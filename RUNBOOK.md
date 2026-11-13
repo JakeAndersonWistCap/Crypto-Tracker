@@ -534,6 +534,81 @@ A Plume seed started on code older than 2026-10-01 saved its state only at the e
 or stop it and start again on the new code. Don't run both at once: they write the same state file.
 
 
+## 11ep. Project round 4F — Morpho's unlocks finished, the store export (2026-11-13)
+
+**Read-only checks first** (PowerShell 5.1, from the repo folder; nothing here writes to `metrics.db`):
+
+```
+git fetch origin claude/crypto-metrics-supply-demand-ovkg8g
+git log --oneline -1                                                 # expect: the round-4F commit (PR4F: ...)
+git log --oneline -1 origin/claude/crypto-metrics-supply-demand-ovkg8g   # expect: the same line
+python circ_legs.py Morpho
+#   expect: morpho_undistributed_tokens [switch (subtracted when held)] with every day "ON ANOTHER WALLET SET" or
+#   MISSING — the set now has 17 wallets (the Rewards Safe on Base / Arbitrum / Katana, the Base Rewards Multisig, the
+#   campaign funder 0x30Bf on Ethereum and Base, Merkl's Distributor on Arbitrum and Katana); "switch: … (last build:
+#   in force …)" from your last build, which goes PENDING on the next one
+```
+
+**Then the run, the backfill, and the checks** (the switch is PENDING until the backfill holds every day on the new set):
+
+```
+python token_metrics.py
+#   expect: "CLEAN-UP PR4D.3: … removed" for morpho_undistributed_tokens (the old-set days); the new legacy scan
+#   urd_morpho_legacy_out stores emissions_tokens_claims_ethereum_legacy (its full history, Ethereum)
+python archive_backfill.py --run --project Morpho --budget-min 30    # rerun until it reports nothing left
+python circ_legs.py Morpho
+#   expect: every leg "none missing", no "ON ANOTHER WALLET SET". If an Arbitrum or Katana day stays MISSING after
+#   two backfills, paste the line back: that chain's archive endpoint is the question, not the rule
+python circ_legs.py --release Morpho                                  # ITEM 4
+#   expect: no 1.5M Rewards-Safe-to-Base fall and no 0x30Bf fall in morpho_undistributed_tokens; a "less
+#   emissions_tokens_claims_ethereum_legacy: ~632k claimed; ~632k taken" line; and
+#   "Unlocks Q0 (per day: released − claims taken) = X — the workbook's figure"
+python token_metrics.py --no-fetch                                     # rebuild from the store
+```
+
+**One command per item** (after the rebuild):
+
+```
+@'
+import openpyxl
+wb = openpyxl.load_workbook("token_metrics_audit.xlsx", data_only=True)
+ws = wb["CP Comparability"]; hr = next(r for r in range(1, 13) if ws.cell(r, 1).value == "Project")
+row = next(r for r in range(hr + 1, ws.max_row + 1) if ws.cell(r, 1).value == "Morpho")
+for h in ("Circulating supply (tokens)", "Unlocks Q0", "Emissions Q0 (tokens)"):
+    c = next(c for c in range(1, ws.max_column + 1) if str(ws.cell(hr, c).value or "").startswith(h))
+    print("CP |", h, "|", ws.cell(row, c).value)
+ws = wb["Flows"]; hr = next(r for r in range(1, 13) if ws.cell(r, 1).value == "Project")
+head = [ws.cell(hr, c).value for c in range(1, ws.max_column + 1)]
+for r in range(hr + 1, ws.max_row + 1):
+    v = {h: ws.cell(r, c + 1).value for c, h in enumerate(head)}
+    if v["Project"] == "Morpho" and v["Statement"] == "Token flow" and (v["Line"].startswith("Residual") or v["Line"] == "Status"):
+        print("Flows |", v["Line"][:30], "|", *[str(v[q])[:44] for q in ("Q0", "Q-1", "Q-2", "Q-3")], sep=" ")
+'@ | python -                                                                  # ITEMS 1-4
+#   expect: CP circulating ~1.07M below 548,757,684 once in force (the Rewards Safe on Base 968k + Katana 58k, the
+#   funder 22k, the Arbitrum / Katana distributors 23k); Unlocks Q0 = circ_legs' "Unlocks Q0" line to the token, some
+#   1.8M-2.2M below 51,721,569 (out: the 1.5M bridge, the 35k to the funder, the 632k legacy claims now (b); back in:
+#   up to the 383k of rises that were refills from wallets now inside the set); Emissions Q0 about
+#   1,597,712 + the legacy claims (~632k); Flows residual ~0 and Status "OK — balances within ±0.5%" in every quarter
+python done_check.py --verbose                # expect: Morpho READY (once in force), Uniswap / Fluid / Maple READY
+python project_freeze.py --compare Morpho     # expect: Morpho: 285 cells, 0 undeclared move(s)
+python project_freeze.py --compare Maple      # expect: Maple: 360 cells, 0 undeclared move(s)
+python project_freeze.py --compare Fluid      # expect: Fluid: 353 cells, 0 undeclared move(s)
+python project_freeze.py --compare Uniswap    # expect: Uniswap: 309 cells, 0 undeclared move(s)
+```
+
+**The store export, on a side branch** (ITEM 5; the working branch never carries it — exports/ is git-ignored):
+
+```
+python store_export.py --project Morpho
+#   expect: wrote exports/morpho-<today>.json.gz — metrics N, review_queue N, …; rows <first>..<last>; as of <today>
+git switch -c data/morpho-export
+git add -f exports/morpho-<today>.json.gz                    # the file name the line above printed
+git commit -m "data: Morpho store export <today>"
+git push -u origin data/morpho-export
+git switch claude/crypto-metrics-supply-demand-ovkg8g
+git log --oneline -1                                          # expect: the round-4F commit again
+```
+
 ## 11eo. Project round 4E — Morpho's token-flow residual (2026-11-13)
 
 **Read-only checks first** (PowerShell 5.1, from the repo folder; nothing here writes to `metrics.db`):

@@ -79,12 +79,17 @@ def report(conn, project: str) -> list[str]:
 
 
 def release_parts(conn, project: str, period: int = 90) -> list[str]:
-    """PR4E.2 (Jake 2026-11-13: "list what makes up Morpho's Unlocks Q0"): per leg of the release, the latest quarter's
-    falls and rises in its stored stock (consecutive stored days at most 3 apart, the switch leg on the current wallet
-    set only), the modelled relock's fall, and the claims taken out of (e) (they are (b), counted in Emissions). The
-    workbook nets each DAY before clipping, so its Unlocks Q0 can sit below Σ falls − claims by the same-day rises."""
+    """PR4E.2 / PR4F.4 (Jake 2026-11-13: "list what makes up Morpho's Unlocks Q0"; "Unlocks Q0 must equal circ_legs"):
+    the latest quarter's release, from the store, two ways that must meet.
+      per leg   each stored stock leg's falls and rises (consecutive stored days at most 3 apart; the switch leg on the
+                current wallet set only) and the modelled relock's fall;
+      per day   the workbook's method: each day the legs' changes are summed — a day the set falls releases that fall,
+                a day it rises releases 0 and the rise is a RETURN — then each day's claims out of a distributor inside
+                the set are taken out (on that day or the next stored one, never below 0: they are (b), in Emissions).
+    Unlocks Q0 = per-day release − claims taken. It sits below Σ leg falls − Σ claims by the rises netted on days the
+    set fell and by any claim with no release left to take it from — both printed."""
     swc = config.circulating_swc(project)
-    legs = [m for m in ((config.CIRCULATING_ONCHAIN.get(project) or {}).get("subtract") or ())]
+    legs = list((config.CIRCULATING_ONCHAIN.get(project) or {}).get("subtract") or ())
     if swc.get("unlock_legs"):
         legs.append(swc["metric"])
     asof = conn.execute("SELECT max(substr(date,1,10)) FROM metrics WHERE project=? AND metric='total_supply'",
@@ -93,31 +98,57 @@ def release_parts(conn, project: str, period: int = 90) -> list[str]:
         return [f"{project}: no total_supply stored"]
     end = pd.Timestamp(asof)
     start = end - pd.Timedelta(days=period)
+    days = pd.date_range(start + pd.Timedelta(days=1), end)
     lines = [f"{project}: release legs over ({start.date()}, {end.date()}] — tokens"]
-    tot = 0.0
+    net = pd.Series(0.0, index=days)
+    falls_total = 0.0
     for m in legs:
         if m == "morpho_relocked_tokens":
-            fall = config.relocked_on(str(start.date())) - config.relocked_on(str(end.date()))
-            lines.append(f"  {m}: fall {fall:,.2f} (MODELLED from the published schedule)")
-            tot += fall
+            ch = pd.Series({d: config.relocked_on(str((d - pd.Timedelta(days=1)).date())) - config.relocked_on(str(d.date()))
+                            for d in days})
+            lines.append(f"  {m}: fall {ch.sum():,.2f} (MODELLED from the published schedule)")
+            falls_total += float(ch.sum())
+            net = net.add(ch, fill_value=0.0)
             continue
         rows = conn.execute("SELECT substr(date,1,10), value, source FROM metrics WHERE project=? AND metric=? "
                             "ORDER BY date", (project, m)).fetchall()
         if m == swc.get("metric") and swc.get("current_set_only"):
             rows = [r for r in rows if config.on_current_set(project, m, r[2])]
         s = pd.Series({pd.Timestamp(d): float(v) for d, v, _s in rows}, dtype=float).sort_index()
+        s = s[~s.index.duplicated(keep="last")]
         gap = s.index.to_series().diff().dt.days
-        d = s.diff()[(gap <= 3) & (s.index > start) & (s.index <= end)]
-        fall, rise = float(-d[d < 0].sum()), float(d[d > 0].sum())
+        fall_by_day = (-s.diff())[(gap <= 3) & (s.index > start) & (s.index <= end)]
+        fall, rise = float(fall_by_day[fall_by_day > 0].sum()), abs(float(fall_by_day[fall_by_day < 0].sum()))
         lines.append(f"  {m}: fall {fall:,.2f}; rise {rise:,.2f} (returned / refilled)")
-        tot += fall
-    less = 0.0
-    for m in config.release_less(project)[0] or (swc.get("release_less") or ()):
-        v = conn.execute("SELECT sum(value) FROM metrics WHERE project=? AND metric=? AND substr(date,1,10)>? AND "
-                         "substr(date,1,10)<=?", (project, m, str(start.date()), str(end.date()))).fetchone()[0] or 0.0
-        lines.append(f"  less {m}: {v:,.2f} (claims: (b), in Emissions — out of (e))")
-        less += float(v)
-    lines.append(f"  falls − claims = {tot - less:,.2f} (compare the workbook's Unlocks Q0)")
+        falls_total += fall
+        net = net.add(fall_by_day, fill_value=0.0)
+    released, returned = net.clip(lower=0.0), (-net).clip(lower=0.0)
+    lines.append(f"  per day (the legs summed each day): released {released.sum():,.2f}; returned {returned.sum():,.2f}")
+    claims_total = taken_total = 0.0
+    rel = released.copy()
+    less_legs = config.release_less(project)[0] or tuple(swc.get("release_less") or ())
+    for m in less_legs:
+        rows = conn.execute("SELECT substr(date,1,10), sum(value) FROM metrics WHERE project=? AND metric=? AND "
+                            "substr(date,1,10)>? AND substr(date,1,10)<=? GROUP BY substr(date,1,10)",
+                            (project, m, str(start.date()), str(end.date()))).fetchall()
+        tot = taken = 0.0
+        for d, v in rows:
+            left = float(v or 0.0)
+            tot += left
+            for day in (pd.Timestamp(d), pd.Timestamp(d) + pd.Timedelta(days=1)):
+                if left > 1e-9 and day in rel.index:
+                    t = min(left, float(rel.loc[day]))
+                    rel.loc[day] -= t
+                    left -= t
+                    taken += t
+        lines.append(f"  less {m}: {tot:,.2f} claimed; {taken:,.2f} taken out of (e) ((b), in Emissions)")
+        claims_total += tot
+        taken_total += taken
+    unlocks = float(released.sum()) - taken_total
+    lines.append(f"  falls − claims = {falls_total - claims_total:,.2f} (per leg, gross)")
+    lines.append(f"  Unlocks Q0 (per day: released − claims taken) = {unlocks:,.2f} — the workbook's figure")
+    lines.append(f"  the difference {falls_total - claims_total - unlocks:,.2f} = rises netted on days the set fell "
+                 f"{falls_total - float(released.sum()):,.2f} − claims with no release left to take {claims_total - taken_total:,.2f}")
     return lines
 
 

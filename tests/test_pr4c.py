@@ -138,7 +138,7 @@ def test_5_morpho_is_frozen_with_round_4_4b_and_4cs_moves_declared(built):
     base = json.loads(pf.baseline_path("Morpho").read_text(encoding="utf-8"))
     moves = config.FROZEN_MOVES["Morpho"]
     assert len(base) > 250 and moves
-    assert all(d["why"].startswith(("PR4.", "PR4B.", "PR4C.")) for d in moves.values())
+    assert all(d["why"].startswith(("PR4.", "PR4B.", "PR4C.", "PR4F.")) for d in moves.values())   # PR4F.2 moves
     assert all(base[k] == pf._norm(d["to"]) for k, d in moves.items() if k in base)
     now = pf.cells(built["audit"], built["reader"], "Morpho")
     assert pf.undeclared(base, now, moves) == []

@@ -32,3 +32,6 @@ dumps/
 explorer_routes.json
 # subsidy targeting's per-pool tables and Pendle's daily gauge-rate samples (Round G8 4a): machine-local output
 data/subsidy/
+
+# store_export.py output (PR4F.5): committed only on a data/<project>-export side branch, with git add -f
+exports/

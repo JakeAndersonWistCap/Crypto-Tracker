@@ -29996,7 +29996,10 @@ def wire_probed_scans(state: dict | None = None, projects=None, open_routes: boo
             continue
         excl = ["0x0000000000000000000000000000000000000000"]
         excl += ([_PENDLE_EXCLUDE.get(cid, "0xCbcb48e22622a3778b6F14C2f5d258Ba026b05e6")] if proj == "Pendle" else
-                 [] if proj == "Morpho" else
+                 # PR4F: a transfer to another wallet of Morpho's not-yet-released set on Base is not a claim
+                 ["0xF057afeEc22E220f47AD4220871364e9E828b2e9", "0x5Eb982bb1E620cC3927E5CF8A5D207e667643297",
+                  "0x30Bf2590081184CA4e3c39F8c82346b1752b22C9", "0xcBa28b38103307Ec8dA98377ffF9816C164f9AFa"]
+                 if proj == "Morpho" else
                  ["0x4F6F977aCDD1177DCD81aB83074855EcB9C2D49e", "0x9800020b610194dBa52CF606E8Aa142F9F256166"])
         scans.append({"key": key, "metric": metric, "chain": chain, "token": tok, "holders": list(holders),
                       "direction": "out", "store": True, "attribution": "dedicated_wallet",
@@ -41146,3 +41149,716 @@ FROZEN_MOVES["Morpho"].update({'audit|CP Comparability|Trend — cp_float (arrow
                                                     'MODELLED leg (the relock schedule) — partly modelled, never '
                                                     'VERIFIED: the trends name the modelled quarters and the cells are '
                                                     'AMBER'}})
+
+
+# =====================================================================================================================
+# PROJECT ROUND 4F — MORPHO'S UNLOCKS FINISHED (Jake 2026-11-13). Morpho cells only.
+# =====================================================================================================================
+# PR4F.1 THE REWARDS SAFE ON EVERY CHAIN (Jake's decision 2026-11-13: DAO-owned rewards custody, not a release). Sources,
+# read 2026-11-13: Morpho's Blockworks filing lists the "Rewards Safe" 0xF057afeE… ("Operational Safe used for MORPHO
+# rewards distribution to Morpho Protocol users. DAO owned.") on Ethereum, Base, Polygon, OP Mainnet and Katana;
+# docs.morpho.org/learn/governance/organization lists the MORPHO Rewards Multisig (Base) 0x5Eb982bb… (3/5).
+# docs.morpho.org/get-started/resources/addresses (read 2026-11-13) lists MORPHO on four chains only: Ethereum, Base
+# 0xBAa5CC21…, Arbitrum 0x40BD670A… (LayerZero OFT: MorphoMintBurnOFTAdapter 0xFc332936…, locked on Ethereum by
+# MorphoOFTAdapter 0x50d3d6fD…) and Katana 0x1e5eFCA3… (agglayer TokenWrappedBridgeUpgradeable). So Polygon and OP Mainnet
+# have NO MORPHO token on file — nothing there to read (the Rewards Safe's Merkl campaigns there pay OP / none, Merkl API
+# creatorAddress, read 2026-11-13). Every bridged MORPHO is backed by new MORPHO locked on Ethereum (inside the 1B
+# totalSupply, in a bridge that is circulating), so subtracting a holder's bridged balance double-counts nothing.
+# ARBITRUM, BEYOND THE FILING'S LIST: the same Rewards Safe creates MORPHO campaigns paid on Arbitrum (Merkl API
+# creatorAddress=0xF057…&chainId=42161: 100+ campaigns, rewardToken 0x40BD670A…), so its Arbitrum MORPHO is the same
+# custody. Merkl's Distributor on Arbitrum and Katana (unclaimed: the rule's "unclaimed distributor balances") were left
+# out only for want of a token contract on file (MORPHO_UNDISTRIBUTED_NOT_READ); with the docs' tokens they are read, and
+# their claims are netted out of (e) like Ethereum's and Base's — so a token funded into any distributor and claimed is
+# counted ONCE, as (b), on every chain.
+# PR4F.3 THE CAMPAIGN FUNDER 0x30Bf2590… (traced 2026-11-13, eth.blockscout.com + api.merkl.xyz): an EOA that created 39
+# MORPHO Merkl campaigns (9 paid on Ethereum, 30 on Base), pays MORPHO into Merkl's Distributor about weekly, bridges to
+# ITSELF on Base (Base L1StandardBridge ERC20DepositInitiated to = 0x30Bf…: 13,000 07-27 … 3,000 11-03), and is funded by
+# the Rewards Safe (34,999 + 1 in Q0) and the Morpho Association Master Safe (12,100 08-24, 12,000 09-11, wrapped from
+# legacy). Campaign funding -> the not-yet-released set (Jake's rule), on Ethereum and Base.
+# Read 2026-11-13 (mainnet.base.org, rpc.katana.network, arb1.arbitrum.io): Rewards Safe on Base 968,190.25, on Katana
+# 57,705.76, on Arbitrum 0.0000008; Base Rewards Multisig 0x5Eb982bb… 0.00; Merkl Distributor Arbitrum 6,392.24, Katana
+# 16,306.23; 0x30Bf… on Base 1,475.55 (Ethereum 20,910.42). THE 1,500,000 bridged on 08-21 (500,000) and 10-20 (1,000,000)
+# went to 0xF057afeE… ITSELF on Base (ERC20DepositInitiated to = 0xF057…, txs 0xba464d7b…, 0x83778054…), not 0x5Eb982bb….
+_MORPHO_TOKENS_DOC = "https://docs.morpho.org/get-started/resources/addresses/"
+PROJECT_BY_NAME["Morpho"]["contracts"]["token_arbitrum"] = _contract(
+    "0x40BD670A58238e6E230c430BBb5cE6ec0d40df48", "arbitrum", "bridged_representation", "MORPHO", _MORPHO_TOKENS_DOC,
+    verified="2026-11-13", purpose="MORPHO on Arbitrum — LayerZero OFT (MorphoMintBurnOFTAdapter; locked on Ethereum by "
+                                   "MorphoOFTAdapter 0x50d3d6fD…); reference only, read as a holder's token")
+PROJECT_BY_NAME["Morpho"]["contracts"]["token_katana"] = _contract(
+    "0x1e5eFCA3D0dB2c6d5C67a4491845c43253eB9e4e", "katana", "bridged_representation", "MORPHO", _MORPHO_TOKENS_DOC,
+    verified="2026-11-13", purpose="MORPHO on Katana — agglayer TokenWrappedBridgeUpgradeable (backed by MORPHO locked "
+                                   "on Ethereum); reference only, read as a holder's token")
+_REWARDS_SAFE = "0xF057afeEc22E220f47AD4220871364e9E828b2e9"
+_CAMPAIGN_FUNDER = "0x30Bf2590081184CA4e3c39F8c82346b1752b22C9"
+_FILING = "https://blockworks.com/token-transparency/filing/morpho (Rewards Safe, read 2026-11-13)"
+for _key, _addr, _chain, _und, _code, _src, _why in (
+        ("undist_rewards_safe_base", _REWARDS_SAFE, "base", "token_base", True, _FILING,
+         "the Rewards Safe on Base — DAO-owned rewards custody (PR4F.1: not released); received the 1,500,000 bridged "
+         "on 2026-08-21 and 2026-10-20"),
+        ("undist_rewards_multisig_base", "0x5Eb982bb1E620cC3927E5CF8A5D207e667643297", "base", "token_base", True,
+         "https://docs.morpho.org/learn/governance/organization/ (MORPHO Rewards Multisig (Base), read 2026-11-13)",
+         "the MORPHO Rewards Multisig on Base (docs) — rewards custody (PR4F.1: not released)"),
+        ("undist_rewards_safe_arbitrum", _REWARDS_SAFE, "arbitrum", "token_arbitrum", True,
+         "https://api.merkl.xyz/v4/campaigns?creatorAddress=0xF057afeEc22E220f47AD4220871364e9E828b2e9&chainId=42161 "
+         "(MORPHO campaigns, read 2026-11-13)",
+         "the Rewards Safe on Arbitrum — creates MORPHO campaigns there (PR4F.1: not released)"),
+        ("undist_merkl_distributor_arbitrum", _MERKL_DIST, "arbitrum", "token_arbitrum", True,
+         "https://github.com/AngleProtocol/merkl-contracts/blob/ed53c694/scripts/Distributor.s.sol#L85 (one address "
+         "on every chain)", "Merkl's Distributor on Arbitrum — MORPHO not yet claimed (PR4F.1)"),
+        ("undist_rewards_safe_katana", _REWARDS_SAFE, "katana", "token_katana", True, _FILING,
+         "the Rewards Safe on Katana — DAO-owned rewards custody (PR4F.1: not released)"),
+        ("undist_merkl_distributor_katana", _MERKL_DIST, "katana", "token_katana", True,
+         "https://github.com/AngleProtocol/merkl-contracts/blob/ed53c694/scripts/Distributor.s.sol#L85 (one address "
+         "on every chain)", "Merkl's Distributor on Katana — MORPHO not yet claimed (PR4F.1)"),
+        ("undist_campaign_funder", _CAMPAIGN_FUNDER, "ethereum", None, False,
+         "https://api.merkl.xyz/v4/campaigns?creatorAddress=0x30Bf2590081184CA4e3c39F8c82346b1752b22C9 (39 MORPHO "
+         "campaigns, read 2026-11-13)",
+         "MORPHO campaign funder (EOA; funded by the Rewards Safe and the Association; pays Merkl's Distributor) — "
+         "campaign funding (PR4F.3: not released)"),
+        ("undist_campaign_funder_base", _CAMPAIGN_FUNDER, "base", "token_base", False,
+         "https://api.merkl.xyz/v4/campaigns?creatorAddress=0x30Bf2590081184CA4e3c39F8c82346b1752b22C9 (30 campaigns "
+         "paid on Base, read 2026-11-13)",
+         "the MORPHO campaign funder on Base (it bridges to itself) — campaign funding (PR4F.3: not released)")):
+    PROJECT_BY_NAME["Morpho"]["contracts"][_key] = _contract(
+        _addr, _chain, "treasury_holding", "MORPHO", _src, verified="2026-11-13", purpose=_why,
+        provenance="Jake 2026-11-13 (PR4F): rewards custody / campaign funding — not yet released",
+        holder_has_code=_code, metric_override="morpho_undistributed_tokens", underlying=_und)
+MORPHO_UNDISTRIBUTED_NOT_READ = ("nothing named: Merkl's Distributor on Arbitrum and Katana is read from PR4F.1 (the "
+                                 "docs' MORPHO there, read 2026-11-13); Polygon and OP Mainnet have no MORPHO token on "
+                                 "file, so the Rewards Safe holds none there")
+CIRCULATING_ONCHAIN["Morpho"]["missing"] = (
+    "the Founders' and Strategic Partners cohort 3 allocations vest (docs) with no vesting contract or holder wallet on "
+    "file (the relock is MODELLED, PR4C.1); Safe 0x92e4629a… (2,500,000 MORPHO from the Rewards Safe, 3/5 signers shared "
+    "with no Morpho Safe on file, no Merkl campaign, never sent) — owner NOT ESTABLISHED, so a release (PR4F.3)")
+METRICS["morpho_undistributed_tokens"]["label"] = (
+    "MORPHO not yet distributed (PR4.1, PR4F): the Rewards Safe 0xF057… (Ethereum new + legacy, Base, Arbitrum, Katana) "
+    "+ the Rewards Multisig on Base 0x5Eb982bb… + the campaign funder 0x30Bf… (Ethereum, Base) + unclaimed in Merkl's "
+    "Distributor 0x3Ef3D8bA… (Ethereum, Base, Arbitrum, Katana) + the Morpho URD 0x330eefa8… (new + legacy) + the "
+    "contributors' unvested / unallocated reserve — out of circulating (Jake's rule: undistributed / unclaimed is not "
+    "released)")
+# PR4F.2 LEGACY URD CLAIMS ARE (b) (Jake's decision 2026-11-13). docs: legacy MORPHO converts to wrapped MORPHO 1:1; URDs
+# deprecated, rewards via Merkl since MIP-111. The Ethereum claims scan reads the CURRENT token only, so legacy MORPHO
+# claimed out of the URD 0x330eefa8… (631,951.54 in Q0, eth.blockscout.com) fell into (e). This scan counts them as
+# Emissions; the release nets them out (release_less), so a claim is never in both. The URD's legacy balance stays in the
+# set (undist_urd_legacy). Transfers to another wallet of the set (the Rewards Safe, the DAO, the distributors) are not
+# claims.
+METRICS["emissions_tokens_claims_ethereum_legacy"] = {
+    "label": "LEGACY MORPHO claimed out of the Morpho URD 0x330eefa8… on ETHEREUM (log scan urd_morpho_legacy_out, "
+             "reconciled to the wei; PR4F.2 — one leg of emissions_tokens, converts to MORPHO 1:1)",
+    "kind": "flow", "unit": "tokens", "archetypes": [2, 3], "tiers": [2], "sanity_min": 0, "sanity_max": 1e8,
+    "only_projects": ("Morpho",)}
+_MORPHO_SET_ETHEREUM = ["0x0000000000000000000000000000000000000000", _MERKL_DIST, _MORPHO_URD, _REWARDS_SAFE,
+                        "0xcBa28b38103307Ec8dA98377ffF9816C164f9AFa", _CAMPAIGN_FUNDER]
+PROJECT_BY_NAME["Morpho"]["log_scans"].append(
+    {"key": "urd_morpho_legacy_out", "metric": "emissions_tokens_claims_ethereum_legacy", "chain": "ethereum",
+     "token": "0x9994E35Db50125E0DF82e4c2dde62496CE330999",
+     "holders": [_MORPHO_URD],
+     "direction": "out", "store": True, "attribution": "dedicated_wallet",
+     "attribution_sources": [
+         "Morpho docs (Universal Rewards Distributor), given by Jake 2026-10-07; contract name UniversalRewardsDistributor "
+         "(verified source)",
+         "docs.morpho.org/get-started/resources/addresses (Legacy MORPHO 0x9994E35D…, read 2026-11-13)"],
+     "exclude_counterparties": list(_MORPHO_SET_ETHEREUM),
+     "partial_reason": "the Morpho URD 0x330eefa8… (Ethereum), legacy MORPHO: every claim; other URD instances are not "
+                       "scanned",
+     "wired_on": "2026-11-13"})
+# the current-token scan names the same wallets of the set as not claims (a URD -> Rewards Safe return is internal)
+for _s in PROJECT_BY_NAME["Morpho"]["log_scans"]:
+    if _s["key"] == "merkl_morpho_out":
+        _s["exclude_counterparties"] = sorted(set(_s["exclude_counterparties"]) | set(_MORPHO_SET_ETHEREUM),
+                                              key=str.lower)
+PROJECT_BY_NAME["Morpho"]["emissions_from_metric"] = tuple(PROJECT_BY_NAME["Morpho"]["emissions_from_metric"]) + (
+    "emissions_tokens_claims_ethereum_legacy",)
+for _s in PROJECT_BY_NAME["Morpho"]["log_scans"]:
+    if _s["key"] in ("merkl_morpho_out_arbitrum", "merkl_morpho_out_katana"):
+        _s["exclude_counterparties"] = list(_s["exclude_counterparties"]) + [_REWARDS_SAFE]   # internal, not a claim
+# every chain's claims out of a distributor inside the set are (b): netted out of (e), counted once
+CIRCULATING_ONCHAIN["Morpho"]["subtract_when_complete"]["release_less"] = (
+    "emissions_tokens_claims_ethereum", "emissions_tokens_claims_ethereum_legacy", "emissions_tokens_claims_base",
+    "emissions_tokens_claims_arbitrum", "emissions_tokens_claims_katana")
+
+
+# PR4F.2 (Jake 2026-11-13): the legacy URD claims leg joins emissions_tokens — on the dumps (no claims stored) the BLOCKED
+# reason names it: 17 cells, wording only. The baseline is rewritten from the same build.
+FROZEN_MOVES["Morpho"].update({'audit|A2 Coordination|CUSTOMER REVENUE PER TOKEN EMITTED ($/token) — key ratio': {'date': '2026-11-13',
+                                                                                    'from': 'n/a — emissions_tokens '
+                                                                                            '(q0): BLOCKED — BLOCKED — '
+                                                                                            'the sum of '
+                                                                                            'emissions_tokens_claims_ethereum, '
+                                                                                            'emissions_tokens_claims_arbitrum, '
+                                                                                            'emissions_tokens_claims_base, '
+                                                                                            'emissions_tokens_claims_katana '
+                                                                                            'is not formed: '
+                                                                                            'emissions_tokens_claims_ethereum, '
+                                                                                            'em',
+                                                                                    'to': 'n/a — emissions_tokens '
+                                                                                          '(q0): BLOCKED — BLOCKED — '
+                                                                                          'the sum of '
+                                                                                          'emissions_tokens_claims_ethereum, '
+                                                                                          'emissions_tokens_claims_arbitrum, '
+                                                                                          'emissions_tokens_claims_base, '
+                                                                                          'emissions_tokens_claims_katana, '
+                                                                                          'emissions_tokens_claims_ethereum_legacy '
+                                                                                          'is not for',
+                                                                                    'why': 'PR4F.2 (Jake 2026-11-13): '
+                                                                                           'legacy MORPHO claimed out '
+                                                                                           'of the URD is (b) — '
+                                                                                           'emissions_tokens sums '
+                                                                                           'emissions_tokens_claims_ethereum_legacy '
+                                                                                           "too, so the dumps' BLOCKED "
+                                                                                           'reason (no claims stored) '
+                                                                                           'names five legs; no value '
+                                                                                           'moves'},
+ 'audit|A2 Coordination|Customer revenue ÷ emissions value (x)': {'date': '2026-11-13',
+                                                                  'from': 'n/a — emissions_tokens (q0): BLOCKED — '
+                                                                          'BLOCKED — the sum of '
+                                                                          'emissions_tokens_claims_ethereum, '
+                                                                          'emissions_tokens_claims_arbitrum, '
+                                                                          'emissions_tokens_claims_base, '
+                                                                          'emissions_tokens_claims_katana is not '
+                                                                          'formed: emissions_tokens_claims_ethereum, '
+                                                                          'em',
+                                                                  'to': 'n/a — emissions_tokens (q0): BLOCKED — '
+                                                                        'BLOCKED — the sum of '
+                                                                        'emissions_tokens_claims_ethereum, '
+                                                                        'emissions_tokens_claims_arbitrum, '
+                                                                        'emissions_tokens_claims_base, '
+                                                                        'emissions_tokens_claims_katana, '
+                                                                        'emissions_tokens_claims_ethereum_legacy is '
+                                                                        'not for',
+                                                                  'why': 'PR4F.2 (Jake 2026-11-13): legacy MORPHO '
+                                                                         'claimed out of the URD is (b) — '
+                                                                         'emissions_tokens sums '
+                                                                         'emissions_tokens_claims_ethereum_legacy too, '
+                                                                         "so the dumps' BLOCKED reason (no claims "
+                                                                         'stored) names five legs; no value moves'},
+ 'audit|A2 Coordination|Customer share of supplier earnings': {'date': '2026-11-13',
+                                                               'from': 'n/a — emissions_tokens (q0): BLOCKED — BLOCKED '
+                                                                       '— the sum of emissions_tokens_claims_ethereum, '
+                                                                       'emissions_tokens_claims_arbitrum, '
+                                                                       'emissions_tokens_claims_base, '
+                                                                       'emissions_tokens_claims_katana is not formed: '
+                                                                       'emissions_tokens_claims_ethereum, em',
+                                                               'to': 'n/a — emissions_tokens (q0): BLOCKED — BLOCKED — '
+                                                                     'the sum of emissions_tokens_claims_ethereum, '
+                                                                     'emissions_tokens_claims_arbitrum, '
+                                                                     'emissions_tokens_claims_base, '
+                                                                     'emissions_tokens_claims_katana, '
+                                                                     'emissions_tokens_claims_ethereum_legacy is not '
+                                                                     'for',
+                                                               'why': 'PR4F.2 (Jake 2026-11-13): legacy MORPHO claimed '
+                                                                      'out of the URD is (b) — emissions_tokens sums '
+                                                                      'emissions_tokens_claims_ethereum_legacy too, so '
+                                                                      "the dumps' BLOCKED reason (no claims stored) "
+                                                                      'names five legs; no value moves'},
+ "audit|A2 Coordination|Emissions Q0 ($, each day's emissions × that day's price)": {'date': '2026-11-13',
+                                                                                     'from': 'n/a — emissions_tokens '
+                                                                                             '(q0): BLOCKED — BLOCKED '
+                                                                                             '— the sum of '
+                                                                                             'emissions_tokens_claims_ethereum, '
+                                                                                             'emissions_tokens_claims_arbitrum, '
+                                                                                             'emissions_tokens_claims_base, '
+                                                                                             'emissions_tokens_claims_katana '
+                                                                                             'is not formed: '
+                                                                                             'emissions_tokens_claims_ethereum, '
+                                                                                             'em',
+                                                                                     'to': 'n/a — emissions_tokens '
+                                                                                           '(q0): BLOCKED — BLOCKED — '
+                                                                                           'the sum of '
+                                                                                           'emissions_tokens_claims_ethereum, '
+                                                                                           'emissions_tokens_claims_arbitrum, '
+                                                                                           'emissions_tokens_claims_base, '
+                                                                                           'emissions_tokens_claims_katana, '
+                                                                                           'emissions_tokens_claims_ethereum_legacy '
+                                                                                           'is not for',
+                                                                                     'why': 'PR4F.2 (Jake 2026-11-13): '
+                                                                                            'legacy MORPHO claimed out '
+                                                                                            'of the URD is (b) — '
+                                                                                            'emissions_tokens sums '
+                                                                                            'emissions_tokens_claims_ethereum_legacy '
+                                                                                            "too, so the dumps' "
+                                                                                            'BLOCKED reason (no claims '
+                                                                                            'stored) names five legs; '
+                                                                                            'no value moves'},
+ 'audit|A2 Coordination|Emissions RELEASED, % of circulating (annualised over covered days)': {'date': '2026-11-13',
+                                                                                               'from': 'n/a — '
+                                                                                                       'emissions_tokens '
+                                                                                                       '(q0): BLOCKED '
+                                                                                                       '— BLOCKED — '
+                                                                                                       'the sum of '
+                                                                                                       'emissions_tokens_claims_ethereum, '
+                                                                                                       'emissions_tokens_claims_arbitrum, '
+                                                                                                       'emissions_tokens_claims_base, '
+                                                                                                       'emissions_tokens_claims_katana '
+                                                                                                       'is not formed: '
+                                                                                                       'emissions_tokens_claims_ethereum, '
+                                                                                                       'em',
+                                                                                               'to': 'n/a — '
+                                                                                                     'emissions_tokens '
+                                                                                                     '(q0): BLOCKED — '
+                                                                                                     'BLOCKED — the '
+                                                                                                     'sum of '
+                                                                                                     'emissions_tokens_claims_ethereum, '
+                                                                                                     'emissions_tokens_claims_arbitrum, '
+                                                                                                     'emissions_tokens_claims_base, '
+                                                                                                     'emissions_tokens_claims_katana, '
+                                                                                                     'emissions_tokens_claims_ethereum_legacy '
+                                                                                                     'is not for',
+                                                                                               'why': 'PR4F.2 (Jake '
+                                                                                                      '2026-11-13): '
+                                                                                                      'legacy MORPHO '
+                                                                                                      'claimed out of '
+                                                                                                      'the URD is (b) '
+                                                                                                      '— '
+                                                                                                      'emissions_tokens '
+                                                                                                      'sums '
+                                                                                                      'emissions_tokens_claims_ethereum_legacy '
+                                                                                                      'too, so the '
+                                                                                                      "dumps' BLOCKED "
+                                                                                                      'reason (no '
+                                                                                                      'claims stored) '
+                                                                                                      'names five '
+                                                                                                      'legs; no value '
+                                                                                                      'moves'},
+ 'audit|A2 Coordination|Emissions to suppliers Q0 (tokens)': {'date': '2026-11-13',
+                                                              'from': 'n/a — Data: BLOCKED — BLOCKED — the sum of '
+                                                                      'emissions_tokens_claims_ethereum, '
+                                                                      'emissions_tokens_claims_arbitrum, '
+                                                                      'emissions_tokens_claims_base, '
+                                                                      'emissions_tokens_claims_katana is not formed: '
+                                                                      'emissions_tokens_claims_ethereum, '
+                                                                      'emissions_tokens_cl',
+                                                              'to': 'n/a — Data: BLOCKED — BLOCKED — the sum of '
+                                                                    'emissions_tokens_claims_ethereum, '
+                                                                    'emissions_tokens_claims_arbitrum, '
+                                                                    'emissions_tokens_claims_base, '
+                                                                    'emissions_tokens_claims_katana, '
+                                                                    'emissions_tokens_claims_ethereum_legacy is not '
+                                                                    'formed: emissions_to',
+                                                              'why': 'PR4F.2 (Jake 2026-11-13): legacy MORPHO claimed '
+                                                                     'out of the URD is (b) — emissions_tokens sums '
+                                                                     'emissions_tokens_claims_ethereum_legacy too, so '
+                                                                     "the dumps' BLOCKED reason (no claims stored) "
+                                                                     'names five legs; no value moves'},
+ 'audit|A2 Coordination|Emissions Δ30d': {'date': '2026-11-13',
+                                          'from': 'n/a — emissions_tokens (now): BLOCKED — BLOCKED — the sum of '
+                                                  'emissions_tokens_claims_ethereum, emissions_tokens_claims_arbitrum, '
+                                                  'emissions_tokens_claims_base, emissions_tokens_claims_katana is not '
+                                                  'formed: emissions_tokens_claims_ethereum, e',
+                                          'to': 'n/a — emissions_tokens (now): BLOCKED — BLOCKED — the sum of '
+                                                'emissions_tokens_claims_ethereum, emissions_tokens_claims_arbitrum, '
+                                                'emissions_tokens_claims_base, emissions_tokens_claims_katana, '
+                                                'emissions_tokens_claims_ethereum_legacy is not fo',
+                                          'why': 'PR4F.2 (Jake 2026-11-13): legacy MORPHO claimed out of the URD is '
+                                                 '(b) — emissions_tokens sums emissions_tokens_claims_ethereum_legacy '
+                                                 "too, so the dumps' BLOCKED reason (no claims stored) names five "
+                                                 'legs; no value moves'},
+ 'audit|A2 Coordination|Emissions Δ3m': {'date': '2026-11-13',
+                                         'from': 'n/a — emissions_tokens (q0): BLOCKED — BLOCKED — the sum of '
+                                                 'emissions_tokens_claims_ethereum, emissions_tokens_claims_arbitrum, '
+                                                 'emissions_tokens_claims_base, emissions_tokens_claims_katana is not '
+                                                 'formed: emissions_tokens_claims_ethereum, em',
+                                         'to': 'n/a — emissions_tokens (q0): BLOCKED — BLOCKED — the sum of '
+                                               'emissions_tokens_claims_ethereum, emissions_tokens_claims_arbitrum, '
+                                               'emissions_tokens_claims_base, emissions_tokens_claims_katana, '
+                                               'emissions_tokens_claims_ethereum_legacy is not for',
+                                         'why': 'PR4F.2 (Jake 2026-11-13): legacy MORPHO claimed out of the URD is (b) '
+                                                '— emissions_tokens sums emissions_tokens_claims_ethereum_legacy too, '
+                                                "so the dumps' BLOCKED reason (no claims stored) names five legs; no "
+                                                'value moves'},
+ 'audit|A2 Coordination|Emissions Δ6m': {'date': '2026-11-13',
+                                         'from': 'n/a — emissions_tokens (q0): BLOCKED — BLOCKED — the sum of '
+                                                 'emissions_tokens_claims_ethereum, emissions_tokens_claims_arbitrum, '
+                                                 'emissions_tokens_claims_base, emissions_tokens_claims_katana is not '
+                                                 'formed: emissions_tokens_claims_ethereum, em',
+                                         'to': 'n/a — emissions_tokens (q0): BLOCKED — BLOCKED — the sum of '
+                                               'emissions_tokens_claims_ethereum, emissions_tokens_claims_arbitrum, '
+                                               'emissions_tokens_claims_base, emissions_tokens_claims_katana, '
+                                               'emissions_tokens_claims_ethereum_legacy is not for',
+                                         'why': 'PR4F.2 (Jake 2026-11-13): legacy MORPHO claimed out of the URD is (b) '
+                                                '— emissions_tokens sums emissions_tokens_claims_ethereum_legacy too, '
+                                                "so the dumps' BLOCKED reason (no claims stored) names five legs; no "
+                                                'value moves'},
+ 'audit|A2 Coordination|Emissions Δ9m': {'date': '2026-11-13',
+                                         'from': 'n/a — emissions_tokens (q0): BLOCKED — BLOCKED — the sum of '
+                                                 'emissions_tokens_claims_ethereum, emissions_tokens_claims_arbitrum, '
+                                                 'emissions_tokens_claims_base, emissions_tokens_claims_katana is not '
+                                                 'formed: emissions_tokens_claims_ethereum, em',
+                                         'to': 'n/a — emissions_tokens (q0): BLOCKED — BLOCKED — the sum of '
+                                               'emissions_tokens_claims_ethereum, emissions_tokens_claims_arbitrum, '
+                                               'emissions_tokens_claims_base, emissions_tokens_claims_katana, '
+                                               'emissions_tokens_claims_ethereum_legacy is not for',
+                                         'why': 'PR4F.2 (Jake 2026-11-13): legacy MORPHO claimed out of the URD is (b) '
+                                                '— emissions_tokens sums emissions_tokens_claims_ethereum_legacy too, '
+                                                "so the dumps' BLOCKED reason (no claims stored) names five legs; no "
+                                                'value moves'},
+ 'audit|A2 Coordination|Rev ÷ emission at Q1 (−3m, $/token)': {'date': '2026-11-13',
+                                                               'from': 'n/a — emissions_tokens (q1): BLOCKED — BLOCKED '
+                                                                       '— the sum of emissions_tokens_claims_ethereum, '
+                                                                       'emissions_tokens_claims_arbitrum, '
+                                                                       'emissions_tokens_claims_base, '
+                                                                       'emissions_tokens_claims_katana is not formed: '
+                                                                       'emissions_tokens_claims_ethereum, em',
+                                                               'to': 'n/a — emissions_tokens (q1): BLOCKED — BLOCKED — '
+                                                                     'the sum of emissions_tokens_claims_ethereum, '
+                                                                     'emissions_tokens_claims_arbitrum, '
+                                                                     'emissions_tokens_claims_base, '
+                                                                     'emissions_tokens_claims_katana, '
+                                                                     'emissions_tokens_claims_ethereum_legacy is not '
+                                                                     'for',
+                                                               'why': 'PR4F.2 (Jake 2026-11-13): legacy MORPHO claimed '
+                                                                      'out of the URD is (b) — emissions_tokens sums '
+                                                                      'emissions_tokens_claims_ethereum_legacy too, so '
+                                                                      "the dumps' BLOCKED reason (no claims stored) "
+                                                                      'names five legs; no value moves'},
+ 'audit|A2 Coordination|Rev ÷ emission at Q2 (−6m)': {'date': '2026-11-13',
+                                                      'from': 'n/a — emissions_tokens (q2): BLOCKED — BLOCKED — the '
+                                                              'sum of emissions_tokens_claims_ethereum, '
+                                                              'emissions_tokens_claims_arbitrum, '
+                                                              'emissions_tokens_claims_base, '
+                                                              'emissions_tokens_claims_katana is not formed: '
+                                                              'emissions_tokens_claims_ethereum, em',
+                                                      'to': 'n/a — emissions_tokens (q2): BLOCKED — BLOCKED — the sum '
+                                                            'of emissions_tokens_claims_ethereum, '
+                                                            'emissions_tokens_claims_arbitrum, '
+                                                            'emissions_tokens_claims_base, '
+                                                            'emissions_tokens_claims_katana, '
+                                                            'emissions_tokens_claims_ethereum_legacy is not for',
+                                                      'why': 'PR4F.2 (Jake 2026-11-13): legacy MORPHO claimed out of '
+                                                             'the URD is (b) — emissions_tokens sums '
+                                                             'emissions_tokens_claims_ethereum_legacy too, so the '
+                                                             "dumps' BLOCKED reason (no claims stored) names five "
+                                                             'legs; no value moves'},
+ 'audit|A2 Coordination|Rev ÷ emission at Q3 (−9m)': {'date': '2026-11-13',
+                                                      'from': 'n/a — emissions_tokens (q3): BLOCKED — BLOCKED — the '
+                                                              'sum of emissions_tokens_claims_ethereum, '
+                                                              'emissions_tokens_claims_arbitrum, '
+                                                              'emissions_tokens_claims_base, '
+                                                              'emissions_tokens_claims_katana is not formed: '
+                                                              'emissions_tokens_claims_ethereum, em',
+                                                      'to': 'n/a — emissions_tokens (q3): BLOCKED — BLOCKED — the sum '
+                                                            'of emissions_tokens_claims_ethereum, '
+                                                            'emissions_tokens_claims_arbitrum, '
+                                                            'emissions_tokens_claims_base, '
+                                                            'emissions_tokens_claims_katana, '
+                                                            'emissions_tokens_claims_ethereum_legacy is not for',
+                                                      'why': 'PR4F.2 (Jake 2026-11-13): legacy MORPHO claimed out of '
+                                                             'the URD is (b) — emissions_tokens sums '
+                                                             'emissions_tokens_claims_ethereum_legacy too, so the '
+                                                             "dumps' BLOCKED reason (no claims stored) names five "
+                                                             'legs; no value moves'},
+ "audit|A2 Coordination|Supplier earnings from emissions ($, each day's emissions × that day's price)": {'date': '2026-11-13',
+                                                                                                         'from': 'n/a '
+                                                                                                                 '— '
+                                                                                                                 'emissions_tokens '
+                                                                                                                 '(q0): '
+                                                                                                                 'BLOCKED '
+                                                                                                                 '— '
+                                                                                                                 'BLOCKED '
+                                                                                                                 '— '
+                                                                                                                 'the '
+                                                                                                                 'sum '
+                                                                                                                 'of '
+                                                                                                                 'emissions_tokens_claims_ethereum, '
+                                                                                                                 'emissions_tokens_claims_arbitrum, '
+                                                                                                                 'emissions_tokens_claims_base, '
+                                                                                                                 'emissions_tokens_claims_katana '
+                                                                                                                 'is '
+                                                                                                                 'not '
+                                                                                                                 'formed: '
+                                                                                                                 'emissions_tokens_claims_ethereum, '
+                                                                                                                 'em',
+                                                                                                         'to': 'n/a — '
+                                                                                                               'emissions_tokens '
+                                                                                                               '(q0): '
+                                                                                                               'BLOCKED '
+                                                                                                               '— '
+                                                                                                               'BLOCKED '
+                                                                                                               '— the '
+                                                                                                               'sum of '
+                                                                                                               'emissions_tokens_claims_ethereum, '
+                                                                                                               'emissions_tokens_claims_arbitrum, '
+                                                                                                               'emissions_tokens_claims_base, '
+                                                                                                               'emissions_tokens_claims_katana, '
+                                                                                                               'emissions_tokens_claims_ethereum_legacy '
+                                                                                                               'is not '
+                                                                                                               'for',
+                                                                                                         'why': 'PR4F.2 '
+                                                                                                                '(Jake '
+                                                                                                                '2026-11-13): '
+                                                                                                                'legacy '
+                                                                                                                'MORPHO '
+                                                                                                                'claimed '
+                                                                                                                'out '
+                                                                                                                'of '
+                                                                                                                'the '
+                                                                                                                'URD '
+                                                                                                                'is '
+                                                                                                                '(b) — '
+                                                                                                                'emissions_tokens '
+                                                                                                                'sums '
+                                                                                                                'emissions_tokens_claims_ethereum_legacy '
+                                                                                                                'too, '
+                                                                                                                'so '
+                                                                                                                'the '
+                                                                                                                "dumps' "
+                                                                                                                'BLOCKED '
+                                                                                                                'reason '
+                                                                                                                '(no '
+                                                                                                                'claims '
+                                                                                                                'stored) '
+                                                                                                                'names '
+                                                                                                                'five '
+                                                                                                                'legs; '
+                                                                                                                'no '
+                                                                                                                'value '
+                                                                                                                'moves'},
+ 'audit|A2 Coordination|TOTAL DILUTION = emissions + unlocks, annualised % of free float': {'date': '2026-11-13',
+                                                                                            'from': 'n/a — '
+                                                                                                    'emissions_tokens '
+                                                                                                    '(q0): BLOCKED — '
+                                                                                                    'BLOCKED — the sum '
+                                                                                                    'of '
+                                                                                                    'emissions_tokens_claims_ethereum, '
+                                                                                                    'emissions_tokens_claims_arbitrum, '
+                                                                                                    'emissions_tokens_claims_base, '
+                                                                                                    'emissions_tokens_claims_katana '
+                                                                                                    'is not formed: '
+                                                                                                    'emissions_tokens_claims_ethereum, '
+                                                                                                    'em',
+                                                                                            'to': 'n/a — '
+                                                                                                  'emissions_tokens '
+                                                                                                  '(q0): BLOCKED — '
+                                                                                                  'BLOCKED — the sum '
+                                                                                                  'of '
+                                                                                                  'emissions_tokens_claims_ethereum, '
+                                                                                                  'emissions_tokens_claims_arbitrum, '
+                                                                                                  'emissions_tokens_claims_base, '
+                                                                                                  'emissions_tokens_claims_katana, '
+                                                                                                  'emissions_tokens_claims_ethereum_legacy '
+                                                                                                  'is not for',
+                                                                                            'why': 'PR4F.2 (Jake '
+                                                                                                   '2026-11-13): '
+                                                                                                   'legacy MORPHO '
+                                                                                                   'claimed out of the '
+                                                                                                   'URD is (b) — '
+                                                                                                   'emissions_tokens '
+                                                                                                   'sums '
+                                                                                                   'emissions_tokens_claims_ethereum_legacy '
+                                                                                                   "too, so the dumps' "
+                                                                                                   'BLOCKED reason (no '
+                                                                                                   'claims stored) '
+                                                                                                   'names five legs; '
+                                                                                                   'no value moves'},
+ 'audit|CP Comparability|Emissions Q0 (tokens) — every incentive programme, as the A-tabs read it': {'date': '2026-11-13',
+                                                                                                     'from': 'n/a — '
+                                                                                                             'Data: '
+                                                                                                             'BLOCKED '
+                                                                                                             '— '
+                                                                                                             'BLOCKED '
+                                                                                                             '— the '
+                                                                                                             'sum of '
+                                                                                                             'emissions_tokens_claims_ethereum, '
+                                                                                                             'emissions_tokens_claims_arbitrum, '
+                                                                                                             'emissions_tokens_claims_base, '
+                                                                                                             'emissions_tokens_claims_katana '
+                                                                                                             'is not '
+                                                                                                             'formed: '
+                                                                                                             'emissions_tokens_claims_ethereum, '
+                                                                                                             'emissions_tokens_cl',
+                                                                                                     'to': 'n/a — '
+                                                                                                           'Data: '
+                                                                                                           'BLOCKED — '
+                                                                                                           'BLOCKED — '
+                                                                                                           'the sum of '
+                                                                                                           'emissions_tokens_claims_ethereum, '
+                                                                                                           'emissions_tokens_claims_arbitrum, '
+                                                                                                           'emissions_tokens_claims_base, '
+                                                                                                           'emissions_tokens_claims_katana, '
+                                                                                                           'emissions_tokens_claims_ethereum_legacy '
+                                                                                                           'is not '
+                                                                                                           'formed: '
+                                                                                                           'emissions_to',
+                                                                                                     'why': 'PR4F.2 '
+                                                                                                            '(Jake '
+                                                                                                            '2026-11-13): '
+                                                                                                            'legacy '
+                                                                                                            'MORPHO '
+                                                                                                            'claimed '
+                                                                                                            'out of '
+                                                                                                            'the URD '
+                                                                                                            'is (b) — '
+                                                                                                            'emissions_tokens '
+                                                                                                            'sums '
+                                                                                                            'emissions_tokens_claims_ethereum_legacy '
+                                                                                                            'too, so '
+                                                                                                            'the '
+                                                                                                            "dumps' "
+                                                                                                            'BLOCKED '
+                                                                                                            'reason '
+                                                                                                            '(no '
+                                                                                                            'claims '
+                                                                                                            'stored) '
+                                                                                                            'names '
+                                                                                                            'five '
+                                                                                                            'legs; no '
+                                                                                                            'value '
+                                                                                                            'moves'},
+ "audit|CP Comparability|NET HOLDER YIELD = holder value yield − dilution (outflows a+b+c+d+e at each day's price, annualised) ÷ market cap": {'date': '2026-11-13',
+                                                                                                                                               'from': 'n/a '
+                                                                                                                                                       '— '
+                                                                                                                                                       'outflow '
+                                                                                                                                                       '(b) '
+                                                                                                                                                       '= '
+                                                                                                                                                       'emissions_tokens '
+                                                                                                                                                       'has '
+                                                                                                                                                       'no '
+                                                                                                                                                       'value '
+                                                                                                                                                       'in '
+                                                                                                                                                       'this '
+                                                                                                                                                       'window: '
+                                                                                                                                                       'BLOCKED '
+                                                                                                                                                       '— '
+                                                                                                                                                       'outflow '
+                                                                                                                                                       '(b) '
+                                                                                                                                                       'is '
+                                                                                                                                                       'not '
+                                                                                                                                                       'formed: '
+                                                                                                                                                       'emissions_tokens: '
+                                                                                                                                                       'BLOCKED '
+                                                                                                                                                       '— '
+                                                                                                                                                       'the '
+                                                                                                                                                       'sum '
+                                                                                                                                                       'of '
+                                                                                                                                                       'emissions_tokens_claims_ethereum, '
+                                                                                                                                                       'emissions_tokens_claims_arbitrum, '
+                                                                                                                                                       'emissions_tokens_claims_base, '
+                                                                                                                                                       'emissions_tokens_claims_katana '
+                                                                                                                                                       'is '
+                                                                                                                                                       'not '
+                                                                                                                                                       'formed: '
+                                                                                                                                                       'emissions_tokens_claims_ethereum, '
+                                                                                                                                                       'emissions_tokens_claims_arbitrum, '
+                                                                                                                                                       'emissions_tokens_claims_base, '
+                                                                                                                                                       'emissions_tokens_claims_katana '
+                                                                                                                                                       'stored '
+                                                                                                                                                       'nothing '
+                                                                                                                                                       'yet '
+                                                                                                                                                       '(a '
+                                                                                                                                                       'log '
+                                                                                                                                                       'scan '
+                                                                                                                                                       'stores '
+                                                                                                                                                       'only '
+                                                                                                                                                       'once '
+                                                                                                                                                       'its '
+                                                                                                                                                       'history, '
+                                                                                                                                                       'or '
+                                                                                                                                                       'its '
+                                                                                                                                                       '100-day '
+                                                                                                                                                       'window, '
+                                                                                                                                                       'reconciles). '
+                                                                                                                                                       'The '
+                                                                                                                                                       'next '
+                                                                                                                                                       'token_metrics.py '
+                                                                                                                                                       'run '
+                                                                                                                                                       'reads '
+                                                                                                                                                       'them '
+                                                                                                                                                       '(config '
+                                                                                                                                                       'log_scans '
+                                                                                                                                                       '/ '
+                                                                                                                                                       'EXPLORER_PROBED_SCANS)',
+                                                                                                                                               'to': 'n/a '
+                                                                                                                                                     '— '
+                                                                                                                                                     'outflow '
+                                                                                                                                                     '(b) '
+                                                                                                                                                     '= '
+                                                                                                                                                     'emissions_tokens '
+                                                                                                                                                     'has '
+                                                                                                                                                     'no '
+                                                                                                                                                     'value '
+                                                                                                                                                     'in '
+                                                                                                                                                     'this '
+                                                                                                                                                     'window: '
+                                                                                                                                                     'BLOCKED '
+                                                                                                                                                     '— '
+                                                                                                                                                     'outflow '
+                                                                                                                                                     '(b) '
+                                                                                                                                                     'is '
+                                                                                                                                                     'not '
+                                                                                                                                                     'formed: '
+                                                                                                                                                     'emissions_tokens: '
+                                                                                                                                                     'BLOCKED '
+                                                                                                                                                     '— '
+                                                                                                                                                     'the '
+                                                                                                                                                     'sum '
+                                                                                                                                                     'of '
+                                                                                                                                                     'emissions_tokens_claims_ethereum, '
+                                                                                                                                                     'emissions_tokens_claims_arbitrum, '
+                                                                                                                                                     'emissions_tokens_claims_base, '
+                                                                                                                                                     'emissions_tokens_claims_katana, '
+                                                                                                                                                     'emissions_tokens_claims_ethereum_legacy '
+                                                                                                                                                     'is '
+                                                                                                                                                     'not '
+                                                                                                                                                     'formed: '
+                                                                                                                                                     'emissions_tokens_claims_ethereum, '
+                                                                                                                                                     'emissions_tokens_claims_arbitrum, '
+                                                                                                                                                     'emissions_tokens_claims_base, '
+                                                                                                                                                     'emissions_tokens_claims_katana, '
+                                                                                                                                                     'emissions_tokens_claims_ethereum_legacy '
+                                                                                                                                                     'stored '
+                                                                                                                                                     'nothing '
+                                                                                                                                                     'yet '
+                                                                                                                                                     '(a '
+                                                                                                                                                     'log '
+                                                                                                                                                     'scan '
+                                                                                                                                                     'stores '
+                                                                                                                                                     'only '
+                                                                                                                                                     'once '
+                                                                                                                                                     'its '
+                                                                                                                                                     'history, '
+                                                                                                                                                     'or '
+                                                                                                                                                     'its '
+                                                                                                                                                     '100-day '
+                                                                                                                                                     'window, '
+                                                                                                                                                     'reconciles). '
+                                                                                                                                                     'The '
+                                                                                                                                                     'next '
+                                                                                                                                                     'token_metrics.py '
+                                                                                                                                                     'run '
+                                                                                                                                                     'reads '
+                                                                                                                                                     'them '
+                                                                                                                                                     '(config '
+                                                                                                                                                     'log_scans '
+                                                                                                                                                     '/ '
+                                                                                                                                                     'EXPLORER_PROBED_SCANS)',
+                                                                                                                                               'why': 'PR4F.2 '
+                                                                                                                                                      '(Jake '
+                                                                                                                                                      '2026-11-13): '
+                                                                                                                                                      'legacy '
+                                                                                                                                                      'MORPHO '
+                                                                                                                                                      'claimed '
+                                                                                                                                                      'out '
+                                                                                                                                                      'of '
+                                                                                                                                                      'the '
+                                                                                                                                                      'URD '
+                                                                                                                                                      'is '
+                                                                                                                                                      '(b) '
+                                                                                                                                                      '— '
+                                                                                                                                                      'emissions_tokens '
+                                                                                                                                                      'sums '
+                                                                                                                                                      'emissions_tokens_claims_ethereum_legacy '
+                                                                                                                                                      'too, '
+                                                                                                                                                      'so '
+                                                                                                                                                      'the '
+                                                                                                                                                      "dumps' "
+                                                                                                                                                      'BLOCKED '
+                                                                                                                                                      'reason '
+                                                                                                                                                      '(no '
+                                                                                                                                                      'claims '
+                                                                                                                                                      'stored) '
+                                                                                                                                                      'names '
+                                                                                                                                                      'five '
+                                                                                                                                                      'legs; '
+                                                                                                                                                      'no '
+                                                                                                                                                      'value '
+                                                                                                                                                      'moves'}})
