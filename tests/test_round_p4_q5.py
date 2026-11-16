@@ -77,10 +77,13 @@ def days(m, n=90.0):
 
 
 # ============================================================================================== Q5a: the key
-def test_key_is_burned_over_emissions_plus_unlocks_for_every_a3_project():
+def test_key_is_burned_over_emissions_plus_unlocks_for_every_a3_project(monkeypatch):
     """The formula reads the BURNED buyback (never the retired = burned + held series), the absorption emissions and the
     unlock releases; Sky at its emission rate in force (no unlock set declared); Ether.fi with no emissions leg (not
     emitted, by declaration); the old key's header, builder and fallback are gone."""
+    # no build state: a build earlier on the same worker leaves its R5.3 lag match (Pendle's follow series read as
+    # `<m>_lagm`), which the formula then reads — an order dependence; the matched case is checked below on its own
+    monkeypatch.setattr(bw, "LAG_MATCH", {})
     for p in config.PROJECTS:
         if 3 not in p["archetypes"] or bw._retirement_zero(p):
             continue
@@ -93,6 +96,10 @@ def test_key_is_burned_over_emissions_plus_unlocks_for_every_a3_project():
     assert '|emissions_rate_current_annual_tokens"' in sky and '|emissions_tokens"' not in sky
     efi = bw._a3_key_col(bw.Refs(100, 10, ["2026-09"]), {})[1](5, P["Ether.fi"])
     assert '|emissions_tokens"' not in efi and '|unlock_release_tokens"' in efi
+    # R5.3: where the build matched Pendle's window, the key reads the lag-matched unlock release
+    monkeypatch.setitem(bw.LAG_MATCH, "Pendle", {"ok": True, "cut": {"unlock_release_tokens", "emissions_tokens"}})
+    pen = bw._a3_key_col(bw.Refs(100, 10, ["2026-09"]), {})[1](5, P["Pendle"])
+    assert '|unlock_release_tokens_lagm"' in pen and '|unlock_release_tokens"' not in pen
     for gone in ("RETIRE_VS_EMISSIONS_HEAD", "_retire_vs_emissions_col", "A3_KEY_FALLBACK_TEXT", "a3_key_fallback",
                  "_a3_fallback_applies", "_a3_emissions_zero_in"):
         assert not hasattr(bw, gone), gone

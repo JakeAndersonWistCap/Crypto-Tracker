@@ -926,13 +926,18 @@ def test_d2_subsidy_cover_blocks_are_allowlisted_only_while_the_gap_is_declared(
     import coverage_audit as ca
     detail = ("CP SUBSIDY COVER = revenue ÷ $ supply-side incentives (b), per covered da: 12.578 in the previous run "
               "(2026-10-13), now BLOCKED — unequal coverage: the incentive denominator is incomplete")
+    # the allowance's own day: these entries hold to 2026-11-14 (their re-check date); past it they accept nothing,
+    # which is the rule — the test pins a day inside it to test the mechanism (regression_rows' `on`)
+    on = "2026-11-13"
     rows = {r["Project"]: r for r in ca.regression_rows([(p, "headline_lost", detail)
-                                                         for p in ("Pendle", "Aethir", "Fluid", "Morpho")])}
+                                                         for p in ("Pendle", "Aethir", "Fluid", "Morpho")], on=on)}
     assert all(rows[p]["Status"] == "N/A BY DESIGN" for p in ("Pendle", "Aethir", "Fluid"))
     assert "re-check" in rows["Pendle"]["Reason / route / error"] and rows["Morpho"]["Status"] == "BROKEN"
     gaps = {k: v for k, v in config.OUTFLOW_INCOMPLETE.items() if k != ("Pendle", "b")}
     monkeypatch.setattr(config, "OUTFLOW_INCOMPLETE", gaps)               # the Pendle scans wired: the allowance lapses
-    assert ca.regression_rows([("Pendle", "headline_lost", detail)])[0]["Status"] == "BROKEN"
+    assert ca.regression_rows([("Pendle", "headline_lost", detail)], on=on)[0]["Status"] == "BROKEN"
+    # past the re-check date the allowance lapses by itself (the gap still declared)
+    assert ca.regression_rows([("Aethir", "headline_lost", detail)], on="2026-11-15")[0]["Status"] == "BROKEN"
 
 
 def _arb_gauge_world(drop_every: int):

@@ -25757,7 +25757,7 @@ def test_circulating_decisions_are_applied_consistently_and_coingecko_free_float
     # the credibility row compares CoinGecko with OUR free float where CoinGecko's basis is free float
     spec = cred.circulating_input("Pendle")
     # like-for-like since Jake's run 2026-10-07: CoinGecko counts sPENDLE, so ours adds it back for the comparison
-    assert spec["ours"] == {"py": "free_float_now", "args": {"add_back": ("locked_tokens",)}} and \
+    assert spec["ours"] == {"py": "free_float_now", "args": {"add_back": ("locked_tokens",), "minus_released": True}} and \
         spec["ref"]["metric"] == "circulating_supply"
     long = pd.DataFrame({"date": pd.Timestamp("2026-10-05"), "project": "Pendle",
                          "metric": ["circulating_supply_onchain", "locked_tokens"], "value": [250e6, 80e6]})
@@ -26352,7 +26352,7 @@ def test_pendle_is_compared_with_coingecko_like_for_like_and_ours_stays_the_docu
     import credibility as cred
     assert config.coingecko_counted_lock_legs("Pendle") == ("locked_tokens",)
     spec = cred.circulating_input("Pendle")
-    assert spec["ours"] == {"py": "free_float_now", "args": {"add_back": ("locked_tokens",)}}
+    assert spec["ours"] == {"py": "free_float_now", "args": {"add_back": ("locked_tokens",), "minus_released": True}}
     rows = {"Pendle|circulating_supply_onchain": {"now": 237.9e6, "latest_date": "2026-10-07"},
             "Pendle|locked_tokens": {"now": 31.4e6}, "Pendle|locked_tokens_legacy_vependle": {"now": 63.5e6}}
     ff, _d, _h = cred.FORMULAS["free_float_now"]("Pendle", rows, None, pd.Timestamp("2026-10-07"))

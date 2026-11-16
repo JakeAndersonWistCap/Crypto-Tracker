@@ -444,7 +444,11 @@ def test_g4_7b_answered_rows_leave_the_open_queue_and_say_the_decision():
     hits = [("Pendle", "headline_lost", "CP SUBSIDY COVER = revenue ÷ $ supply-side incentives (b): 12.578 in the "
                                         "previous run (2026-10-13), now BLOCKED — unequal coverage"),
             ("Pendle", "headline_lost", "CP SOMETHING ELSE: 1 in the previous run, now n/a")]
-    bw._write_sanity(ws, hits)
+    # the allowance's own day (the subsidy-cover entry holds to 2026-11-14, its re-check date): a day inside it
+    _allow = config.regression_allowance
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(config, "regression_allowance", lambda pr, d, on=None: _allow(pr, d, on="2026-11-13"))
+        bw._write_sanity(ws, hits)
     text = [str(c.value) for row in ws.iter_rows() for c in row if c.value is not None]
     assert any("SANITY RULES — 1 hit(s)" in t for t in text)
     assert any(t == "headline_lost — ANSWERED" for t in text)
