@@ -43013,3 +43013,138 @@ CREDIBILITY["Sky"]["a3_protocol_yield"] = dict(CREDIBILITY["Sky"]["in_apy_usds_f
 CREDIBILITY["Sky"]["in_apy_usds_farm_ba"]["ref"] = dict(
     CREDIBILITY["Sky"]["in_apy_usds_farm"]["ref"], tol=CREDIBILITY["Sky"]["in_apy_usds_farm_ba"]["ref"]["tol"])
 
+# R7.C1 HYPERLIQUID'S CIRCULATING BY JAKE'S RULE (2026-11-16): HYPE staked and earning yield is RELEASED (circulating, off
+# the free float); genuinely locked or undistributed HYPE stays out. Read 2026-11-16 (api.hyperliquid.xyz/info,
+# spotClearinghouseState + delegatorSummary): Hyper Foundation 0xd57ecca4… 60,631,464.49 staked, 0.00000044 spot; Community
+# Grants 0xa20fcfa0… 2,874,364.37 staked, 105,001.00 spot (undistributed grants: out); team 0x43e9abea… 238,232,696.56
+# staked, 0.0033 spot (unvested: out until each tranche vests, even staked — Jake); Assistance Fund 0xfefe…
+# 49,014,807.81 spot (burned: the validators' vote, Dec 2025 — out of supply). The whole first-party series is restated
+# (build_workbook._released_staked_views): a DECLARED HANDOVER, one basis.
+CIRC_RELEASED_STAKED = {
+    "Hyperliquid": {"metric": "circulating_supply_first_party", "held": "excluded_wallets_tokens",
+                    "staked_all": "staked_noncirculating_tokens", "team": "team_wallet_tokens",
+                    "spot_metric": "excluded_wallets_spot_tokens", "point": "foundation+grants stake released"},
+}
+METRICS["excluded_wallets_spot_tokens"] = {
+    "label": "HYPE the Hyper Foundation + Community Grants wallets hold UNSTAKED (spot) — the part of them still out of "
+             "circulating (R7.C1: their stake is released); the stock whose falls are their releases",
+    "kind": "stock", "unit": "tokens", "archetypes": [1], "tiers": [1], "sanity_min": 0, "sanity_max": 1e9,
+    "only_projects": ("Hyperliquid",), "view_only": True}
+PROJECT_BY_NAME["Hyperliquid"]["series_handover"]["circulating_supply_first_party"]["ordered_points"] = tuple(
+    PROJECT_BY_NAME["Hyperliquid"]["series_handover"]["circulating_supply_first_party"]["ordered_points"]) + (
+    "derived:released_staked[foundation+grants stake released]",)
+HYPERLIQUID_CIRC_R7 = {
+    "read_on": "2026-11-16",
+    "wallets": {"foundation": (60_631_464.49, 0.0), "grants": (2_874_364.37, 105_001.00),
+                "team": (238_232_696.56, 0.0033), "assistance_fund": (0.0, 49_014_807.81)},
+    "ours_estimate": 301_190_000, "tokendetails": 301_610_830.01, "coingecko": 237_730_949.46,
+    "coinmarketcap": 252_597_653.18,
+    "gaps": "vs tokenDetails −0.14% (Grants' spot 105,001 + the HyperEVM burn, both out of ours); vs CoinGecko +26.7% = "
+            "the Foundation's stake 60.63M + Grants' stake 2.87M (CoinGecko leaves both out; residual 0.06M); vs "
+            "CoinMarketCap +19.2%: the same 63.51M named, CoinMarketCap counts 14.87M more than CoinGecko on a basis it "
+            "does not publish (not established)",
+    "team_schedule": "DERIVED from the team wallet's own ledger (userNonFundingLedgerUpdates, read 2026-11-16): HYPE "
+                     "sent to 132 addresses, unstaked first, mostly on the 6th-7th of the month — 2025-11 1,745,745; "
+                     "2026-01 1,125,766; 02 140,333; 03 173,217; 04 333,335; 05 421,879; 06 533,752; 07 452,000; 08 "
+                     "433,024; 09 433,419; 10 3,750,000; 11 (to 16th) 179,706 — 9,722,176 in all, NOT linear (The Block: "
+                     "~237M, one-year cliff then 24 months, distributions on the 6th since Jan 2026). Vested-but-"
+                     "undistributed HYPE cannot be told apart on chain: the wallet stays out whole; each distribution is "
+                     "the vested tranche entering circulation — an unlock (e). Labelled DERIVED."}
+# R7.C1 what follows from it: only the team's stake is outside circulating (the lock leg and the pro-rata of (a)), and
+# the two wallets' SPOT is the stock whose falls are their releases (e) (the team wallet's stays one too)
+CIRCULATING_ONCHAIN["Hyperliquid"]["locked_excluded_metrics"] = ["team_wallet_tokens"]
+STAKE_PRORATA["Hyperliquid"]["outside"] = "team_wallet_tokens"
+UNLOCK_STOCKS["Hyperliquid"] = ("excluded_wallets_spot_tokens", "team_wallet_tokens")
+UNLOCK_RELEASE_SUBSETS["Hyperliquid"]["unlock_release_counted_tokens"] = ("excluded_wallets_spot_tokens",)
+DISCRETIONARY_SUPPLY["Hyperliquid"] = (("excluded_wallets_spot_tokens",),
+                                       "the Foundation + Grants wallets' unstaked HYPE (their stake is circulating, R7.C1)")
+CIRCULATING_POLICY["Hyperliquid"].update({
+    "definition": "tokenDetails.circulatingSupply (total − Hyperliquid's own nonCirculatingUserBalances: the team wallet, "
+                  "the burned Assistance Fund, 0x0 / 0xdead) − the Foundation + Grants wallets' UNSTAKED HYPE − the "
+                  "HyperEVM burn; their stake is released (R7.C1, Jake 2026-11-16), off the free float",
+    "previous": "the Foundation + Grants wallets out whole, staked included (2026-10-11 .. 2026-11-15)"})
+
+# R7.C2 HYPERLIQUID'S EMISSIONS, ONE FIGURE (Jake 2026-11-16): staking rewards are SECURITY EMISSIONS (a), paid from the
+# unreleased Future Emissions & Community Rewards pool — not an unlock. CP "Emissions Q0" reads emissions_tokens (was
+# "0 — fixed supply"), the figure Master and the A-tabs read; (a)'s dilution leg stays the share paid to stake inside
+# circulating (STAKE_PRORATA: rewards to the team's stake land outside circulating and count once, as the team's
+# release (e)). Option C is judged on the read-to-read interval basis (Jake 2026-11-16: it meets the pass marks there);
+# the history it fills stays labelled MODELLED.
+EMISSIONS_ARE_INCENTIVE_SPEND["Hyperliquid"] = (
+    "HYPE paid to stakers is SECURITY EMISSIONS, outflow (a) (R7.C2, Jake 2026-11-16), paid from the unreleased Future "
+    "Emissions & Community Rewards pool (tokenDetails.futureEmissions) — not an unlock: emissions_tokens, the same figure "
+    "as A1 and Master. Nothing is minted (the pool was pre-minted at genesis); its history before the first measured "
+    "read is MODELLED (option C, read-to-read basis) and labelled so")
+OPTION_C_INTERVAL_BASIS = ("Hyperliquid",)
+
+# R7.C4 HYPERLIQUID'S CHECKS ON HYPERLIQUID'S OWN DATA (Jake 2026-11-16): the burn rows are judged against the Assistance
+# Fund's balance change as Hyperliquid lists it (tokenDetails.nonCirculatingUserBalances, af_noncirc_listed_tokens — a
+# second endpoint from the spotClearinghouseState read ours differences) and, for A1, the HyperEVM zero address's
+# balance change (hyperevm_zero_address_balance, read on HyperEVM). ASXN stays BESIDE each row, for information only
+# (N/A (recorded), never judged). Tolerances unchanged (15%).
+_HL_AF = ("Hyperliquid's own listing of the Assistance Fund 0xfefe… (tokenDetails.nonCirculatingUserBalances), its "
+          "change over Q0 — the Fund's HYPE is burned (validators' vote, Dec 2025: 'permanently removed from both "
+          "circulating and total supply')")
+for _rid, _plus_stock in (("a4_gross_burn", None), ("a1_gross_burn", "hyperevm_zero_address_balance")):
+    _old = CREDIBILITY["Hyperliquid"][_rid]
+    _ref = {"formula": "delta_q0", "args": {"metric": "af_noncirc_listed_tokens"}, "tol": _old.get("tol", 15.0),
+            "source": _HL_AF + (" + the HyperEVM zero address's balance change over Q0 (the HyperEVM burn)"
+                                if _plus_stock else "")}
+    if _plus_stock:
+        _ref = {"formula": "sum_of_deltas_q0", "args": {"metrics": ["af_noncirc_listed_tokens", _plus_stock]},
+                "tol": _old.get("tol", 15.0), "source": _ref["source"]}
+    CREDIBILITY["Hyperliquid"][_rid] = _ref
+    CREDIBILITY["Hyperliquid"][f"in_{_rid}_asxn"] = {
+        "what": f"{_rid.replace('_', ' ')} vs ASXN (beside, for information only — Jake 2026-11-16)",
+        "ours": {"metric": PROJECT_BY_NAME["Hyperliquid"]["a4_burn_metric" if _rid == "a4_gross_burn" else
+                                                           "a1_burn_metric"], "window": "q0"},
+        "fmt": "#,##0;(#,##0);-",
+        "ref": dict(_old, tol=None, force_verdict="N/A (recorded)",
+                    why="ASXN beside, for information only (Jake 2026-11-16); judged against Hyperliquid's own data")}
+_old_rev = CREDIBILITY["Hyperliquid"]["in_revenue"]
+CREDIBILITY["Hyperliquid"]["in_revenue"] = dict(
+    _old_rev, what="Revenue, last 30 days annualised (DefiLlama) vs the Assistance Fund's intake (on-chain), same days",
+    ref={"formula": "flow_usd_over_price_30d_annualised", "args": {"metrics": ["actual_buyback_usd"]}, "tol": 15.0,
+         "source": "the Assistance Fund's measured buyback ($, actual_buyback_usd — its HYPE intake on chain x the "
+                   "day's price), last 30 days annualised: what reaches the Fund, 99% of fees net of builder fees"})
+CREDIBILITY["Hyperliquid"]["in_revenue_asxn"] = {
+    "what": "Revenue, last 30 days annualised vs ASXN (beside, for information only — Jake 2026-11-16)",
+    "ours": _old_rev["ours"], "fmt": _old_rev.get("fmt", "$#,##0;($#,##0);-"),
+    "ref": dict(_old_rev["ref"], tol=None, force_verdict="N/A (recorded)",
+                why="ASXN beside, for information only (Jake 2026-11-16)")}
+CREDIBILITY["Hyperliquid"]["in_revenue"]["ref"] = {
+    "formula": "last30_annualised", "args": {"metric": "actual_buyback_usd"}, "tol": 15.0,
+    "source": "the Assistance Fund's measured buyback ($, actual_buyback_usd: its HYPE intake on chain x the day's "
+              "price), last 30 days annualised — what reaches the Fund (99% of fees net of builder fees + the reserve "
+              "yields it converts)"}
+
+# R7.C3 HYPERLIQUID'S THREE REVENUE LINES (S13), per Jake's decisions (2026-11-16). Hyperliquid's own statistics
+# (stats-data.hyperliquid.xyz) refused this machine (AccessDenied, 2026-11-16) and its info API publishes no fee series,
+# so FEES and REVENUE are DefiLlama's, marked SECONDARY with the methodology read 2026-11-16 (hyperliquid-perps,
+# hyperliquid-spot-orderbook); HOLDER REVENUE is measured on chain (the Assistance Fund's buybacks).
+REVENUE_SPLIT["Hyperliquid"] = {
+    "round": "R7.C3 (Jake 2026-11-16)",
+    "fees": {"metric": "fees_usd", "primary": False,
+             "route": "DefiLlama 'hyperliquid' dailyFees: all trading fees users pay — perps (crypto and HIP-3 markets, "
+                      "builder fees included), spot (builder code fees included), HIP-1 auction HYPE, plus the 90% share "
+                      "of the AQAv2 reserve yield since 2026-08-27 (methodology, read 2026-11-16). SECONDARY: Hyperliquid "
+                      "publishes no fee series this machine can read (stats-data: AccessDenied, 2026-11-16)"},
+    "revenue": {"metric": "revenue_usd", "primary": False,
+                "route": "DefiLlama 'hyperliquid' dailyRevenue: fees − builder fees − maker rebates (spot: 'after builder "
+                         "code fees and maker rebates') − HLP's 1% (3% before 2025-08-30), + the AQAv2 yield share. Jake's "
+                         "definition also takes out the HIP-3 DEPLOYERS' share: DefiLlama's methodology does not say it "
+                         "does — a named difference until Hyperliquid's own figure can be read"},
+    "holder_revenue": {"metric": "holder_value_revenue_usd", "primary": True,
+                       "route": "the Assistance Fund's buybacks, credited (its HYPE is burned: validators' vote, Dec "
+                                "2025), measured on chain from the Fund 0xfefe…'s HYPE intake x the day's price"},
+    "holder_share": {"route": "holder revenue ÷ revenue per covered day"},
+    "other_recipients": "builders and HIP-3 deployers (their shares of fees); HLP vault depositors (1% of fees); makers "
+                        "(rebates)",
+    "crosscheck": "DefiLlama's holdersRevenue beside HOLDER REVENUE; ASXN's annualised revenue beside REVENUE (unjudged)",
+}
+# A FINDING FOR JAKE (not changed): revenue_total_usd = DefiLlama's revenue + the AQAv2 reserve yield (REVENUE_TOTAL) —
+# DefiLlama's methodology now INCLUDES that yield since 2026-08-27, so from then the yield may be counted twice there.
+HL_REVENUE_TOTAL_DOUBLE_COUNT_RISK = (
+    "revenue_total_usd adds the AQAv2 reserve yield (aqa_revenue_usd) to DefiLlama's revenue, whose methodology (read "
+    "2026-11-16) includes 'Hyperliquid's 90% share of AQAv2 stablecoin reserve yield since 27 Aug 2026' — from that day "
+    "the yield may be in it twice; not changed this round (a decision for Jake)")

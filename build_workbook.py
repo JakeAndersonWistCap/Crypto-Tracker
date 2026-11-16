@@ -3411,7 +3411,7 @@ def _read_interval_fit(rows: list, stock, stake: pd.Series) -> dict:
             "interval_hours": (min(h for *_r, h in rr), max(h for *_r, h in rr))}
 
 
-def hl_option_c(a: pd.Series, stake: pd.Series, emissions, stock=None) -> dict:
+def hl_option_c(a: pd.Series, stake: pd.Series, emissions, stock=None, interval_basis: bool = False) -> dict:
     """P5-1.5 (Jake 2026-11-04): the staking-reward term R = k x sqrt(stake) / 365. k is CALIBRATED on the earlier half
     of the MEASURED rows (a measured emissions row whose every span day has a measured stake read) and TESTED on the
     later half; the a-based form k^2 / (365 x a) - what fills the days without a stake read - is tested on the same rows
@@ -3459,6 +3459,13 @@ def hl_option_c(a: pd.Series, stake: pd.Series, emissions, stock=None) -> dict:
                        f"{t0:%Y-%m-%d}..{t1:%Y-%m-%d}: " + _fit_text(ri) + (" - MEETS the pass marks on this basis"
                        if ri["meets_pass_marks"] else " - does NOT meet the pass marks on this basis")
                        + "; the a-based form is tested on calendar days only; verdict unchanged until Jake confirms]")
+        # R7.C2 (Jake 2026-11-16): option C IS JUDGED on the read-to-read interval basis where declared — it passes
+        # when that fit meets the pass marks; its k is the interval fit's; the history it fills stays MODELLED
+        if interval_basis and ri["meets_pass_marks"] and not out["passed"]:
+            out.update({"passed": True, "k": ri["k"], "calibrated_on": ri["calibrated_on"],
+                        "tested_on": ri["tested_on"], "basis": "read_to_read",
+                        "why": "passed on the read-to-read interval basis (Jake 2026-11-16): " + _fit_text(ri)
+                               + f" (calendar days: {out['why'].split(' [FOR JAKE')[0]})"})
     return out
 
 
@@ -3519,7 +3526,8 @@ def _hl_model_views(groups: dict) -> None:
         a = a[a > 0] if not a.empty else a
         stake = _daily(groups.get((name, spec["stake"])))
         stake = stake[stake > 0] if not stake.empty else stake
-        oc = hl_option_c(a, stake, groups.get((name, spec["emissions"])), groups.get((name, spec["future"])))
+        oc = hl_option_c(a, stake, groups.get((name, spec["emissions"])), groups.get((name, spec["future"])),
+                         interval_basis=name in config.OPTION_C_INTERVAL_BASIS)
         OPTION_C[name] = oc
         config.OPTION_C_STATE[name] = bool(oc["passed"])
         print(f"  {name}: {option_c_text(name)}")
@@ -4862,6 +4870,45 @@ NEAR_LOCKUP_FRESH_DAYS = 10        # a weekly read, plus slack: older than this 
 # D3-1: (project, metric) -> why, for the cells formed from a lockup read older than NEAR_LOCKUP_FRESH_DAYS (AMBER via
 # confidence_for). Set by _near_lockup_views on each build.
 LOCKUP_AGE_AMBER: dict = {}
+
+
+RELEASED_STAKED_RESTATED: dict = {}        # project -> {"days", "dropped", "first", "last"} (R7.C1), last build
+
+
+def _released_staked_views(groups: dict) -> None:
+    """R7.C1 (Jake 2026-11-16, Hyperliquid): HYPE STAKED AND EARNING YIELD IS RELEASED. The Hyper Foundation and
+    Community Grants wallets' STAKED HYPE is circulating (off the free float); only their unstaked (spot) HYPE stays out.
+    The whole first-party series is restated from stored legs, one basis (never two): on a day stored net of the two
+    wallets ("-exclude_wallets" points, from 2026-10-11) their stake is added back; on a day stored before that (the raw
+    tokenDetails points) their spot is taken out. Their stake = staked_noncirculating_tokens (team + Foundation + Grants
+    stake) − team_wallet_tokens (the team wallet, all staked: spot 0.0033 HYPE on 2026-11-16); spot = their total
+    (excluded_wallets_tokens) − their stake. A day missing a leg is no value (unknown is never 0). Also stored: the two
+    wallets' spot as its own series (excluded_wallets_spot_tokens), the stock whose falls are their releases."""
+    RELEASED_STAKED_RESTATED.clear()
+    for name, spec in config.CIRC_RELEASED_STAKED.items():
+        key = (name, spec["metric"])
+        g = dict.get(groups, key)
+        if g is None or g.empty:
+            continue
+        excl, stk, team = (_daily(groups.get((name, m))) for m in (spec["held"], spec["staked_all"], spec["team"]))
+        g = g.assign(date=pd.to_datetime(g["date"]).dt.normalize()).sort_values("date") \
+             .drop_duplicates("date", keep="last").set_index("date")
+        idx = g.index.intersection(excl.index).intersection(stk.index).intersection(team.index)
+        staked_out = (stk.reindex(idx) - team.reindex(idx)).clip(lower=0)
+        spot = (excl.reindex(idx) - staked_out).clip(lower=0)
+        net = g.loc[idx, "source"].astype(str).str.contains("-exclude_wallets", regex=False)
+        val = g.loc[idx, "value"].astype(float).where(~net, g.loc[idx, "value"].astype(float) + staked_out)
+        val = val.where(net, g.loc[idx, "value"].astype(float) - spot)
+        cols = groups[key].columns
+        groups[key] = _as_stored(pd.DataFrame(
+            {"date": idx, "project": name, "metric": spec["metric"], "value": val.values, "tier": 1,
+             "source": f"derived:released_staked[{spec['point']}]"}), cols)
+        groups[(name, spec["spot_metric"])] = _as_stored(pd.DataFrame(
+            {"date": idx, "project": name, "metric": spec["spot_metric"], "value": spot.values, "tier": 1,
+             "source": "derived:released_staked[spot]"}), cols)
+        RELEASED_STAKED_RESTATED[name] = {"days": len(idx), "dropped": int(len(g) - len(idx)),
+                                          "first": str(idx.min().date()) if len(idx) else None,
+                                          "last": str(idx.max().date()) if len(idx) else None}
 
 
 def _near_lockup_views(groups: dict) -> None:
@@ -6595,6 +6642,7 @@ def aggregate(long: pd.DataFrame, fetch_status: pd.DataFrame, asof: pd.Timestamp
     _flow_from_stored_stock_views(groups)   # P5-1.3: measured from the stored stock before the flow's first row
     _emissions_model_views(groups)
     _hl_model_views(groups)           # fix round 3 B1: Hyperliquid's MODELLED rewards / stake / reserve history
+    _released_staked_views(groups)    # R7.C1: Hyperliquid's Foundation / Grants stake is released — BEFORE the release
     _onchain_release_views(groups)    # BEFORE the issuance views that read pool_release_tokens
     _release_floor_views(groups)      # a release is never negative, whatever stored it (alignment D2)
     _supply_history_views(groups)     # fix round 2 H1/H3: ETH supply + issuance before Etherscan's first read
@@ -12810,7 +12858,10 @@ def _cp_cols(R: Refs, data_by_key: dict) -> list[tuple]:
         ("Insider share of circulating = insider-held tokens counted inside circulating ÷ circulating",
          lambda r, p: ("=0" if (config.CIRCULATING_ONCHAIN.get(p["name"]) or {}).get("status") == "established"
                        and config.circulating_primary_metric(p["name"]) in ("circulating_supply_onchain",)
-                       else "=0" if p["name"] == "Hyperliquid"    # tokenDetails less the Foundation + Grants (A1)
+                       # R7.C1: the Foundation + Grants STAKE is insider-held and inside circulating (released)
+                       else calc(f"({R.D(r, config.CIRC_RELEASED_STAKED[p['name']]['held'], 'now')}"
+                                 f"-{R.D(r, config.CIRC_RELEASED_STAKED[p['name']]['spot_metric'], 'now')})"
+                                 f"/({circ(r, p)})") if p["name"] in config.CIRC_RELEASED_STAKED
                        else "n/a — circulating is a published / aggregator figure: which insider wallets it counts is "
                             "not established"), FMT_PCT, "calc"),
         # ---- DEMAND (LITMUS B; lock rate on the demand side, amendment 5) ----

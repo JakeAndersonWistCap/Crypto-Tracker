@@ -173,3 +173,77 @@ def test_b2_the_usds_farm_rate_is_judged_against_the_same_28_days():
         ref = config.CREDIBILITY["Sky"][k].get("ref", config.CREDIBILITY["Sky"][k])
         assert ref["formula"] == "window_mean" and ref["tol"] == 10.0                     # tolerance unchanged
 
+
+# ================================================================================ C1: Hyperliquid's circulating
+def _hg(metric, rows):
+    return pd.DataFrame({"date": pd.to_datetime([d for d, _v, _s in rows]), "project": "Hyperliquid", "metric": metric,
+                         "value": [float(v) for _d, v, _s in rows], "tier": 1, "source": [s for _d, _v, s in rows]})
+
+
+def test_c1_the_foundation_and_grants_stake_is_released_and_their_spot_stays_out():
+    import build_workbook as bw
+    raw, net = "hypercore_info:tokenDetails.circulatingSupply-hyperevm_burn", \
+        "hypercore_info:tokenDetails.circulatingSupply-exclude_wallets-hyperevm_burn"
+    g = {("Hyperliquid", "circulating_supply_first_party"): _hg("circulating_supply_first_party", [
+            ("2026-10-10", 302_000_000, raw), ("2026-10-12", 238_500_000, net), ("2026-10-13", 238_600_000, net)]),
+         ("Hyperliquid", "excluded_wallets_tokens"): _hg("excluded_wallets_tokens", [
+             ("2026-10-10", 63_500_000, "x"), ("2026-10-12", 63_500_000, "x"), ("2026-10-13", 63_600_000, "x")]),
+         ("Hyperliquid", "staked_noncirculating_tokens"): _hg("staked_noncirculating_tokens", [
+             ("2026-10-10", 301_300_000, "x"), ("2026-10-12", 301_300_000, "x"), ("2026-10-13", 301_400_000, "x")]),
+         ("Hyperliquid", "team_wallet_tokens"): _hg("team_wallet_tokens", [
+             ("2026-10-10", 237_900_000, "x"), ("2026-10-12", 237_900_000, "x")])}           # 10-13: no team read
+    bw._released_staked_views(g)
+    c = g[("Hyperliquid", "circulating_supply_first_party")].set_index("date")["value"]
+    spot = 63_500_000 - (301_300_000 - 237_900_000)                                       # 100,000 unstaked
+    assert c[pd.Timestamp("2026-10-10")] == pytest.approx(302_000_000 - spot)            # raw day: their spot out
+    assert c[pd.Timestamp("2026-10-12")] == pytest.approx(238_500_000 + 63_400_000)      # net day: their stake back
+    assert pd.Timestamp("2026-10-13") not in c.index                                      # a leg missing: no value
+    assert g[("Hyperliquid", "circulating_supply_first_party")]["source"].nunique() == 1  # one basis
+    assert config.unlock_stock_metrics("Hyperliquid") == ("excluded_wallets_spot_tokens", "team_wallet_tokens")
+    assert config.locked_excluded_metrics("Hyperliquid") == ("team_wallet_tokens",) or \
+        tuple(config.locked_excluded_metrics("Hyperliquid")) == ("team_wallet_tokens",)
+
+
+def test_c1_the_classification_names_every_gap_over_two_percent():
+    r = config.HYPERLIQUID_CIRC_R7
+    assert r["wallets"]["foundation"][0] > 6e7 and r["wallets"]["assistance_fund"][0] == 0.0
+    for ref in ("coingecko", "coinmarketcap"):
+        assert abs(r["ours_estimate"] / r[ref] - 1) > 0.02
+    assert "60.63M" in r["gaps"] and "2.87M" in r["gaps"] and "not established" in r["gaps"]
+    assert "DERIVED" in r["team_schedule"] and "9,722,176" in r["team_schedule"]
+
+
+# ===================================================================================== C2: emissions, option C
+def test_c2_one_emissions_figure_and_option_c_judged_on_the_read_to_read_basis():
+    import build_workbook as bw
+    assert "SECURITY EMISSIONS" in config.EMISSIONS_ARE_INCENTIVE_SPEND["Hyperliquid"]
+    assert "Hyperliquid" in config.OPTION_C_INTERVAL_BASIS
+    import inspect
+    assert "interval_basis" in inspect.signature(bw.hl_option_c).parameters
+
+
+# ============================================================================ C3 / C4: S13 lines and the checks
+def test_c3_s13_lines_follow_jakes_decisions():
+    rs = config.REVENUE_SPLIT["Hyperliquid"]
+    assert (rs["fees"]["metric"], rs["revenue"]["metric"], rs["holder_revenue"]["metric"]) == (
+        "fees_usd", "revenue_usd", "holder_value_revenue_usd")
+    assert not rs["fees"]["primary"] and "AccessDenied" in rs["fees"]["route"] and rs["holder_revenue"]["primary"]
+    assert "HIP-3 DEPLOYERS" in rs["revenue"]["route"]
+
+
+def test_c4_burns_and_revenue_judge_on_hyperliquids_own_data_and_asxn_is_beside():
+    import credibility as cred
+    cr = config.CREDIBILITY["Hyperliquid"]
+    assert cr["a4_gross_burn"]["formula"] == "delta_q0" and cr["a4_gross_burn"]["tol"] == 15.0
+    assert cr["a1_gross_burn"]["args"]["metrics"] == ["af_noncirc_listed_tokens", "hyperevm_zero_address_balance"]
+    assert cr["in_revenue"]["ref"]["args"]["metric"] == "actual_buyback_usd" and cr["in_revenue"]["ref"]["tol"] == 15.0
+    for k in ("in_a4_gross_burn_asxn", "in_a1_gross_burn_asxn", "in_revenue_asxn"):
+        assert cr[k]["ref"]["force_verdict"] == "N/A (recorded)" and cr[k]["ref"]["tol"] is None
+    d = pd.date_range("2026-07-01", "2026-10-13")
+    long = pd.concat([pd.DataFrame({"date": d, "project": "Hyperliquid", "metric": m,
+                                    "value": [b + 10.0 * i for i in range(len(d))]})
+                      for m, b in (("af_noncirc_listed_tokens", 4.8e7), ("hyperevm_zero_address_balance", 3e5))])
+    v, _d, how = cred._sum_of_deltas_q0("Hyperliquid", {}, long, pd.Timestamp("2026-10-13"),
+                                        metrics=["af_noncirc_listed_tokens", "hyperevm_zero_address_balance"])
+    one, _d1, _h = cred._delta_q0("Hyperliquid", {}, long, pd.Timestamp("2026-10-13"), metric="af_noncirc_listed_tokens")
+    assert v == pytest.approx(2 * one) and " + " in how
