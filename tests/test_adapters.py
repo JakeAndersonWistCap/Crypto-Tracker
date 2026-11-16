@@ -27886,7 +27886,9 @@ def test_sky_yield_headline_is_the_farm_and_the_economy_wide_figure_is_recorded_
     assert (py["revenue"], py["lock"]) == ("staking_rewards_usds_usd", "locked_tokens_usds_farm")
     assert py["token_yield"]["payday"]["metric"] == "staking_yield_usds_farm_28d_pct"
     # R6.4: the reference is Block Analitica's live farm rate, no longer Jake's 2026-10-07 reading (4.61%)
-    assert sky["a3_protocol_yield"]["metric"] == "usds_farm_apy_ba" and "manual" not in sky["a3_protocol_yield"]
+    # R7.B2: over the same 28 days ours averages (Block Analitica's mean), never a manual reading
+    a3 = sky["a3_protocol_yield"]
+    assert "manual" not in a3 and "usds_farm_apy_ba" in str(a3.get("metric") or a3.get("args"))
     eco = sky["in_yield_economy_wide"]
     assert eco["ours"]["args"]["flow"] == "holders_revenue_usd" and eco["ours"]["args"]["stock"] == "locked_tokens"
     assert eco["ref"]["verdict"] == "N/A (recorded)" and "2.72%" in eco["ref"]["why"]

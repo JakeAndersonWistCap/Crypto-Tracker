@@ -151,7 +151,9 @@ def test_hyperliquid_circulating_excludes_foundation_and_grants():
     assert f.loc["circulating_supply_tokendetails", "value"] == 302_167_698.0
     h = config.declared_handover("Hyperliquid", "circulating_supply_first_party")
     from fetch.base import _measuring_point
-    assert _measuring_point(f.loc["circulating_supply_first_party", "source"]) == h["ordered_points"][-1]
+    # the stored (fetch-time) point is the last stored one; R7.C1 adds the read-time restatement after it
+    assert _measuring_point(f.loc["circulating_supply_first_party", "source"]) == h["ordered_points"][-2]
+    assert h["ordered_points"][-1].startswith("derived:released_staked")
 
 
 def test_hyperliquid_unread_wallet_stores_no_circulating():
@@ -589,7 +591,8 @@ def test_hyperliquid_team_wallet_is_an_unlock_stock_not_subtracted_again():
     f = out.frame().set_index("metric")["value"]
     assert f["team_wallet_tokens"] == pytest.approx(237_915_860.47, abs=0.01)
     assert f["circulating_supply_first_party"] == pytest.approx(302_167_698.0 - 63_525_720.63 - 308_538.17, abs=0.01)
-    assert config.unlock_stock_metrics("Hyperliquid") == ("excluded_wallets_tokens", "team_wallet_tokens")
+    # R7.C1: the Foundation + Grants stake is released, so only their unstaked HYPE is an unlock stock beside the team's
+    assert config.unlock_stock_metrics("Hyperliquid") == ("excluded_wallets_spot_tokens", "team_wallet_tokens")
 
 
 def test_chainlink_unlock_row_is_judged_against_the_scan_on_the_real_dump(tmp_path, monkeypatch):

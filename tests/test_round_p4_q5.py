@@ -254,7 +254,9 @@ def test_buying_pressure_is_every_market_buyback_annualised_over_tradeable_float
 # the A3 actual buyback: 658,866 on the dumps), was the trailing 90 days of month-end rows (283,866): 0.0040527229897458356
 # R6.3 (Jake 2026-11-16): Sky's market cap counts the Pause Proxy's held buyback (circulating + 20,142,225.8 on the
 # dumps), so its holder value yield is over a larger cap (was 0.02410483100412517)
-BEFORE_HVY = {"Maple": 0.009202065513863445, "Sky": 0.024084003858726048, "Hyperliquid": 0.038137512591568695,
+# R7.C1 (Jake 2026-11-16): Hyperliquid's market cap counts the Foundation + Grants stake (released) — its holder value
+# yield is over a larger cap; on the dumps that stake is held on the last day only (was 0.038137512591568695)
+BEFORE_HVY = {"Maple": 0.009202065513863445, "Sky": 0.024084003858726048, "Hyperliquid": 0.030133419313739723,
               "Pendle": 0.01114886645183712, "Chainlink": 0.005996886350660165, "Near": 0.0022805223703844632}
 
 

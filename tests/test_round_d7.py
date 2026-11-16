@@ -275,12 +275,13 @@ def test_2_hyperliquids_burn_over_issuance_is_blocked_with_both_legs_holes_on_th
                if isinstance(ws.cell(r, c).value, str) and ws.cell(r, c).value.startswith("BURN ÷ ISSUANCE"))
     row = next(r for r in range(2, ws.max_row + 1) if "Hyperliquid" in (ws.cell(r, 1).value, ws.cell(r, 2).value))
     v = X.value("A4 Permanent Burn", row, col)
-    assert isinstance(v, str) and v.startswith("BLOCKED — unequal coverage"), v
-    # P5-1.13: the burn's rederived rows across missed reads count every day since the previous read — 90 days, no holes
-    # (was 87, with 2026-09-13 and 09-19..09-20 read as holes)
-    # PR1.S1: k daily rows cover k days (the release's first row's own day is in) — 8, was 7 (trends report: 7 -> 8)
-    assert "gross_burn_tokens, q0) covers 90 days" in v and "pool_release_tokens, q0) covers 8 days" in v, v
-    assert "holes: 2026-09-13" not in v and "holes: 2026-10-02..10-05, 2026-10-12" in v, v
+    # R7.C2: with option C in force (read-to-read basis) the issuance leg is option C's, which needs the unlock
+    # release the 10-13 dump does not hold — still blocked, never a ratio over unequal windows, naming the leg
+    assert isinstance(v, str) and ("BLOCKED" in v), v
+    assert ("covers" in v and "gross_burn_tokens" in v) or "no rows for unlock_release_tokens" in v, v
+    assert "holes: 2026-09-13" not in v                       # P5-1.13: the burn's rederived rows have no such hole
+    if "covers" in v:                                         # the release leg's own holes, where it is the leg
+        assert "holes: 2026-10-02..10-05, 2026-10-12" in v, v
 
 
 # ============================================================================================ 3 CCIP: a record

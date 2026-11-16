@@ -696,6 +696,21 @@ def _delta_q0(p, rows, long, asof, metric="total_supply", plus=None, **_):
     return v, str(b.index[-1].date()), how
 
 
+def _sum_now(p, rows, long, asof, metrics=(), max_age=3, **_):
+    """R7B.B2: the sum of several stocks' latest readings, each within `max_age` days of the as-of — every leg held,
+    or nothing (Sky's two farms' total staked)."""
+    tot, last, hows = 0.0, None, []
+    for m in metrics:
+        s = _series(long, p, m)
+        s = s[(s.index <= asof.normalize()) & (s.index >= asof.normalize() - pd.Timedelta(days=int(max_age)))]
+        if s.empty:
+            return None, None, f"{m}: no reading within {max_age} days of {asof.date()}"
+        tot += float(s.iloc[-1])
+        last = max(last or str(s.index[-1].date()), str(s.index[-1].date()))
+        hows.append(f"{m} {float(s.iloc[-1]):,.0f} ({s.index[-1].date()})")
+    return tot, last, " + ".join(hows)
+
+
 def _sum_of_deltas_q0(p, rows, long, asof, metrics=(), **_):
     """R7.C4: the sum of several stocks' changes across Q0 (_delta_q0 each) — every leg held, or nothing."""
     tot, last, hows = 0.0, None, []
@@ -2274,7 +2289,7 @@ def _aero_rebase_apr(p, rows, long, asof, rebase="emissions_tokens", stake="vote
             f"{float(rb.iloc[-1]):,.0f} AERO in the week of {rb.index[-1].date()} x 52 / {stake} {st[0]:,.0f}")
 
 
-FORMULAS = {"sum_of_deltas_q0": _sum_of_deltas_q0, "window_mean": _window_mean, "sum_months": _sum_months, "free_float_now": _free_float_now, "window_vs_rate": _window_vs_rate,
+FORMULAS = {"sum_now": _sum_now, "sum_of_deltas_q0": _sum_of_deltas_q0, "window_mean": _window_mean, "sum_months": _sum_months, "free_float_now": _free_float_now, "window_vs_rate": _window_vs_rate,
             "aero_rebase_formula": _aero_rebase_formula, "common_days_sum": _common_days_sum, "eth_net_formula": _eth_net_formula,
             "sums_on_common_day": _sums_on_common_day,
             "eth_issuance_curve": _eth_issuance_formula, "flow_usd_over_price": _flow_usd_over_price,

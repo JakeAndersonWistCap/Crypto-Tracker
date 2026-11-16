@@ -76,6 +76,7 @@ from .sky_ssr import SkySSR
 from .business import Business
 from .sky_accounting import SkyAccounting
 from .sky_mkr import SkyMkr
+from .hl_stats import HlStats
 from .share_price import SharePrice
 from .ve_managed import VeManaged
 from .aero_v3 import AeroV3
@@ -215,6 +216,8 @@ TIER_ORDER = [
     ("near_issuance", 1, lambda ctx: NearIssuance(deadline_s=100.0)),
     # Sky's MKR backing (non-issuer MKR is circulating) and the reward vest in force (Jake 2026-10-12, decision 2).
     ("sky_mkr", 2, lambda ctx: SkyMkr(stored_long=ctx.get("stored_long"))),
+    # Hyperliquid's own statistics for its S13 lines (R7B.C2, Jake 2026-11-16): fees by venue, the HIP-3 deployer route.
+    ("hl_stats", 1, lambda ctx: HlStats()),
     # Aethir's own dashboard, from the Next.js server-rendered payload (Jake's probes2, 2026-09-30).
     ("aethir_page", 3, lambda ctx: AethirPages()),
     # Pendle's per-epoch sPENDLE distributions and its own APR (spendle/data, 2026-09-29).

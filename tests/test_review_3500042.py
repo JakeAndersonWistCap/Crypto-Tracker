@@ -73,16 +73,18 @@ def test_hyperliquid_stake_outside_circulating_is_read_and_taken_out_of_the_lock
     f = out.frame()
     assert float(f.loc[f.metric == "staked_noncirculating_tokens", "value"].iloc[0]) == pytest.approx(301_307_793.72,
                                                                                                     abs=0.01)
-    assert config.locked_excluded_metrics("Hyperliquid") == ("staked_noncirculating_tokens",)
+    # R7.C1 (Jake 2026-11-16): the Foundation + Grants stake is released (circulating), so only the team's stake is
+    # outside circulating and comes out of the lock leg (the team wallet: all staked)
+    assert tuple(config.locked_excluded_metrics("Hyperliquid")) == ("team_wallet_tokens",)
     import build_workbook as bw
 
     class R:
         def D(self, r, m, w):
             return f"[{m}]"
     expr = bw._ff_lock(R(), 5, config.PROJECT_BY_NAME["Hyperliquid"])
-    assert expr == "MAX(0,[locked_tokens]-[staked_noncirculating_tokens])"
-    # the 2026-10-13 figures: 238.6M circulating − (440.07M − 301.31M) is a positive float
-    assert 238_602_000 - (440_065_811 - 301_307_794) == pytest.approx(99_844_000, abs=1_000)
+    assert expr == "MAX(0,[locked_tokens]-[team_wallet_tokens])"
+    # the 2026-10-13 figures: 302.0M circulating − (440.07M − 237.93M of team stake) is a positive float
+    assert 301_979_203 - (440_065_811 - 237_930_044) == pytest.approx(99_843_436, abs=1_000)
 
 
 # ------------------------------------------------------------------------------------------- 24 NHY

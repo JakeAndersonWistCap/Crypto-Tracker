@@ -307,7 +307,8 @@ def test_3_every_d_recipient_is_labelled_and_the_budget_safes_are_holders():
     ex = {a.lower() for a in sc["exclude_counterparties"]}
     assert {"0x675671a8756ddb69f7254afb030865388ef699ee", "0xc8d67fcf101d3f89d0e1f3a2857485a84072a63f"} <= ex
     # R6.2 (Jake 2026-11-16): the distributors' rewards are emissions, (c), in every funding period — none is (e)
-    assert config.OUTFLOW_CATEGORIES["Sky"]["c"] == ("emissions_tokens",) and config.OUTFLOW_CATEGORIES["Sky"]["e"] == ()
+    assert config.OUTFLOW_CATEGORIES["Sky"]["c"] == ("emissions_tokens",)
+    assert set(config.OUTFLOW_CATEGORIES["Sky"]["e"]) <= {"unlock_release_tokens"}      # never a staker reward
     assert "allowance" in config.SKY_TREASURY_VEST["how"] or "transferFrom" in config.SKY_TREASURY_VEST["how"]
 
 
@@ -345,9 +346,12 @@ def test_3c_the_endowment_legs_are_read_and_credibility_names_the_basis():
     assert len(legs) == 4 and all(v.get("metric_override") == "sky_endowment_tokens" and v.get("required_component")
                                   for v in legs.values())
     assert {v["kind"] for v in legs.values()} == {"treasury_holding", "lockstake_owner_ink"}
-    assert config.CIRCULATING_ONCHAIN["Sky"]["subtract_when_complete"]["zero_before"] == "2025-08-25"
+    assert config.SKY_ENDOWMENT["zero_before"] == "2025-08-25"
+    # R7B.B1 (Jake 2026-11-16): the endowments are CIRCULATING (released to the Foundations) — read for the float and
+    # the insider share, never subtracted; the credibility row says so, as CoinGecko counts them too
+    assert not config.CIRCULATING_ONCHAIN["Sky"].get("subtract_when_complete")
     spec = credibility.circulating_input("Sky")
-    assert "sky_endowment_tokens" in spec["what"] and "CoinGecko counts them" in spec["ref"]["note"]
+    assert "sky_endowment_tokens" not in spec["what"] and "CIRCULATING" in spec["ref"]["note"]
 
 
 def test_3c_lockstake_ink_sums_the_vat_ink_of_every_urn_the_engine_lists():

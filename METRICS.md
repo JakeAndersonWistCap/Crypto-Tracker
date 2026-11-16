@@ -1329,7 +1329,7 @@ Funding: 2000-01-01..now treasury: the Foundation buys AERO with its own voting 
 | out of circulating | retirement (bought, burned + held) | `retired_buyback_tokens` |
 | out of circulating | burn (every burn) | `sky_stage2_burn_tokens` |
 
-Basis: SKY rewards to stakers are emissions — outflow (c) in every funding period (R6.2, Jake 2026-11-16: released from the treasury, not an unlock): minted to 2025-06-01, paid from Pause Proxy reserves, or from SKY bought back (from 2026-08-17; the buyback is credited once, as holder revenue). The USDS -> SKY farm 0x0650CAF1… stopped paying 2026-01-26; LSSKY -> SKY vests 17/18 since
+Basis: SKY rewards to stakers are emissions — outflow (c) in every funding period (R6.2, Jake 2026-11-16: released from the treasury, not an unlock): minted to 2025-06-01, paid from Pause Proxy reserves, or from SKY bought back (from 2026-08-17; the buyback is credited once, as holder revenue). The USDS -> SKY farm 0x0650CAF1… stopped paying 2026-01-26; LSSKY -> SKY vests 17/18 since R7B.B1 (2026-11-16): no unlock — the endowments are circulating, so their releases are not unlocks
 
 **Value flow statement**
 
@@ -1456,7 +1456,7 @@ Funding: 2025-05-09..2025-11-03 treasury: April 2025 withdrawal-fee buyback (pai
 | Virtuals | 2 | `circulating_supply` | CoinGecko first | none | `gross_burn_tokens` | `gross_issuance_tokens` | `emissions_tokens` | — |
 | Maple | 3 | `circulating_supply_onchain` | on-chain first | treasury_inflow | `gross_burn_tokens` | `pool_release_tokens` | `emissions_tokens` | `treasury_holding_tokens_chain` + `noncirculating_holding_tokens` |
 | Morpho | 2 | `circulating_supply_onchain` | on-chain first | none | `gross_burn_tokens` | `gross_issuance_tokens` | `emissions_tokens` | `noncirculating_holding_tokens` + `morpho_relocked_tokens` |
-| Hyperliquid | 3, 1, 4 | `circulating_supply_first_party` | on-chain first | burn | `gross_burn_tokens` | `pool_release_tokens` | `emissions_tokens` | `excluded_wallets_tokens` + `team_wallet_tokens` |
+| Hyperliquid | 3, 1, 4 | `circulating_supply_first_party` | on-chain first | burn | `gross_burn_tokens` | `pool_release_tokens` | `emissions_tokens` | `excluded_wallets_spot_tokens` + `team_wallet_tokens` |
 | Uniswap | 4 | `circulating_supply_onchain` | on-chain first | burn | `gross_burn_tokens` | `gross_issuance_tokens` | `emissions_tokens` | `treasury_holding_tokens` + `noncirculating_holding_tokens` |
 | Aerodrome | 3 | `circulating_supply_onchain` | on-chain first | treasury_inflow | `gross_burn_tokens` | `gross_issuance_tokens` | `gross_issuance_tokens` + `emissions_tokens` | `noncirculating_holding_tokens` + `filing_managed_lock_tokens` |
 | PancakeSwap | 4, 3 | `circulating_supply` | CoinGecko first | none | `gross_burn_tokens` | `gross_issuance_tokens` | `emissions_tokens` | — |

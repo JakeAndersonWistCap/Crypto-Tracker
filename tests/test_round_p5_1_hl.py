@@ -220,6 +220,10 @@ def test_locked_tokens_has_no_modelled_leg_and_the_modelled_rewards_rest_on_meas
 def test_the_outflow_a_on_a_modelled_day_comes_from_measured_inputs(hl_only, monkeypatch):
     monkeypatch.setattr(bw, "_VIEW_BLOCKS", {})
     groups, k, stake, a, idx = _model_groups()
+    # R7.C1: the stake outside circulating is the configured series (the team's, once the Foundation + Grants stake is
+    # released) — the fixture's outside stake under that name
+    out_m = config.STAKE_PRORATA[HL]["outside"]
+    groups[(HL, out_m)] = groups[(HL, "staked_noncirculating_tokens")].assign(metric=out_m)
     bw._hl_model_views(groups)
     bw._stake_prorata_views(groups)
     g = groups[(HL, "emissions_circulating_stake_tokens")]

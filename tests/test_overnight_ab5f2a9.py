@@ -69,13 +69,15 @@ def test_hyperliquid_adds_only_the_foundation_and_grants_releases():
     """The team wallet's falls already move tokenDetails' circulating (the net figure's basis); the Foundation / Grants
     wallets are counted AS circulating by it, so only their releases are added — a release series of that subset."""
     import build_workbook as bw
-    assert config.UNLOCK_RELEASE_SUBSETS["Hyperliquid"] == {"unlock_release_counted_tokens": ("excluded_wallets_tokens",)}
+    # R7.C1: their STAKE is released (circulating), so the subset is their unstaked HYPE
+    sub_m = config.UNLOCK_RELEASE_SUBSETS["Hyperliquid"]["unlock_release_counted_tokens"]
+    assert sub_m == ("excluded_wallets_spot_tokens",)
     days = pd.date_range("2026-09-01", "2026-09-05")
 
     def g(m, vals):
         return pd.DataFrame({"date": days, "project": "Hyperliquid", "metric": m, "value": vals, "source": f"x:{m}",
                              "tier": 2, "is_manual": False, "entered_on": ""})
-    groups = {("Hyperliquid", "excluded_wallets_tokens"): g("excluded_wallets_tokens", [100.0, 90.0, 90.0, 80.0, 85.0]),
+    groups = {("Hyperliquid", sub_m[0]): g(sub_m[0], [100.0, 90.0, 90.0, 80.0, 85.0]),
               ("Hyperliquid", "team_wallet_tokens"): g("team_wallet_tokens", [50.0, 40.0, 30.0, 20.0, 10.0])}
     import types
     old = bw._SCOPE

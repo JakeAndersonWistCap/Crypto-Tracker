@@ -49,7 +49,9 @@ def test_1_the_fetch_stores_the_savings_rate_and_revenue_net_of_it(monkeypatch):
 # ===================================================================================== 2: emissions and dilution
 def test_2_every_staker_reward_is_emissions_c_and_none_is_an_unlock():
     assert config.outflow_metrics("Sky", "c") == ("emissions_tokens",)
-    assert config.outflow_metrics("Sky", "e") == ()
+    # no staker reward is an unlock: (e) holds only releases from a non-circulating wallet set, if Sky has one
+    e = config.outflow_metrics("Sky", "e")
+    assert "emissions_tokens" not in e and set(e) <= {"unlock_release_tokens"}
     assert "not an unlock" in config.OUTFLOW_CATEGORIES["Sky"]["basis"]
     na = config.declared_na_reason("Sky", "n/a — no non-circulating wallet set on this project (config.unlock_stock_"
                                           "metrics)")
@@ -80,8 +82,11 @@ def test_4_the_farm_rows_read_block_analitica_live_not_jakes_10_07_reading():
     cr = config.CREDIBILITY["Sky"]
     for k, m in (("in_locked_sky_farm", "locked_tokens_sky_farm_ba"), ("in_locked_usds_farm", "locked_tokens_usds_farm_ba"),
                  ("in_apy_sky_farm", "sky_farm_apy_ba"), ("in_apy_usds_farm", "usds_farm_apy_ba")):
-        assert cr[k]["ref"]["metric"] == m and "manual" not in cr[k]["ref"], k
-    assert cr["a3_protocol_yield"]["metric"] == "usds_farm_apy_ba" and "manual" not in cr["a3_protocol_yield"]
+        ref = cr[k]["ref"]
+        assert m in str(ref.get("metric") or ref.get("args")) and "manual" not in ref, k      # live, never manual
+        assert ("Sky", k) in config.LIVE_REFERENCE_OVER_MANUAL                               # not overridden (R7.B2)
+    a3 = cr["a3_protocol_yield"]
+    assert "usds_farm_apy_ba" in str(a3.get("metric") or a3.get("args")) and "manual" not in a3
 
 
 # ================================================================ 3: the SBE's bought SKY is a held buyback

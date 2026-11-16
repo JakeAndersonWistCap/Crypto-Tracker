@@ -1177,6 +1177,23 @@ def _tier_note(project: dict, metric: str, scrape_entries: dict) -> tuple[str, s
         "the sPENDLE epoch reader (fetch/pendle_epochs.py) stored no complete epoch's PT-looping fee (spendle/data did "
         "not answer, or no epoch has a fee read)",
         "Check the Run Log's pendle_epochs line for {name}.")
+    # R7B.C2: Hyperliquid's own statistics (fetch/hl_stats.py)
+    for _m in ("hl_exchange_volume_usd", "hl_hip3_dex_count"):
+        r3[_m] = ("Hyperliquid's info API (fetch/hl_stats.py) stored nothing this run (userFees / perpDexs did not answer)",
+                  "Check the Run Log's hl_stats line for {name}.")
+    for _m in ("hl_fees_daily_usd", "hl_fees_perps_usd", "hl_fees_spot_usd", "hl_hip3_deployer_fees_usd"):
+        r3[_m] = ("Hyperliquid's stats-data path is not confirmed yet (config HL_STATS: stored only once its date / value "
+                  "keys are read on Jake's machine), or it did not answer",
+                  "Paste the Run Log's hl_stats lines for {name} back: each names the path's status and its keys.")
+    # R7.A2a: the like-for-like legs of Pendle's revenue row (Jake 2026-11-16)
+    r3["pendle_epoch_market_revenue_unpriced_usd"] = (
+        "the sPENDLE epoch reader (fetch/pendle_epochs.py) stored no complete epoch's revenue on Robinhood Chain / "
+        "HyperEVM markets (statistics/market-fees did not answer, or a market's fee is missing)",
+        "Check the Run Log's pendle_epochs line for {name}.")
+    r3["revenue_usd_defillama_unpriced"] = (
+        "DefiLlama's pendle-v2 dailyRevenue breakdown (totalDataChartBreakdown) stored nothing for Robinhood Chain + "
+        "Hyperliquid L1 this run",
+        "Check the Run Log's DefiLlama line for revenue_usd_defillama_unpriced; the endpoint is free and needs no key.")
     r3["pendle_epoch_market_fees_usd"] = (
         "the sPENDLE epoch reader (fetch/pendle_epochs.py) stored no complete epoch's per-market fees "
         "(statistics/market-fees did not answer, or a total is missing)",

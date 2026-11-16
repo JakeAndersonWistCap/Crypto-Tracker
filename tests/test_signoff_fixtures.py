@@ -197,7 +197,10 @@ def test_sky_headline_is_the_usds_farm_yield(tmp_path, monkeypatch):
                  (d, "Sky", "locked_tokens_usds_farm", 8_597_539_804.0, "chain:ethereum:usds_farm_stake", 2),
                  (d, "Sky", "price_usd", 0.0785, "coingecko", 1),
                  (d, "Sky", "holders_revenue_usd", 210_000.0, "llama:fees", 1),
-                 (d, "Sky", "locked_tokens", 17.42e9, "chain:ethereum:lssky", 2)]
+                 (d, "Sky", "locked_tokens", 17.42e9, "chain:ethereum:lssky", 2),
+                 # R6.4 / R7.B2: the reference is Block Analitica's farm rate over the same 28 days (Jake's page
+                 # reading of 4.61% was that rate), no longer the 2026-10-07 manual reading
+                 (d, "Sky", "usds_farm_apy_ba", 0.0461, "sky_accounting:info-sky.farms", 3)]
     o = _evaluate(tmp_path, monkeypatch, "Sky", rows)
     head, farm = o["a3_protocol_yield"], o["in_apy_usds_farm"]
     assert abs(float(head["ours"]) - float(farm["ours"])) < 1e-9, (head, farm)

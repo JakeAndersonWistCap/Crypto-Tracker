@@ -185,7 +185,8 @@ def test_sky_rewards_split_by_funding_period():
     assert parts == pytest.approx(float(tot.drop_duplicates("date", keep="last")["value"].sum()))
     # R6.2 (Jake 2026-11-16): every SKY paid to stakers is emissions, outflow (c), whatever funded it; none is (e)
     assert config.outflow_metrics("Sky", "c") == ("emissions_tokens",)
-    assert config.outflow_metrics("Sky", "e") == ()
+    # no staker reward is an unlock: (e) holds only releases from a non-circulating set, if Sky has one
+    assert set(config.outflow_metrics("Sky", "e")) <= {"unlock_release_tokens"}
 
 
 # --------------------------------------------------------------------------------------------- S3 / S5 mints

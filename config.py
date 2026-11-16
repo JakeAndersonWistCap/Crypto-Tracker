@@ -43148,3 +43148,162 @@ HL_REVENUE_TOTAL_DOUBLE_COUNT_RISK = (
     "revenue_total_usd adds the AQAv2 reserve yield (aqa_revenue_usd) to DefiLlama's revenue, whose methodology (read "
     "2026-11-16) includes 'Hyperliquid's 90% share of AQAv2 stablecoin reserve yield since 27 Aug 2026' — from that day "
     "the yield may be in it twice; not changed this round (a decision for Jake)")
+
+# =====================================================================================================================
+# ROUND 7B (Jake 2026-11-16, on df26e6f): gate fixes, finish Sky, finish Hyperliquid. Frozen projects do not move.
+# =====================================================================================================================
+# R7B.A1 the like-for-like legs are evidence series (named on the revenue row's working), not headlines; epoch-dated
+for _m, _why in (("pendle_epoch_market_revenue_unpriced_usd", "Pendle's own revenue on the two chains DefiLlama cannot "
+                                                              "price, per epoch"),
+                 ("revenue_usd_defillama_unpriced", "DefiLlama's pendle-v2 revenue on those two chains, per day")):
+    NOT_SHOWN[("Pendle", _m)] = f"R7.A2a: {_why} — the like-for-like leg of Credibility in_revenue, not a headline"
+_stale_after_days_r7 = stale_after_days
+
+
+def stale_after_days(project_name: str, metric: str, default: int) -> int:  # noqa: F811 — R7.A2a: an epoch series
+    if metric == "pendle_epoch_market_revenue_unpriced_usd":
+        return int(_SPE.get("epoch_days") or 14) * 2 + 2
+    return _stale_after_days_r7(project_name, metric, default)
+
+# R7B.B1 SKY'S ENDOWMENTS ARE CIRCULATING (Jake 2026-11-16; reverses G18-3c of 2026-10-26). By Jake's test — has the
+# token been released to its holder? — the SKY was ENDOWED to the two Ecosystem Entities (SKY Frontier Foundation,
+# Fortification Foundation): released. The SFF Q1 2026 Transparency Report (insights.skyeco.com, March 2026, read
+# 2026-11-16) says "All SKY endowed to the Foundation is locked and is not available for sale or distribution" — that
+# is the Foundation's own pledge on tokens it holds and stakes in Lockstake for yield, not a release restriction: no
+# disbursement or vesting schedule binds the endowment (none found in Sky's spells or Atlas). A voluntary pledge or
+# lock by a holder is circulating and off the free float. Revisit only if Sky publishes binding terms showing the
+# endowment is not yet released. Their locked SKY is in Lockstake (locked_tokens), so already off the float; their
+# LIQUID SKY comes off the tradeable float as released issuer-held supply. Their releases are no longer unlocks.
+CIRCULATING_ONCHAIN["Sky"].pop("subtract_when_complete", None)
+CIRCULATING_ONCHAIN["Sky"]["endowment_note"] = (
+    "Sky's two Ecosystem Entity endowments (SKY Frontier Foundation, Fortification Foundation) are CIRCULATING (Jake "
+    "2026-11-16, R7B.B1): the SKY was endowed to them, so released. The SFF Q1 2026 Transparency Report "
+    "(insights.skyeco.com, March 2026) says 'All SKY endowed to the Foundation is locked and is not available for sale "
+    "or distribution' — the Foundation's own pledge on SKY it holds and stakes in Lockstake, not a release restriction "
+    "(no disbursement or vesting schedule found). Off the free float: their Lockstake SKY as locked, their liquid SKY as "
+    "issuer-held")
+CIRCULATING_ONCHAIN["Sky"]["handover"] = {
+    "on": "2026-11-16", "decided": "Jake 2026-11-16 (R6.3; R7B.B1)",
+    "from": "total − the Pause Proxy − the MKR_SKY converters − the endowments (once their history was complete)",
+    "to": "total − the MKR_SKY converters + the MKR-backed SKY held by non-issuers; the Pause Proxy's held buyback and "
+          "the endowments are circulating, both off the tradeable float",
+    "how": "the whole series is restated from stored legs: neither the Pause Proxy nor the endowments is subtracted on "
+           "any day"}
+CIRCULATING_ONCHAIN["Sky"]["method"] = (
+    "SKY totalSupply − the MKR_SKY converters' SKY (pre-minted for unconverted MKR: MKR's claim) + the MKR-backed SKY "
+    "held by non-issuers — spells-mainnet@17926e18 addresses_mainnet.sol L507, L508. The Pause Proxy's held buyback "
+    "(R6.3) and the two endowments (R7B.B1) are circulating and off the tradeable float")
+CIRCULATING_ONCHAIN["Sky"]["project_definition"] = (
+    "Sky: the entire supply is circulating — ours too counts the Pause Proxy's held buyback (R6.3) and the endowments "
+    "(R7B.B1); ours leaves out only the MKR_SKY converters' reserve beyond the MKR-backed SKY")
+CIRCULATING_POLICY["Sky"].update({
+    "now": "ON-CHAIN: total − the MKR_SKY converters' reserve + the non-issuer MKR backing; the Pause Proxy's held "
+           "buyback and the endowments are circulating, off the tradeable float (R6.3, R7B.B1)",
+    "previous": "the endowments out of circulating (G18-3c, 2026-10-26 .. 2026-11-16)"})
+SWITCH_LEG_IS_THE_SET = ()
+OUTFLOW_CATEGORIES["Sky"] = dict(
+    OUTFLOW_CATEGORIES["Sky"], e=(),
+    basis=OUTFLOW_CATEGORIES["Sky"]["basis"].split(" R7.B2 (2026-11-16)")[0]
+          + " R7B.B1 (2026-11-16): no unlock — the endowments are circulating, so their releases are not unlocks")
+DIFFERENCE_VIEWS = {("Sky", "sky_endowment_liquid_tokens"): ("sky_endowment_tokens", "sky_endowment_locked_tokens")}
+METRICS["sky_endowment_liquid_tokens"] = {
+    "label": "Sky's two endowments' LIQUID SKY (their total − their SKY locked in Lockstake) — circulating, off the "
+             "tradeable float as released issuer-held supply (R7B.B1)",
+    "kind": "stock", "unit": "tokens", "archetypes": [3, 4], "tiers": [2], "sanity_min": 0, "sanity_max": 1e11,
+    "only_projects": ("Sky",), "view_only": True}
+FLOAT_RELEASED_HELD["Sky"] = {
+    "metric": "issuer_held_released_tokens", "from": "sky_endowment_liquid_tokens",
+    "why": "released to Sky's two Ecosystem Entity endowments (circulating, R7B.B1); their liquid SKY out of the "
+           "tradeable float (their Lockstake SKY is already out, as locked)"}
+METRICS["issuer_held_released_tokens"]["only_projects"] = tuple(
+    dict.fromkeys((*METRICS["issuer_held_released_tokens"]["only_projects"], "Sky")))
+SKY_CIRC_R7B = {"coingecko": 23_419_101_653, "coinmarketcap": 23_419_037_857, "read_on": "2026-11-16"}
+# R7B.B2 the combined-stake row (in_locked) judged against Block Analitica live too (Jake: R7 decision 5): the two
+# farms' total_staked, summed
+CREDIBILITY["Sky"]["in_locked"] = {
+    "what": "Locked / staked tokens (lsSKY, every SKY in Lockstake) vs the two farms' total staked",
+    "ours": {"metric": "locked_tokens", "window": "now"}, "fmt": "#,##0;(#,##0);-",
+    "ref": {"formula": "sum_now", "args": {"metrics": ["locked_tokens_sky_farm_ba", "locked_tokens_usds_farm_ba"]},
+            "tol": 2.0,
+            "source": "Block Analitica info-sky: the SKY-rewards farm + the USDS-rewards farm total_staked, latest "
+                      "(R7B.B2; replaces Jake's 2026-10-07 reading of 17,422,509,040; tolerance 2%, as that reading's)"}}
+LIVE_REFERENCE_OVER_MANUAL[("Sky", "in_locked")] = "Block Analitica info-sky, both farms' total_staked (R7B.B2)"
+
+# R7B.C2 HYPERLIQUID'S REVENUE, EVERY STREAM THAT FUNDS THE ASSISTANCE FUND (Jake 2026-11-16), each sourced, never twice:
+#   trading fees (perps incl. HIP-3, spot; builder fees and maker rebates out; HLP's 1% out) - DefiLlama revenue_usd
+#     (hyperliquid-perps / hyperliquid-spot-orderbook methodology, read 2026-11-16), SECONDARY until Hyperliquid's own
+#     stats are stored (fetch/hl_stats.py, Jake's run);
+#   the AQAv2 reserve yield (90% share) - measured on chain (aqa_revenue_usd, from 2026-08-26); DefiLlama's revenue
+#     includes it FROM 2026-08-27, so from that day it is counted there and this leg reads 0 (the R7 double count, fixed);
+#   HIP-1 deployment-auction HYPE - burned; inside DefiLlama's spot revenue ("HYPE paid in successful HIP-1 token-
+#     deployment auctions is burned"), measured beside as burn_auction_usd (not added: it would be twice);
+#   USDH reserve yield (50% to the Fund, Native Markets, from 2026-09-17; assistance_fund_inflows) - NOT MEASURED: no
+#     on-chain route or published series yet; named as the remaining gap of HOLDER SHARE.
+REVENUE_LEG_COUNTED_ELSEWHERE = {
+    ("Hyperliquid", "aqa_revenue_usd"): {
+        "from": "2026-08-27", "in": "revenue_usd",
+        "source": "DefiLlama hyperliquid-perps methodology (read 2026-11-16): Revenue '... plus Hyperliquid's 90% share of "
+                  "AQAv2 stablecoin reserve yield since 27 Aug 2026'"}}
+REVENUE_SPLIT["Hyperliquid"]["revenue"] = {
+    "metric": "revenue_total_usd", "primary": False,
+    "route": "every stream that funds the Assistance Fund, each once: trading fees net of builder fees, maker rebates "
+             "and HLP's 1% (DefiLlama dailyRevenue: perps incl. HIP-3, spot, HIP-1 auction HYPE) + the AQAv2 reserve "
+             "yield measured on chain before 2026-08-27 (DefiLlama counts it from then — never twice). Not measured: "
+             "the USDH reserve yield (50% to the Fund since 2026-09-17). SECONDARY until Hyperliquid's own stats rows "
+             "(fetch/hl_stats.py) are stored. DefiLlama's methodology does not say the HIP-3 deployers' share is out"}
+HL_HOLDER_SHARE_GAP = (
+    "HOLDER REVENUE (the Fund's measured buybacks) above REVENUE: the streams that fund the Fund but are not in REVENUE — "
+    "the USDH reserve yield (50% to the Fund from 2026-09-17, Native Markets; not measured) — and the Fund's own "
+    "conversion timing (it buys on its own schedule; a quarter's buys can include fees of the quarter before)")
+
+# R7B.C3 SUBSIDY COVER / LEAKAGE (ii): n/a — Hyperliquid pays NO supply-side incentive (b) in HYPE (Jake 2026-11-16).
+DECLARED_NA_REASONS.setdefault("Hyperliquid", []).append(
+    {"cols": (), "match": "no supply-side incentive (b) series on file",
+     "source": "https://hyperliquid.gitbook.io/hyperliquid-docs/trading/fees ('fees are entirely directed to the community "
+               "(HLP, the assistance fund, and deployers)'; maker rebates 'paid continuously on each trade, directly to "
+               "the trading wallet' — funded by fees, not by HYPE) ; https://hyperliquid.gitbook.io/hyperliquid-docs/"
+               "hype/hype-tokenomics (Future Emissions & Community Rewards pays staking rewards: security emissions (a))",
+     "read_on": "2026-11-16", "decided": "Jake 2026-11-16 (R7B.C3)", "recheck": "2026-12-16",
+     "why": "no HYPE-paid liquidity or trading incentive is published; third-party 'points' claims are unconfirmed and pay "
+            "no tokens — subsidy cover and leakage (ii) have no denominator. Re-check by 2026-12-16 against Hyperliquid's "
+            "announcements; if HYPE is ever distributed against points, it is counted when paid"})
+# R7B.C2 HYPERLIQUID'S OWN STATS, WIRED INTO JAKE'S DAILY RUN (fetch/hl_stats.py). stats-data.hyperliquid.xyz refused
+# this machine (AccessDenied, 2026-11-16) and its paths are not published: each candidate below is read on every run
+# and STORED only once `confirmed` (its shape read in Jake's Run Log: the hl_stats line names the keys). The info API
+# answered here (2026-11-16): userFees.dailyUserVlm carries the exchange's own daily volume; perpDexs lists 11 HIP-3 DEXs
+# with their feeRecipient (the deployer's share is paid there).
+HL_STATS = {
+    "project": "Hyperliquid", "info_url": "https://api.hyperliquid.xyz/info",
+    "any_user": "0xfefefefefefefefefefefefefefefefefefefefe",
+    "stats_base": "https://stats-data.hyperliquid.xyz/Mainnet",
+    "series": {
+        "hl_fees_daily_usd": {"path": "daily_fees", "date_key": "time", "value_key": "fees", "confirmed": False},
+        "hl_fees_perps_usd": {"path": "daily_perp_fees", "date_key": "time", "value_key": "fees", "confirmed": False},
+        "hl_fees_spot_usd": {"path": "daily_spot_fees", "date_key": "time", "value_key": "fees", "confirmed": False},
+        "hl_hip3_deployer_fees_usd": {"path": "daily_hip3_deployer_fees", "date_key": "time", "value_key": "fees",
+                                      "confirmed": False}},
+}
+for _m, _lab in (("hl_exchange_volume_usd", "Hyperliquid's own exchange-wide daily volume ($, info userFees."
+                                            "dailyUserVlm.exchange) — first-party, beside DefiLlama (R7B.C2)"),
+                 ("hl_fees_daily_usd", "Hyperliquid's own daily fees ($, stats-data) — stored once its shape is "
+                                       "confirmed (R7B.C2)"),
+                 ("hl_fees_perps_usd", "Hyperliquid's own daily perps fees ($, stats-data) — once confirmed (R7B.C2)"),
+                 ("hl_fees_spot_usd", "Hyperliquid's own daily spot fees ($, stats-data) — once confirmed (R7B.C2)"),
+                 ("hl_hip3_deployer_fees_usd", "the HIP-3 deployers' share of fees ($/day, stats-data) — once "
+                                               "confirmed (R7B.C2)")):
+    METRICS[_m] = {"label": _lab, "kind": "flow", "unit": "usd", "archetypes": [1, 3, 4], "tiers": [1],
+                   "sanity_min": 0, "sanity_max": 1e12, "only_projects": ("Hyperliquid",)}
+METRICS["hl_hip3_dex_count"] = {"label": "HIP-3 perp DEXs deployed on Hyperliquid (info perpDexs) — R7B.C2",
+                                "kind": "stock", "unit": "count", "archetypes": [1, 3, 4], "tiers": [1],
+                                "sanity_min": 0, "sanity_max": 1e4, "only_projects": ("Hyperliquid",)}
+for _m in ("hl_exchange_volume_usd", "hl_hip3_dex_count", "hl_fees_daily_usd", "hl_fees_perps_usd", "hl_fees_spot_usd",
+           "hl_hip3_deployer_fees_usd"):
+    NOT_SHOWN[("Hyperliquid", _m)] = "R7B.C2: Hyperliquid's own statistics — evidence for the S13 lines, not a headline"
+# R7B.B1: Sky's own released-held series (A3 / A4) — not the shared metric, so no other project's applicability moves
+FLOAT_RELEASED_HELD["Sky"]["metric"] = "sky_released_held_tokens"
+METRICS["sky_released_held_tokens"] = {
+    "label": "SKY released to Sky's two endowments and still held LIQUID by them — in circulating, out of the tradeable "
+             "float (R7B.B1)", "kind": "stock", "unit": "tokens", "archetypes": [3, 4], "tiers": [2], "sanity_min": 0,
+    "sanity_max": 1e11, "only_projects": ("Sky",), "view_only": True}
+METRICS["issuer_held_released_tokens"]["only_projects"] = tuple(
+    x for x in METRICS["issuer_held_released_tokens"]["only_projects"] if x != "Sky")

@@ -4872,6 +4872,20 @@ NEAR_LOCKUP_FRESH_DAYS = 10        # a weekly read, plus slack: older than this 
 LOCKUP_AGE_AMBER: dict = {}
 
 
+def _difference_views(groups: dict) -> None:
+    """R7B.B1 (config.DIFFERENCE_VIEWS): a read-time series = a stock − a part of it, per day both are held (Sky's
+    endowments' LIQUID SKY = their total − their SKY locked in Lockstake). A day missing either is no value."""
+    for (name, metric), (whole, part) in config.DIFFERENCE_VIEWS.items():
+        a, b = _daily(groups.get((name, whole))), _daily(groups.get((name, part)))
+        idx = a.index.intersection(b.index)
+        if idx.empty:
+            continue
+        cols = next(g.columns for (n_, _m), g in groups.items() if n_ == name and g is not None and not g.empty)
+        groups[(name, metric)] = _as_stored(pd.DataFrame(
+            {"date": idx, "project": name, "metric": metric, "value": (a.reindex(idx) - b.reindex(idx)).clip(lower=0).values,
+             "tier": 2, "source": f"derived:{whole}-{part}"}), cols)
+
+
 RELEASED_STAKED_RESTATED: dict = {}        # project -> {"days", "dropped", "first", "last"} (R7.C1), last build
 
 
@@ -4893,9 +4907,13 @@ def _released_staked_views(groups: dict) -> None:
         excl, stk, team = (_daily(groups.get((name, m))) for m in (spec["held"], spec["staked_all"], spec["team"]))
         g = g.assign(date=pd.to_datetime(g["date"]).dt.normalize()).sort_values("date") \
              .drop_duplicates("date", keep="last").set_index("date")
-        idx = g.index.intersection(excl.index).intersection(stk.index).intersection(team.index)
-        staked_out = (stk.reindex(idx) - team.reindex(idx)).clip(lower=0)
-        spot = (excl.reindex(idx) - staked_out).clip(lower=0)
+        # the two wallets' stake and spot on every day their own legs hold (R7B.A1: not only on the days circulating
+        # is stored — the spot is the unlock stock, and its history is the legs' own)
+        legs = excl.index.intersection(stk.index).intersection(team.index)
+        staked_all_days = (stk.reindex(legs) - team.reindex(legs)).clip(lower=0)
+        spot_all_days = (excl.reindex(legs) - staked_all_days).clip(lower=0)
+        idx = g.index.intersection(legs)
+        staked_out, spot = staked_all_days.reindex(idx), spot_all_days.reindex(idx)
         net = g.loc[idx, "source"].astype(str).str.contains("-exclude_wallets", regex=False)
         val = g.loc[idx, "value"].astype(float).where(~net, g.loc[idx, "value"].astype(float) + staked_out)
         val = val.where(net, g.loc[idx, "value"].astype(float) - spot)
@@ -4904,7 +4922,7 @@ def _released_staked_views(groups: dict) -> None:
             {"date": idx, "project": name, "metric": spec["metric"], "value": val.values, "tier": 1,
              "source": f"derived:released_staked[{spec['point']}]"}), cols)
         groups[(name, spec["spot_metric"])] = _as_stored(pd.DataFrame(
-            {"date": idx, "project": name, "metric": spec["spot_metric"], "value": spot.values, "tier": 1,
+            {"date": legs, "project": name, "metric": spec["spot_metric"], "value": spot_all_days.values, "tier": 1,
              "source": "derived:released_staked[spot]"}), cols)
         RELEASED_STAKED_RESTATED[name] = {"days": len(idx), "dropped": int(len(g) - len(idx)),
                                           "first": str(idx.min().date()) if len(idx) else None,
@@ -5174,6 +5192,13 @@ def _revenue_total_views(groups: dict) -> None:
             if not legs:
                 continue
             ss = [_daily(groups.get((name, m))) for m in legs]
+            # R7B.C2: a leg another leg counts from a date is 0 from that date whether or not it has a row there
+            for i, m in enumerate(legs):
+                cut = config.REVENUE_LEG_COUNTED_ELSEWHERE.get((name, m))
+                if cut and i and not ss[0].empty:
+                    s_ = ss[i].reindex(ss[i].index.union(ss[0].index))
+                    s_[s_.index >= pd.Timestamp(cut["from"])] = 0.0
+                    ss[i] = s_.dropna()
             missing = [m for m, s_ in zip(legs, ss) if s_.empty]
             if missing:
                 _VIEW_BLOCKS[(name, metric)] = "BLOCKED — no rows stored for " + ", ".join(missing)
@@ -5184,6 +5209,14 @@ def _revenue_total_views(groups: dict) -> None:
                   pd.concat([pd.Series(0.0, index=[d for d in ss[0].index
                                                    if d < pd.Timestamp(config.REVENUE_LEG_FROM[(name, m)])]), s_])
                   for m, s_ in zip(legs, ss)]
+            # R7B.C2 (Jake 2026-11-16): A LEG ANOTHER LEG ALREADY COUNTS FROM A DATE is 0 from that date — never twice
+            # (Hyperliquid: DefiLlama's revenue includes the AQAv2 reserve yield from 2026-08-27)
+            for i, m in enumerate(legs):
+                cut = config.REVENUE_LEG_COUNTED_ELSEWHERE.get((name, m))
+                if cut:
+                    s_ = ss[i].copy()
+                    s_[s_.index >= pd.Timestamp(cut["from"])] = 0.0
+                    ss[i] = s_
             tot = pd.concat(ss, axis=1).dropna().sum(axis=1)
             if tot.empty:
                 continue
@@ -6654,6 +6687,7 @@ def aggregate(long: pd.DataFrame, fetch_status: pd.DataFrame, asof: pd.Timestamp
     _total_supply_net_views(groups)   # Round G2 D2/L3: total supply = our total net of what is burned (FDV reads it)
     _wm_total_supply_views(groups)    # Round G7 0a: World Mobile's total = option C, option B its own row
     _modelled_lock_views(groups)  # PR4C.1: Morpho's relocked MORPHO, modelled, before circulating subtracts it
+    _difference_views(groups)     # R7B.B1: e.g. Sky's endowments' liquid SKY, before the floats read it
     _circulating_views(groups)
     _cg_plus_staked_views(groups)
     _near_lockup_views(groups)    # BEFORE market cap: NEAR's circulating under Jake's lockup rule
@@ -10492,12 +10526,18 @@ def _onchain_release_views(groups: dict) -> None:
         # A RELEASE IS NEVER NEGATIVE (item 2): a day the circulating figure fell net of the buyback is not a negative
         # release — clipped at 0, as the unlock releases are (_unlock_release_view)
         rel = rel.clip(lower=0.0)
-        if rel.empty:
-            continue
         held = groups.get((name, "pool_release_tokens"))
         if held is not None and not held.empty:
             groups[(name, "pool_release_tokens_coingecko")] = _as_stored(
                 held.assign(metric="pool_release_tokens_coingecko"), held.columns)
+        if rel.empty:
+            # R7B.A1 (the R7 gate's guard): the CoinGecko-derived rows are the CROSS-CHECK only — never the release
+            # while the first-party one has no day (two measuring points in one series); the release is unknown
+            groups.pop((name, "pool_release_tokens"), None)
+            _VIEW_BLOCKS[(name, "pool_release_tokens")] = (
+                f"BLOCKED — the first-party release has no two consecutive days on one basis of {fp['stock']} yet "
+                f"(the CoinGecko-derived route is kept beside it as pool_release_tokens_coingecko, never in its place)")
+            continue
         groups[(name, "pool_release_tokens")] = _as_stored(pd.DataFrame(
             {"date": rel.index, "project": name, "metric": "pool_release_tokens", "value": rel.values,
              "source": f"derived:d({fp['stock']})+{'+'.join(fp.get('plus') or ())}", "tier": 2}), g.columns)
