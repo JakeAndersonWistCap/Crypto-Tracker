@@ -534,6 +534,69 @@ A Plume seed started on code older than 2026-10-01 saved its state only at the e
 or stop it and start again on the new code. Don't run both at once: they write the same state file.
 
 
+## 11es. Rounds 6B + 7 — housekeeping, Sky, Hyperliquid (2026-11-16)
+
+Three parts, pushed one by one: part A (9bedc93: the gate's two fixes, gate speed, Pendle's revenue row like for like,
+Fluid's allowance re-checked, ASCII .ps1), part B (64490e5: Sky — the endowments stay out because a lock applies, the
+endowment set is Sky's unlock leg, the MKR-backing history, live references), part C (3b4f186: Hyperliquid —
+circulating by the rule, one emissions figure, S13, checks on Hyperliquid's own data). PowerShell 5.1:
+
+```
+cd C:\Users\jake\Crypto-Tracker
+.venv\Scripts\Activate.ps1
+git switch claude/crypto-metrics-supply-demand-ovkg8g
+git pull
+git log --oneline -1
+#   expect: the line ends "R7: RUNBOOK 11es" (the round's last commit; part C is 3b4f186 just below it)
+python -c "import config; print(config.unlock_stock_metrics('Hyperliquid'), config.REVENUE_SPLIT['Hyperliquid']['round'], config.OPTION_C_INTERVAL_BASIS, sorted(config.FROZEN_PROJECTS))"
+#   expect: ('excluded_wallets_spot_tokens', 'team_wallet_tokens') R7.C3 (Jake 2026-11-16) ('Hyperliquid',) ['Fluid', 'Maple', 'Morpho', 'Pendle', 'Uniswap']
+python circ_legs.py Sky
+#   expect: sky_mkr_nonissuer_backing_tokens [add]: 28 of 35 day(s) held; MISSING 7 (the backfill below fills them)
+python circ_legs.py Hyperliquid
+#   expect: the first-party legs with few or no MISSING days (read-only; nothing changes yet)
+python token_metrics.py
+#   expect: Pendle stores pendle_epoch_market_revenue_unpriced_usd and revenue_usd_defillama_unpriced (new); Sky and
+#   Hyperliquid read as before (a tier timeout after a long pause is the PC sleeping - rerun that step)
+python archive_backfill.py --run --project Sky --budget-min 45
+#   expect: "MKR backing Sky: N row(s) (4 per day ...) - reached the start of the window"; rerun until it says
+#   "0 row(s)" and the other Sky legs report nothing left
+python archive_backfill.py --run --project Hyperliquid --budget-min 30
+#   expect: a line per backfilled series; rerun until it reports nothing left
+python circ_legs.py Sky
+#   expect: sky_mkr_nonissuer_backing_tokens [add]: none missing
+python circ_legs.py Hyperliquid
+#   expect: every leg "none missing"
+python token_metrics.py --no-fetch
+#   expect: the workbooks rebuild with no error; Hyperliquid's option C line reads "PASSED ... passed on the
+#   read-to-read interval basis"
+python done_check.py --verbose
+#   expect: Uniswap, Fluid, Maple, Morpho, Pendle READY; Sky READY or only lines naming a series your store lacks
+#   (net supply change reads a number once the backing is filled); Hyperliquid NOT READY - paste its list back
+python store_export.py --project Sky
+#   expect: wrote exports/sky-2026-...json.gz - metrics N, review_queue N, manual_overrides N, run_log N, gap_report N
+python store_export.py --project Hyperliquid
+#   expect: wrote exports/hyperliquid-2026-...json.gz - metrics N, ...
+git switch data/store-exports
+git pull
+git add -f exports
+git commit -m "data: Sky and Hyperliquid store exports"
+git push
+git switch claude/crypto-metrics-supply-demand-ovkg8g
+git log --oneline -1
+#   expect: the line ends "R7: RUNBOOK 11es"
+python project_freeze.py --compare Uniswap    # expect: Uniswap: 309 cells, 0 undeclared move(s)
+python project_freeze.py --compare Fluid      # expect: Fluid: 353 cells, 0 undeclared move(s)
+python project_freeze.py --compare Maple      # expect: Maple: 360 cells, 0 undeclared move(s)
+python project_freeze.py --compare Morpho     # expect: Morpho: 285 cells, 0 undeclared move(s)
+python project_freeze.py --compare Pendle     # expect: Pendle: 373 cells, 0 undeclared move(s)
+```
+
+What to look for after the rebuild: Sky's circulating about 20,343.6M (the endowments still out, R7.B1), its net
+supply change a number; the five Sky farm rows judged against Block Analitica (the USDS-farm row against its 28-day
+mean: about 5.30% vs 5.61%); Hyperliquid's circulating about 301.2M (tokenDetails 301.6M less Grants' unstaked 0.1M
+and the HyperEVM burn), CP Emissions Q0 a number (no "0 — fixed supply"), FEES / REVENUE / HOLDER REVENUE numbers;
+Pendle's revenue row "not stored" until this run's two new series land, then like for like (about +6%, PASS).
+
 ## 11er. Project rounds 5B (Pendle frozen) and 6 (Sky) — 2026-11-16
 
 Round 5B finished Pendle on your 11-15 export and froze it (the full gate passed before the push). Round 6 is Sky:
