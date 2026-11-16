@@ -306,7 +306,8 @@ def test_3_every_d_recipient_is_labelled_and_the_budget_safes_are_holders():
     # (b): the distributors stay out of (d) and the rewards they pay are counted elsewhere — never dropped
     ex = {a.lower() for a in sc["exclude_counterparties"]}
     assert {"0x675671a8756ddb69f7254afb030865388ef699ee", "0xc8d67fcf101d3f89d0e1f3a2857485a84072a63f"} <= ex
-    assert config.OUTFLOW_CATEGORIES["Sky"]["c"] and config.OUTFLOW_CATEGORIES["Sky"]["e"]
+    # R6.2 (Jake 2026-11-16): the distributors' rewards are emissions, (c), in every funding period — none is (e)
+    assert config.OUTFLOW_CATEGORIES["Sky"]["c"] == ("emissions_tokens",) and config.OUTFLOW_CATEGORIES["Sky"]["e"] == ()
     assert "allowance" in config.SKY_TREASURY_VEST["how"] or "transferFrom" in config.SKY_TREASURY_VEST["how"]
 
 

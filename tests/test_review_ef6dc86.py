@@ -151,7 +151,8 @@ def test_sky_onchain_circulating_takes_its_added_back_leg(monkeypatch):
     bw._circulating_views(groups)
     g = groups[("Sky", "circulating_supply_onchain")]
     assert len(g) == len(days)
-    assert g["value"].iloc[-1] == pytest.approx(23_459_804_204 - 27_996_757 - 2_043_352_267 + 1_903_000_000)
+    # R6.3 (Jake 2026-11-16): the Pause Proxy's SKY (treasury_holding_tokens) is the held buyback, in circulating
+    assert g["value"].iloc[-1] == pytest.approx(23_459_804_204 - 2_043_352_267 + 1_903_000_000)
 
 
 # ------------------------------------------------------------------------------------------- 10 / 11 trajectory

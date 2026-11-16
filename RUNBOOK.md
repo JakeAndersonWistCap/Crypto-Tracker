@@ -534,6 +534,101 @@ A Plume seed started on code older than 2026-10-01 saved its state only at the e
 or stop it and start again on the new code. Don't run both at once: they write the same state file.
 
 
+## 11er. Project rounds 5B (Pendle frozen) and 6 (Sky) — 2026-11-16
+
+Round 5B finished Pendle on your 11-15 export and froze it (the full gate passed before the push). Round 6 is Sky:
+Pendle and the four earlier freezes do not move. PowerShell 5.1, from the repo folder. **Read-only checks first**
+(nothing here writes to `metrics.db`):
+
+```
+git switch claude/crypto-metrics-supply-demand-ovkg8g
+git pull
+git log --oneline -1
+#   expect: the line ends "R6: Sky - revenue lines, emissions, held buyback, live references"
+python -c "import config; print(config.REVENUE_SPLIT['Sky']['round'], config.CIRCULATING_ONCHAIN['Sky']['subtract'], config.held_buyback_float_metric('Sky'), sorted(config.FROZEN_PROJECTS))"
+#   expect: R6.1 (Jake 2026-11-16) ('noncirculating_holding_tokens',) treasury_holding_tokens ['Fluid', 'Maple', 'Morpho', 'Pendle', 'Uniswap']
+python circ_legs.py Sky
+#   expect: total_supply, noncirculating_holding_tokens and sky_mkr_nonissuer_backing_tokens listed with few or no
+#   MISSING days; no treasury_holding_tokens leg (the Pause Proxy's SKY is circulating now, R6.3)
+python circ_legs.py Pendle
+#   expect: every leg "none missing"
+```
+
+**Then the run, the backfills and the rebuild** (long steps):
+
+```
+python token_metrics.py
+#   expect: sky_accounting stores sky_savings_cost_usd_ba and sky_revenue_after_savings_usd_ba (monthly) beside
+#   revenue_usd_ba; the farm references locked_tokens_*_farm_ba and *_farm_apy_ba store as before
+python archive_backfill.py --run --project Sky --budget-min 30       # rerun until it reports nothing left
+python archive_backfill.py --run --project Pendle --budget-min 30    # rerun until it reports nothing left
+python circ_legs.py Sky                                               # expect: every leg "none missing"
+python circ_legs.py Pendle                                            # expect: every leg "none missing"
+python token_metrics.py --no-fetch
+```
+
+**One command for the round's cells** (after the rebuild):
+
+```
+@'
+import openpyxl
+wb = openpyxl.load_workbook("token_metrics_audit.xlsx", data_only=True)
+ws = wb["CP Comparability"]; hr = next(r for r in range(1, 13) if ws.cell(r, 1).value == "Project")
+heads = ("Circulating supply (tokens)", "Held buyback inside circulating", "TRADEABLE FLOAT", "Emissions Q0 (tokens)",
+         "Unlocks Q0", "FEES Q0", "REVENUE Q0", "HOLDER REVENUE Q0", "HOLDER SHARE", "Payout ratio", "Insider share",
+         "Dilution (c)", "TOTAL DILUTION", "NET HOLDER YIELD")
+for name in ("Sky", "Pendle"):
+    row = next(r for r in range(hr + 1, ws.max_row + 1) if ws.cell(r, 1).value == name)
+    for c in range(1, ws.max_column + 1):
+        h = str(ws.cell(hr, c).value or "")
+        if h.startswith(heads):
+            print(name, "|", h[:50], "|", str(ws.cell(row, c).value)[:90])
+'@ | python -
+#   expect, Sky: circulating = your last build's + the Pause Proxy (~33.3M on 2026-11-16); held buyback ~33.3M; the
+#   tradeable float unchanged; Emissions Q0 ~106M (the vest payouts); Unlocks "n/a — no non-circulating wallet set on this
+#   project" (declared: no unlock, R6.2); FEES / REVENUE / HOLDER REVENUE numbers (REVENUE ~ fees − ~$46M of
+#   savings rate a quarter); HOLDER SHARE a number; Dilution (c) a number; TOTAL DILUTION and NET HOLDER YIELD
+#   numbers where sky_ecosystem_out_tokens is stored
+#   expect, Pendle: HOLDER SHARE ~0.82, payout ratios ~0.76 gross / ~0.82 net, insider share 0 (as on the 11-15 export)
+python credibility_report.py --project Sky
+#   expect: in_locked_sky_farm / in_locked_usds_farm / in_apy_sky_farm / in_apy_usds_farm against Block Analitica
+#   (no "Awaiting Jake's reading"); in_emissions PASS: ~106M measured vs ~113M declared (vest 16/17/18;
+#   about −6%: the 11-16 payout lands after the window; tolerance 10%, not widened)
+python credibility_report.py --project Pendle
+#   expect: in_circ PASS (~+0.3%); in_revenue CHECK ~+10% (the gap numbered on its working; not widened)
+python done_check.py --verbose
+#   expect: Uniswap READY; Sky NOT READY with at most: A3 total dilution x2 (waits on your endowment decision), and
+#   only those of total dilution / net holder yield / net supply change / T-bill / insider whose series your store
+#   lacks; Pendle, Morpho, Maple, Fluid as on your last build
+```
+
+**The store exports, onto the side branch** (it exists, so switch to it):
+
+```
+python store_export.py --project Sky
+#   expect: wrote exports/sky-2026-...json.gz — metrics N, review_queue N, manual_overrides N, run_log N, gap_report N
+python store_export.py --project Pendle
+#   expect: wrote exports/pendle-2026-...json.gz — metrics N, ...
+git switch data/store-exports
+git pull
+git add -f exports
+git commit -m "data: Sky and Pendle store exports"
+git push
+git switch claude/crypto-metrics-supply-demand-ovkg8g
+git log --oneline -1
+#   expect: the line ends "R6: Sky - revenue lines, emissions, held buyback, live references"
+```
+
+**The five freezes, last:**
+
+```
+python project_freeze.py --compare Uniswap    # expect: Uniswap: 309 cells, 0 undeclared move(s)
+python project_freeze.py --compare Fluid      # expect: Fluid: 353 cells, 0 undeclared move(s)
+python project_freeze.py --compare Maple      # expect: Maple: 360 cells, 0 undeclared move(s)
+python project_freeze.py --compare Morpho     # expect: Morpho: 285 cells, 0 undeclared move(s)
+python project_freeze.py --compare Pendle     # expect: Pendle: 373 cells, 0 undeclared move(s)
+```
+
 ## 11eq. Project round 5 — Pendle (2026-11-13; for Jake's return)
 
 The store export branch `data/store-exports` was not on the remote, so round 5 ran on the dumps. These steps confirm it

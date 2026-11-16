@@ -334,13 +334,17 @@ def test_d5_near_settlement_reason_is_in_the_rebuilds_own_terms():
 
 
 def test_d6_sky_farm_rate_is_judged_on_the_readings_date():
+    """D6: ours is judged on the reference's date. R6.4 (2026-11-16): the reference is Block Analitica's live farm
+    rate, read each run (no longer Jake's 2026-10-07 reading) — so ours reads the latest day, not a pinned one."""
     import credibility as cred
     ours = config.CREDIBILITY["Sky"]["in_apy_sky_farm"]["ours"]
-    assert ours["as_of"] == "2026-10-07"
+    assert "as_of" not in ours and config.CREDIBILITY["Sky"]["in_apy_sky_farm"]["ref"]["window"] == "now"
     long = pd.concat([_g("Sky", "sky_farm_reward_rate_tokens_per_s", ["2026-10-07", "2026-10-20"], [18.4, 12.8]),
                       _g("Sky", "locked_tokens_sky_farm", ["2026-10-07", "2026-10-20"], [8.8e9, 8.8e9])])
     v = cred.ours_value("Sky", ours, {}, long, pd.Timestamp("2026-10-21"))
-    assert abs(v - 18.4 * 31_536_000 / 8.8e9) < 1e-9
+    assert abs(v - 12.8 * 31_536_000 / 8.8e9) < 1e-9
+    v = cred.ours_value("Sky", dict(ours, as_of="2026-10-07"), {}, long, pd.Timestamp("2026-10-21"))
+    assert abs(v - 18.4 * 31_536_000 / 8.8e9) < 1e-9            # a dated reference still judges on its date
 
 
 def test_d7_near_treasury_mint_is_a_memo_and_not_d():

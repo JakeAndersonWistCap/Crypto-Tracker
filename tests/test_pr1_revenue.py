@@ -65,8 +65,11 @@ def test_s13_labels_say_the_line_and_never_substitute():
     assert s == " · fees" and "SECONDARY" in note
     s, note = config.revenue_tier_label("Uniswap", bw.CP_HREV_LINE_HEAD)
     assert s == " · holder revenue" and "PRIMARY" in note
-    assert config.revenue_tier_label("Sky", bw.CP_REV_LINE_HEAD) is None
-    t = config.not_yet_split_text("Sky")
+    # R6.1: Sky is split (Block Analitica's P&L); Aave is the project not yet split
+    assert config.revenue_tier_label("Aave", bw.CP_REV_LINE_HEAD) is None
+    s, note = config.revenue_tier_label("Sky", bw.CP_REV_LINE_HEAD)
+    assert s == " · revenue" and "SSR" in note and "DSR" in note
+    t = config.not_yet_split_text("Aave")
     assert t.startswith("not yet split") and "REVENUE" in t and reader.code_of(t) == "not yet split"
 
 
@@ -239,8 +242,8 @@ def test_gate_the_new_lines_are_on_cp_and_every_reader_tab(built):
     ws = built["rd"][reader.COMPARISON]
     heads, rows = _table(ws)
     c = heads["Revenue (S13), 90 days"]
-    sky = ws.cell(rows["Sky"], c)
-    assert sky.value == "not yet split" and "REVENUE" in sky.comment.text
+    aave = ws.cell(rows["Aave"], c)                     # R6.1: Sky is split; Aave is not yet
+    assert aave.value == "not yet split" and "REVENUE" in aave.comment.text
 
 
 def test_gate_uniswap_three_lines_are_the_routed_series(built):

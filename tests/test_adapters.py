@@ -24578,7 +24578,10 @@ def test_sky_rewards_are_released_not_minted():
     sky = config.PROJECT_BY_NAME["Sky"]
     sch = sky["issuance_schedule"]
     assert sch["emissions_only"] and not sch.get("also_emissions")
-    assert sch["steps"][-1] == {"from": "2026-09-13", "tokens_per_day": 143_208_393 / 90, "until": "2026-12-11"}
+    # R6.2 (read from DssVest.awards, 2026-11-16): vest 17 (143,208,393 / 90 a day from 2026-09-13) was yanked on
+    # 10-12 by vest 18 (99,525,882 over 2026-10-12..2027-01-10)
+    assert {"from": "2026-09-13", "tokens_per_day": 143_208_393 / 90, "until": "2026-10-11"} in sch["steps"]
+    assert sch["steps"][-1] == {"from": "2026-10-12", "tokens_per_day": 99_525_882 / 90, "until": "2027-01-10"}
     assert sky["declared_zero"]["gross_issuance_tokens"]["sourced"]
     assert config.issuance_declared_zero("Sky")["check_metric"] == "gross_issuance_tokens"
     out = FetchOutput()
@@ -26320,16 +26323,19 @@ def test_sky_emissions_are_the_measured_release_and_the_rebuilt_streams_are_its_
     from fetch.schedule import Schedule
     sky = config.PROJECT_BY_NAME["Sky"]
     froms = [s["from"] for s in sky["issuance_schedule"]["steps"]]
-    assert {"2026-06-18", "2026-07-16", "2026-08-13", "2026-09-13"} <= set(froms)
+    # R6.2: vest 16 from its on-chain bgn 2026-08-17 (the spell date was 08-13); vest 18 from 2026-10-12
+    assert {"2026-06-18", "2026-07-16", "2026-08-17", "2026-09-13", "2026-10-12"} <= set(froms)
     assert sky["emissions_from_metric"] == "emissions_tokens_scan"
     out = FetchOutput()
     Schedule().run([sky], 30, out)
     got = set(out.frame()["metric"])
     assert "emissions_tokens_declared" in got and "emissions_tokens" not in got
-    # Q0 of the rebuilt schedule (2026-07-08..2026-10-06) is ~182M, within 4% of the measured 189.1M
+    # Q0 of the rebuilt schedule (2026-07-08..2026-10-06) against the measured 189.1M. R6.2 (2026-11-16, DssVest
+    # awards): vest 16 began on chain 2026-08-17, so vest 15 paid until then — 190.6M (was ~182M with vest 16 from the
+    # spell date 08-13): within 1% of the measured release (the pin was 175M..190M)
     f = out.frame().query("metric == 'emissions_tokens_declared'").set_index("date")["value"]
     q0 = float(f[(f.index > pd.Timestamp("2026-07-07")) & (f.index <= pd.Timestamp("2026-10-06"))].sum())
-    assert 175e6 < q0 < 190e6, q0
+    assert abs(q0 / 189.1e6 - 1) < 0.01, q0
     d = pd.Timestamp("2026-10-05")
     mk = lambda m, v, src: pd.DataFrame({"date": [d], "project": ["Sky"], "metric": [m], "value": [v],  # noqa: E731
                                          "source": [src], "tier": [2]})
@@ -27879,7 +27885,8 @@ def test_sky_yield_headline_is_the_farm_and_the_economy_wide_figure_is_recorded_
     py = config.PROTOCOL_YIELD["Sky"]
     assert (py["revenue"], py["lock"]) == ("staking_rewards_usds_usd", "locked_tokens_usds_farm")
     assert py["token_yield"]["payday"]["metric"] == "staking_yield_usds_farm_28d_pct"
-    assert sky["a3_protocol_yield"]["manual"]["value"] == 0.0461
+    # R6.4: the reference is Block Analitica's live farm rate, no longer Jake's 2026-10-07 reading (4.61%)
+    assert sky["a3_protocol_yield"]["metric"] == "usds_farm_apy_ba" and "manual" not in sky["a3_protocol_yield"]
     eco = sky["in_yield_economy_wide"]
     assert eco["ours"]["args"]["flow"] == "holders_revenue_usd" and eco["ours"]["args"]["stock"] == "locked_tokens"
     assert eco["ref"]["verdict"] == "N/A (recorded)" and "2.72%" in eco["ref"]["why"]

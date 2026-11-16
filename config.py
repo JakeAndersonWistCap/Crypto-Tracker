@@ -42729,3 +42729,173 @@ FROZEN_MOVES["Pendle"] = {"audit|A3 Revenue Buyback|BURNED ÷ (EMISSIONS + UNLOC
                                  'to': 0.706086757,
                                  'why': 'R5.3 (Jake 2026-11-13): a declared publish lag is matched — holder value ÷ '
                                         'revenue / fees over the days both cover (R5B.1: one basis)'}}
+
+
+# =====================================================================================================================
+# PROJECT ROUND 6 — SKY (Jake 2026-11-16). Sky cells only; the five frozen projects must not move. Not frozen.
+# =====================================================================================================================
+# R6.1 SKY'S THREE REVENUE LINES (S13), per Jake's decisions (2026-11-16). Source: Block Analitica's Sky P&L
+# (sky.data.blockanalitica.com/v1/accounting/profit-and-loss/items/history/?group_by=month, read 2026-11-16 — Sky's
+# analytics provider, the figures info.skyeco.com shows). October 2026: revenue 32,484,100 = Lite-PSM (USDC) 10,729,168 +
+# the Primes / Stars (Spark 8,218,667, Grove 5,765,598, Obex 1,239,313, Osero 80,784) + RWA (HVB 2,204,041, New Silver
+# 137,504, FortunaFi 11,540, Harbor Trade Credit 10,713) + crypto vaults (ETH-A/B/C, WSTETH-A/B, WBTC-A/B/C, LSE-SKY);
+# the savings rate: SSR "USDS Savings (sUSDS)" 15,121,442 + DSR "DAI Savings" 210,919. stUSDS staking (854,775) and the
+# Stars' distribution rewards are other expenses, not the savings rate.
+PROJECT_BY_NAME["Sky"]["sky_accounting"]["metrics"].update({
+    "savings": "sky_savings_cost_usd_ba", "revenue_after_savings": "sky_revenue_after_savings_usd_ba"})
+METRICS["sky_savings_cost_usd_ba"] = {
+    "label": "Sky's savings-rate cost per month ($, Block Analitica P&L expense subcategory 'Savings': SSR (sUSDS) + DSR "
+             "(sDAI)) — what REVENUE subtracts from fees (R6.1)", "kind": "flow", "unit": "usd", "archetypes": [3],
+    "tiers": [3], "sanity_min": -1e9, "sanity_max": 1e10, "only_projects": ("Sky",)}
+METRICS["sky_revenue_after_savings_usd_ba"] = {
+    "label": "Sky REVENUE per month ($) = Block Analitica P&L revenue (every income item: PSM, the Primes / Stars, RWA, "
+             "crypto vaults) − the savings rate (SSR + DSR) — S13 line 2 per Jake's decision (R6.1)", "kind": "flow",
+    "unit": "usd", "archetypes": [3], "tiers": [3], "sanity_min": -1e10, "sanity_max": 1e10, "only_projects": ("Sky",)}
+REVENUE_SPLIT["Sky"] = {
+    "round": "R6.1 (Jake 2026-11-16)",
+    "fees": {"metric": "revenue_usd_ba", "primary": False,
+             "route": "Block Analitica's Sky P&L revenue (type 'revenue', every item): all interest and yield the "
+                      "protocol earns — the Lite-PSM, the Primes / Stars' allocations (Spark, Grove, Obex, Osero), RWA "
+                      "vaults (HVB, New Silver, FortunaFi, Harbor Trade Credit), crypto vaults (ETH, wstETH, WBTC, "
+                      "LSE-SKY) — monthly, complete months. SECONDARY in the sense of a third party (Sky's analytics "
+                      "provider), not rebuilt on chain"},
+    "revenue": {"metric": "sky_revenue_after_savings_usd_ba", "primary": False,
+                "route": "fees − the savings rate paid to sUSDS / sDAI holders (Block Analitica P&L expense items SSR "
+                         "'USDS Savings (sUSDS)' + DSR 'DAI Savings'), month by month (Jake 2026-11-16)"},
+    "holder_revenue": {"metric": "holder_value_revenue_usd", "primary": True,
+                       "route": "the Smart Burn Engine's buyback (the Flapper buys SKY; its receiver() is the Pause "
+                                "Proxy 0xBE8E3e36…, read 2026-11-16) + the USDS the Splitter pays SKY stakers "
+                                "(staking_rewards_usds_usd), both credited (Jake 2026-11-16)"},
+    "holder_share": {"route": "holder revenue ÷ revenue per covered day"},
+    "other_recipients": "sUSDS / sDAI holders: the savings rate (fees − revenue); stUSDS stakers and the Stars' "
+                        "distribution rewards are other expenses inside revenue",
+    "crosscheck": "DefiLlama 'sky' fees / revenue stay beside it (fees_usd / revenue_usd); Block Analitica's net revenue "
+                  "before distributions (net_revenue_pre_distribution_usd) stays the payout ratio's base",
+}
+
+# R6.2 EMISSIONS, ONE FIGURE (Jake 2026-11-16): SKY paid to stakers from treasury vests (the SKY-rewards farm) is an
+# emissions outflow — dilution, released from the treasury, not an unlock — whatever funded the vest (minted to
+# 2025-06-01, Pause Proxy reserves, or SKY bought back from 2026-08-17). So every funding period's rewards are outflow
+# (c) — emissions_tokens itself, the figure CP, Master and the A-tabs read — and none is (e). The buyback that funds
+# the vests from 2026-08-17 is credited once, as holder revenue (R6.1); its re-emission is dilution.
+OUTFLOW_CATEGORIES["Sky"] = dict(
+    OUTFLOW_CATEGORIES["Sky"], c=("emissions_tokens",), e=(),
+    basis="SKY rewards to stakers are emissions — outflow (c) in every funding period (R6.2, Jake 2026-11-16: "
+          "released from the treasury, not an unlock): minted to 2025-06-01, paid from Pause Proxy reserves, or from "
+          "SKY bought back (from 2026-08-17; the buyback is credited once, as holder revenue). The USDS -> SKY farm "
+          "0x0650CAF1… stopped paying 2026-01-26; LSSKY -> SKY vests 17/18 since")
+
+# R6.2 THE DECLARED VEST STREAMS, CORRECTED FROM THE VEST CONTRACT (the reference of Emissions Q0; read 2026-11-16,
+# DssVest MCD_VEST_SKY_TREASURY 0x67eaDb32… awards(16..18), VestedRewardsDistribution 0x675671A8… vestId() = 18):
+#   vest 16 2026-08-17 14:02 .. 09-13 12:42  29,011,145 (1,076,708 / day)
+#   vest 17 2026-09-13 12:42 .. 10-12 14:01  46,232,885 (1,591,204 / day — 143,208,393 / 90 declared, yanked early)
+#   vest 18 2026-10-12 14:01 .. 2027-01-10  99,525,882 (1,105,843 / day)
+# Jake's 11-16 build read the measured release 106,026,762 against the declared 130,345,980 (−18.7%). The declared
+# schedule had no vest-18 step: it kept vest 17's 1,591,204 a day after 10-12 (≈ +16.5M over 10-12..11-15), and the
+# window's last days (11-09..11-15, ≈ 6.6M) are paid by the 11-16 distribute(), after the window — weekly distribute()
+# moves releases across the edges. Thirteen distribute() payouts land in Q0 (08-24 .. 11-09, eth.blockscout.com: they
+# sum to 106,026,762 exactly). No real shortfall; the tolerance is not widened.
+_sky_sched = PROJECT_BY_NAME["Sky"]["issuance_schedule"]["steps"]
+for _st in _sky_sched:
+    if _st["from"] == "2026-08-13":
+        _st["from"] = "2026-08-17"                                   # vest 16's on-chain bgn (the spell date was 08-13)
+    if _st["from"] == "2026-09-13":
+        _st["until"] = "2026-10-11"                                  # vest 17 yanked at vest 18's bgn
+for _st in _sky_sched:
+    if _st["from"] == "2026-08-17":
+        _st["until"] = "2026-09-12"
+_sky_sched.append({"from": "2026-10-12", "tokens_per_day": 99_525_882 / 90, "until": "2027-01-10"})
+PROJECT_BY_NAME["Sky"]["issuance_schedule"]["source_date"] = "2026-11-16"
+PROJECT_BY_NAME["Sky"]["issuance_schedule"]["note"] += (
+    " R6.2 (2026-11-16): vest 16 from its on-chain bgn 2026-08-17; vest 17 yanked 2026-10-12 by vest 18 (99,525,882 SKY, "
+    "2026-10-12..2027-01-10) — read from DssVest.awards(16..18)")
+
+# R6.2 NO UNLOCK ON SKY: every SKY that left the Pause Proxy 2026-08-01..11-16 went to the VestedRewardsDistribution
+# (180,704,462 in 21 distribute() transfers — the stakers' emissions, outflow (c)) or was BURNED (Stage 2: 2,860,943.76 on
+# 09-13, 7,372,288 on 10-12); its inflows were the Flapper's buys (135,626,281 from the UniswapV2 SKY/USDS pair, 2,707
+# swaps). Nothing else is released from the treasury: Unlocks (e) is n/a by evidence, not a missing set.
+DECLARED_NA_REASONS.setdefault("Sky", []).append(
+    {"cols": ("Unlocks Q0",), "match": "no non-circulating wallet set on this project",
+     "text": "n/a — no unlock: every SKY leaving the Pause Proxy is a vest payout to the stakers (emissions, outflow (c)) "
+             "or a Stage 2 burn",
+     "source": "eth.blockscout.com SKY transfers of the Pause Proxy 0xBE8E3e36…, 2026-08-01..11-16: out 180,704,462 to "
+               "the VestedRewardsDistribution 0x675671A8… (21 transfers) + 10,233,232 burned (09-13, 10-12); in "
+               "135,626,281 from the UniswapV2 SKY/USDS pair (the Flapper's buys)",
+     "read_on": "2026-11-16", "decided": "Jake 2026-11-16 (R6.2: SKY to stakers is emissions, not an unlock)",
+     "why": "the treasury's only outflows are emissions (c) and burns; there is no other release to count as (e)"})
+
+# R6.4 JAKE'S STALE 2026-10-07 READINGS -> LIVE SOURCES: Block Analitica's info-sky farm history (the figures
+# info.skyeco.com/staking shows), stored daily as *_ba by fetch/sky_accounting.py
+for _k, _m, _tol, _what in (
+        ("in_locked_sky_farm", "locked_tokens_sky_farm_ba", 2.0, "SKY-rewards farm total_staked"),
+        ("in_locked_usds_farm", "locked_tokens_usds_farm_ba", 2.0, "USDS-rewards farm total_staked"),
+        ("in_apy_sky_farm", "sky_farm_apy_ba", 5.0, "SKY-rewards farm apy"),
+        ("in_apy_usds_farm", "usds_farm_apy_ba", 10.0, "USDS-rewards farm apy")):
+    _row = CREDIBILITY["Sky"][_k]
+    _row["ref"] = {"metric": _m, "window": "now", "tol": _tol,
+                   "source": f"Block Analitica info-sky farm history, {_what} (what info.skyeco.com/staking shows), read "
+                             f"each run — replaces Jake's 2026-10-07 reading (R6.4)",
+                   "note": (_row.get("ref") or {}).get("note", "")}
+    _row["ours"].pop("as_of", None) if isinstance(_row.get("ours"), dict) else None
+CREDIBILITY["Sky"]["a3_protocol_yield"] = {
+    "metric": "usds_farm_apy_ba", "window": "now", "tol": 10.0,
+    "source": "Block Analitica info-sky USDS-rewards farm apy (live; replaces Jake's 2026-10-07 reading of 4.61%, R6.4)",
+    "note": "Ours is the USDS PAID over the trailing window, annualised over the SKY staked; the reference is the "
+            "farm's current rate. They part when the Splitter's flow changes inside the window."}
+
+# R6.3 WHERE THE SMART BURN ENGINE'S SKY GOES (Jake 2026-11-16: "Held -> retired (held), in circulating and off float").
+# The Flapper 0x374D9c3d… sends every SKY it buys to receiver() = the MCD Pause Proxy 0xBE8E3e36… (read 2026-11-16,
+# block 26,426,858: 33,265,937.27 SKY held). There it is HELD until the treasury vests pay it to the stakers (R6.2: those
+# payouts are emissions, outflow (c)) or a Stage 2 spell burns it (R6.2). So the Pause Proxy's SKY is a held buyback:
+# in circulating (Jake's rule: held buybacks are released supply), out of the tradeable float while held. Was (from
+# 2026-10-07): out of circulating as the governance treasury, so the "Held buyback inside circulating" cell read 0.
+# The whole circulating series is restated from stored legs (treasury_holding_tokens is held on every day it was
+# subtracted), never two bases. The $ the buyback spends is credited once, in HOLDER REVENUE (R6.1).
+CIRCULATING_ONCHAIN["Sky"]["subtract"] = tuple(
+    m for m in CIRCULATING_ONCHAIN["Sky"]["subtract"] if m != "treasury_holding_tokens")
+CIRCULATING_ONCHAIN["Sky"]["method"] = (
+    "SKY totalSupply − the MKR_SKY converters' SKY (pre-minted for unconverted MKR: MKR's claim, listed separately on "
+    "CoinGecko as MKR) − the two endowments once their history is complete (G18-3c) — spells-mainnet@17926e18 "
+    "addresses_mainnet.sol L507, L508. The Pause Proxy's SKY (the Flapper's held buyback) is circulating and out of "
+    "the tradeable float (R6.3, Jake 2026-11-16)")
+CIRCULATING_ONCHAIN["Sky"]["handover"] = {
+    "on": "2026-11-16", "decided": "Jake 2026-11-16 (R6.3)",
+    "from": "total − the Pause Proxy (treasury + every Flapper buyback) − the MKR_SKY converters − the endowments",
+    "to": "total − the MKR_SKY converters − the endowments; the Pause Proxy's SKY (the held buyback) is circulating and "
+          "out of the tradeable float",
+    "how": "the whole series is restated from stored legs: the Pause Proxy leg is no longer subtracted on any day"}
+CIRCULATING_POLICY["Sky"].update({
+    "now": "ON-CHAIN: total − the MKR_SKY converters' reserve − the endowments (G18-3c); the Pause Proxy's held buyback "
+           "is circulating, off the tradeable float (R6.3, Jake 2026-11-16)",
+    "previous": "total − the Pause Proxy − the MKR_SKY converters (− the endowments from G18-3c), 2026-10-07 .. 11-15"})
+HELD_BUYBACK_FLOAT["Sky"] = {
+    "how": "subtract", "held": "treasury_holding_tokens",
+    "why": "the MCD Pause Proxy 0xBE8E3e36…, the Flapper's receiver(): every SKY the Smart Burn Engine buys is held there "
+           "until the treasury vests pay it to stakers (emissions, R6.2) or a Stage 2 spell burns it — a held buyback, "
+           "in circulating (R6.3, Jake 2026-11-16). Stock: treasury_holding_tokens (SKY.balanceOf(Pause Proxy))"}
+SKY_HELD_BUYBACK_READ = {"block": 26_426_858, "read_on": "2026-11-16", "pause_proxy_sky": 33_265_937.27,
+                         "flapper": "0x374D9c3d…", "receiver": "0xBE8E3e36… (MCD Pause Proxy)"}
+CIRCULATING_ONCHAIN["Sky"]["project_definition"] = (
+    "Sky: the entire supply is circulating — ours too counts the Pause Proxy's SKY (the Flapper's held buyback, R6.3); "
+    "ours leaves out the MKR_SKY converters' reserve and the two endowments (G18-3c)")
+DISCRETIONARY_SUPPLY["Sky"] = (("treasury_holding_tokens",),
+                               "the Pause Proxy (the Flapper's held buyback, in circulating and off float, R6.3)")
+# R6.3: A3's effective float (circulating − ve locked − held reserve) takes the held buyback out as the tradeable float
+# does, where a handover brought it into circulating — so it does not rise by it (Sky's held Pause Proxy SKY)
+EFFECTIVE_FLOAT_HELD = {"Sky": "treasury_holding_tokens"}
+
+# R6.5 SKY'S DECLARED n/a REASONS (done_check's rule-3 suspects on the dumps): two quantities that do not exist for Sky
+DECLARED_NA_REASONS["Sky"] += [
+    {"cols": (), "match": "no supply-side incentive (b) series on file",
+     "source": "Jake's decision 2026-11-16 (R6.2): every SKY paid to stakers is emissions, outflow (c); "
+               "OUTFLOW_CATEGORIES['Sky'] (b) holds no series — Sky pays no supply-side incentive in SKY (its savings "
+               "rate is a USDS expense, inside fees − revenue, R6.1)",
+     "read_on": "2026-11-16", "decided": "Jake 2026-11-16 (R6.2)",
+     "why": "subsidy cover and leakage (ii) divide by supply-side incentives (b), which Sky does not pay: no ratio"},
+    {"cols": (), "match": "NO BUYBACK FUND EXISTS. Sky's surplus",
+     "source": "eth_call receiver() on the Flapper 0x374D9c3d… = the MCD Pause Proxy 0xBE8E3e36… (block 26,426,858, "
+               "2026-11-16); the Splitter and Flapper hold nothing between calls",
+     "read_on": "2026-11-16", "decided": "Jake 2026-11-16 (R6.3)",
+     "why": "no locked buyback fund exists: the bought SKY is held at the Pause Proxy (the held buyback, read as "
+            "treasury_holding_tokens, R6.3), which is not locked supply"},
+]

@@ -138,7 +138,9 @@ def test_sky_mkr_backing_is_circulating_and_the_vest_rate_is_stored():
     h = pd.DataFrame([{"date": d, "project": "Sky", "metric": m, "value": v} for m, v in (
         ("total_supply", 23_459_804_203.61), ("treasury_holding_tokens", 100.0), ("noncirculating_holding_tokens", 50.0),
         ("sky_mkr_nonissuer_backing_tokens", f.loc["sky_mkr_nonissuer_backing_tokens", "value"]))])
-    assert series(h, "Sky").iloc[-1] == pytest.approx(23_459_804_203.61 - 150 + 1_903_042_128.0, rel=1e-9)
+    # R6.3 (Jake 2026-11-16): the Pause Proxy (treasury_holding_tokens) is the held buyback, in circulating — only the
+    # converters' reserve comes off
+    assert series(h, "Sky").iloc[-1] == pytest.approx(23_459_804_203.61 - 50 + 1_903_042_128.0, rel=1e-9)
     # a day without the backing read computes nothing (never a figure on a basis missing a leg)
     assert series(h[h["metric"] != "sky_mkr_nonissuer_backing_tokens"], "Sky").empty
 

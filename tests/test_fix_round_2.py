@@ -183,8 +183,9 @@ def test_sky_rewards_split_by_funding_period():
     tot = g[("Sky", "emissions_tokens")]
     parts = sum(float(g[("Sky", m)]["value"].sum()) for m in config.REWARD_FUNDING["Sky"]["to"].values())
     assert parts == pytest.approx(float(tot.drop_duplicates("date", keep="last")["value"].sum()))
-    assert config.outflow_metrics("Sky", "c") == ("emissions_mint_funded_tokens",)
-    assert config.outflow_metrics("Sky", "e") == ("emissions_treasury_funded_tokens",)
+    # R6.2 (Jake 2026-11-16): every SKY paid to stakers is emissions, outflow (c), whatever funded it; none is (e)
+    assert config.outflow_metrics("Sky", "c") == ("emissions_tokens",)
+    assert config.outflow_metrics("Sky", "e") == ()
 
 
 # --------------------------------------------------------------------------------------------- S3 / S5 mints

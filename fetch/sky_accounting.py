@@ -298,6 +298,32 @@ class SkyAccounting:
                                 continue
                     self._store(out, name, rev_m, revs, last_complete, f"{SOURCE}:pnl.revenue",
                                 "P&L revenue (gross, before expenses and distributions)")
+            # 1b. THE SAVINGS-RATE COST (R6.1, Jake 2026-11-16: REVENUE = fees − the savings rate paid to sUSDS / sDAI
+            #     holders): the P&L expense items of subcategory "Savings" — SSR "USDS Savings (sUSDS)" + DSR "DAI
+            #     Savings" — summed per month. stUSDS staking and the Stars' distribution rewards are other expenses.
+            sv = spec["metrics"].get("savings")
+            if sv:
+                try:
+                    rows = _rows(get("/v1/accounting/profit-and-loss/items/history/", type="expense"))
+                except Exception as e:  # noqa: BLE001
+                    rows = f"{e}"
+                if isinstance(rows, str):
+                    out.fail(SOURCE, name, f"{sv}: {rows} — NOTHING STORED", TIER)
+                else:
+                    keep = [r for r in rows if str(r.get("subcategory")) == "Savings"]
+                    uids = sorted({str(r.get("uid")) for r in keep})
+                    sav = monthly_sum(keep)
+                    self._store(out, name, sv, sav, last_complete,
+                                f"{SOURCE}:pnl.expense.Savings[{'+'.join(uids)}]",
+                                f"the savings rate paid: P&L expense subcategory 'Savings' ({', '.join(uids)})")
+                    # REVENUE (S13 line 2) = P&L revenue (every income item: PSM, the Primes / Stars, RWA, vaults) −
+                    # the savings rate, month by month from the same two answers
+                    rn = spec["metrics"].get("revenue_after_savings")
+                    if rn and isinstance(bt, list):
+                        gross = monthly_sum([r for r in bt if str(r.get("type")) == "revenue"])
+                        self._store(out, name, rn, {k: v - sav.get(k, 0.0) for k, v in gross.items() if k in sav},
+                                    last_complete, f"{SOURCE}:pnl.revenue-expense.Savings",
+                                    "revenue (every P&L income item) − the savings rate (SSR + DSR)")
             # 2-3. CASH-FLOW CATEGORIES (outflows are negative; stored as positive spending)
             for key, category in (("buyback", "Buyback Spending"), ("staking", "Staking Rewards")):
                 m = spec["metrics"].get(key)

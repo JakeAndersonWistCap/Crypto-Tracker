@@ -12233,6 +12233,17 @@ def _held_buyback_note(p: dict) -> str:
             "out, and a fall in it returns to float through circulating; it is not subtracted twice.")
 
 
+def _effective_float_held(R: Refs, r, p: dict) -> str:
+    """R6.3 (config.EFFECTIVE_FLOAT_HELD): a held buyback brought INTO circulating by a declared handover comes off A3's
+    effective float too, as it does off the tradeable float — so the effective float does not rise by it. Only the
+    projects declared there (Sky: the Pause Proxy, the Flapper's receiver); a held stock not read today is no value."""
+    m = config.EFFECTIVE_FLOAT_HELD.get(p["name"])
+    if not m:
+        return ""
+    v = R.D(r, m, "now")
+    return f"-IF(ISNUMBER({v}),{v},NA())"
+
+
 HELD_BUYBACK_HEAD = ("Held buyback inside circulating (tokens) — out of the tradeable float while held (P4-Q5b)")
 BUYING_PRESSURE_HEAD = ("BUYING PRESSURE ON FLOAT, % a year = all market buybacks (burned + held + distributed, tokens, "
                         "annualised) ÷ tradeable float (P4-Q5c)")
@@ -13391,7 +13402,8 @@ def write_a3(ws, R: Refs, data_by_key: dict):
              f"({circ(r, p)})"
              f"-IF(ISNUMBER({R.D(r, 'locked_tokens', 'now')}),{_stake_inside(R, r, p)},0)"
              f"-IF(AND({R.C(r, 'Destination effect on float')}=\"locked_supply\","
-             f"ISNUMBER({R.D(r, 'buyback_fund_balance', 'now')})),{R.D(r, 'buyback_fund_balance', 'now')},0)"),
+             f"ISNUMBER({R.D(r, 'buyback_fund_balance', 'now')})),{R.D(r, 'buyback_fund_balance', 'now')},0)"
+             + _effective_float_held(R, r, p)),
          FMT_NUM, "calc"),
         ("Destination effect on float", lambda r, p: pull(R.C(r, "Destination effect on float")), FMT_TEXT, "pull"),
         # A hold and a payout move float in OPPOSITE directions, so they never share a formula.

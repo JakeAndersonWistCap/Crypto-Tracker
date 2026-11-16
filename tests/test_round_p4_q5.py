@@ -252,7 +252,9 @@ def test_buying_pressure_is_every_market_buyback_annualised_over_tradeable_float
 # project's programme (was 0.00842358798583249)
 # PR3B.3 (Jake 2026-11-11): Maple's holder value reads the buyback's own 3 published months (one flow, one window with
 # the A3 actual buyback: 658,866 on the dumps), was the trailing 90 days of month-end rows (283,866): 0.0040527229897458356
-BEFORE_HVY = {"Maple": 0.009202065513863445, "Sky": 0.02410483100412517, "Hyperliquid": 0.038137512591568695,
+# R6.3 (Jake 2026-11-16): Sky's market cap counts the Pause Proxy's held buyback (circulating + 20,142,225.8 on the
+# dumps), so its holder value yield is over a larger cap (was 0.02410483100412517)
+BEFORE_HVY = {"Maple": 0.009202065513863445, "Sky": 0.024084003858726048, "Hyperliquid": 0.038137512591568695,
               "Pendle": 0.01114886645183712, "Chainlink": 0.005996886350660165, "Near": 0.0022805223703844632}
 
 
@@ -368,7 +370,9 @@ def test_fixture_float_buying_pressure_and_holder_value_unchanged(built):
     # predate it): n/a naming it, never the old figure that took the Safe out twice
     assert "maple_ssf_safe_tokens" in str(XA.value(CP, crow["Maple"], fc))
     assert "less maple_ssf_safe_tokens" in cp.cell(crow["Maple"], fc).comment.text
-    assert "already out of circulating" in cp.cell(crow["Sky"], fc).comment.text
+    # R6.3 (Jake 2026-11-16): Sky's Pause Proxy is a held buyback IN circulating, out of the float while held
+    sky_note = cp.cell(crow["Sky"], fc).comment.text
+    assert "out of the tradeable float while held" in sky_note.lower() and "treasury_holding_tokens" in sky_note
     # buying pressure, same figure on A3 and CP (one builder): every buyback annualised ÷ the float
     pa, pc = _col(ws, lambda h: h == bw.BUYING_PRESSURE_HEAD), _col(cp, lambda h: h == bw.BUYING_PRESSURE_HEAD)
     arows = _rows(ws)
@@ -442,9 +446,10 @@ def test_the_held_buyback_column_maps_to_float_and_reads_only_listed_inputs():
     ins = set(flt["inputs"])
     # the original inputs stay; the held stocks are added, nothing else
     assert ins == {"circulating_supply_used", "locked_tokens", "staked_noncirculating_tokens",
-                   "ssf_holdings_tokens", "buyback_fund_balance", "buyback_held_tokens"}
+                   "ssf_holdings_tokens", "buyback_fund_balance", "buyback_held_tokens", "treasury_holding_tokens"}
     assert "held" in flt["definition"] and "held_buyback_inside" in flt["formula"]
-    for n, held in (("Maple", "ssf_holdings_tokens"), ("Near", "buyback_fund_balance")):
+    for n, held in (("Maple", "ssf_holdings_tokens"), ("Near", "buyback_fund_balance"),
+                    ("Sky", "treasury_holding_tokens")):                # R6.3: Sky's held buyback is inside now
         assert config.held_buyback_float(n)["how"] == "subtract"
         assert config.held_buyback_float_metric(n) == held
         reads = {held}                                   # the column's metric_fn: held_buyback_float_metric(n)
@@ -452,7 +457,7 @@ def test_the_held_buyback_column_maps_to_float_and_reads_only_listed_inputs():
         R = FakeRefs({})
         bw._cp_float(R, 5, P[n])
         assert held in {m for m, _c in R.cells}, n      # the float subtracts the held stock once
-    for n in ("Sky", "Chainlink", "Fluid"):
+    for n in ("Chainlink", "Fluid"):
         h = config.held_buyback_float(n)
         assert h["how"] == "outside" and config.held_buyback_float_metric(n) is None, n
         assert h["leg"] in (config.CIRCULATING_ONCHAIN[n].get("subtract") or ()), n
