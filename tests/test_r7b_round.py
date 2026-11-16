@@ -108,3 +108,17 @@ def test_c3_subsidy_cover_is_declared_na_with_its_sources_and_a_recheck_date():
     e = config.declared_na_reason("Hyperliquid", "n/a — no supply-side incentive (b) series on file; outflows held")
     assert e and "trading/fees" in e["source"] and "hype-tokenomics" in e["source"]
     assert e["recheck"] == "2026-12-16" and "points" in e["why"]
+
+
+# ================================================================== C4 / B2: the export's remaining reasons
+def test_c4_the_derived_emissions_series_inherit_the_declared_handover_and_no_coingecko_fallback():
+    for m in ("emissions_circulating_stake_tokens", "issuance_option_c_tokens"):
+        h = config.declared_handover("Hyperliquid", m)
+        assert h and h["ordered_points"][0] == "modelled:hl_reference_yield" and "none" in h["composition_change"]
+    assert config.no_coingecko_fallback("Hyperliquid")                  # never CoinGecko's basis as a stand-in
+
+
+def test_b2_sky_has_no_unlock_by_construction_and_says_why():
+    e = config.declared_na_reason("Sky", "Not formed on this tab: its total dilution is emissions + unlocks, and no "
+                                         "non-circulating wallet set is declared for Sky")
+    assert e and "mkrToSky" in e["source"] and e["read_on"] == "2026-11-16"

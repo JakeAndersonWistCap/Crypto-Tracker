@@ -534,6 +534,62 @@ A Plume seed started on code older than 2026-10-01 saved its state only at the e
 or stop it and start again on the new code. Don't run both at once: they write the same state file.
 
 
+## 11et. Round 7B — gate fixes, Sky endowments in, Hyperliquid finished on its export (2026-11-16)
+
+The round's commits: 4d15c7b (the gate's pins and fixes, Sky's endowments circulating, Hyperliquid's revenue streams,
+own stats, declared n/a) and the export fixes with this section. Your data branch's Sky file was still the 14:18
+export (on 96f6d97), so Sky's backfilled backing is not visible to the round yet: the steps below export it again.
+
+```
+cd C:\Users\jake\Crypto-Tracker
+.venv\Scripts\Activate.ps1
+git switch claude/crypto-metrics-supply-demand-ovkg8g
+git pull
+git log --oneline -1
+#   expect: the line ends "R7B: export fixes (Hyperliquid handover, no CoinGecko fallback, Sky no-unlock); RUNBOOK 11et"
+python -c "import config; print(config.CIRCULATING_ONCHAIN['Sky'].get('subtract_when_complete'), config.outflow_metrics('Sky','e'), bool(config.no_coingecko_fallback('Hyperliquid')), sorted(config.FROZEN_PROJECTS))"
+#   expect: None () True ['Fluid', 'Maple', 'Morpho', 'Pendle', 'Uniswap']
+python circ_legs.py Sky
+#   expect: sky_mkr_nonissuer_backing_tokens [add] listed; no switch leg (the endowments are circulating)
+python circ_legs.py Hyperliquid
+#   expect: the first-party legs listed (read-only; nothing changes yet)
+python token_metrics.py
+#   expect: an hl_stats line: hl_exchange_volume_usd N day(s); hl_hip3_dex_count=11 (or more); and one UNCONFIRMED line
+#   per stats-data path naming its status and keys (nothing stored from them yet)
+python archive_backfill.py --run --project Sky --budget-min 45
+#   expect: "MKR backing Sky: N row(s) ... - reached the start of the window"; rerun until it says 0 row(s)
+python archive_backfill.py --run --project Hyperliquid --budget-min 30
+#   expect: a line per backfilled series; rerun until it reports nothing left
+python circ_legs.py Sky
+#   expect: sky_mkr_nonissuer_backing_tokens [add]: none missing
+python circ_legs.py Hyperliquid
+#   expect: every leg "none missing"
+python token_metrics.py --no-fetch
+#   expect: no error; Sky circulating about 23,312M (the endowments in); Hyperliquid about 301.2M
+python -c "import sqlite3; c=sqlite3.connect('metrics.db'); [print(r) for r in c.execute(\"select ts, status, message from run_log where source='hl_stats' order by rowid desc limit 8\")]"
+#   expect: up to 8 lines - paste them back (they name each stats-data path's status and keys)
+python done_check.py --verbose
+#   expect: Uniswap, Fluid, Maple, Morpho, Pendle READY; Sky READY or only "Staking yield minus T-bill"; Hyperliquid
+#   NOT READY with "Net supply change" x2 (our figure starts 2026-09-30) - paste both lists back
+python store_export.py --project Sky
+#   expect: wrote exports/sky-2026-...json.gz - metrics N, review_queue N, manual_overrides N, run_log N, gap_report N
+python store_export.py --project Hyperliquid
+#   expect: wrote exports/hyperliquid-2026-...json.gz - metrics N, ...
+git switch data/store-exports
+git pull
+git add -f exports
+git commit -m "data: Sky and Hyperliquid store exports (after the backing backfill)"
+git push
+git switch claude/crypto-metrics-supply-demand-ovkg8g
+git log --oneline -1
+#   expect: the line ends "R7B: export fixes (Hyperliquid handover, no CoinGecko fallback, Sky no-unlock); RUNBOOK 11et"
+python project_freeze.py --compare Uniswap    # expect: Uniswap: 309 cells, 0 undeclared move(s)
+python project_freeze.py --compare Fluid      # expect: Fluid: 353 cells, 0 undeclared move(s)
+python project_freeze.py --compare Maple      # expect: Maple: 360 cells, 0 undeclared move(s)
+python project_freeze.py --compare Morpho     # expect: Morpho: 285 cells, 0 undeclared move(s)
+python project_freeze.py --compare Pendle     # expect: Pendle: 373 cells, 0 undeclared move(s)
+```
+
 ## 11es. Rounds 6B + 7 — housekeeping, Sky, Hyperliquid (2026-11-16)
 
 Three parts, pushed one by one: part A (9bedc93: the gate's two fixes, gate speed, Pendle's revenue row like for like,

@@ -43307,3 +43307,36 @@ METRICS["sky_released_held_tokens"] = {
     "sanity_max": 1e11, "only_projects": ("Sky",), "view_only": True}
 METRICS["issuer_held_released_tokens"]["only_projects"] = tuple(
     x for x in METRICS["issuer_held_released_tokens"]["only_projects"] if x != "Sky")
+
+# R7B.C4 THE TWO SERIES DERIVED FROM HYPERLIQUID'S EMISSIONS INHERIT ITS DECLARED HANDOVER (Jake's 11-16 export: with
+# option C passing on the read-to-read basis, Q0 holds MODELLED reward days before the first measured read, and the
+# derived pro-rata (a) and option-C issuance read "measuring point changed" — BROKEN ×7 on A1 / A4). The same quantity,
+# modelled before it was read, as emissions_tokens' own declared handover (2026-10-13); every modelled row stays
+# labelled MODELLED and counted apart.
+for _m, _pt in (("emissions_circulating_stake_tokens", "derived:stake_prorata"),
+                ("issuance_option_c_tokens", "derived:option_c_issuance")):
+    PROJECT_BY_NAME["Hyperliquid"]["series_handover"][_m] = {
+        "ordered_points": ("modelled:hl_reference_yield", _pt),
+        "why": "derived from emissions_tokens, whose history before its first measured read is MODELLED (option C, "
+               "read-to-read basis, Jake 2026-11-16) — the declared handover of emissions_tokens (2026-10-13), inherited",
+        "composition_change": "none: the same quantity, modelled before it was read",
+        "declared": "2026-11-16"}
+# R7B.B2 SKY HAS NO UNLOCK (A3's total dilution, rule-3 on Jake's store): with the Pause Proxy (R6.3) and the endowments
+# (R7B.B1) circulating, the only SKY outside circulating is the MKR_SKY converters' reserve beyond the non-issuer MKR
+# backing — it leaves only when MKR is converted (mkrToSky burns the MKR and sends 24,000 SKY each, less the fee), and
+# the backing added back falls by the same SKY: circulating does not move, so there is nothing to release.
+DECLARED_NA_REASONS["Sky"].append(
+    {"cols": (), "match": "no non-circulating wallet set is declared for Sky",
+     "source": "spells-mainnet@17926e18 addresses_mainnet.sol L507-L508 (MKR_SKY, MKR_SKY_LEGACY); the converter's "
+               "mkrToSky: MKR burned, SKY sent at rate() x (1 − fee()); config.CIRCULATING_ONCHAIN['Sky'] (total − the "
+               "converters + the non-issuer MKR backing)",
+     "read_on": "2026-11-16", "decided": "Jake 2026-11-16 (R7B.B1: the endowments are circulating)",
+     "why": "no unreleased SKY can be released: a conversion moves SKY out of the converter and MKR out of the backing in "
+            "equal measure; Sky's total dilution is its emissions (CP TOTAL DILUTION reads them)"})
+# R7B.C1 NO COINGECKO FALLBACK FOR HYPERLIQUID (Jake: "no CoinGecko fallback"): CoinGecko's ~222M leaves out the
+# Foundation + Grants stake, which ours counts (R7.C1) — another basis. On Jake's 11-16 export our first-party figure is
+# stored from 2026-09-30; before it CoinGecko stood in, so Q0's token flow opened on 222.4M and closed on 301.2M (a
+# +34% "residual" that was only the change of basis). A day without our figure is now no figure.
+CIRCULATING_ONCHAIN["Hyperliquid"]["no_coingecko_fallback"] = (
+    "CoinGecko's circulating leaves out the Foundation + Grants stake that ours counts (R7.C1) — another basis, never a "
+    "stand-in; our first-party figure is stored from 2026-09-30 on Jake's store")
