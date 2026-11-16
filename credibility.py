@@ -1331,7 +1331,7 @@ def _now_combo(p, rows, long, asof, metrics=(), minus=(), minus_from=None, dated
     return a - b, max(str(da or ""), str(db or "")) or None, f"{ha} − ({hb})"
 
 
-def _free_float_now(p, rows, long, asof, add_back=(), **_):
+def _free_float_now(p, rows, long, asof, add_back=(), minus_released=False, **_):
     """OUR free float now: the circulating the ratios use − the locked tokens inside it (as A2 computes it)."""
     # FROM THE BUILT ROWS (2026-10-06 overnight, A1/A2): the on-chain circulating is a READ-TIME view, absent from
     # the raw store — reading the store fell back to CoinGecko's circulating, which for Pendle / Aerodrome already
@@ -1370,6 +1370,16 @@ def _free_float_now(p, rows, long, asof, add_back=(), **_):
                     return None, None, f"no {xm} figure"
                 lock = max(0.0, lock - v)
                 parts.append(f"less {xm} {v:,.0f} (locked, already out of circulating)")
+    # R5B.3: the RELEASED issuer-held wallets (config.FLOAT_RELEASED_HELD) are in our circulating and out of A2's free
+    # float — subtracted here too, named, so "free float" is A2's own (Pendle: the Team multisig + the fee wallet, which
+    # CoinGecko also excludes)
+    fr = config.float_released_held(p) if minus_released else None
+    if fr:
+        v, _d = now(fr["metric"])
+        if v is None:
+            return None, None, f"no {fr['metric']} figure"
+        lock += v
+        parts.append(f"{fr['metric']} {v:,.0f} (released, held: out of the float)")
     extra, extra_parts = 0.0, []
     for lm in add_back:                       # lock legs the REFERENCE still counts (Pendle: CoinGecko's sPENDLE)
         v, _d = now(lm)
@@ -2747,9 +2757,13 @@ def circulating_input(name: str) -> dict:
     if config.coingecko_is_free_float(name) and ours_m == "circulating_supply_onchain":
         legs = config.coingecko_counted_lock_legs(name)
         if legs:                                  # Pendle: CoinGecko excludes vePENDLE but still counts sPENDLE
+            fr = config.float_released_held(name)
+            rel = (f" — A2's free float takes out the locks AND {fr['metric']} (released, held: the Team multisig + "
+                   f"the fee wallet, R5.1), which CoinGecko excludes too" if fr else "")
             return {"what": f"Circulating as CoinGecko counts it = OUR FREE FLOAT + {' + '.join(legs)} (CoinGecko "
-                            f"still counts them); ours is stricter by exactly that",
-                    "ours": {"py": "free_float_now", "args": {"add_back": legs}}, "fmt": '#,##0;(#,##0);-',
+                            f"still counts them){rel}",
+                    "ours": {"py": "free_float_now", "args": {"add_back": legs, "minus_released": bool(fr)}},
+                    "fmt": '#,##0;(#,##0);-',
                     "ref": {"metric": "circulating_supply", "window": "now", "tol": 2.0,
                             "source": "CoinGecko circulating_supply — it excludes the legacy lock but still counts "
                                       f"{', '.join(legs)}, so it is compared with our free float plus those",

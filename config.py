@@ -42077,3 +42077,655 @@ for _m in ("unlock_release_tokens", "revenue_usd", "fees_usd"):
                  f"cover)", "kind": "flow", "unit": METRICS[_m]["unit"], "archetypes": [3], "tiers": [2],
         "sanity_min": 0, "sanity_max": METRICS[_m].get("sanity_max", 1e12), "view_only": True,
         "only_projects": ("Pendle",)}
+
+
+# =====================================================================================================================
+# PROJECT ROUND 5B — FINISH AND FREEZE PENDLE (Jake 2026-11-16). Pendle cells only.
+# =====================================================================================================================
+# R5B.2 A WHOLE-SET CONTRACT SUM'S PARTIAL DAY IS A HOLE: insider_stake_shares (the six issuer-side wallets' sPENDLE)
+# held one ":PARTIAL" row on 2026-11-09 over five wallets (the fee wallet's read refused) — a different measuring point
+# that blanked all 304 stored days (Jake's 11-16 run: "MISSING E — stored nothing yet")
+WHOLE_SET_SERIES = {("Pendle", "insider_stake_shares")}
+
+# R5B.4 THE REVENUE GAP TO DEFILLAMA, NUMBERED (Jake 2026-11-16; tolerance NOT widened, the row stays CHECK). Over the
+# five complete epochs the 11-15 export compares (2026-08-25 .. 11-02): ours 1,244,647 = Pendle's per-market protocol +
+# realized YT fee 1,230,501 + the PT-looping fee 14,146; DefiLlama pendle-v2 1,130,825; gap +113,823 (+10.07%). By chain,
+# read 2026-11-16 (api-v2.pendle.finance/core/v1/statistics/market-fees?epochs=13 per market by chainId;
+# api.llama.fi/summary/fees/pendle-v2?dataType=dailyRevenue totalDataChartBreakdown, the same UTC days):
+PENDLE_REVENUE_GAP = {
+    "read_on": "2026-11-16", "epochs": ("2026-08-25", "2026-11-02"),
+    "ours": 1_244_647, "defillama": 1_130_825, "gap": 113_823,
+    "components": (
+        ("Robinhood Chain (4663): tokens DefiLlama cannot price", 33_044, 601, 32_443),
+        ("HyperEVM (999): tokens DefiLlama cannot price", 28_480, 11_662, 16_818),
+        ("Ethereum: DefiLlama's receipt-based figure below Pendle's realized fees in two epochs (09-08 +27,590, 10-06 "
+         "+14,491; the other three within ±7,541) — timing of receipt or tokens it cannot price", 940_217, 891_252,
+         48_965),
+        ("Plasma / Base / Arbitrum / X Layer / BSC (small, same direction)", 163_329, 159_324, 4_005),
+        ("chains DefiLlama books and Pendle's market list does not (Sonic 2,306, Monad 158, Mantle 75, Berachain 13)",
+         65_431, 67_983, -2_552),
+        ("the PT-looping fee: ours' own line (spendle/data ptLoopingFees); DefiLlama's methodology counts it too ('what "
+         "PT Looper users pay the treasury') INSIDE its chain figures, so the chain gaps above understate the market gap "
+         "by up to this", 14_146, 0, 14_146),
+    ),
+    "airdrops": "0 in all five epochs (spendle/data airdropInUSDs) — DefiLlama's methodology no longer names the airdrop "
+                "distributor; it adds points accrued and sPENDLE instant-exit fees, which its API does not separate",
+    "unattributed": "OUT of ours: Pendle's epoch `revenues` 1,449,907 (spendle/data, airdrops 0) − ours 1,244,647 = "
+                    "205,260 attributed to no market (with it the gap would be +28.2%)",
+    "like_for_like": "without the two chains DefiLlama cannot price, on both sides: ours 1,183,123 vs DefiLlama 1,118,562 "
+                     "= +5.77%, inside ±10%",
+}
+CREDIBILITY["Pendle"]["in_revenue"]["ref"]["note"] += (
+    " R5B.4 — THE GAP NUMBERED (read 2026-11-16, the five epochs 2026-08-25..11-02): +113,823 = Robinhood Chain +32,443 "
+    "(ours 33,044 vs 601) + HyperEVM +16,818 (28,480 vs 11,662) — tokens DefiLlama cannot price — + Ethereum +48,965 "
+    "(two epochs: 09-08 +27,590, 10-06 +14,491) + other chains +1,453 + the PT-looping fee 14,146 (ours' own line; "
+    "DefiLlama counts it inside its chain figures). Airdrop-distributor tokens: 0 in these epochs. "
+    "Pendle's unattributed remainder 205,260 is OUT of ours. LIKE FOR LIKE without the two unpriceable chains: +5.77%. "
+    "The ±10% is not widened: the row stays CHECK until Jake decides (accept as a finding, or compare per chain).")
+
+
+# R5B.5 (Jake 2026-11-16): PENDLE FROZEN after rounds 5 and 5B — its 373 cells on the 15-dump build are the baseline
+# (tests/fixtures/frozen_pendle.json); round 5's 21 moves on the dumps are declared here as the record (round 5B moves
+# none on the dumps: its fixes act on Jake's store — the epoch-spread revenue, the PARTIAL day, the released wallets).
+FROZEN_PROJECTS["Pendle"] = {"baseline": "tests/fixtures/frozen_pendle.json", "since": "2026-11-16",
+                             "why": "rounds 5 and 5B done (Jake 2026-11-13/16): on Jake's 11-15 export done_check lists only "
+                                    "the T-bill row the export cannot hold"}
+FROZEN_MOVES["Pendle"] = {"audit|A3 Revenue Buyback|BURNED ÷ (EMISSIONS + UNLOCKS) (x) = BURNED buyback ÷ (emissions + unlocks), per covered day, at the emission rate IN FORCE — A3's rank key (P4-Q5a)": {'date': '2026-11-13',
+                                                                                                                                                                                   'from': 'BLOCKED '
+                                                                                                                                                                                           '— '
+                                                                                                                                                                                           'unequal '
+                                                                                                                                                                                           'coverage: '
+                                                                                                                                                                                           'burned '
+                                                                                                                                                                                           'buyback '
+                                                                                                                                                                                           '(buyback_burned_tokens, '
+                                                                                                                                                                                           'q0) '
+                                                                                                                                                                                           'covers '
+                                                                                                                                                                                           '68 '
+                                                                                                                                                                                           'days '
+                                                                                                                                                                                           'of '
+                                                                                                                                                                                           'a '
+                                                                                                                                                                                           '90-day '
+                                                                                                                                                                                           'window; '
+                                                                                                                                                                                           'emissions_tokens '
+                                                                                                                                                                                           '(emissions_tokens, '
+                                                                                                                                                                                           'q0) '
+                                                                                                                                                                                           'covers '
+                                                                                                                                                                                           '90 '
+                                                                                                                                                                                           'days '
+                                                                                                                                                                                           'of '
+                                                                                                                                                                                           'a '
+                                                                                                                                                                                           '90-day '
+                                                                                                                                                                                           'window; '
+                                                                                                                                                                                           'unlocks '
+                                                                                                                                                                                           '(unlock_release_tokens, '
+                                                                                                                                                                                           'q0) '
+                                                                                                                                                                                           'covers '
+                                                                                                                                                                                           '90 '
+                                                                                                                                                                                           'days '
+                                                                                                                                                                                           'of '
+                                                                                                                                                                                           'a '
+                                                                                                                                                                                           '90-day '
+                                                                                                                                                                                           'window',
+                                                                                                                                                                                   'to': 'BLOCKED '
+                                                                                                                                                                                         '— '
+                                                                                                                                                                                         'unequal '
+                                                                                                                                                                                         'coverage: '
+                                                                                                                                                                                         'burned '
+                                                                                                                                                                                         'buyback '
+                                                                                                                                                                                         '(buyback_burned_tokens, '
+                                                                                                                                                                                         'q0) '
+                                                                                                                                                                                         'covers '
+                                                                                                                                                                                         '68 '
+                                                                                                                                                                                         'days '
+                                                                                                                                                                                         'of '
+                                                                                                                                                                                         'a '
+                                                                                                                                                                                         '90-day '
+                                                                                                                                                                                         'window; '
+                                                                                                                                                                                         'emissions_tokens '
+                                                                                                                                                                                         '(emissions_tokens, '
+                                                                                                                                                                                         'q0) '
+                                                                                                                                                                                         'covers '
+                                                                                                                                                                                         '90 '
+                                                                                                                                                                                         'days '
+                                                                                                                                                                                         'of '
+                                                                                                                                                                                         'a '
+                                                                                                                                                                                         '90-day '
+                                                                                                                                                                                         'window; '
+                                                                                                                                                                                         'unlocks '
+                                                                                                                                                                                         '(unlock_release_tokens_lagm, '
+                                                                                                                                                                                         'q0) '
+                                                                                                                                                                                         'covers '
+                                                                                                                                                                                         '68 '
+                                                                                                                                                                                         'days '
+                                                                                                                                                                                         'of '
+                                                                                                                                                                                         'a '
+                                                                                                                                                                                         '90-day '
+                                                                                                                                                                                         'window',
+                                                                                                                                                                                   'why': 'R5.4 '
+                                                                                                                                                                                          '(Jake '
+                                                                                                                                                                                          '2026-11-13): '
+                                                                                                                                                                                          "Pendle's "
+                                                                                                                                                                                          'three '
+                                                                                                                                                                                          'revenue '
+                                                                                                                                                                                          'lines '
+                                                                                                                                                                                          '(S13) '
+                                                                                                                                                                                          'on '
+                                                                                                                                                                                          'its '
+                                                                                                                                                                                          'own '
+                                                                                                                                                                                          'basis '
+                                                                                                                                                                                          '(D4-5)'},
+ 'audit|A3 Revenue Buyback|Trend — a3_burned_vs_new_supply (arrow · QoQ · 4Q growth/yr · quarters improved; Trajectory tab)': {'date': '2026-11-13',
+                                                                                                                               'from': '– '
+                                                                                                                                       '· '
+                                                                                                                                       'T12M '
+                                                                                                                                       'n/a '
+                                                                                                                                       '· '
+                                                                                                                                       'growth '
+                                                                                                                                       'n/a',
+                                                                                                                               'to': '– '
+                                                                                                                                     '· '
+                                                                                                                                     '4Q '
+                                                                                                                                     'n/a '
+                                                                                                                                     '· '
+                                                                                                                                     'QoQ '
+                                                                                                                                     'n/a',
+                                                                                                                               'why': 'R5.4 '
+                                                                                                                                      '(Jake '
+                                                                                                                                      '2026-11-13): '
+                                                                                                                                      "Pendle's "
+                                                                                                                                      'three '
+                                                                                                                                      'revenue '
+                                                                                                                                      'lines '
+                                                                                                                                      '(S13) '
+                                                                                                                                      'on '
+                                                                                                                                      'its '
+                                                                                                                                      'own '
+                                                                                                                                      'basis '
+                                                                                                                                      '(D4-5)'},
+ 'audit|CP Comparability|Emissions Q0 (tokens) — every incentive programme, as the A-tabs read it': {'date': '2026-11-13',
+                                                                                                     'from': '0 — '
+                                                                                                             'fixed '
+                                                                                                             'supply: '
+                                                                                                             'totalSupply '
+                                                                                                             'flat at '
+                                                                                                             '281,527,448 '
+                                                                                                             'PENDLE '
+                                                                                                             'since '
+                                                                                                             '~Mar '
+                                                                                                             '2025 '
+                                                                                                             '(fix '
+                                                                                                             'round 2, '
+                                                                                                             'S4): the '
+                                                                                                             '~0.2%/yr '
+                                                                                                             'incentives '
+                                                                                                             'are paid '
+                                                                                                             'from the '
+                                                                                                             'treasury, '
+                                                                                                             'not '
+                                                                                                             'minted',
+                                                                                                     'to': 'n/a — '
+                                                                                                           'Data: '
+                                                                                                           'BLOCKED — '
+                                                                                                           'BLOCKED — '
+                                                                                                           'the sum of '
+                                                                                                           'emissions_tokens_gauge_mainnet, '
+                                                                                                           'emissions_tokens_gauge_arbitrum, '
+                                                                                                           'emissions_tokens_gauge_optimism, '
+                                                                                                           'emissions_tokens_gauge_bsc, '
+                                                                                                           'emissions_tokens_gauge_base, '
+                                                                                                           'emissions_tokens_gauge_mantle, '
+                                                                                                           'emissions_t',
+                                                                                                     'why': 'R5.2 '
+                                                                                                            '(Jake '
+                                                                                                            '2026-11-13): '
+                                                                                                            'CP reads '
+                                                                                                            'the gauge '
+                                                                                                            'payouts '
+                                                                                                            '(emissions_tokens), '
+                                                                                                            'one '
+                                                                                                            'figure '
+                                                                                                            'with A3 — '
+                                                                                                            'BLOCKED '
+                                                                                                            'on the '
+                                                                                                            'dumps '
+                                                                                                            '(six '
+                                                                                                            'gauge '
+                                                                                                            'legs '
+                                                                                                            'stored '
+                                                                                                            'nothing)'},
+ 'audit|CP Comparability|FEES Q0 ($) — S13 line 1: all fees paid by users of the protocol': {'date': '2026-11-13',
+                                                                                             'from': 'not yet split — '
+                                                                                                     "Pendle's three "
+                                                                                                     'revenue lines '
+                                                                                                     'come in its own '
+                                                                                                     'round; its '
+                                                                                                     'existing revenue '
+                                                                                                     'cell (Master '
+                                                                                                     "'Revenue Q0 "
+                                                                                                     "($)', "
+                                                                                                     'revenue_usd) is '
+                                                                                                     'REVENUE: '
+                                                                                                     "DefiLlama's "
+                                                                                                     "'Revenue' line = "
+                                                                                                     'fees − '
+                                                                                                     'supply-side '
+                                                                                                     'revenue (its '
+                                                                                                     'methodology), '
+                                                                                                     'i.e. fees minus '
+                                                                                                     'what is paid to '
+                                                                                                     'liquidity '
+                                                                                                     'providers / '
+                                                                                                     'suppliers / '
+                                                                                                     'validators; not '
+                                                                                                     'yet checked '
+                                                                                                     'against the '
+                                                                                                     "project's own "
+                                                                                                     'payouts (its own '
+                                                                                                     'round)',
+                                                                                             'to': 1767313.0,
+                                                                                             'why': 'R5.4 (Jake '
+                                                                                                    '2026-11-13): '
+                                                                                                    "Pendle's three "
+                                                                                                    'revenue lines '
+                                                                                                    '(S13) on its own '
+                                                                                                    'basis (D4-5)'},
+ 'audit|CP Comparability|HOLDER REVENUE Q0 ($) — S13 line 3: the part of revenue reaching token holders': {'date': '2026-11-13',
+                                                                                                           'from': 'not '
+                                                                                                                   'yet '
+                                                                                                                   'split '
+                                                                                                                   '— '
+                                                                                                                   "Pendle's "
+                                                                                                                   'three '
+                                                                                                                   'revenue '
+                                                                                                                   'lines '
+                                                                                                                   'come '
+                                                                                                                   'in '
+                                                                                                                   'its '
+                                                                                                                   'own '
+                                                                                                                   'round; '
+                                                                                                                   'its '
+                                                                                                                   'existing '
+                                                                                                                   'revenue '
+                                                                                                                   'cell '
+                                                                                                                   '(Master '
+                                                                                                                   "'Revenue "
+                                                                                                                   'Q0 '
+                                                                                                                   "($)', "
+                                                                                                                   'revenue_usd) '
+                                                                                                                   'is '
+                                                                                                                   'REVENUE: '
+                                                                                                                   "DefiLlama's "
+                                                                                                                   "'Revenue' "
+                                                                                                                   'line '
+                                                                                                                   '= '
+                                                                                                                   'fees '
+                                                                                                                   '− '
+                                                                                                                   'supply-side '
+                                                                                                                   'revenue '
+                                                                                                                   '(its '
+                                                                                                                   'methodology), '
+                                                                                                                   'i.e. '
+                                                                                                                   'fees '
+                                                                                                                   'minus '
+                                                                                                                   'what '
+                                                                                                                   'is '
+                                                                                                                   'paid '
+                                                                                                                   'to '
+                                                                                                                   'liquidity '
+                                                                                                                   'providers '
+                                                                                                                   '/ '
+                                                                                                                   'suppliers '
+                                                                                                                   '/ '
+                                                                                                                   'validators; '
+                                                                                                                   'not '
+                                                                                                                   'yet '
+                                                                                                                   'checked '
+                                                                                                                   'against '
+                                                                                                                   'the '
+                                                                                                                   "project's "
+                                                                                                                   'own '
+                                                                                                                   'payouts '
+                                                                                                                   '(its '
+                                                                                                                   'own '
+                                                                                                                   'round)',
+                                                                                                           'to': 1050105.64,
+                                                                                                           'why': 'R5.4 '
+                                                                                                                  '(Jake '
+                                                                                                                  '2026-11-13): '
+                                                                                                                  "Pendle's "
+                                                                                                                  'three '
+                                                                                                                  'revenue '
+                                                                                                                  'lines '
+                                                                                                                  '(S13) '
+                                                                                                                  'on '
+                                                                                                                  'its '
+                                                                                                                  'own '
+                                                                                                                  'basis '
+                                                                                                                  '(D4-5)'},
+ 'audit|CP Comparability|HOLDER SHARE = holder revenue ÷ revenue, per covered day (S13)': {'date': '2026-11-13',
+                                                                                           'from': 'not yet split — '
+                                                                                                   "Pendle's three "
+                                                                                                   'revenue lines come '
+                                                                                                   'in its own round; '
+                                                                                                   'its existing '
+                                                                                                   'revenue cell '
+                                                                                                   "(Master 'Revenue "
+                                                                                                   "Q0 ($)', "
+                                                                                                   'revenue_usd) is '
+                                                                                                   'REVENUE: '
+                                                                                                   "DefiLlama's "
+                                                                                                   "'Revenue' line = "
+                                                                                                   'fees − supply-side '
+                                                                                                   'revenue (its '
+                                                                                                   'methodology), i.e. '
+                                                                                                   'fees minus what is '
+                                                                                                   'paid to liquidity '
+                                                                                                   'providers / '
+                                                                                                   'suppliers / '
+                                                                                                   'validators; not '
+                                                                                                   'yet checked '
+                                                                                                   'against the '
+                                                                                                   "project's own "
+                                                                                                   'payouts (its own '
+                                                                                                   'round)',
+                                                                                           'to': 0.706086757,
+                                                                                           'why': 'R5.4/R5.3 (Jake '
+                                                                                                  '2026-11-13): HOLDER '
+                                                                                                  'SHARE = credited '
+                                                                                                  'holder value ÷ '
+                                                                                                  'revenue over the '
+                                                                                                  'days both cover'},
+ 'audit|CP Comparability|Insider share of staked / locked supply': {'date': '2026-11-13',
+                                                                    'from': 'MISSING E — needs issuer wallet list '
+                                                                            '(Jake): no insider wallet identified '
+                                                                            'among sPENDLE holders: the 6 issuer-side '
+                                                                            'wallets checked hold 0 (route: sPENDLE '
+                                                                            'holders crossed with the issuer-wallet '
+                                                                            'list; the ratio shows once one holds '
+                                                                            'shares)',
+                                                                    'to': 'MISSING E — insider_stake_shares stored '
+                                                                          'nothing yet (the six wallets Pendle '
+                                                                          'publishes are read by the chain tier)',
+                                                                    'why': 'R5.5 (Jake 2026-11-13): Pendle publishes '
+                                                                           'its issuer-side wallets — a measured 0 is '
+                                                                           'the insider share; on the dumps '
+                                                                           'insider_stake_shares stored nothing '
+                                                                           "(R5B.2: a PARTIAL day is a hole on Jake's "
+                                                                           'store)'},
+ 'audit|CP Comparability|Leakage (i) — insider share of distributed holder value = insider share of the stake x distributed ÷ credited holder value, Q0 (PROPOSED)': {'date': '2026-11-13',
+                                                                                                                                                                      'from': 'MISSING '
+                                                                                                                                                                              'E '
+                                                                                                                                                                              '— '
+                                                                                                                                                                              'needs '
+                                                                                                                                                                              'issuer '
+                                                                                                                                                                              'wallet '
+                                                                                                                                                                              'list '
+                                                                                                                                                                              '(Jake): '
+                                                                                                                                                                              'no '
+                                                                                                                                                                              'insider '
+                                                                                                                                                                              'wallet '
+                                                                                                                                                                              'identified '
+                                                                                                                                                                              'among '
+                                                                                                                                                                              'sPENDLE '
+                                                                                                                                                                              'holders: '
+                                                                                                                                                                              'the '
+                                                                                                                                                                              '6 '
+                                                                                                                                                                              'issuer-side '
+                                                                                                                                                                              'wallets '
+                                                                                                                                                                              'checked '
+                                                                                                                                                                              'hold '
+                                                                                                                                                                              '0 '
+                                                                                                                                                                              '(route: '
+                                                                                                                                                                              'sPENDLE '
+                                                                                                                                                                              'holders '
+                                                                                                                                                                              'crossed '
+                                                                                                                                                                              'with '
+                                                                                                                                                                              'the '
+                                                                                                                                                                              'issuer-wallet '
+                                                                                                                                                                              'list; '
+                                                                                                                                                                              'the '
+                                                                                                                                                                              'ratio '
+                                                                                                                                                                              'shows '
+                                                                                                                                                                              'once '
+                                                                                                                                                                              'one '
+                                                                                                                                                                              'holds '
+                                                                                                                                                                              'shares)',
+                                                                                                                                                                      'to': 'MISSING '
+                                                                                                                                                                            'E '
+                                                                                                                                                                            '— '
+                                                                                                                                                                            'insider_stake_shares '
+                                                                                                                                                                            'stored '
+                                                                                                                                                                            'nothing '
+                                                                                                                                                                            'yet '
+                                                                                                                                                                            '(the '
+                                                                                                                                                                            'six '
+                                                                                                                                                                            'wallets '
+                                                                                                                                                                            'Pendle '
+                                                                                                                                                                            'publishes '
+                                                                                                                                                                            'are '
+                                                                                                                                                                            'read '
+                                                                                                                                                                            'by '
+                                                                                                                                                                            'the '
+                                                                                                                                                                            'chain '
+                                                                                                                                                                            'tier)',
+                                                                                                                                                                      'why': 'R5.5 '
+                                                                                                                                                                             '(Jake '
+                                                                                                                                                                             '2026-11-13): '
+                                                                                                                                                                             'Pendle '
+                                                                                                                                                                             'publishes '
+                                                                                                                                                                             'its '
+                                                                                                                                                                             'issuer-side '
+                                                                                                                                                                             'wallets '
+                                                                                                                                                                             '— '
+                                                                                                                                                                             'a '
+                                                                                                                                                                             'measured '
+                                                                                                                                                                             '0 '
+                                                                                                                                                                             'is '
+                                                                                                                                                                             'the '
+                                                                                                                                                                             'insider '
+                                                                                                                                                                             'share; '
+                                                                                                                                                                             'on '
+                                                                                                                                                                             'the '
+                                                                                                                                                                             'dumps '
+                                                                                                                                                                             'insider_stake_shares '
+                                                                                                                                                                             'stored '
+                                                                                                                                                                             'nothing '
+                                                                                                                                                                             '(R5B.2: '
+                                                                                                                                                                             'a '
+                                                                                                                                                                             'PARTIAL '
+                                                                                                                                                                             'day '
+                                                                                                                                                                             'is '
+                                                                                                                                                                             'a '
+                                                                                                                                                                             'hole '
+                                                                                                                                                                             'on '
+                                                                                                                                                                             "Jake's "
+                                                                                                                                                                             'store)'},
+ 'audit|CP Comparability|Payout ratio — gross = credited holder value ÷ fees': {'date': '2026-11-13',
+                                                                                'from': 'BLOCKED — unequal coverage: '
+                                                                                        'holder value '
+                                                                                        '(holder_value_revenue_usd, '
+                                                                                        'q0) covers 68 days of a '
+                                                                                        '90-day window; revenue '
+                                                                                        '(fees_usd, q0) covers 89 days '
+                                                                                        'of a 90-day window',
+                                                                                'to': 0.696764512,
+                                                                                'why': 'R5.3 (Jake 2026-11-13): a '
+                                                                                       'declared publish lag is '
+                                                                                       'matched — holder value ÷ '
+                                                                                       'revenue / fees over the days '
+                                                                                       'both cover (R5B.1: one basis)'},
+ "audit|CP Comparability|Payout ratio — the project's own net basis = credited holder value ÷ revenue (config revenue basis)": {'date': '2026-11-13',
+                                                                                                                                'from': 'BLOCKED '
+                                                                                                                                        '— '
+                                                                                                                                        'unequal '
+                                                                                                                                        'coverage: '
+                                                                                                                                        'holder '
+                                                                                                                                        'value '
+                                                                                                                                        '(holder_value_revenue_usd, '
+                                                                                                                                        'q0) '
+                                                                                                                                        'covers '
+                                                                                                                                        '68 '
+                                                                                                                                        'days '
+                                                                                                                                        'of '
+                                                                                                                                        'a '
+                                                                                                                                        '90-day '
+                                                                                                                                        'window; '
+                                                                                                                                        'revenue '
+                                                                                                                                        '(revenue_usd, '
+                                                                                                                                        'q0) '
+                                                                                                                                        'covers '
+                                                                                                                                        '89 '
+                                                                                                                                        'days '
+                                                                                                                                        'of '
+                                                                                                                                        'a '
+                                                                                                                                        '90-day '
+                                                                                                                                        'window',
+                                                                                                                                'to': 0.706086757,
+                                                                                                                                'why': 'R5.3 '
+                                                                                                                                       '(Jake '
+                                                                                                                                       '2026-11-13): '
+                                                                                                                                       'a '
+                                                                                                                                       'declared '
+                                                                                                                                       'publish '
+                                                                                                                                       'lag '
+                                                                                                                                       'is '
+                                                                                                                                       'matched '
+                                                                                                                                       '— '
+                                                                                                                                       'holder '
+                                                                                                                                       'value '
+                                                                                                                                       '÷ '
+                                                                                                                                       'revenue '
+                                                                                                                                       '/ '
+                                                                                                                                       'fees '
+                                                                                                                                       'over '
+                                                                                                                                       'the '
+                                                                                                                                       'days '
+                                                                                                                                       'both '
+                                                                                                                                       'cover '
+                                                                                                                                       '(R5B.1: '
+                                                                                                                                       'one '
+                                                                                                                                       'basis)'},
+ 'audit|CP Comparability|REVENUE Q0 ($) — S13 line 2, THE HEADLINE: fees − the cost of delivering them': {'date': '2026-11-13',
+                                                                                                          'from': 'not '
+                                                                                                                  'yet '
+                                                                                                                  'split '
+                                                                                                                  '— '
+                                                                                                                  "Pendle's "
+                                                                                                                  'three '
+                                                                                                                  'revenue '
+                                                                                                                  'lines '
+                                                                                                                  'come '
+                                                                                                                  'in '
+                                                                                                                  'its '
+                                                                                                                  'own '
+                                                                                                                  'round; '
+                                                                                                                  'its '
+                                                                                                                  'existing '
+                                                                                                                  'revenue '
+                                                                                                                  'cell '
+                                                                                                                  '(Master '
+                                                                                                                  "'Revenue "
+                                                                                                                  'Q0 '
+                                                                                                                  "($)', "
+                                                                                                                  'revenue_usd) '
+                                                                                                                  'is '
+                                                                                                                  'REVENUE: '
+                                                                                                                  "DefiLlama's "
+                                                                                                                  "'Revenue' "
+                                                                                                                  'line '
+                                                                                                                  '= '
+                                                                                                                  'fees '
+                                                                                                                  '− '
+                                                                                                                  'supply-side '
+                                                                                                                  'revenue '
+                                                                                                                  '(its '
+                                                                                                                  'methodology), '
+                                                                                                                  'i.e. '
+                                                                                                                  'fees '
+                                                                                                                  'minus '
+                                                                                                                  'what '
+                                                                                                                  'is '
+                                                                                                                  'paid '
+                                                                                                                  'to '
+                                                                                                                  'liquidity '
+                                                                                                                  'providers '
+                                                                                                                  '/ '
+                                                                                                                  'suppliers '
+                                                                                                                  '/ '
+                                                                                                                  'validators; '
+                                                                                                                  'not '
+                                                                                                                  'yet '
+                                                                                                                  'checked '
+                                                                                                                  'against '
+                                                                                                                  'the '
+                                                                                                                  "project's "
+                                                                                                                  'own '
+                                                                                                                  'payouts '
+                                                                                                                  '(its '
+                                                                                                                  'own '
+                                                                                                                  'round)',
+                                                                                                          'to': 1742878.0,
+                                                                                                          'why': 'R5.4 '
+                                                                                                                 '(Jake '
+                                                                                                                 '2026-11-13): '
+                                                                                                                 "Pendle's "
+                                                                                                                 'three '
+                                                                                                                 'revenue '
+                                                                                                                 'lines '
+                                                                                                                 '(S13) '
+                                                                                                                 'on '
+                                                                                                                 'its '
+                                                                                                                 'own '
+                                                                                                                 'basis '
+                                                                                                                 '(D4-5)'},
+ 'reader|A3 Revenue Buyback|Payout ratio': {'date': '2026-11-13',
+                                            'from': 'blocked',
+                                            'to': 0.706086757,
+                                            'why': 'R5.3 (Jake 2026-11-13): a declared publish lag is matched — holder '
+                                                   'value ÷ revenue / fees over the days both cover (R5B.1: one '
+                                                   'basis)'},
+ 'reader|Business|Holder revenue (S13), 90 days': {'date': '2026-11-13',
+                                                   'from': 'not yet split',
+                                                   'to': 1050105.64,
+                                                   'why': "R5.4 (Jake 2026-11-13): Pendle's three revenue lines (S13) "
+                                                          'on its own basis (D4-5)'},
+ 'reader|Business|Holder share (S13)': {'date': '2026-11-13',
+                                        'from': 'not yet split',
+                                        'to': 0.706086757,
+                                        'why': 'R5.4/R5.3 (Jake 2026-11-13): HOLDER SHARE = credited holder value ÷ '
+                                               'revenue over the days both cover'},
+ 'reader|Comparison|Fees (S13), 90 days': {'date': '2026-11-13',
+                                           'from': 'not yet split',
+                                           'to': 1767313.0,
+                                           'why': "R5.4 (Jake 2026-11-13): Pendle's three revenue lines (S13) on its "
+                                                  'own basis (D4-5)'},
+ 'reader|Comparison|Holder revenue (S13), 90 days': {'date': '2026-11-13',
+                                                     'from': 'not yet split',
+                                                     'to': 1050105.64,
+                                                     'why': "R5.4 (Jake 2026-11-13): Pendle's three revenue lines "
+                                                            '(S13) on its own basis (D4-5)'},
+ 'reader|Comparison|Holder share (S13)': {'date': '2026-11-13',
+                                          'from': 'not yet split',
+                                          'to': 0.706086757,
+                                          'why': 'R5.4/R5.3 (Jake 2026-11-13): HOLDER SHARE = credited holder value ÷ '
+                                                 'revenue over the days both cover'},
+ 'reader|Comparison|Payout ratio': {'date': '2026-11-13',
+                                    'from': 'blocked',
+                                    'to': 0.706086757,
+                                    'why': 'R5.3 (Jake 2026-11-13): a declared publish lag is matched — holder value ÷ '
+                                           'revenue / fees over the days both cover (R5B.1: one basis)'},
+ 'reader|Comparison|Revenue (S13), 90 days': {'date': '2026-11-13',
+                                              'from': 'not yet split',
+                                              'to': 1742878.0,
+                                              'why': "R5.4 (Jake 2026-11-13): Pendle's three revenue lines (S13) on "
+                                                     'its own basis (D4-5)'},
+ 'reader|Summary|Confidence (share green)': {'date': '2026-11-13',
+                                             'from': 0.5,
+                                             'to': 0.428571429,
+                                             'why': 'R5 (Jake 2026-11-13): the share of green cells moves with the '
+                                                    'cells above'},
+ 'reader|Summary|Payout ratio': {'date': '2026-11-13',
+                                 'from': 'blocked',
+                                 'to': 0.706086757,
+                                 'why': 'R5.3 (Jake 2026-11-13): a declared publish lag is matched — holder value ÷ '
+                                        'revenue / fees over the days both cover (R5B.1: one basis)'}}

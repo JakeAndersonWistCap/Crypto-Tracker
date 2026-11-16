@@ -1579,6 +1579,25 @@ def _subsidy_common_views(groups: dict, asof) -> None:
 LAG_MATCH: dict = {}     # project -> {"ok", "last", "first", "days", "lag"} (R5.3), last build
 
 
+def _whole_set_views(groups: dict) -> None:
+    """R5B.2 (config.WHOLE_SET_SERIES; Jake's 11-16 run: Pendle's insider share read "stored nothing yet" over 304
+    stored days): a contract sum read on a day one component was refused is stored ":PARTIAL", over a smaller wallet set
+    — a different measuring point, which blanked the whole series. For a declared whole-set series that day is a HOLE
+    (as the release's own rule, RELEASE_WHOLE_SET_ONLY): left out (recorded in WHOLE_SET_DROPPED), never a value."""
+    WHOLE_SET_DROPPED.clear()
+    for key in config.WHOLE_SET_SERIES:
+        g = dict.get(groups, key)
+        if g is None or g.empty:
+            continue
+        part = g["source"].astype(str).str.contains(":PARTIAL", regex=False)
+        if part.any():
+            WHOLE_SET_DROPPED[key] = sorted(str(d)[:10] for d in g.loc[part, "date"])
+            groups[key] = g[~part]
+
+
+WHOLE_SET_DROPPED: dict = {}   # (project, metric) -> the PARTIAL days left out (R5B.2), last build
+
+
 def _lag_matched_views(groups: dict, asof) -> None:
     """R5.3 (config.LAG_MATCHED): a lead series that stops at a DECLARED publish lag (Pendle's buyback, published at each
     sPENDLE epoch's end) is compared with the follow series over the days both cover — each follow series cut at the
@@ -1604,6 +1623,16 @@ def _lag_matched_views(groups: dict, asof) -> None:
             if g is None or g.empty:
                 continue
             cut = g[pd.to_datetime(g["date"]).dt.normalize() <= last]
+            # R5B.1 (Jake's 11-16 run: HOLDER SHARE and both payout ratios read "measuring_point_changed —
+            # defillama, pendle_api:epoch_spread"): a series stitched from declared points (Pendle's D4-5 handover)
+            # keeps only the point in force at the cut — the basis of FEES / REVENUE Q0 — so the matched series is ONE
+            # basis; a day of the window before that point began is not held (never the other basis)
+            if config.declared_handover(name, m) and not cut.empty:
+                basis = cut["source"].astype(str).map(lambda s: trajectory.basis_of(m, s))
+                cut = cut[basis == basis.iloc[-1]]
+                LAG_MATCH[name].setdefault("basis", {})[m] = str(basis.iloc[-1])
+            if cut.empty:
+                continue
             groups[(name, f"{m}_lagm")] = _as_stored(cut.assign(
                 metric=f"{m}_lagm", source=cut["source"].astype(str) + f"[cut at {last.date()}: R5.3 lag-matched]"),
                 g.columns)
@@ -6523,6 +6552,7 @@ def aggregate(long: pd.DataFrame, fetch_status: pd.DataFrame, asof: pd.Timestamp
     _handover_cut_views(groups)       # G11 C1: a declared cut — the earlier leg's rows after the later leg starts dropped
     _tokenjar_revenue_views(groups, asof)   # PR1C.2: the TokenJars beside DefiLlama's revenue; in it only on takeover
     _partial_sum_views(groups)    # FIRST: nothing downstream may read a partial sum
+    _whole_set_views(groups)      # R5B.2: a PARTIAL day of a declared whole-set contract sum is a hole, not a new point
     _bad_print_views(groups)      # P3-A2: a stored stock's one-day bad print, before any view or window reads it
     _epoch_primary_views(groups, asof)   # D4-5: Pendle's own epoch figures, spread; DefiLlama only where none
     _same_basis_views(groups)     # one basis read by several routes is one measuring point (config.SAME_BASIS)

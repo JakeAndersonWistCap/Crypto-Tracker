@@ -1,5 +1,6 @@
 """Project round 5 — Pendle (Jake 2026-11-13). Pendle cells only. No network."""
 import pandas as pd
+import pytest
 
 import build_workbook as bw
 import config
@@ -165,3 +166,59 @@ def test_5_the_published_issuer_wallets_make_a_measured_zero_the_insider_share()
     assert "Tokenomics.md L29-31" in mon["wallets_published"] and "Fees.md" in mon["wallets_published"]
     assert not mon["not_wired"].startswith("MISSING E — needs issuer wallet list")
     assert mon["numerator"] == "insider_stake_shares"
+
+
+# ================================================================================= ROUND 5B (Jake 2026-11-16)
+def test_5b1_a_lag_matched_series_keeps_one_basis(monkeypatch):
+    """Jake's 11-16 run: HOLDER SHARE and both payout ratios read "measuring_point_changed (defillama,
+    pendle_api:epoch_spread)" — the matched revenue / fees keep only the point in force at the cut."""
+    days = pd.date_range("2026-07-01", "2026-11-12")
+    last = pd.Timestamp("2026-11-02")
+    src = ["defillama" if d < pd.Timestamp("2026-08-01") or d > last else "pendle_api:epoch_spread[x]" for d in days]
+    rev = pd.DataFrame({"date": days, "project": "Pendle", "metric": "revenue_usd", "value": 10_000.0, "source": src,
+                        "tier": 1})
+    g = {("Pendle", "actual_buyback_tokens"): _rows("actual_buyback_tokens", days[days <= last], 1.0, "pendle_api:x"),
+         ("Pendle", "revenue_usd"): rev}
+    bw._lag_matched_views(g, pd.Timestamp("2026-11-12"))
+    cut = g[("Pendle", "revenue_usd_lagm")]
+    assert set(cut["source"].str.split("[").str[0]) == {"pendle_api:epoch_spread"}
+    assert pd.to_datetime(cut["date"]).min() == pd.Timestamp("2026-08-01") and pd.to_datetime(cut["date"]).max() == last
+    assert bw.LAG_MATCH["Pendle"]["basis"]["revenue_usd"].startswith("pendle_api")
+
+
+def test_5b2_a_partial_day_of_the_insider_sum_is_a_hole_not_a_second_point():
+    full = "chain:sum(ethereum:a+ethereum:b)"
+    g = {("Pendle", "insider_stake_shares"): _rows("insider_stake_shares", pd.date_range("2026-11-07", periods=4), 0.0,
+                                                   [full + ":archive", full, "chain:sum(ethereum:a):PARTIAL", full])}
+    bw._whole_set_views(g)
+    left = g[("Pendle", "insider_stake_shares")]
+    assert len(left) == 3 and not left["source"].str.contains("PARTIAL").any()
+    assert bw.WHOLE_SET_DROPPED[("Pendle", "insider_stake_shares")] == ["2026-11-09"]
+    assert ("Pendle", "insider_stake_shares") in config.WHOLE_SET_SERIES
+
+
+def test_5b3_the_coingecko_row_takes_the_released_wallets_out_like_for_like():
+    import credibility as cr
+    rows = {"Pendle|circulating_supply_onchain": {"now": 245_655_386.0, "latest_date": "2026-11-15"},
+            "Pendle|locked_tokens": {"now": 30_626_250.0}, "Pendle|locked_tokens_legacy_vependle": {"now": 63_177_152.0},
+            "Pendle|issuer_held_released_tokens": {"now": 7_744_419.0}}
+    import build_workbook
+    orig = build_workbook.chosen_circulating_metric
+    build_workbook.chosen_circulating_metric = lambda p: "circulating_supply_onchain"
+    try:
+        v, _d, how = cr._free_float_now("Pendle", rows, None, pd.Timestamp("2026-11-16"), add_back=("locked_tokens",),
+                                        minus_released=True)
+        row = cr.circulating_input("Pendle")
+    finally:
+        build_workbook.chosen_circulating_metric = orig
+    assert v == pytest.approx(245_655_386 - 63_177_152 - 7_744_419) and "released, held" in how
+    assert row["ours"]["args"] == {"add_back": ("locked_tokens",), "minus_released": True}
+    assert "Team multisig" in row["what"]
+
+
+def test_5b4_the_revenue_gap_is_numbered_and_the_tolerance_stands():
+    g = config.PENDLE_REVENUE_GAP
+    assert abs(sum(c[3] for c in g["components"]) - g["gap"]) <= 5 and g["ours"] - g["defillama"] == g["gap"] - 1
+    assert "+5.77%" in g["like_for_like"] and "205,260" in g["unattributed"]
+    assert config.CREDIBILITY["Pendle"]["in_revenue"]["ref"]["tol"] == 10.0
+    assert "R5B.4 — THE GAP NUMBERED" in config.CREDIBILITY["Pendle"]["in_revenue"]["ref"]["note"]
