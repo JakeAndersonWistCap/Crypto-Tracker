@@ -1668,6 +1668,21 @@ def _last30_annualised(p, rows, long, asof, metric="revenue_usd", **_):
     return float(sr.sum()) * 365.0 / 30.0, str(sr.index[-1].date()), f"{metric}, last 30 days x 365/30"
 
 
+def _window_mean(p, rows, long, asof, metric="", days=28, **_):
+    """R7.B2 (Jake 2026-11-16, Sky's USDS-farm rate): a rate's daily readings AVERAGED over the same complete days ours
+    averages (the `days` up to yesterday) — the like-for-like reference of a trailing-average figure; a spot reading
+    of a rate that moved inside the window is not. Every day of the window held, or nothing."""
+    end = asof.normalize() - pd.Timedelta(days=1)
+    start = end - pd.Timedelta(days=int(days) - 1)
+    s = _series(long, p, metric)
+    s = s[(s.index >= start) & (s.index <= end)]
+    label = f"{start.date()}..{end.date()}"
+    if len(s) < int(days):
+        return None, None, f"{metric}: {len(s)} of {days} days held in {label}"
+    return float(s.mean()), str(end.date()), (f"{metric}: mean of its {len(s)} daily readings {label} (first "
+                                              f"{float(s.iloc[0]):.4f}, last {float(s.iloc[-1]):.4f})")
+
+
 def _window_vs_rate(p, rows, long, asof, flow="fees_usd", rate="", days=7, side="ours", plus_flow=None, **_):
     """A FLOW SUMMED OVER THE LAST `days` COMPLETE DAYS vs A PER-DAY RATE x `days` (overnight 2026-10-06, A4): Morpho's
     one-day comparison read nothing — a rate read at one instant against one day's fees. ours = the flow summed over
@@ -2247,7 +2262,7 @@ def _aero_rebase_apr(p, rows, long, asof, rebase="emissions_tokens", stake="vote
             f"{float(rb.iloc[-1]):,.0f} AERO in the week of {rb.index[-1].date()} x 52 / {stake} {st[0]:,.0f}")
 
 
-FORMULAS = {"sum_months": _sum_months, "free_float_now": _free_float_now, "window_vs_rate": _window_vs_rate,
+FORMULAS = {"window_mean": _window_mean, "sum_months": _sum_months, "free_float_now": _free_float_now, "window_vs_rate": _window_vs_rate,
             "aero_rebase_formula": _aero_rebase_formula, "common_days_sum": _common_days_sum, "eth_net_formula": _eth_net_formula,
             "sums_on_common_day": _sums_on_common_day,
             "eth_issuance_curve": _eth_issuance_formula, "flow_usd_over_price": _flow_usd_over_price,
@@ -2950,7 +2965,8 @@ def build_rows(headline_cells: list[dict], rows: dict, long, asof, projects=None
             if spec is None:
                 spec = ({"verdict": "UNVERIFIABLE", "why": DERIVED_WHY} if hc["kind"] == "calc" else
                         {"verdict": "CHECK", "why": "no independent reference is wired for this figure yet."})
-            if (name, hc["id"]) in manual:           # Jake's reading (manual_form.py) replaces the reference
+            if (name, hc["id"]) in manual and (name, hc["id"]) not in config.LIVE_REFERENCE_OVER_MANUAL:
+                # Jake's reading (manual_form.py) replaces the reference — unless a live source replaced the reading
                 pg = manual_refs.page_for(name, hc["id"])
                 if pg.get("beside"):                 # ... unless it is a different quantity: recorded beside it
                     rd = manual[(name, hc["id"])][0]
@@ -3008,7 +3024,8 @@ def build_rows(headline_cells: list[dict], rows: dict, long, asof, projects=None
             spec = spec(name) if callable(spec) else spec
             if spec is None:
                 continue
-            if (name, iid) in manual:                # Jake's reading (manual_form.py) replaces the reference
+            if (name, iid) in manual and (name, iid) not in config.LIVE_REFERENCE_OVER_MANUAL:
+                # Jake's reading (manual_form.py) replaces the reference — unless a live source replaced the reading
                 mref, mours = manual_refs.reference_for(manual[(name, iid)], spec.get("ours"))
                 spec = {**spec, "ref": mref, **({"ours": mours} if mours else {})}
             ref = reference(name, spec["ref"], rows, long, asof)

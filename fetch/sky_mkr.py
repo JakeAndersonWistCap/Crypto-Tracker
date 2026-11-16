@@ -200,3 +200,50 @@ class SkyMkr:
             log.info("%s: MKR outstanding %s, issuer %s, rate %s, fee %.4f -> non-issuer backing %s SKY",
                      name, f"{got['outstanding']:,.2f}", f"{got['issuer']:,.2f}", got["rate"], got["fee"],
                      f"{got['backing']:,.0f}")
+
+
+def _w3_call(w3, to: str, data: str, block: int) -> str:
+    r = w3.eth.call({"to": w3.to_checksum_address(to), "data": data}, block)
+    return "0x" + (r.hex()[2:] if r.hex().startswith("0x") else r.hex())
+
+
+def backing_history(project: dict, w3, day_blocks, days: int, have: set, head: int, deadline: float | None = None,
+                    call=None) -> tuple[list, str]:
+    """R7.B2 (Jake's 96f6d97 store: sky_mkr_nonissuer_backing_tokens held from 2026-10-12 only, 7 days missing since —
+    so Sky's circulating had no reading on its 90-day window's opening day, and net supply change read n/a): the
+    backing on past days, read at each day's FIRST block through the archive endpoint (the same four reads the live run
+    makes: MKR.totalSupply, MKR.balanceOf(Pause Proxy), converter rate() and fee()). Newest first; a stored day is
+    skipped (never an overwrite); stops at the first day the converter is not readable and says so."""
+    import time
+    import check_offline_items as coi                      # noqa: PLC0415
+    import config                                          # noqa: PLC0415
+    import pandas as pd                                    # noqa: PLC0415
+    from .base import point
+    spec, name = project["mkr_backing"], project["name"]
+    call = call or (lambda to, data, block: _w3_call(w3, to, data, block))
+    sel_ts, sel_bal = coi._selx("totalSupply()"), coi.SEL_BALANCE_OF
+    src = config.mark_source(f"{SOURCE}:(mkr.totalSupply-pause_proxy)xratex(1-fee)", "archive")
+    rows, why = [], "reached the start of the window"
+    for i in range(1, days + 1):
+        if deadline is not None and time.monotonic() > deadline:
+            why = "time budget spent; re-run to continue"
+            break
+        day = today() - pd.Timedelta(days=i)
+        if str(day.date()) in have:
+            continue
+        try:
+            b = day_blocks.at(day, head)
+            out = _word(call(spec["mkr"], sel_ts, b)) / 1e18
+            iss = _word(call(spec["mkr"], sel_bal + spec["issuer"].lower()[2:].rjust(64, "0"), b)) / 1e18
+            rate = _word(call(spec["converter"], coi._selx("rate()"), b))
+            fee = _word(call(spec["converter"], coi._selx("fee()"), b)) / 1e18
+        except Exception as e:  # noqa: BLE001
+            why = f"stopped at {day.date()}: the converter is not readable there ({str(e)[:160]})"
+            break
+        if not rate:
+            why = f"stopped at {day.date()}: converter rate() reads 0"
+            break
+        for metric, v in (("mkr_outstanding_tokens", out), ("mkr_issuer_tokens", iss), ("mkr_sky_fee", fee),
+                          ("sky_mkr_nonissuer_backing_tokens", (out - iss) * rate * (1 - fee))):
+            rows.append(point(name, metric, float(v), src, TIER, day).iloc[0])
+    return rows, why

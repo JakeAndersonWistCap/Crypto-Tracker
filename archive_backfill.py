@@ -163,6 +163,21 @@ def _work(a) -> int:
         db.save()
         n = ar._write_new(st, pd.DataFrame(rows)) if rows else 0
         print(f"  reward vault {p['name']}: {n} row(s) (emissions_tokens and the annual rate) — {why}")
+    # R7.B2 SKY'S MKR BACKING, DAY BY DAY (Jake's 96f6d97 store held it from 2026-10-12 only): the add leg of Sky's
+    # circulating, read at each past day's first block through the Ethereum archive. Never overwrites a stored day.
+    for p in projects:
+        if not p.get("mkr_backing") or "ethereum" not in archive_chains:
+            continue
+        from fetch import sky_mkr
+        w3 = bf.reader._w3["ethereum"]
+        have = {d[:10] for (d,) in st.conn.execute(
+            "SELECT date FROM metrics WHERE project=? AND metric='sky_mkr_nonissuer_backing_tokens'", (p["name"],))}
+        db = ar.DayBlocks(w3, "ethereum")
+        rows, why = sky_mkr.backing_history(p, w3, db, ar.ARCHIVE_DAYS, have, w3.eth.block_number,
+                                            deadline=t0 + a.budget_min * 60)
+        db.save()
+        n = ar._write_new(st, pd.DataFrame(rows)) if rows else 0
+        print(f"  MKR backing {p['name']}: {n} row(s) (4 per day: MKR supply, Pause Proxy MKR, fee, the backing) — {why}")
     if a.near:
         near = config.PROJECT_BY_NAME.get("Near")
         if near and near in projects:

@@ -38420,12 +38420,14 @@ def release_less(project_name: str) -> tuple[tuple, bool]:
 
 
 _unlock_stock_metrics_pr4 = unlock_stock_metrics
+SWITCH_LEG_IS_THE_SET = ("Sky",)        # R7.B2 (Sky's endowments: its only non-circulating set of releases)
 
 
 def unlock_stock_metrics(project_name: str) -> tuple:     # noqa: F811 — PR4.1 extends it with the switched-on leg
     legs = _unlock_stock_metrics_pr4(project_name)
     swc = circulating_swc(project_name)
-    if legs and swc.get("unlock_legs") and swc.get("in_force"):
+    # R7.B2: a switched leg is the set on its own where the project has no other (Sky's endowments)
+    if (legs or project_name in SWITCH_LEG_IS_THE_SET) and swc.get("unlock_legs") and swc.get("in_force"):
         # PR4B.2: an ADDED leg (sign +1: Maple's Safe, now circulating) is taken off the stock the release reads ("-m")
         leg = ("-" if swc.get("sign", -1) == 1 else "") + swc["metric"]
         if leg not in legs:
@@ -42951,4 +42953,63 @@ for _a in REGRESSION_ALLOWLIST:
                              "scans (config.OUTFLOW_INCOMPLETE) or by 2026-12-16",
                    "source": "eth_getLogs Transfer(from distributor) on FLUID 0x61E030A56D33e8260FdD81f03B162A79Fe3449Cd: "
                              "rpc.plasma.to (to block 37,901,383), base-rpc.publicnode.com (to block 58,271,762)"})
+
+# R7.B2 THE FOUR SKY ROWS STILL JUDGED AGAINST JAKE'S 2026-10-07 READINGS (his 96f6d97 store build): a reading in
+# manual_references.csv REPLACES the row's configured reference (credibility: manual_refs.reference_for), so R6.4's live
+# Block Analitica references never applied. A row listed here is judged against its configured LIVE reference; Jake's
+# reading stays in manual_references.csv as history (never deleted).
+LIVE_REFERENCE_OVER_MANUAL = {
+    ("Sky", "in_locked_sky_farm"): "Block Analitica info-sky farm history, SKY-rewards farm total_staked (R6.4)",
+    ("Sky", "in_locked_usds_farm"): "Block Analitica info-sky farm history, USDS-rewards farm total_staked (R6.4)",
+    ("Sky", "in_apy_sky_farm"): "Block Analitica info-sky farm history, SKY-rewards farm apy (R6.4)",
+    ("Sky", "in_apy_usds_farm"): "Block Analitica info-sky farm history, USDS-rewards farm apy (R6.4)",
+    ("Sky", "a3_protocol_yield"): "Block Analitica info-sky farm history, USDS-rewards farm apy (R6.4)",
+}
+
+# R7.B1 SKY'S ENDOWMENTS: NOT APPLIED — A LOCK APPLIES (stopped, as Jake's instruction says). Sky's own published report
+# (insights.skyeco.com, "SFF Q1 2026 Transparency Report", Sky Frontier Foundation, March 2026, read 2026-11-16): "All
+# SKY endowed to the Foundation is locked and is not available for sale or distribution"; "All purchased SKY was held in
+# the SFF treasury subject to the same lock-up restrictions as the original endowment"; "To fund operations without
+# unwinding any part of the endowment, SFF borrows USDS against its SKY holdings as collateral"; 2,669,869,394 SKY
+# "locked in treasury". The report says it is not official protocol documentation; no Atlas text or spell giving the
+# terms was found (search 2026-11-16), and none for the Fortification Foundation. The endowments stay OUT of circulating
+# (G18-3c) and the decision goes back to Jake with this evidence.
+SKY_ENDOWMENT_LOCK_EVIDENCE = {
+    "read_on": "2026-11-16", "url": "https://insights.skyeco.com/insights/sff-q1-2026-transparency-report",
+    "quote": "All SKY endowed to the Foundation is locked and is not available for sale or distribution",
+    "also": "All purchased SKY was held in the SFF treasury subject to the same lock-up restrictions as the original "
+            "endowment",
+    "locked": 2_669_869_394, "caveat": "the report says it is not official protocol documentation; no Atlas or spell "
+                                      "text found; Fortification Foundation: no terms found"}
+# R7.B2 A3 TOTAL DILUTION ×2 (rule-3 on Jake's store: "no non-circulating wallet set is declared for Sky, so the unlock
+# leg is not measured"): with the endowments out of circulating, a release from them IS Sky's unlock — the endowment
+# set is the declared non-circulating set of Unlocks (e), once its switch is in force (in force on Jake's store).
+CIRCULATING_ONCHAIN["Sky"]["subtract_when_complete"]["unlock_legs"] = True
+OUTFLOW_CATEGORIES["Sky"] = dict(
+    OUTFLOW_CATEGORIES["Sky"], e=("unlock_release_tokens",),
+    basis=OUTFLOW_CATEGORIES["Sky"]["basis"] + " R7.B2 (2026-11-16): (e) = releases from the two endowments (the "
+                                               "non-circulating set, in force) — none from the Pause Proxy, whose SKY "
+                                               "is circulating (R6.3)")
+# R7.B2 THE USDS-FARM RATE GAP, SETTLED FROM THE STORED SERIES (Jake's store, 2026-10-19..11-15): the USDS paid is FLAT
+# (staking_rewards_usds_usd 81,000-83,700 a day; rewardRate 1.002599 USDS/s on every day), while SKY's price fell 24.6%
+# (0.06953 -> 0.05243) — so a SPOT rate rises (Block Analitica 4.81% -> 6.65%, rewardRate x year at spot 7.08%) while
+# ours, USDS paid over 28 days at payment-day prices ÷ the mean stake, reads 5.30%. Block Analitica's own rate averaged
+# over the same 28 days: 5.61% (ours −5.5%). The like-for-like reference of a 28-day average is that mean, not a spot
+# reading: both rows judge against it. Tolerance unchanged (10%).
+for _k in ("in_apy_usds_farm", "a3_protocol_yield"):
+    _blk = CREDIBILITY["Sky"][_k]
+    _ref = {"formula": "window_mean", "args": {"metric": "usds_farm_apy_ba", "days": 28}, "tol": 10.0,
+            "source": "Block Analitica info-sky USDS-rewards farm apy, MEAN over the same 28 days ours averages (R7.B2)",
+            "note": "Ours: the USDS paid over 28 days at payment-day prices ÷ the mean SKY staked. The reference: Block "
+                    "Analitica's daily rate averaged over the same days — a spot rate moves with the SKY price inside "
+                    "the window (USDS paid flat at ~82,700 a day; SKY −24.6% over 2026-10-19..11-15 on Jake's store)."}
+    if "ref" in _blk:
+        _blk["ref"] = _ref
+    else:
+        CREDIBILITY["Sky"][_k] = dict(_ref, **{k: v for k, v in _blk.items() if k not in ("metric", "window", "manual")})
+CREDIBILITY["Sky"]["a3_protocol_yield"] = dict(CREDIBILITY["Sky"]["in_apy_usds_farm"]["ref"])
+# the same comparison beside it (Block Analitica's apy vs our 28-day figure): like for like over the same 28 days too;
+# its own tolerance (15%) unchanged
+CREDIBILITY["Sky"]["in_apy_usds_farm_ba"]["ref"] = dict(
+    CREDIBILITY["Sky"]["in_apy_usds_farm"]["ref"], tol=CREDIBILITY["Sky"]["in_apy_usds_farm_ba"]["ref"]["tol"])
 

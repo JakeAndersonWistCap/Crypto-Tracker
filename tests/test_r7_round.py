@@ -111,3 +111,65 @@ def test_a1_slow_tests_are_marked_and_collected_first_and_none_is_dropped():
     assert [i.name for i in items[:2]] == ["test_a", "test_headline_diff_runs_on_a_store_circulating"]
     assert all(any(m.name == "slow" for m in i.marks) for i in items[:2])
     assert not any(m.name == "slow" for i in items[2:] for m in i.marks)
+
+
+# ================================================================================== B1: Sky's endowments — stopped
+def test_b1_the_endowments_stay_out_because_a_lock_applies_and_releases_are_unlocks(monkeypatch):
+    ev = config.SKY_ENDOWMENT_LOCK_EVIDENCE
+    assert "locked and is not available for sale or distribution" in ev["quote"] and ev["url"].startswith("https://")
+    swc = config.CIRCULATING_ONCHAIN["Sky"]["subtract_when_complete"]
+    assert swc["metric"] == "sky_endowment_tokens" and swc["unlock_legs"]                 # still subtracted
+    monkeypatch.setitem(swc, "in_force", True)
+    assert "sky_endowment_tokens" in config.unlock_stock_metrics("Sky")                   # in force: (e)'s set
+    assert config.outflow_metrics("Sky", "e") == ("unlock_release_tokens",)
+    monkeypatch.setitem(swc, "in_force", False)
+    assert config.unlock_stock_metrics("Sky") == ()                                       # pending: no set yet
+
+
+# ====================================================== B2: the backing's history, live refs, the USDS-farm rate
+def test_b2_the_mkr_backing_history_reads_each_missing_day_at_its_block(monkeypatch):
+    import fetch.sky_mkr as sm
+    monkeypatch.setattr(sm, "today", lambda: pd.Timestamp("2026-11-16"))
+    spec = config.PROJECT_BY_NAME["Sky"]["mkr_backing"]
+    word = lambda v: "0x" + hex(int(v))[2:].rjust(64, "0")  # noqa: E731
+
+    def call(to, data, block):
+        if to == spec["converter"]:
+            return word(24_000) if data.startswith("0x2c4e722e") else word(5e16)          # rate() else fee()
+        return word(82_664.63e18) if data.startswith("0x18160ddd") else word(49.56e18)
+
+    class DB:
+        def at(self, day, head):
+            return 26_000_000 - (pd.Timestamp("2026-11-16") - day).days * 7200
+    rows, why = sm.backing_history(config.PROJECT_BY_NAME["Sky"], None, DB(), 3, {"2026-11-14"}, 26_000_000,
+                                   call=call)
+    f = pd.DataFrame(rows)
+    back = f[f.metric == "sky_mkr_nonissuer_backing_tokens"]
+    assert sorted(back["date"].astype(str).str[:10]) == ["2026-11-13", "2026-11-15"]     # the stored day skipped
+    assert back["value"].iloc[0] == pytest.approx((82_664.63 - 49.56) * 24_000 * 0.95, rel=1e-9)
+    assert why == "reached the start of the window" and back["source"].iloc[0].endswith(":archive")
+
+
+def test_b2_four_sky_rows_judge_against_the_live_reference_not_jakes_10_07_reading():
+    for k in ("in_locked_sky_farm", "in_locked_usds_farm", "in_apy_sky_farm", "in_apy_usds_farm", "a3_protocol_yield"):
+        assert ("Sky", k) in config.LIVE_REFERENCE_OVER_MANUAL
+    import manual_refs
+    assert ("Sky", "in_apy_sky_farm") in manual_refs.by_row()                              # Jake's reading kept
+    src = open(ROOT / "credibility.py", encoding="utf-8").read()
+    assert src.count("not in config.LIVE_REFERENCE_OVER_MANUAL") == 2                     # both reading paths
+
+
+def test_b2_the_usds_farm_rate_is_judged_against_the_same_28_days():
+    import credibility as cred
+    days = pd.date_range("2026-10-19", "2026-11-15")
+    vals = [0.048 + 0.0185 * i / (len(days) - 1) for i in range(len(days))]           # 4.8% -> 6.65%, spot rises
+    long = pd.DataFrame({"date": days, "project": "Sky", "metric": "usds_farm_apy_ba", "value": vals})
+    v, d, how = cred._window_mean("Sky", {}, long, pd.Timestamp("2026-11-16"), metric="usds_farm_apy_ba", days=28)
+    assert v == pytest.approx(sum(vals) / 28) and d == "2026-11-15" and "28 daily readings" in how
+    v, _d, why = cred._window_mean("Sky", {}, long.iloc[1:], pd.Timestamp("2026-11-16"), metric="usds_farm_apy_ba",
+                                   days=28)
+    assert v is None and "27 of 28" in why
+    for k in ("in_apy_usds_farm", "a3_protocol_yield"):
+        ref = config.CREDIBILITY["Sky"][k].get("ref", config.CREDIBILITY["Sky"][k])
+        assert ref["formula"] == "window_mean" and ref["tol"] == 10.0                     # tolerance unchanged
+
