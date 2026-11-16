@@ -245,5 +245,9 @@ def backing_history(project: dict, w3, day_blocks, days: int, have: set, head: i
             break
         for metric, v in (("mkr_outstanding_tokens", out), ("mkr_issuer_tokens", iss), ("mkr_sky_fee", fee),
                           ("sky_mkr_nonissuer_backing_tokens", (out - iss) * rate * (1 - fee))):
-            rows.append(point(name, metric, float(v), src, TIER, day).iloc[0])
+            # R7C.B2: each detail series under its own call (the live point) + the archive marker; the backing under
+            # its formula — rows written before R7C carry the backing's source on all four (a declared handover)
+            own = config.SKY_MKR_DETAIL_POINTS.get(metric)
+            rows.append(point(name, metric, float(v), config.mark_source(own, "archive") if own else src, TIER,
+                              day).iloc[0])
     return rows, why

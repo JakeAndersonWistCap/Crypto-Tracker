@@ -256,7 +256,10 @@ def test_buying_pressure_is_every_market_buyback_annualised_over_tradeable_float
 # dumps), so its holder value yield is over a larger cap (was 0.02410483100412517)
 # R7.C1 (Jake 2026-11-16): Hyperliquid's market cap counts the Foundation + Grants stake (released) — its holder value
 # yield is over a larger cap; on the dumps that stake is held on the last day only (was 0.038137512591568695)
-BEFORE_HVY = {"Maple": 0.009202065513863445, "Sky": 0.024084003858726048, "Hyperliquid": 0.030133419313739723,
+# R7C.A1 (Jake 2026-11-16, decision 1b): Sky's and Hyperliquid's dumps were refreshed from his store exports (more
+# stored history up to the same 10-13 as-of), so their figures are re-pinned on the refreshed dumps (were 0.024084003858726048
+# and 0.030133419313739723); the four other projects' dumps did not change and their pins hold to 1e-9.
+BEFORE_HVY = {"Maple": 0.009202065513863445, "Sky": 0.02447713721663361, "Hyperliquid": 0.030258293116699385,
               "Pendle": 0.01114886645183712, "Chainlink": 0.005996886350660165, "Near": 0.0022805223703844632}
 
 

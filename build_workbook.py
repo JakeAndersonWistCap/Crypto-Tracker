@@ -12896,7 +12896,9 @@ def _cp_cols(R: Refs, data_by_key: dict) -> list[tuple]:
         # C5: insider holdings INSIDE circulating — by the convention every identified issuer / insider wallet is
         # outside circulating, so where circulating is our on-chain set the share is 0 by construction
         ("Insider share of circulating = insider-held tokens counted inside circulating ÷ circulating",
-         lambda r, p: ("=0" if (config.CIRCULATING_ONCHAIN.get(p["name"]) or {}).get("status") == "established"
+         lambda r, p: (calc(f"{R.D(r, config.INSIDER_INSIDE_CIRCULATING[p['name']]['held'], 'now')}/({circ(r, p)})")
+                       # R7C.B1: released insider holdings an on-chain circulating counts (Sky's endowments)
+                       if p["name"] in config.INSIDER_INSIDE_CIRCULATING else "=0" if (config.CIRCULATING_ONCHAIN.get(p["name"]) or {}).get("status") == "established"
                        and config.circulating_primary_metric(p["name"]) in ("circulating_supply_onchain",)
                        # R7.C1: the Foundation + Grants STAKE is insider-held and inside circulating (released)
                        else calc(f"({R.D(r, config.CIRC_RELEASED_STAKED[p['name']]['held'], 'now')}"

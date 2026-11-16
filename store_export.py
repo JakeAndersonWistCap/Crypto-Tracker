@@ -1,7 +1,8 @@
 """store_export.py --project <name> — READ-ONLY: one project's stored rows from metrics.db, in one file under exports/,
 for a side branch (PR4F.5, Jake 2026-11-13: "we'll use it from Pendle on").
 
-    python store_export.py --project Morpho          # writes exports/morpho-<as-of>.json.gz
+    python store_export.py --project Morpho          # writes exports/morpho-<as-of>-<HHMMSS UTC>-<commit>.json.gz
+    python store_export.py --project Morpho --out-dir ..\tm-exports   # outside the worktree (RUNBOOK 11eu)
 
 What it holds: every stored row of that project — every date, so the catch-up window and anything older the build reads
 (the build reads the whole store) — and the project's review-queue, manual-override, gap-report and last-30-days run-log
@@ -73,7 +74,12 @@ def export(project: str, db: str = "metrics.db", out_dir: str | Path = "exports"
                                    "run_log": len(rl), "gap_report": len(gaps), "manual_references": 0}},
                "metrics": met, "review_queue": rq, "manual_overrides": mo, "run_log": rl, "gap_report": gaps,
                "manual_references": []}
-    path = Path(out_dir) / f"{slug(project)}-{payload['meta']['asof']}.json.gz"
+    # R7C (Jake 2026-11-16, the export bug): a name UNIQUE PER RUN — date, UTC time and commit. A fixed
+    # "<project>-<date>.json.gz" collided with the same name already tracked on data/store-exports, and `git switch`
+    # overwrote the fresh (ignored) file with the tracked one, so a day's second export never reached the branch.
+    path = Path(out_dir) / f"{slug(project)}-{payload['meta']['asof']}-{now:%H%M%S}-{commit or 'nocommit'}.json.gz"
+    if path.exists():
+        raise SystemExit(f"{path} exists already — never overwritten; run again")
     path.parent.mkdir(parents=True, exist_ok=True)
     with gzip.open(path, "wt", encoding="utf-8") as fh:
         json.dump(payload, fh, indent=0, default=str)

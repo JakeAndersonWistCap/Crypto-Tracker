@@ -534,6 +534,62 @@ A Plume seed started on code older than 2026-10-01 saved its state only at the e
 or stop it and start again on the new code. Don't run both at once: they write the same state file.
 
 
+## 11eu. Round 7C — the gate, Sky's MKR handover, safe exports (2026-11-16)
+
+The round's commit: the test dumps of Sky and Hyperliquid refreshed from your store exports (cut at the dumps'
+2026-10-13 as-of, so no frozen project moves), Sky's insider share of circulating (the endowments), Sky's MKR detail
+rows as a declared handover (archive point, then the live read), the USDH evidence, and store_export.py's names made
+unique per run (date, UTC time, commit). Hyperliquid's circulating before 2026-09-30 is NOT rebuilt (no primary
+source holds the Assistance Fund's or the total supply's history; SPEC R7C.C1), so its net supply change stays n/a.
+
+THE EXPORT STEPS ARE NOW SAFE AGAINST CHECKOUT. The export is written OUTSIDE the worktree (..\tm-exports) under a
+name no branch tracks, and copied into exports\ only after `git switch data/store-exports` — a checkout can no longer
+overwrite a fresh export with an older tracked file of the same name (what happened to Sky's 11-16 export).
+
+```
+cd C:\Users\jake\Crypto-Tracker
+.venv\Scripts\Activate.ps1
+git switch claude/crypto-metrics-supply-demand-ovkg8g
+git pull
+git log --oneline -1
+#   expect: the line ends "R7C: refreshed Sky/Hyperliquid dumps, Sky insider share + MKR handover, unique exports; RUNBOOK 11eu"
+python -c "import config; print(sorted(config.INSIDER_INSIDE_CIRCULATING), config.declared_handover('Sky','mkr_outstanding_tokens')['cut'], sorted(config.FROZEN_PROJECTS))"
+#   expect: ['Sky'] True ['Fluid', 'Maple', 'Morpho', 'Pendle', 'Uniswap']
+python circ_legs.py Sky
+#   expect: every leg "450 of 450", none missing
+python circ_legs.py Hyperliquid
+#   expect: the replayed legs full; total_supply "0 of 450" (not rebuilt: SPEC R7C.C1)
+python token_metrics.py
+#   expect: the run ends without error; an hl_stats line per stats-data path (status and keys)
+python token_metrics.py --no-fetch
+#   expect: no error
+python -c "import sqlite3; c=sqlite3.connect('metrics.db'); [print(r) for r in c.execute('select ts, status, message from run_log where source=? order by rowid desc limit 8', ('hl_stats',))]"
+#   expect: up to 8 lines naming each stats-data path's HTTP status and first-record keys - paste them back
+python done_check.py --verbose
+#   expect: Uniswap, Fluid, Maple, Morpho, Pendle READY; Sky READY (the 3 MKR BROKEN gone: a declared handover);
+#   Hyperliquid NOT READY with only "Net supply change" x2 - paste both lists back
+New-Item -ItemType Directory -Force ..\tm-exports | Out-Null
+python store_export.py --project Sky --out-dir ..\tm-exports
+#   expect: a line starting "wrote ../tm-exports/sky-" + today's date, the UTC time and the commit git log showed; metrics about 32,800
+python store_export.py --project Hyperliquid --out-dir ..\tm-exports
+#   expect: a line starting "wrote ../tm-exports/hyperliquid-" + the same date, time and commit; metrics about 24,000
+git switch data/store-exports
+git pull
+Copy-Item ..\tm-exports\*.json.gz exports\
+git add -f exports
+git commit -m "data: Sky and Hyperliquid store exports (R7C, unique names)"
+git push
+git switch claude/crypto-metrics-supply-demand-ovkg8g
+git log --oneline -1
+#   expect: the same line as above
+python project_freeze.py --compare Uniswap    # expect: Uniswap: 309 cells, 0 undeclared move(s)
+python project_freeze.py --compare Fluid      # expect: Fluid: 353 cells, 0 undeclared move(s)
+python project_freeze.py --compare Maple      # expect: Maple: 360 cells, 0 undeclared move(s)
+python project_freeze.py --compare Morpho     # expect: Morpho: 285 cells, 0 undeclared move(s)
+python project_freeze.py --compare Pendle     # expect: Pendle: 373 cells, 0 undeclared move(s)
+```
+
+
 ## 11et. Round 7B — gate fixes, Sky endowments in, Hyperliquid finished on its export (2026-11-16)
 
 The round's commits: 4d15c7b (the gate's pins and fixes, Sky's endowments circulating, Hyperliquid's revenue streams,

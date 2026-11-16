@@ -250,7 +250,10 @@ def test_g2_d2_hyperliquid_total_is_gross_less_the_fund_and_the_hyperevm_burn(mo
     day = pd.Timestamp("2026-10-13")
     g[("Hyperliquid", "hyperevm_zero_address_balance")] = _frame("Hyperliquid", "hyperevm_zero_address_balance",
                                                                  [("2026-10-13", 308_538.17)])
-    cg_before = g[("Hyperliquid", "total_supply")].copy()
+    # CoinGecko's total: stored as total_supply on the 10-13 dump, as total_supply_coingecko on Jake's store (the
+    # dump refreshed from his export, R7C.A1)
+    cg_before = (g.get(("Hyperliquid", "total_supply")) if ("Hyperliquid", "total_supply") in g
+                 else g[("Hyperliquid", "total_supply_coingecko")]).copy()
     bw._total_supply_net_views(g)
     t = g[("Hyperliquid", "total_supply")].assign(date=lambda x: pd.to_datetime(x["date"])).set_index("date")
     v = lambda f: float(f.assign(date=pd.to_datetime(f["date"])).set_index("date")["value"].loc[day])  # noqa: E731
@@ -438,10 +441,15 @@ def test_g2_d4_revenue_total_counts_aqa_as_zero_before_activation(monkeypatch):
          ("Hyperliquid", "aqa_revenue_usd"): _frame("Hyperliquid", "aqa_revenue_usd",
                                                     rng("2026-08-26", "2026-10-05", 0.0))}
     g[("Hyperliquid", "aqa_revenue_usd")].loc[lambda x: x["date"] == "2026-10-04", "value"] = 14_580_774.69
+    g[("Hyperliquid", "aqa_revenue_usd")].loc[lambda x: x["date"] == "2026-08-26", "value"] = 5.0
     bw._revenue_total_views(g)
     t = g[("Hyperliquid", "revenue_total_usd")].assign(date=lambda x: pd.to_datetime(x["date"])).set_index("date")
     assert t["value"].loc["2026-08-20"] == 100.0, "before activation AQAv2 paid nothing: a 0, not a gap"
-    assert t["value"].loc["2026-10-04"] == pytest.approx(14_580_874.69)
+    # R7B.C2 (Jake 2026-11-16): from REVENUE_LEG_COUNTED_ELSEWHERE's cut DefiLlama's revenue already holds the AQAv2
+    # yield, so the leg counts once — inside revenue_usd — and adds 0 here; before the cut it is added as stored
+    cut = pd.Timestamp(config.REVENUE_LEG_COUNTED_ELSEWHERE[("Hyperliquid", "aqa_revenue_usd")]["from"])
+    assert t["value"].loc["2026-10-04"] == pytest.approx(100.0) and pd.Timestamp("2026-10-04") >= cut
+    assert t["value"].loc["2026-08-26"] == pytest.approx(105.0)
 
 
 # ----------------------------------------------------------------------------------------------- D5 Aerodrome supply

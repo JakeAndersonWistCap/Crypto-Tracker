@@ -112,8 +112,10 @@ def test_u5_the_basis_note_explains_the_difference_on_the_cells_and_the_credibil
     for s in ("UNI Timelock", "272,134,858.48", "supply_breakdown", "14,262,526.60", "+2.34%", "26,348,366"):
         assert s in note, s
     assert config.coingecko_circ_basis_note("Aave") == ""
-    # R6.3: Sky's cell now carries its declared circulating handover (the Pause Proxy's held buyback is circulating)
-    assert config.coingecko_circ_basis_note("Sky").startswith("CIRCULATING — DECLARED HANDOVER (Jake 2026-11-16 (R6.3)")
+    # R6.3 / R7B.B1: Sky's cell carries its declared circulating handover (the Pause Proxy's held buyback and the
+    # endowments are circulating) — the decision is cited, whatever else the note names
+    sky = config.coingecko_circ_basis_note("Sky")
+    assert sky.startswith("CIRCULATING — DECLARED HANDOVER") and "R6.3" in sky
     b = config.COINGECKO_CIRC_BASIS["Uniswap"]["live"]
     assert b["ours"] == pytest.approx(b["net_total"] - b["timelock"] - b["distributor"] - b["vesting"], abs=1e-3)
     assert b["coingecko_total"] - b["coingecko_circulating"] - b["timelock"] == pytest.approx(14_262_526.60, abs=0.01)

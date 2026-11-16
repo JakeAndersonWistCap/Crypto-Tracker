@@ -310,7 +310,9 @@ def test_s12_a_blocked_projects_statement_cells_leave_green():
 def test_s12_on_the_built_files_a_blocked_project_is_neither_green_on_its_statement_nor_ranked(built):
     au = openpyxl.load_workbook(built["audit"])
     blocks = reader.flow_blocks_of(au, bw)
-    assert set(blocks) == {"Plume", "Hyperliquid"}, blocks     # Q0 residuals +5.00% and +8.38% on the 15 dumps
+    # Plume's Q0 residual (+5.00%) blocks it; Hyperliquid's balances since its dump holds its legs' replayed history
+    # (R7C.A1, Jake decision 1b) — a project that balances is never blocked
+    assert "Plume" in blocks and "Hyperliquid" not in blocks, blocks
     ws = au["Master"]
     green = str(bw.FILL_GREEN.fgColor.rgb)[-6:]
     for r in range(5, ws.max_row + 1):

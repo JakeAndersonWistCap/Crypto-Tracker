@@ -108,6 +108,44 @@ def dump(project: str, db: str = "metrics.db", metrics: list[str] | None = None,
     return path
 
 
+# REFRESH FROM A STORE EXPORT (R7C.A1, Jake 2026-11-16 decision 1b): a non-frozen project's dump is rebuilt from Jake's
+# store export (store_export.py) so it holds the leg histories his backfills and replays wrote. The rows are cut at the
+# dumps' common as-of (the build of the 15 dumps reads max(as-of) — moving one dump past it would move every frozen
+# project's cells): metric rows and manual overrides dated on or before it, review-queue rows queued on or before it. The
+# as-of day's run log, gap report and manual references are the old dump's (the export holds the latest 30 days only).
+def from_export(export_path: str | Path, old_dump: str | Path, out: str | Path | None = None) -> Path:
+    import gzip                                            # noqa: PLC0415
+    with gzip.open(export_path, "rt", encoding="utf-8") as fh:
+        ex = json.load(fh)
+    old = json.loads(Path(old_dump).read_text(encoding="utf-8"))
+    project = ex["meta"]["project"]
+    if old["meta"]["project"] != project:
+        raise SystemExit(f"{export_path} is {project}, {old_dump} is {old['meta']['project']}")
+    asof = str(old["meta"]["asof"])[:10]
+    met = [r for r in ex["metrics"] if str(r["date"])[:10] <= asof]
+    for r in met:
+        r["source"] = _redact(r["source"])
+    rq = [r for r in ex.get("review_queue") or [] if str(r.get("ts") or r.get("date") or "")[:10] <= asof]
+    mo = [r for r in ex.get("manual_overrides") or [] if str(r.get("date") or "")[:10] <= asof]
+    rl, gaps, refs = old.get("run_log") or [], old.get("gap_report") or [], old.get("manual_references") or []
+    payload = {"meta": {"project": project, "asof": asof, "dumped_at": old["meta"].get("dumped_at"),
+                        "git_commit": old["meta"].get("git_commit"), "db": old["meta"].get("db"),
+                        "days": old["meta"].get("days"), "metrics_filter": [],
+                        "refreshed_from_export": {"file": Path(export_path).name,
+                                                  "exported_at": ex["meta"].get("dumped_at"),
+                                                  "export_commit": ex["meta"].get("git_commit"),
+                                                  "cut_at_asof": asof,
+                                                  "decided": "Jake 2026-11-16 (R7C decision 1b)",
+                                                  "kept_from_old_dump": ["run_log", "gap_report", "manual_references"]},
+                        "counts": {"metrics": len(met), "review_queue": len(rq), "manual_overrides": len(mo),
+                                   "run_log": len(rl), "gap_report": len(gaps), "manual_references": len(refs)}},
+               "metrics": met, "review_queue": rq, "manual_overrides": mo, "run_log": rl, "gap_report": gaps,
+               "manual_references": refs}
+    path = Path(out) if out else Path(old_dump)
+    path.write_text(json.dumps(payload, indent=1, default=str), encoding="utf-8")
+    return path
+
+
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     ap.add_argument("--project", required=True, help="the project's name as in config (e.g. Pendle, Ether.fi)")
@@ -115,12 +153,24 @@ def main(argv=None) -> int:
     ap.add_argument("--days", type=int, default=400, help="days of history to export (default 400)")
     ap.add_argument("--db", default="metrics.db")
     ap.add_argument("--out", default=None)
+    ap.add_argument("--from-export", default=None, help="rebuild fixtures/real_<project>.json from a store export, "
+                    "cut at that dump's as-of (R7C decision 1b; non-frozen projects only)")
     a = ap.parse_args(argv)
     sys.path.insert(0, str(ROOT))
     import config                                          # noqa: PLC0415
     if a.project not in config.PROJECT_BY_NAME:
         print(f"unknown project {a.project!r}; one of: {', '.join(sorted(config.PROJECT_BY_NAME))}")
         return 2
+    if a.from_export:
+        if a.project in getattr(config, "FROZEN_PROJECTS", ()):
+            print(f"{a.project} is frozen — its dump stays exactly as it is (Jake 2026-11-16)")
+            return 2
+        old = ROOT / "fixtures" / f"real_{a.project.lower().replace('.', '').replace(' ', '_')}.json"
+        path = from_export(a.from_export, old, a.out)
+        meta = json.loads(Path(path).read_text(encoding="utf-8"))["meta"]
+        print(f"wrote {path} — " + ", ".join(f"{k} {v:,}" for k, v in meta["counts"].items())
+              + f"; cut at {meta['asof']} from {meta['refreshed_from_export']['file']}")
+        return 0
     metrics = [m.strip() for m in a.metrics.split(",") if m.strip()] or None
     path = dump(a.project, a.db, metrics, a.days, a.out)
     meta = json.loads(path.read_text(encoding="utf-8"))["meta"]

@@ -43340,3 +43340,70 @@ DECLARED_NA_REASONS["Sky"].append(
 CIRCULATING_ONCHAIN["Hyperliquid"]["no_coingecko_fallback"] = (
     "CoinGecko's circulating leaves out the Foundation + Grants stake that ours counts (R7.C1) — another basis, never a "
     "stand-in; our first-party figure is stored from 2026-09-30 on Jake's store")
+# R7C.B1 INSIDER-HELD SUPPLY INSIDE AN ON-CHAIN CIRCULATING (Jake 2026-11-16): where a project's on-chain circulating
+# counts released issuer-affiliated holdings, the C5 cell "insider share of circulating" divides them by circulating
+# (never "0 by construction"). Sky: the endowments (SFF + FF; R7B.B1: released, circulating, off the float) — their
+# liquid + Lockstake SKY. Not counted here: the Pause Proxy's held buyback (R6.3) — the protocol's own retired-held
+# buyback, credited as RETIRED on A3, not an insider allocation.
+INSIDER_INSIDE_CIRCULATING = {
+    "Sky": {"held": "sky_endowment_tokens",
+            "what": "the Sky Frontier Foundation + Fortification Foundation endowments (liquid + Lockstake SKY) — "
+                    "released, so circulating (R7B.B1)",
+            "decided": "Jake 2026-11-16 (R7B.B1; R7C.B1)"},
+}
+# R7C.C3 THE USDH RESERVE YIELD (Jake decision 3, 2026-11-16: measure it if a sourced route exists, else keep it named).
+# Read 2026-11-16, the Assistance Fund's WHOLE ledger (info userNonFundingLedgerUpdates, 0xfefe…, every update from
+# 2025-10-15 to 2026-11-16, 3,083 entries): one address, 0xc4bb9b6f…7577, sent USDH into the Fund once a day at 00:00 UTC
+# from 2025-11-22 to 2026-05-26 (141 sends + a 70,000 and a 1 USDH transfer on 2025-11-22; 448,772.85 USDH in all) and
+# NOTHING since — the only USDH into the Fund after 2026-05-26 is 0.09 USDH on 2026-07-15 from another address. USDH is
+# sunsetting (Coinmarketman 2026-05-14: "USDH is sunsetting"; AQAv2 — Coinbase's USDC — replaces it, read as
+# aqa_revenue_usd, inside DefiLlama's revenue from 2026-08-27). NOT BOOKED: no published source names 0xc4bb… as Native
+# Markets' yield sender (the G2-D4 rule books a payment only from a documented sender). Its Q0 contribution is 0 either
+# way: nothing reached the Fund in Q0.
+HL_USDH_YIELD_EVIDENCE = {
+    "read_on": "2026-11-16", "fund": "0xfefefefefefefefefefefefefefefefefefefefe",
+    "sender": "0xc4bb9b6fda3112b381cb94f571bc72db541e7577", "first": "2025-11-22", "last": "2026-05-26",
+    "total_usdh": 448_772.85, "since_last": "nothing from the sender; 0.09 USDH from another address on 2026-07-15",
+    "sender_documented": False,
+    "sources": ("https://api.hyperliquid.xyz/info userNonFundingLedgerUpdates (the Fund, read 2026-11-16)",
+                "https://coinmarketman.com/blog/usdh-is-dead-coinbase-now-runs-hyperliquids-stablecoin-vault--en/ "
+                "(2026-05-14: 'USDH is sunsetting')")}
+HL_HOLDER_SHARE_GAP = (
+    "HOLDER REVENUE (the Fund's measured buybacks) above REVENUE: the Fund's own conversion timing (it buys on its own "
+    "schedule; a quarter's buys can include fees of the quarter before). The USDH reserve yield adds nothing in Q0: the "
+    "Fund's whole ledger (read 2026-11-16) shows USDH sent daily from 0xc4bb…7577 from 2025-11-22 to 2026-05-26 "
+    "(448,772.85 USDH) and none since — USDH is sunsetting (2026-05-14), replaced by AQAv2 (in REVENUE); the sender is "
+    "not named by any published source, so the earlier sends are not booked")
+REVENUE_SPLIT["Hyperliquid"]["revenue"]["route"] = REVENUE_SPLIT["Hyperliquid"]["revenue"]["route"].replace(
+    "Not measured: the USDH reserve yield (50% to the Fund since 2026-09-17).",
+    "The USDH reserve yield: nothing reached the Fund after 2026-05-26 (its whole ledger, read 2026-11-16; USDH "
+    "sunsetting) — 0 in Q0; the earlier daily USDH sends are not booked (their sender is not documented).")
+# R7C.A1 DECLARED RANK MOVES (Jake 2026-11-16, decision 1b: Sky's and Hyperliquid's dumps refreshed from his store
+# exports, cut at the dumps' 2026-10-13 as-of): Hyperliquid's refreshed dump holds its Foundation / Grants / team legs'
+# replayed history, so its float and total dilution form and it is RANKED in A3 (it was unranked: blocked) — first; each
+# A3 project below it moves down one place. No Fluid or Maple value moved.
+_R7C_RANK_WHY = ("R7C.A1 (Jake 2026-11-16, decision 1b): the Sky and Hyperliquid dumps are refreshed from Jake's store "
+                 "exports (cut at the 2026-10-13 as-of); Hyperliquid's float and total dilution now form, so it enters "
+                 "the A3 ranking (was unranked: blocked) — this project's values are unchanged, its rank moves down one")
+for _p, _to in (("Fluid", 4.0), ("Maple", 3.0)):
+    for _k in ("reader|A3 Revenue Buyback|Rank in A3", "reader|Summary|Rank in archetype"):
+        FROZEN_MOVES[_p][_k] = {"date": "2026-11-16", "to": _to, "why": _R7C_RANK_WHY}
+# R7C.B2 SKY'S MKR DETAIL ROWS: A DECLARED HANDOVER (Jake's run on df26e6f, 2026-11-16: archive_backfill "MKR backing Sky:
+# 1708 row(s) … reached the start of the window", then done_check — 3 BROKEN on A3's detail rows, "measuring point
+# changed"). The R7.B2 backfill (fetch/sky_mkr.backing_history) wrote all four series under the BACKING's source; the live
+# run writes each detail series under its own call. The same quantity — the same contract call, at each day's first block
+# (archive) instead of during the run — so a declared handover, not hidden: the archive point first, the live read from
+# its first row; `cut`: an archive row dated on or after the live read's first row is dropped (the live read wins). From
+# R7C the backfill labels each detail series with its own call (+ the archive marker): the live point.
+_SKY_MKR_ARCHIVE_POINT = "sky_mkr:(mkr.totalSupply-pause_proxy)xratex(1-fee):archive"
+SKY_MKR_DETAIL_POINTS = {"mkr_outstanding_tokens": "sky_mkr:mkr.totalSupply",
+                         "mkr_issuer_tokens": "sky_mkr:mkr.balanceOf(pause_proxy)",
+                         "mkr_sky_fee": "sky_mkr:mkr_sky.fee"}
+for _m, _live in SKY_MKR_DETAIL_POINTS.items():
+    PROJECT_BY_NAME["Sky"]["series_handover"][_m] = {
+        "ordered_points": (_SKY_MKR_ARCHIVE_POINT, _live), "cut": True,
+        "why": "R7C.B2: the archive backfill (R7.B2, 1,708 rows on Jake's store) labelled this series with the backing's "
+               "formula; the live run reads the call itself — the archive rows are the same call at each day's first "
+               "block",
+        "composition_change": "none: the same contract call, read at the day's first block (archive) vs during the run",
+        "declared": "2026-11-16", "decided": "Jake 2026-11-16 (R7C addendum: declare the handover; don't hide it)"}

@@ -75,7 +75,10 @@ def test_integration_fixture_build_runs_every_check(built, capsys):
     fails = [ln for ln in lines if ln.startswith("FAIL")]
     assert len(fails) == 1 and fails[0].startswith("FAIL  scoreboard"), out
     assert re.search(r"— 1 BROKEN: Ethereum: 1$", fails[0]), fails[0]
-    assert "NOT WIRED (declared, informational): " in out and "Sky: 5" in out
+    # the standing NOT WIRED list is printed; R7C.A1 (Jake 2026-11-16, decision 1b): Sky's and Hyperliquid's dumps were
+    # refreshed from his store exports and hold the series their NOT WIRED cells waited on (Sky 5, Hyperliquid 3 before)
+    nw = next(ln for ln in out.splitlines() if "NOT WIRED (declared, informational): " in ln)
+    assert "Sky:" not in nw and "Hyperliquid:" not in nw and "Pendle: 3" in nw, nw
     assert "FRIDAY CHECK: 8 PASS, 1 FAIL" in out and code == 1
     assert "      ran on: " + str(fc.GUARD_BASELINE) in out        # the guard says what it ran on
     assert re.search(r"PASS  guard: 0 violations", out)
