@@ -10,6 +10,7 @@ import sys
 from pathlib import Path
 
 import pandas as pd
+import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -318,27 +319,38 @@ def test_real_aerodrome_migration_watch_labels_the_voter_apr_and_emissions_rows(
     assert not str(o["in_locked"]["note"]).lstrip().startswith("MIGRATION WATCH")
 
 
-def test_real_master_agrees_with_the_a_tabs_on_every_dump(tmp_path, monkeypatch):
+@pytest.fixture(scope="module")
+def one_project_builds(tmp_path_factory):
+    """R7.A1 (gate speed): each real dump built ONCE, on its own project (only=[project]), for the two tests below that
+    each built all of them with the same call — the workbook and the sanity hits the build recorded, per project."""
+    import copy
+    import store as sm
+    import build_workbook as bw
+    from real_dump import FIXTURES, to_store
+    out = []
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setitem(sys.modules, "recalc", None)
+        for f in sorted(FIXTURES.glob("real_*.json")):
+            payload = load(f.stem.removeprefix("real_"))
+            project = payload["meta"]["project"]
+            d = tmp_path_factory.mktemp(project.replace(".", ""))
+            to_store(payload, d / "metrics.db")
+            mp.setattr(sm, "DB_PATH", str(d / "metrics.db"))
+            bw.build_workbook(sm.Store(str(d / "metrics.db")), d / "wb.xlsx", asof=pd.Timestamp(payload["meta"]["asof"]),
+                              only=[project])
+            out.append({"project": project, "wb": d / "wb.xlsx", "hits": copy.deepcopy(list(bw.SANITY_HITS))})
+    return out
+
+
+def test_real_master_agrees_with_the_a_tabs_on_every_dump(one_project_builds):
     """Jake's review of 97b29ae (2026-10-11), item 16 — PERMANENT: every Master column that summarises an A-tab figure
     equals that A-tab cell (same series, window, supply basis, coverage rule), and the same header never differs
     between two A-tabs. Each mismatch names the project, column, both values and both formulas."""
     import cross_tab
-    import store as sm
-    import build_workbook as bw
-    from real_dump import FIXTURES, to_store
-    monkeypatch.setitem(sys.modules, "recalc", None)
     found = []
-    for f in sorted(FIXTURES.glob("real_*.json")):
-        payload = load(f.stem.removeprefix("real_"))
-        project = payload["meta"]["project"]
-        d = tmp_path / project.replace(".", "")
-        d.mkdir()
-        to_store(payload, d / "metrics.db")
-        monkeypatch.setattr(sm, "DB_PATH", str(d / "metrics.db"))
-        out = d / "wb.xlsx"
-        bw.build_workbook(sm.Store(str(d / "metrics.db")), out, asof=pd.Timestamp(payload["meta"]["asof"]),
-                          only=[project])
-        found += cross_tab.check_workbook(out)
+    for b in one_project_builds:
+        found += cross_tab.check_workbook(b["wb"])
+    assert len(one_project_builds) >= 15
     assert not found, "\n".join(cross_tab.describe(m) for m in found)
 
 
@@ -360,26 +372,14 @@ def test_master_refuses_a_column_that_is_not_its_a_tab_reference(monkeypatch):
     bw._assert_master_refs(ws)
 
 
-def test_real_sanity_rules_on_every_dump(tmp_path, monkeypatch):
+def test_real_sanity_rules_on_every_dump(one_project_builds):
     """Item 17 on the six real dumps (10-09): no hits. The two genuine label contradictions are resolved — Maple's burn
     by decision A6, Aerodrome's buyback (declared active, no series in this dump) by the traced purchases (2026-10-12)."""
     import sanity
-    import store as sm
-    import build_workbook as bw
-    from real_dump import FIXTURES, to_store
-    monkeypatch.setitem(sys.modules, "recalc", None)
     found = []
-    for f in sorted(FIXTURES.glob("real_*.json")):
-        payload = load(f.stem.removeprefix("real_"))
-        project = payload["meta"]["project"]
-        d = tmp_path / project.replace(".", "")
-        d.mkdir()
-        to_store(payload, d / "metrics.db")
-        monkeypatch.setattr(sm, "DB_PATH", str(d / "metrics.db"))
-        bw.build_workbook(sm.Store(str(d / "metrics.db")), d / "wb.xlsx", asof=pd.Timestamp(payload["meta"]["asof"]),
-                          only=[project])
-        assert bw.SANITY_HITS == sanity.check_workbook(d / "wb.xlsx")      # the build ran the same rules
-        found += bw.SANITY_HITS
+    for b in one_project_builds:
+        assert b["hits"] == sanity.check_workbook(b["wb"])                 # the build ran the same rules
+        found += b["hits"]
     # Maple's burn reads 'none (declared: 0% of fees burned)' since Jake's sanity run (2026-10-11, decision A6);
     # Aerodrome's buyback has a series since the traced purchases (Jake 2026-10-12, Aerodrome round item 1)
     assert sorted((p, r) for p, r, _d in found) == [], found

@@ -177,7 +177,7 @@ try {
 
 # 1. NEAR BigQuery, FIRST, before any other step (Jake 2026-10-12 evening, item 16): his user ADC keeps expiring and
 #    service-account keys are blocked by org policy. adc_check.py runs a REAL one-row query. On failure:
-#      * run by hand (interactive): log in here — gcloud auth application-default login, then set the quota project —
+#      * run by hand (interactive): log in here - gcloud auth application-default login, then set the quota project -
 #        re-test, and continue;
 #      * scheduled (-Scheduled, or started by the Task Scheduler service): never wait for a browser; the BigQuery reads
 #        are skipped (TOKEN_METRICS_SKIP_NEAR_BQ) and the summary's FIRST line says how to log in.
@@ -262,7 +262,7 @@ if ($run[0] -eq 75) {
 Write-Log "daily run end"
 [void](Invoke-Step "daily summary" @("daily_summary.py", "--log", $Log))
 
-# 4b. History gaps (theory layer, Phase 1, 2026-10-12): logs\history_gaps.csv — which series the trajectory engine is
+# 4b. History gaps (theory layer, Phase 1, 2026-10-12): logs\history_gaps.csv - which series the trajectory engine is
 # missing and the cheapest fix. Reads nothing from the network; `python history_gaps.py --run-fixes` runs the free ones.
 [void](Invoke-Step "history gaps" @("history_gaps.py"))
 
@@ -299,7 +299,7 @@ $summary = "daily_run: ran $($Steps.Count) step(s); token_metrics exit $($run[0]
 if ($BqSkipped) { $summary = "$BqSkipped | $summary" }      # the skip notice FIRST (item 16)
 if ($PrevKilled -like "*KILLED*") { $summary = "PREVIOUS RUN KILLED - see its log | $summary" }
 # NEARBLOCKS v1 SUNSET (2026-10-31; Jake 2026-10-13, Part E4): fetch/nearblocks.py logs "NEARBLOCKS API SUNSET" when a
-# call answers with a Deprecation / Sunset header, HTTP 410 or a sunset message — the console line names NearBlocks
+# call answers with a Deprecation / Sunset header, HTTP 410 or a sunset message - the console line names NearBlocks
 $NbSunset = (($run[1] -split "`n") | Where-Object { $_ -like "*NEARBLOCKS API SUNSET*" } | Select-Object -First 1)
 if ($NbSunset) { $summary = "NearBlocks: deprecation/sunset answer - see the log ($($NbSunset.Trim().Substring(0, [Math]::Min(160, $NbSunset.Trim().Length)))) | $summary" }
 Write-Log $summary

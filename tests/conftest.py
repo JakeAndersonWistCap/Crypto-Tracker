@@ -106,6 +106,7 @@ SHARED_PLAIN_BUILD_GROUP = "shared_plain_build"
 
 def pytest_configure(config):
     config.addinivalue_line("markers", "xdist_group(name): run every test of the group on one xdist worker")
+    config.addinivalue_line("markers", "slow: over 60 s at the 96f6d97 gate (a full build); the gate runs them all")
     _install_network_block()
 
 
@@ -125,10 +126,35 @@ def needs_one_worker(path) -> bool:
         return True
 
 
+# R7.A1 (Jake 2026-11-16, gate speed): THE SLOW TESTS, measured on the 96f6d97 gate (tests/test_*.py setup or call over
+# 60 s: a full build of the 15 dumps, or one per dump). Marked `slow`, and collected FIRST, so a gate's workers start
+# the long items early and the run does not end on one of them. Nothing is skipped: `-m "not slow"` is for a quick own
+# check only; the gate runs every test.
+SLOW_TEST_FILES = (
+    "test_round_p3_6.py", "test_round_p4_q8.py", "test_round_g8.py", "test_round_p3_7.py", "test_friday_check.py",
+    "test_round_g9.py", "test_round_p4_q3.py", "test_round_p3_5.py", "test_highlights.py", "test_real_dumps.py",
+    "test_alignment.py", "test_signoff_fixtures.py", "test_final_round.py", "test_round_g13.py", *SHARED_PLAIN_BUILD_FILES)
+SLOW_TESTS = {
+    "test_adapters.py": (
+        "test_xlcalc_agrees_with_libreoffice_on_every_formula_of_a_built_workbook", "test_headline_diff_runs_on_a_store_",
+        "test_manual_form_make_runs_on_a_store", "test_credibility_report_runs_without_libreoffice",
+        "test_portfolio_scope_applies_to_the_build_and_not_only_to_the_fetch",
+        "test_no_tab_formula_looks_up_a_metric_that_is_not_defined",
+        "test_hyperliquid_future_emissions_is_its_own_series_never_pool_release",
+        "test_a_route_only_closure_never_blanks_a_live_headline", "test_aerodrome_implied_buyback_is_a_structural_zero",
+        "test_credibility_never_counts_a_reread_of_our_own_source_as_pass",
+        "test_credibility_tab_has_a_row_for_every_headline_cell_of_the_fifteen_projects")}
+
+
+def is_slow(name: str, test: str) -> bool:
+    return name in SLOW_TEST_FILES or any(test.startswith(t) for t in SLOW_TESTS.get(name, ()))
+
+
 @pytest.hookimpl(tryfirst=True)       # before xdist's own hook, which reads the mark to group the tests
 def pytest_collection_modifyitems(session, config, items):
     import pathlib
     seen: dict = {}
+    slow = []
     for item in items:
         path = pathlib.Path(str(item.fspath))
         name = path.name
@@ -137,6 +163,12 @@ def pytest_collection_modifyitems(session, config, items):
         elif seen.setdefault(name, needs_one_worker(path)):
             item.add_marker(pytest.mark.xdist_group(name=name))
         # otherwise no group: under --dist loadgroup the file's tests are distributed one by one
+        if is_slow(name, getattr(item, "name", "")):
+            item.add_marker(pytest.mark.slow)
+            slow.append(item)
+    # the slow items first, each file's own order kept (a stable sort): long work starts on every worker early
+    ids = {id(i) for i in slow}
+    items[:] = slow + [i for i in items if id(i) not in ids]
 
 
 # ================================================================================ P5-1.1c: no network in tests

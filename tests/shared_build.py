@@ -26,6 +26,12 @@ openpyxl. A cached build is reused only under the same key; any change to any of
 fresh build. The cache lives in memory for one process only (one gate, one own-check run): every gate builds
 fresh at least once.
 
+R7.A1 (Jake 2026-11-16, gate speed): ONE BUILD PER COMMIT, ON DISK. The key is computed once per process (the code
+does not change during a run; a file a test writes cannot make a second build), and the master copy and its record
+are kept on disk under the key (TOKEN_METRICS_BUILD_CACHE, default <tmp>/tm_shared_build/<key>), behind a lock, so
+the gate's four workers, a later run and the round's own checks on the same commit build it once between them. A
+cached copy is used only when its files still hash as they did at its build; otherwise it is rebuilt.
+
 THE CONTAINMENT CHECKS:
     - the master copy's file hashes are recorded at build time and re-checked at the end of the session
       (verify_unchanged, called from conftest's pytest_sessionfinish): a test that wrote into the master copy
@@ -38,9 +44,14 @@ from __future__ import annotations
 
 import copy
 import hashlib
+import json
 import os
+import pickle
 import shutil
 import sys
+import tempfile
+import time
+from contextlib import contextmanager
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -53,6 +64,67 @@ STALE_ENV = "TOKEN_METRICS_SHARED_BUILD_STALE"
 STALE_PROJECT = "Pendle"
 
 _CACHE: dict[str, dict] = {}
+_KEY: dict[str, str] = {}
+CACHE_ENV = "TOKEN_METRICS_BUILD_CACHE"
+
+
+def process_key() -> str:
+    """R7.A1: the code key, computed once per process (a file a test writes mid-run is not a code change)."""
+    if "key" not in _KEY:
+        _KEY["key"] = code_key()
+    return _KEY["key"]
+
+
+def cache_dir(key: str) -> Path:
+    return Path(os.environ.get(CACHE_ENV) or (Path(tempfile.gettempdir()) / "tm_shared_build")) / key
+
+
+@contextmanager
+def _locked(path: Path):
+    """An exclusive lock on `path` (POSIX flock; Windows msvcrt; none where neither exists)."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fh = open(path, "a+b")
+    try:
+        try:
+            import fcntl
+            fcntl.flock(fh, fcntl.LOCK_EX)
+        except ImportError:                                  # pragma: no cover — Windows
+            try:
+                import msvcrt
+                while True:
+                    try:
+                        msvcrt.locking(fh.fileno(), msvcrt.LK_LOCK, 1)
+                        break
+                    except OSError:
+                        time.sleep(1)
+            except ImportError:
+                pass
+        yield
+    finally:
+        fh.close()
+
+
+def _from_disk(key: str) -> dict | None:
+    d = cache_dir(key)
+    try:
+        meta = json.loads((d / "hashes.json").read_text(encoding="utf-8"))
+        if _hash_dir(d / "master") != meta:
+            return None
+        rec = pickle.loads((d / "record.pkl").read_bytes())
+    except (OSError, ValueError, pickle.UnpicklingError, EOFError):
+        return None
+    return {"master": d / "master", "rec": rec, "hashes": meta}
+
+
+def _to_disk(key: str, master: Path, rec: dict, hashes: dict) -> None:
+    d = cache_dir(key)
+    tmp = d.parent / f"{key}.writing.{os.getpid()}"
+    shutil.rmtree(tmp, ignore_errors=True)
+    shutil.copytree(master, tmp / "master")
+    (tmp / "record.pkl").write_bytes(pickle.dumps(rec))
+    (tmp / "hashes.json").write_text(json.dumps(hashes), encoding="utf-8")
+    shutil.rmtree(d, ignore_errors=True)
+    os.replace(tmp, d)
 
 
 def key_files(root: Path = ROOT) -> list[Path]:
@@ -158,13 +230,22 @@ def _stale_build(d: Path) -> None:
 def plain_build(tmp_path_factory, name: str) -> dict:
     """The plain build of the 15 dumps: a fresh copy of its files in a directory of the caller's own, and the record.
     Keys: dir, audit, reader, db, asof, stats, bad_prints, groups, headlines, trajectory, locations, built_fresh."""
-    key = code_key()
+    key = process_key()
     hit = _CACHE.get(key)
-    fresh = hit is None
-    if fresh:
-        master = tmp_path_factory.mktemp("shared_plain_build")
-        rec = _build(master)
-        hit = _CACHE[key] = {"master": master, "rec": rec, "hashes": _hash_dir(master)}
+    fresh = False
+    if hit is None:
+        with _locked(cache_dir(key).parent / f"{key}.lock"):
+            hit = _from_disk(key)
+            if hit is None:
+                fresh = True
+                master = tmp_path_factory.mktemp("shared_plain_build")
+                rec = _build(master)
+                hit = {"master": master, "rec": rec, "hashes": _hash_dir(master)}
+                try:
+                    _to_disk(key, master, rec, hit["hashes"])
+                except (OSError, pickle.PicklingError, TypeError, AttributeError):
+                    pass                                   # the disk copy is a speed-up only; the build stands
+        _CACHE[key] = hit
     d = tmp_path_factory.mktemp(name)
     for p in hit["master"].iterdir():
         if p.is_file():

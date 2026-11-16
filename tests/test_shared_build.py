@@ -61,8 +61,10 @@ def test_caches_scratch_and_run_outputs_are_not_inputs(tmp_path):
 
 
 @pytest.fixture
-def fake_build(monkeypatch):
+def fake_build(monkeypatch, tmp_path):
     calls = []
+    monkeypatch.setenv(sb.CACHE_ENV, str(tmp_path / "disk_cache"))     # R7.A1: each test its own disk cache
+    monkeypatch.setattr(sb, "_KEY", {})
 
     def build(d):
         calls.append(d)
@@ -88,6 +90,7 @@ def test_one_build_per_key_and_every_caller_gets_its_own_copy_and_record(tmp_pat
     assert c["audit"].read_text() == "audit.xlsx 1" and c["groups"]["k"] == [1, 2]
     assert sb.verify_unchanged() == []
     monkeypatch.setattr(sb, "code_key", lambda *a, **k: "key-2")    # the code changed: a fresh build
+    monkeypatch.setattr(sb, "_KEY", {})                              # (a new process: the key is read once each)
     d = sb.plain_build(tmp_path_factory, "fourth")
     assert len(fake_build) == 2 and d["built_fresh"] and d["audit"].read_text() == "audit.xlsx 2"
 
@@ -125,3 +128,24 @@ def test_the_files_that_share_the_build_are_declared_and_none_still_builds_the_p
     for n in users:
         src = (TESTS / n).read_text(encoding="utf-8")
         assert "bw.build_workbook(st, d / \"audit.xlsx\"" not in src, f"{n} still builds the plain recipe itself"
+
+
+# ===================================================== R7.A1 (Jake 2026-11-16): one build per commit, kept on disk
+def test_another_process_reuses_the_disk_copy_and_a_tampered_copy_is_rebuilt(tmp_path_factory, fake_build, monkeypatch):
+    a = sb.plain_build(tmp_path_factory, "worker1")
+    monkeypatch.setattr(sb, "_CACHE", {})                            # a second worker / a later run: nothing in memory
+    monkeypatch.setattr(sb, "_KEY", {})
+    b = sb.plain_build(tmp_path_factory, "worker2")
+    assert len(fake_build) == 1 and a["built_fresh"] and not b["built_fresh"]
+    assert b["audit"].read_text() == "audit.xlsx 1" and b["groups"] == {"k": [1, 2]}
+    (sb.cache_dir("key-1") / "master" / "audit.xlsx").write_text("tampered on disk")
+    monkeypatch.setattr(sb, "_CACHE", {})
+    c = sb.plain_build(tmp_path_factory, "worker3")
+    assert len(fake_build) == 2 and c["built_fresh"] and c["audit"].read_text() == "audit.xlsx 2"
+
+
+def test_the_key_is_read_once_per_process(monkeypatch):
+    calls = []
+    monkeypatch.setattr(sb, "_KEY", {})
+    monkeypatch.setattr(sb, "code_key", lambda *a, **k: calls.append(1) or f"k{len(calls)}")
+    assert sb.process_key() == sb.process_key() == "k1" and len(calls) == 1

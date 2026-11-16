@@ -42899,3 +42899,56 @@ DECLARED_NA_REASONS["Sky"] += [
      "why": "no locked buyback fund exists: the bought SKY is held at the Pause Proxy (the held buyback, read as "
             "treasury_holding_tokens, R6.3), which is not locked supply"},
 ]
+
+# =====================================================================================================================
+# ROUND 6B + 7 (Jake 2026-11-16, on 96f6d97). Frozen: Uniswap, Fluid, Maple, Morpho, Pendle — declared moves only.
+# =====================================================================================================================
+# R7.A2a PENDLE'S REVENUE ROW, LIKE FOR LIKE (Jake 2026-11-16): judged over the chains DefiLlama can price. The two it
+# cannot (R5B.4: Robinhood Chain 4663 — DefiLlama "Robinhood Chain"; HyperEVM 999 — DefiLlama "Hyperliquid L1") come off
+# both sides: ours by Pendle's per-market figure for their markets (statistics/market-fees, chainId), DefiLlama by its
+# own per-chain breakdown of pendle-v2 dailyRevenue. Tolerance stays 10%. Until both legs are stored the row says so.
+PENDLE_UNPRICED_CHAINS = {4663: "Robinhood Chain", 999: "Hyperliquid L1"}
+PROJECT_BY_NAME["Pendle"]["spendle_epochs"].update({
+    "market_revenue_unpriced_metric": "pendle_epoch_market_revenue_unpriced_usd",
+    "unpriced_chain_ids": tuple(PENDLE_UNPRICED_CHAINS)})
+PROJECT_BY_NAME["Pendle"]["defillama_chain_breakdown"] = [
+    {"metric": "revenue_usd_defillama_unpriced", "data_type": "dailyRevenue",
+     "chains": tuple(PENDLE_UNPRICED_CHAINS.values())}]
+METRICS["pendle_epoch_market_revenue_unpriced_usd"] = {
+    "label": "Pendle's own per-market revenue per sPENDLE epoch on the chains DefiLlama cannot price (Robinhood Chain "
+             "4663, HyperEVM 999; statistics/market-fees markets by chainId) — the like-for-like leg (R7.A2a)",
+    "kind": "flow", "unit": "usd", "archetypes": [3], "tiers": [1], "sanity_min": 0, "sanity_max": 1e8,
+    "only_projects": ("Pendle",)}
+METRICS["revenue_usd_defillama_unpriced"] = {
+    "label": "DefiLlama pendle-v2 dailyRevenue on Robinhood Chain + Hyperliquid L1 (its totalDataChartBreakdown) — the "
+             "like-for-like leg (R7.A2a)",
+    "kind": "flow", "unit": "usd", "archetypes": [3], "tiers": [1], "sanity_min": 0, "sanity_max": 1e8,
+    "only_projects": ("Pendle",)}
+for _side in ("ours", "ref"):
+    _blk = CREDIBILITY["Pendle"]["in_revenue"][_side if _side == "ours" else "ref"]
+    _blk["args"] = dict(_blk["args"], unpriced_ours="pendle_epoch_market_revenue_unpriced_usd",
+                        unpriced_ref="revenue_usd_defillama_unpriced", unpriced_chains="Robinhood Chain and HyperEVM")
+CREDIBILITY["Pendle"]["in_revenue"]["what"] = (
+    "Revenue over Q0's complete sPENDLE epochs, LIKE FOR LIKE over the chains DefiLlama can price (R7.A2a, Jake "
+    "2026-11-16) — ours (Pendle's own: per-market protocol + realized YT fee + PT-looping fee, each epoch spread) vs "
+    "DefiLlama pendle-v2 over the same UTC days; Robinhood Chain and HyperEVM off both sides, named")
+CREDIBILITY["Pendle"]["in_revenue"]["ref"]["note"] += (
+    " R7.A2a (Jake 2026-11-16): judged LIKE FOR LIKE — Robinhood Chain and HyperEVM (tokens DefiLlama cannot price) "
+    "come off both sides; tolerance 10%, unchanged. R5B's five epochs: +5.77% like for like.")
+
+# R7.A2b FLUID'S SUBSIDY-COVER ALLOWANCE, RE-CHECKED (its re-check date 2026-11-14 had passed). The declared gap STILL
+# HOLDS: the unscanned distributors still pay. Read 2026-11-16 on chain (Transfer logs of FLUID 0x61E030A5…, last 30
+# days): Plasma MerkleDistributor 0x3413D185… paid 888.29 FLUID in 15 transfers (rpc.plasma.to, to block 37,901,383;
+# balance 22,809.68 left); Base 0x94312a60… 2.73 FLUID (7) and 0xF3602935… 1.24 FLUID (2) (base-rpc.publicnode.com, to
+# block 58,271,762; balances 16,283.78 and 2,562.66). Renewed with the new read as its source and a new re-check date.
+# Pendle's entry is not renewed (its chains are wired, R5.2); Aethir's waits for its own round.
+for _a in REGRESSION_ALLOWLIST:
+    if _a.get("project") == "Fluid" and "SUBSIDY COVER" in (_a.get("match") or ()):
+        _a.update({"until": "2026-12-16", "accepted": "2026-11-16",
+                   "reason": "subsidy cover BLOCKED on an incomplete incentive denominator — Base / Plasma distributors "
+                             "unscanned, and still paying (read 2026-11-16, last 30 days: Plasma 0x3413D185… 888.29 FLUID "
+                             "in 15 transfers; Base 0x94312a60… 2.73, 0xF3602935… 1.24); re-check on wiring the missing "
+                             "scans (config.OUTFLOW_INCOMPLETE) or by 2026-12-16",
+                   "source": "eth_getLogs Transfer(from distributor) on FLUID 0x61E030A56D33e8260FdD81f03B162A79Fe3449Cd: "
+                             "rpc.plasma.to (to block 37,901,383), base-rpc.publicnode.com (to block 58,271,762)"})
+

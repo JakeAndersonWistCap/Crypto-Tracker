@@ -1323,13 +1323,13 @@ Funding: 2000-01-01..now treasury: the Foundation buys AERO with its own voting 
 |---|---|---|
 | into circulating | (a) security emissions | **NO SERIES** |
 | into circulating | (b) supply-side incentives | **NO SERIES** |
-| into circulating | (c) demand-side incentives | `emissions_mint_funded_tokens` |
+| into circulating | (c) demand-side incentives | `emissions_tokens` |
 | into circulating | (d) ecosystem / grant spend | `sky_ecosystem_out_tokens` |
-| into circulating | (e) unlocks | `emissions_treasury_funded_tokens` |
+| into circulating | (e) unlocks | **NO SERIES** |
 | out of circulating | retirement (bought, burned + held) | `retired_buyback_tokens` |
 | out of circulating | burn (every burn) | `sky_stage2_burn_tokens` |
 
-Basis: SKY rewards split by funding period (config.REWARD_FUNDING): minted (to 2025-06-02) = (c); paid from Pause Proxy reserves = a treasury release (e); paid from SKY bought back out of revenue (from 2026-08-17) = a distribution of the buyback, credited once as the buyback — not dilution. The USDS -> SKY farm 0x0650CAF1… stopped paying 2026-01-26; LSSKY -> SKY vests 17/18 since
+Basis: SKY rewards to stakers are emissions — outflow (c) in every funding period (R6.2, Jake 2026-11-16: released from the treasury, not an unlock): minted to 2025-06-01, paid from Pause Proxy reserves, or from SKY bought back (from 2026-08-17; the buyback is credited once, as holder revenue). The USDS -> SKY farm 0x0650CAF1… stopped paying 2026-01-26; LSSKY -> SKY vests 17/18 since
 
 **Value flow statement**
 

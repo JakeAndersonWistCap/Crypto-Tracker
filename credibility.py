@@ -1891,7 +1891,7 @@ def _pendle_epoch_revenue(p, rows, long, asof, flow="revenue_usd", ref="pendle_e
 def _pendle_basis_vs_defillama(p, rows, long, asof, ours="revenue_usd", ref="revenue_usd_defillama",
                                markets="pendle_epoch_market_revenue_usd", looping="pendle_pt_looping_fees_usd",
                                total="pendle_epoch_revenue_usd", side="ref", epoch_days=14, window=90, min_epochs=2,
-                               **_):
+                               unpriced_ours=None, unpriced_ref=None, unpriced_chains="", **_):
     """D4-5: PENDLE'S OWN BASIS AGAINST DEFILLAMA, LIKE FOR LIKE. Over the complete sPENDLE epochs wholly inside Q0
     ([asof − window, asof)) whose per-market figure is stored, `ours` (Pendle's epoch figure, spread — the read-time
     view) against DefiLlama pendle-v2 (`ref`) summed over the same UTC days; an epoch counts only when every day of both
@@ -1901,6 +1901,12 @@ def _pendle_basis_vs_defillama(p, rows, long, asof, ours="revenue_usd", ref="rev
     lo = end - pd.Timedelta(days=int(window))
     so, sr, sm = _series(long, p, ours), _series(long, p, ref), _series(long, p, markets)
     sl, st = _series(long, p, looping), _series(long, p, total)
+    # R7.A2a (Jake 2026-11-16): LIKE FOR LIKE — the chains DefiLlama cannot price come off BOTH sides: ours by Pendle's
+    # own per-epoch figure for their markets, DefiLlama by its own per-chain breakdown, over the same days
+    su = _series(long, p, unpriced_ours) if unpriced_ours else None
+    sru = _series(long, p, unpriced_ref) if unpriced_ref else None
+    lfl = su is not None and sru is not None
+    ua = ub = 0.0
     used, holes, a, b = [], [], 0.0, 0.0
     for start in sm.index:
         stop = start + pd.Timedelta(days=int(epoch_days))
@@ -1910,14 +1916,23 @@ def _pendle_basis_vs_defillama(p, rows, long, asof, ours="revenue_usd", ref="rev
         if not (days.isin(so.index).all() and days.isin(sr.index).all()):
             holes.append(str(start.date()))
             continue
+        if lfl and not (start in su.index and days.isin(sru.index).all()):
+            holes.append(f"{start.date()} (the unpriced chains' legs)")
+            continue
         used.append(start)
         a += float(so.loc[days].sum())
         b += float(sr.loc[days].sum())
+        if lfl:
+            ua += float(su.loc[start])
+            ub += float(sru.loc[days].sum())
     if len(used) < int(min_epochs):
         return None, None, (f"{markets}: {len(used)} complete epoch(s) inside {lo.date()}..{end.date()} with every day of "
                             f"{ours} and {ref} held, {min_epochs} needed" + (f" (days missing: {', '.join(holes)})"
                                                                             if holes else ""))
     last = (max(used) + pd.Timedelta(days=int(epoch_days) - 1)).date()
+    if lfl:
+        a_all, b_all = a, b
+        a, b = a - ua, b - ub
     mk = float(sm.loc[used].sum())
     lp = float(sum(float(sl[d]) for d in used if d in sl.index))
     untracked = [str(d.date()) for d in used if d not in sl.index]
@@ -1925,6 +1940,10 @@ def _pendle_basis_vs_defillama(p, rows, long, asof, ours="revenue_usd", ref="rev
            f"{used[0].date()}..{last} — ours {a:,.0f} = per-market protocol + realized YT fee {mk:,.0f} + PT-looping fee "
            f"{lp:,.0f}" + (f" (not tracked: {', '.join(untracked)})" if untracked else "")
            + f"; DefiLlama pendle-v2 {b:,.0f} ({b / a - 1:+.1%} against ours)" if a else "")
+    if lfl:
+        how += (f". LIKE FOR LIKE (Jake 2026-11-16): {unpriced_chains} — tokens DefiLlama cannot price — off both sides: "
+                f"ours {a_all:,.0f} − {ua:,.0f} = {a:,.0f}, DefiLlama {b_all:,.0f} − {ub:,.0f} = {b:,.0f}"
+                + (f" ({b / a - 1:+.1%}; with them {b_all / a_all - 1:+.1%})" if a and a_all else ""))
     tot = [d for d in used if d in st.index]
     if len(tot) == len(used):
         rest = float(st.loc[used].sum()) - mk - lp

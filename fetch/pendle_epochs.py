@@ -413,6 +413,29 @@ class PendleEpochs:
                 f"{metric}: {len(rows)} complete epoch(s) {rows[0][0].date()}..{rows[-1][0].date()} (protocol fee + "
                 f"realized YT fee over {rows[-1][2]} market(s) in the latest); latest {rows[-1][1]:,.0f}"
                 + (f"; NOT STORED (a field missing): {', '.join(bad)}" if bad else ""), TIER)
+        # R7.A2a: the same epochs' revenue on the chains DefiLlama cannot price (config: unpriced_chain_ids) — the part
+        # the like-for-like comparison leaves out of ours
+        um, ids = spec.get("market_revenue_unpriced_metric"), set(spec.get("unpriced_chain_ids") or ())
+        if um and ids:
+            urows = []
+            for e in (payload or {}).get("epochs") or []:
+                try:
+                    st = pd.Timestamp(e["epochStart"])
+                    when = (st.tz_convert(None) if st.tzinfo else st).normalize()
+                except (KeyError, ValueError, TypeError):
+                    continue
+                if when not in {d for d, _v, _n, _f in rows}:
+                    continue
+                mk = [m for m in e.get("markets") or [] if int(m.get("chainId") or 0) in ids]
+                if any(m.get("protocolFeeUsd") is None or m.get("realizedYtFeeUsd") is None for m in mk):
+                    continue
+                urows.append((when, sum(float(m["protocolFeeUsd"]) + float(m["realizedYtFeeUsd"]) for m in mk)))
+            if urows:
+                urows.sort()
+                out.add(pd.DataFrame([point(name, um, v, f"{SOURCE}:statistics/market-fees.markets[chainId in "
+                                                         f"{sorted(ids)}].protocolFeeUsd+realizedYtFeeUsd", TIER, d).iloc[0]
+                                      for d, v in urows]), SOURCE, name,
+                        f"{um}: {len(urows)} complete epoch(s); latest {urows[-1][1]:,.0f}", TIER)
         # D4-5: the same epochs' fees users paid — pool fee (the LPs' share included) + realized YT fee
         fm = spec.get("market_fees_metric")
         fees = [(d, f) for d, _v, _n, f in rows if f is not None]

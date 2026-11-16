@@ -271,6 +271,27 @@ class DefiLlama:
             self._memo[key] = self.http.get(f"{API}/summary/fees/{slug}", params={"dataType": data_type})
         return self._memo[key]
 
+    def _chain_breakdown(self, project: dict, slug: str, spec: dict, window_days, out) -> None:
+        """R7.A2a (Jake 2026-11-16, Pendle's revenue row like for like): the named chains' share of a DefiLlama series,
+        per day, from the same payload's totalDataChartBreakdown ({chain: {listing: $}}) — stored under its own metric.
+        A chain absent on a day is DefiLlama booking nothing there that day (its own 0)."""
+        name = project["name"]
+        chains = tuple(spec["chains"])
+        try:
+            j = self._summary(slug, spec.get("data_type", "dailyRevenue"))
+            br = j.get("totalDataChartBreakdown") or []
+            if not br:
+                raise ValueError("no totalDataChartBreakdown in the payload")
+            rows = [(datetime.fromtimestamp(ts, tz=timezone.utc),
+                     sum(float(v) for c in chains for v in ((day or {}).get(c) or {}).values()))
+                    for ts, day in br]
+            out.add(window(tidy(rows, name, spec["metric"], f"{SOURCE}:{slug}:{spec.get('data_type', 'dailyRevenue')}"
+                                f"[{'+'.join(chains)}]", TIER), window_days), SOURCE, name,
+                    f"{spec['metric']} = {slug}:{spec.get('data_type', 'dailyRevenue')} breakdown, {' + '.join(chains)}",
+                    TIER)
+        except Exception as e:  # noqa: BLE001 — a failed source must not kill the run
+            out.fail(SOURCE, name, f"{spec['metric']}: {slug} breakdown: {e}", TIER)
+
     @staticmethod
     def _chart(j: dict):
         return [(datetime.fromtimestamp(ts, tz=timezone.utc), v)
@@ -584,6 +605,8 @@ class DefiLlama:
                 out.fail(SOURCE, name, f"{slug}:{data_type}: {e}", TIER)
         for spec in project.get("defillama_sum_slugs") or ():
             self._sum_slugs(project, spec, window_days, out)
+        for spec in project.get("defillama_chain_breakdown") or ():
+            self._chain_breakdown(project, slug, spec, window_days, out)
         # ONE SLUG, ONE COMPONENT METRIC (Chainlink requests, 2026-10-05): a line of a read-time sum,
         # stored under its own name so the sum can refuse a day it is missing.
         got_rows: dict = {}
