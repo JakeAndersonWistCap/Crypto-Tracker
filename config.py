@@ -43436,3 +43436,34 @@ CIRC_CHANGE_DECLARED_GAP = {
         "source": "https://api.hyperliquid.xyz/info (userFillsByTime: the latest 10,000 fills only; "
                   "userNonFundingLedgerUpdates: transfers in only — read 2026-11-16); SPEC R7C.C1"},
 }
+
+
+# R7D.B SKY AND HYPERLIQUID FROZEN (Jake 2026-11-16, overnight round 7D: "freeze each one whose done_check is READY on its
+# export, with all its rounds' moves declared"). Built from Jake's R7C exports (data/store-exports 566a0f2:
+# sky-2026-11-16-220053-4b587de, hyperliquid-2026-11-16-220059-4b587de) on this round's code: Hyperliquid READY; Sky
+# lists one cell, "Staking yield minus T-bill" — the T-bill is a macro row the export does not hold (the case Pendle
+# was frozen on, R5B.5; store_export carries the macro rows from this round). The baselines are their cells on the
+# 15-dump build (tests/fixtures/frozen_sky.json 482 cells, frozen_hyperliquid.json 616). The rounds' moves on the dumps
+# are the record, kept beside the baselines (frozen_<project>_moves.json: from the build before round 6 to the
+# baseline; each attributed to the LAST round that moved the cell — most to R7C, whose dump refresh re-read every
+# stored series).
+FROZEN_BEFORE_R7D = tuple(FROZEN_PROJECTS)
+FROZEN_PROJECTS["Sky"] = {
+    "baseline": "tests/fixtures/frozen_sky.json", "since": "2026-11-17",
+    "why": "rounds 6, 6B, 7B, 7C and 7D done (Jake 2026-11-16): on Jake's R7C export done_check lists only the T-bill "
+           "row the export cannot hold"}
+FROZEN_PROJECTS["Hyperliquid"] = {
+    "baseline": "tests/fixtures/frozen_hyperliquid.json", "since": "2026-11-17",
+    "why": "rounds 7, 7B, 7C and 7D done (Jake 2026-11-16): done_check READY on Jake's R7C export, net supply change x2 "
+           "declared n/a until 2026-12-29 (decision 1c)"}
+
+
+def _frozen_moves_record(slug: str) -> dict:
+    import json as _json
+    from pathlib import Path as _Path
+    p = _Path(__file__).resolve().parent / "tests" / "fixtures" / f"frozen_{slug}_moves.json"
+    return _json.loads(p.read_text(encoding="utf-8")) if p.exists() else {}
+
+
+FROZEN_MOVES["Sky"] = _frozen_moves_record("sky")
+FROZEN_MOVES["Hyperliquid"] = _frozen_moves_record("hyperliquid")

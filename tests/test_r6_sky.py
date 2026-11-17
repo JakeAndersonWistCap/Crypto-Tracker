@@ -122,7 +122,7 @@ def test_3_the_held_buyback_comes_off_a3s_effective_float_on_sky_only():
     R = bw.Refs(100, 10, ["2026-09"])
     sky = bw._effective_float_held(R, 5, config.PROJECT_BY_NAME["Sky"])
     assert sky.startswith("-IF(ISNUMBER(") and '|treasury_holding_tokens"' in sky and sky.endswith(",NA())")
-    for frozen in config.FROZEN_PROJECTS:                        # the frozen projects' formula does not change
+    for frozen in config.FROZEN_BEFORE_R7D:                      # the other frozen projects' formula does not change
         assert bw._effective_float_held(R, 5, config.PROJECT_BY_NAME[frozen]) == ""
 
 

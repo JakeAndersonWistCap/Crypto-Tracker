@@ -115,3 +115,21 @@ def test_b_store_export_carries_the_macro_rows_and_they_load_under_the_macro_pro
     got = con.execute("SELECT project, metric, value FROM metrics ORDER BY project").fetchall()
     con.close()
     assert got == [(config.MACRO_PROJECT, "tbill_3m_yield", 0.0391), ("Sky", "price_usd", 0.06)]
+
+
+# ============================================================================ B: Sky and Hyperliquid frozen
+def test_b_sky_and_hyperliquid_are_frozen_with_their_rounds_moves_on_record():
+    import json
+    assert set(config.FROZEN_PROJECTS) == set(config.FROZEN_BEFORE_R7D) | {"Sky", "Hyperliquid"}
+    assert len(config.FROZEN_BEFORE_R7D) == 5
+    for p, n, rounds in (("Sky", 482, {"R6", "R7B", "R7C"}), ("Hyperliquid", 616, {"R7", "R7B", "R7C", "R7D"})):
+        base = json.loads(pf.baseline_path(p).read_text(encoding="utf-8"))
+        moves = config.FROZEN_MOVES[p]
+        assert len(base) == n and len(moves) > 200
+        assert all(d["why"] and d["date"] and "from" in d for d in moves.values())
+        assert all(base[k] == pf._norm(d["to"]) for k, d in moves.items())      # the baseline holds every declared value
+        assert {d["why"].split(" ")[0] for d in moves.values()} == rounds
+        assert pf.undeclared(base, base, moves) == []
+    # the freeze holds from here: a frozen dump is never refreshed again
+    import dump_fixture
+    assert dump_fixture.main(["--project", "Sky", "--from-export", "x.json.gz"]) == 2

@@ -1,0 +1,1514 @@
+{
+"audit|A3 Revenue Buyback|Actual buyback Q0 ($) — observed": {
+"date": "2026-11-16",
+"from": 6293198.45,
+"to": 6393872.34,
+"why": "R7C (Jake 2026-11-16, decision 1b): the dump refreshed from Jake's store export (cut at the 2026-10-13 as-of) — the stored history his backfills and replays wrote; Sky's insider share of circulating"
+},
+"audit|A3 Revenue Buyback|Actual buyback Q0 (tokens) — observed": {
+"date": "2026-11-16",
+"from": 93178286.1,
+"to": 94507077.8,
+"why": "R7C (Jake 2026-11-16, decision 1b): the dump refreshed from Jake's store export (cut at the 2026-10-13 as-of) — the stored history his backfills and replays wrote; Sky's insider share of circulating"
+},
+"audit|A3 Revenue Buyback|Actual buyback Q0 BURNED (tokens)": {
+"date": "2026-11-16",
+"from": 13129546.1,
+"to": 13371144.6,
+"why": "R7C (Jake 2026-11-16, decision 1b): the dump refreshed from Jake's store export (cut at the 2026-10-13 as-of) — the stored history his backfills and replays wrote; Sky's insider share of circulating"
+},
+"audit|A3 Revenue Buyback|Actual buyback Q0 DISTRIBUTED to stakers (tokens) — staking yield, not retirement": {
+"date": "2026-11-16",
+"from": 59082957.4,
+"to": 60170150.6,
+"why": "R7C (Jake 2026-11-16, decision 1b): the dump refreshed from Jake's store export (cut at the 2026-10-13 as-of) — the stored history his backfills and replays wrote; Sky's insider share of circulating"
+},
+"audit|A3 Revenue Buyback|Actual buyback Q0 RETIRED (tokens) = burned + held": {
+"date": "2026-11-16",
+"from": 34095328.7,
+"to": 34336927.2,
+"why": "R7C (Jake 2026-11-16, decision 1b): the dump refreshed from Jake's store export (cut at the 2026-10-13 as-of) — the stored history his backfills and replays wrote; Sky's insider share of circulating"
+},
+"audit|A3 Revenue Buyback|Actual buyback as % of supply (annualised) — RETIRED (burned + held) only": {
+"date": "2026-11-16",
+"from": 0.00593661433,
+"to": 0.00597351528,
+"why": "R7C (Jake 2026-11-16, decision 1b): the dump refreshed from Jake's store export (cut at the 2026-10-13 as-of) — the stored history his backfills and replays wrote; Sky's insider share of circulating"
+},
+"audit|A3 Revenue Buyback|BURNED ÷ (EMISSIONS + UNLOCKS) (x) = BURNED buyback ÷ (emissions + unlocks), per covered day, at the emission rate IN FORCE — A3's rank key (P4-Q5a)": {
+"date": "2026-11-16",
+"from": 0.133403179,
+"to": 0.134348416,
+"why": "R7C (Jake 2026-11-16, decision 1b): the dump refreshed from Jake's store export (cut at the 2026-10-13 as-of) — the stored history his backfills and replays wrote; Sky's insider share of circulating"
+},
+"audit|A3 Revenue Buyback|BUYBACK AS % OF SUPPLY (annualised, implied)": {
+"date": "2026-11-16",
+"from": 0.0118695572,
+"to": 0.011860531,
+"why": "R7C (Jake 2026-11-16, decision 1b): the dump refreshed from Jake's store export (cut at the 2026-10-13 as-of) — the stored history his backfills and replays wrote; Sky's insider share of circulating"
+},
+"audit|A3 Revenue Buyback|BUYING PRESSURE ON FLOAT, % a year = all market buybacks (burned + held + distributed, tokens, annualised) ÷ tradeable float (P4-Q5c)": {
+"date": "2026-11-16",
+"from": 0.0638516021,
+"to": 0.0651792324,
+"why": "R7C (Jake 2026-11-16, decision 1b): the dump refreshed from Jake's store export (cut at the 2026-10-13 as-of) — the stored history his backfills and replays wrote; Sky's insider share of circulating"
+},
+"audit|A3 Revenue Buyback|Base for the implied buyback ($) — revenue, or the metric the protocol's share names": {
+"date": "2026-11-16",
+"from": 28469423.7,
+"to": 28468786.5,
+"why": "R7C (Jake 2026-11-16, decision 1b): the dump refreshed from Jake's store export (cut at the 2026-10-13 as-of) — the stored history his backfills and replays wrote; Sky's insider share of circulating"
+},
+"audit|A3 Revenue Buyback|CIRCULATING RETIREMENT RATE (tokens) = RETIRED buyback tokens (burned + held, annualised) ÷ circulating — primary": {
+"date": "2026-11-16",
+"from": 0.00593661433,
+"to": 0.00597351528,
+"why": "R7C (Jake 2026-11-16, decision 1b): the dump refreshed from Jake's store export (cut at the 2026-10-13 as-of) — the stored history his backfills and replays wrote; Sky's insider share of circulating"
+},
+"audit|A3 Revenue Buyback|Circulating retirement rate ($) = RETIRED buyback $ (burned + held, annualised) ÷ market cap — alongside": {
+"date": "2026-11-16",
+"from": 0.00488019392,
+"to": 0.0049118884,
+"why": "R7C (Jake 2026-11-16, decision 1b): the dump refreshed from Jake's store export (cut at the 2026-10-13 as-of) — the stored history his backfills and replays wrote; Sky's insider share of circulating"
+},
+"audit|A3 Revenue Buyback|Circulating supply": {
+"date": "2026-11-16",
+"from": 23291979600.0,
+"to": 23312121800.0,
+"why": "R6 (Jake 2026-11-16): Sky's revenue lines from Block Analitica's P&L (S13), emissions and vest steps corrected, the Pause Proxy a held buyback in circulating, live references"
+},
+"audit|A3 Revenue Buyback|Coverage ratio = actual buyback ÷ revenue (>1 ⇒ treasury-funded)": {
+"date": "2026-11-16",
+"from": "n/a — net_revenue_pre_distribution_usd (q0): no rows stored",
+"to": 0.121361572,
+"why": "R7C (Jake 2026-11-16, decision 1b): the dump refreshed from Jake's store export (cut at the 2026-10-13 as-of) — the stored history his backfills and replays wrote; Sky's insider share of circulating"
+},
+"audit|A3 Revenue Buyback|Detail — MKR outstanding (tokens, latest)": {
+"date": "2026-11-16",
+"from": 83465.8921,
+"to": 83461.4278,
+"why": "R7C (Jake 2026-11-16, decision 1b): the dump refreshed from Jake's store export (cut at the 2026-10-13 as-of) — the stored history his backfills and replays wrote; Sky's insider share of circulating"
+},
+"audit|A3 Revenue Buyback|Detail — SKY backing MKR held by non-issuers (tokens, latest)": {
+"date": "2026-11-16",
+"from": 1901892400.0,
+"to": 1901790610.0,
+"why": "R7C (Jake 2026-11-16, decision 1b): the dump refreshed from Jake's store export (cut at the 2026-10-13 as-of) — the stored history his backfills and replays wrote; Sky's insider share of circulating"
+},
+"audit|A3 Revenue Buyback|Detail — SKY held by Sky's two Ecosystem Entity endowments (liquid + locked in Lockstake; non-circulating, G18-3c; tokens, latest)": {
+"date": "2026-11-16",
+"from": "n/a — Data: no rows stored",
+"to": 2968541730.0,
+"why": "R7C (Jake 2026-11-16, decision 1b): the dump refreshed from Jake's store export (cut at the 2026-10-13 as-of) — the stored history his backfills and replays wrote; Sky's insider share of circulating"
+},
+"audit|A3 Revenue Buyback|Effective float = circulating − ve locked − held reserve (a hold removes supply, a payout returns it)": {
+"date": "2026-11-16",
+"from": 5918249560.0,
+"to": 5918161880.0,
+"why": "R7C (Jake 2026-11-16, decision 1b): the dump refreshed from Jake's store export (cut at the 2026-10-13 as-of) — the stored history his backfills and replays wrote; Sky's insider share of circulating"
+},
+"audit|A3 Revenue Buyback|FDV ($)": {
+"date": "2026-11-16",
+"from": 1794547460.0,
+"to": 1776837930.0,
+"why": "R7C (Jake 2026-11-16, decision 1b): the dump refreshed from Jake's store export (cut at the 2026-10-13 as-of) — the stored history his backfills and replays wrote; Sky's insider share of circulating"
+},
+"audit|A3 Revenue Buyback|FDV RETIREMENT RATE (tokens) = RETIRED buyback tokens (burned + held, annualised) ÷ FDV supply (the total supply FDV uses) — always read with the rate to its left": {
+"date": "2026-11-16",
+"from": 0.00589599834,
+"to": 0.00593777721,
+"why": "R7C (Jake 2026-11-16, decision 1b): the dump refreshed from Jake's store export (cut at the 2026-10-13 as-of) — the stored history his backfills and replays wrote; Sky's insider share of circulating"
+},
+"audit|A3 Revenue Buyback|FDV retirement rate ($) = RETIRED buyback $ (burned + held, annualised) ÷ FDV — alongside": {
+"date": "2026-11-16",
+"from": 0.00484680554,
+"to": 0.00488250177,
+"why": "R7C (Jake 2026-11-16, decision 1b): the dump refreshed from Jake's store export (cut at the 2026-10-13 as-of) — the stored history his backfills and replays wrote; Sky's insider share of circulating"
+},
+"audit|A3 Revenue Buyback|Fees Q0 ($)": {
+"date": "2026-11-16",
+"from": 80642566.0,
+"to": 82580976.0,
+"why": "R7C (Jake 2026-11-16, decision 1b): the dump refreshed from Jake's store export (cut at the 2026-10-13 as-of) — the stored history his backfills and replays wrote; Sky's insider share of circulating"
+},
+"audit|A3 Revenue Buyback|Fees ÷ FDV (annualised)": {
+"date": "2026-11-16",
+"from": 0.186388702,
+"to": 0.188487498,
+"why": "R7C (Jake 2026-11-16, decision 1b): the dump refreshed from Jake's store export (cut at the 2026-10-13 as-of) — the stored history his backfills and replays wrote; Sky's insider share of circulating"
+},
+"audit|A3 Revenue Buyback|Implied SKY purchased, both legs ($) — buy pressure, NOT supply reduction": {
+"date": "2026-11-16",
+"from": 4594800.5,
+"to": 4594692.1,
+"why": "R7C (Jake 2026-11-16, decision 1b): the dump refreshed from Jake's store export (cut at the 2026-10-13 as-of) — the stored history his backfills and replays wrote; Sky's insider share of circulating"
+},
+"audit|A3 Revenue Buyback|Implied buyback Q0 ($) = revenue × share": {
+"date": "2026-11-16",
+"from": 4594800.5,
+"to": 4594692.1,
+"why": "R7C (Jake 2026-11-16, decision 1b): the dump refreshed from Jake's store export (cut at the 2026-10-13 as-of) — the stored history his backfills and replays wrote; Sky's insider share of circulating"
+},
+"audit|A3 Revenue Buyback|Implied buyback Q0 (tokens) = $ ÷ avg price": {
+"date": "2026-11-16",
+"from": 69684450.7,
+"to": 69691674.7,
+"why": "R7C (Jake 2026-11-16, decision 1b): the dump refreshed from Jake's store export (cut at the 2026-10-13 as-of) — the stored history his backfills and replays wrote; Sky's insider share of circulating"
+},
+"audit|A3 Revenue Buyback|Implied − actual ($)": {
+"date": "2026-11-16",
+"from": -966506.653,
+"to": -966615.056,
+"why": "R7C (Jake 2026-11-16, decision 1b): the dump refreshed from Jake's store export (cut at the 2026-10-13 as-of) — the stored history his backfills and replays wrote; Sky's insider share of circulating"
+},
+"audit|A3 Revenue Buyback|Lock rate = locked inside circulating ÷ circulating (stake held by wallets outside circulating excluded)": {
+"date": "2026-11-16",
+"from": 0.745910409,
+"to": 0.745258632,
+"why": "R7C (Jake 2026-11-16, decision 1b): the dump refreshed from Jake's store export (cut at the 2026-10-13 as-of) — the stored history his backfills and replays wrote; Sky's insider share of circulating"
+},
+"audit|A3 Revenue Buyback|Market cap ($)": {
+"date": "2026-11-16",
+"from": 1782269860.0,
+"to": 1766207550.0,
+"why": "R7C (Jake 2026-11-16, decision 1b): the dump refreshed from Jake's store export (cut at the 2026-10-13 as-of) — the stored history his backfills and replays wrote; Sky's insider share of circulating"
+},
+"audit|A3 Revenue Buyback|Net absorption Q0 (tokens) = RETIRED buyback (burned + held) − emissions": {
+"date": "2026-11-16",
+"from": -149401186.0,
+"to": -149159587.0,
+"why": "R7C (Jake 2026-11-16, decision 1b): the dump refreshed from Jake's store export (cut at the 2026-10-13 as-of) — the stored history his backfills and replays wrote; Sky's insider share of circulating"
+},
+"audit|A3 Revenue Buyback|Net absorption, implied basis (tokens)": {
+"date": "2026-11-16",
+"from": -126973466.0,
+"to": -126966242.0,
+"why": "R7C (Jake 2026-11-16, decision 1b): the dump refreshed from Jake's store export (cut at the 2026-10-13 as-of) — the stored history his backfills and replays wrote; Sky's insider share of circulating"
+},
+"audit|A3 Revenue Buyback|PROTOCOL STAKING YIELD ($) — alongside: what a REAL staker earns per staked token = holders revenue (annualised) ÷ locked value at spot (real + virtual where rewards are shared with virtual balances) — revenue share, NOT a validator yield. Aerodrome and Sky: at PAYMENT-DAY prices over the mean stake (Jake's price convention, 2026-10-09), which makes it equal to the token column; today's-price APR is a labelled second figure on Credibility": {
+"date": "2026-11-16",
+"from": 0.0495536588,
+"to": 0.0494513942,
+"why": "R7C (Jake 2026-11-16, decision 1b): the dump refreshed from Jake's store export (cut at the 2026-10-13 as-of) — the stored history his backfills and replays wrote; Sky's insider share of circulating"
+},
+"audit|A3 Revenue Buyback|PROTOCOL STAKING YIELD (tokens) — primary: tokens paid to stakers per year ÷ reward-bearing stake (real + virtual); dollars paid are converted at each PAYMENT DAY's price (Aerodrome, Sky — Jake's price convention 2026-10-09) over the mean stake in the same window": {
+"date": "2026-11-16",
+"from": 0.0495536588,
+"to": 0.0494513942,
+"why": "R7C (Jake 2026-11-16, decision 1b): the dump refreshed from Jake's store export (cut at the 2026-10-13 as-of) — the stored history his backfills and replays wrote; Sky's insider share of circulating"
+},
+"audit|A3 Revenue Buyback|Price — 90d average ($)": {
+"date": "2026-11-16",
+"from": 0.0659372422,
+"to": 0.0659288519,
+"why": "R7C (Jake 2026-11-16, decision 1b): the dump refreshed from Jake's store export (cut at the 2026-10-13 as-of) — the stored history his backfills and replays wrote; Sky's insider share of circulating"
+},
+"audit|A3 Revenue Buyback|Price — spot ($)": {
+"date": "2026-11-16",
+"from": 0.0765186085,
+"to": 0.0757634832,
+"why": "R7C (Jake 2026-11-16, decision 1b): the dump refreshed from Jake's store export (cut at the 2026-10-13 as-of) — the stored history his backfills and replays wrote; Sky's insider share of circulating"
+},
+"audit|A3 Revenue Buyback|RETIREMENT ÷ DILUTION (x) = RETIRED buyback ÷ (emissions + unlocks), per covered day — 1.0 is the crossover": {
+"date": "2026-11-16",
+"from": 0.187896878,
+"to": 0.187125773,
+"why": "R7C (Jake 2026-11-16, decision 1b): the dump refreshed from Jake's store export (cut at the 2026-10-13 as-of) — the stored history his backfills and replays wrote; Sky's insider share of circulating"
+},
+"audit|A3 Revenue Buyback|RETIREMENT ÷ DILUTION at the emission rate IN FORCE (x) — forward-looking rows (years to crossover) use it": {
+"date": "2026-11-16",
+"from": 0.346426694,
+"to": 0.345005003,
+"why": "R7C (Jake 2026-11-16, decision 1b): the dump refreshed from Jake's store export (cut at the 2026-10-13 as-of) — the stored history his backfills and replays wrote; Sky's insider share of circulating"
+},
+"audit|A3 Revenue Buyback|Revenue Δ30d": {
+"date": "2026-11-16",
+"from": 0.00685077914,
+"to": 0.00489104586,
+"why": "R7C (Jake 2026-11-16, decision 1b): the dump refreshed from Jake's store export (cut at the 2026-10-13 as-of) — the stored history his backfills and replays wrote; Sky's insider share of circulating"
+},
+"audit|A3 Revenue Buyback|Revenue Δ3m": {
+"date": "2026-11-16",
+"from": -0.0230704627,
+"to": -0.023835073,
+"why": "R7C (Jake 2026-11-16, decision 1b): the dump refreshed from Jake's store export (cut at the 2026-10-13 as-of) — the stored history his backfills and replays wrote; Sky's insider share of circulating"
+},
+"audit|A3 Revenue Buyback|Revenue Δ6m": {
+"date": "2026-11-16",
+"from": -0.178459299,
+"to": -0.179102292,
+"why": "R7C (Jake 2026-11-16, decision 1b): the dump refreshed from Jake's store export (cut at the 2026-10-13 as-of) — the stored history his backfills and replays wrote; Sky's insider share of circulating"
+},
+"audit|A3 Revenue Buyback|Revenue Δ9m": {
+"date": "2026-11-16",
+"from": -0.358742711,
+"to": -0.359244602,
+"why": "R7C (Jake 2026-11-16, decision 1b): the dump refreshed from Jake's store export (cut at the 2026-10-13 as-of) — the stored history his backfills and replays wrote; Sky's insider share of circulating"
+},
+"audit|A3 Revenue Buyback|Share applied to this window (not necessarily today's)": {
+"date": "2026-11-16",
+"from": 0.161394222,
+"to": 0.161394027,
+"why": "R7C (Jake 2026-11-16, decision 1b): the dump refreshed from Jake's store export (cut at the 2026-10-13 as-of) — the stored history his backfills and replays wrote; Sky's insider share of circulating"
+},
+"audit|A3 Revenue Buyback|Tokens locked (ve)": {
+"date": "2026-11-16",
+"from": 17373730000.0,
+"to": 17373560000.0,
+"why": "R7C (Jake 2026-11-16, decision 1b): the dump refreshed from Jake's store export (cut at the 2026-10-13 as-of) — the stored history his backfills and replays wrote; Sky's insider share of circulating"
+},
+"audit|A3 Revenue Buyback|Trend — a3_actual_buyback_pct (arrow · QoQ · 4Q growth/yr · quarters improved; Trajectory tab)": {
+"date": "2026-11-16",
+"from": "– · NEW since Q-2 · 0/2 improved · QoQ -33.9%",
+"to": "– · NEW since Q-2 · 0/2 improved · QoQ -33.4%",
+"why": "R7C (Jake 2026-11-16, decision 1b): the dump refreshed from Jake's store export (cut at the 2026-10-13 as-of) — the stored history his backfills and replays wrote; Sky's insider share of circulating"
+},
+"audit|A3 Revenue Buyback|Trend — a3_burned_vs_new_supply (arrow · QoQ · 4Q growth/yr · quarters improved; Trajectory tab)": {
+"date": "2026-11-16",
+"from": "– · 4Q n/a · QoQ n/a — Q0 is part-held",
+"to": "– · NEW since Q0 · QoQ n/a — NEW since Q0",
+"why": "R7C (Jake 2026-11-16, decision 1b): the dump refreshed from Jake's store export (cut at the 2026-10-13 as-of) — the stored history his backfills and replays wrote; Sky's insider share of circulating"
+},
+"audit|A3 Revenue Buyback|Trend — a3_circ_retirement (arrow · QoQ · 4Q growth/yr · quarters improved; Trajectory tab)": {
+"date": "2026-11-16",
+"from": "– · NEW since Q-2 · 0/2 improved · QoQ -33.9%",
+"to": "– · NEW since Q-2 · 0/2 improved · QoQ -33.4%",
+"why": "R7C (Jake 2026-11-16, decision 1b): the dump refreshed from Jake's store export (cut at the 2026-10-13 as-of) — the stored history his backfills and replays wrote; Sky's insider share of circulating"
+},
+"audit|A3 Revenue Buyback|Trend — a3_fdv_retirement (arrow · QoQ · 4Q growth/yr · quarters improved; Trajectory tab)": {
+"date": "2026-11-16",
+"from": "– · NEW since Q-2 · 0/2 improved · QoQ -34.0%",
+"to": "– · NEW since Q-2 · 0/2 improved · QoQ -33.5%",
+"why": "R7C (Jake 2026-11-16, decision 1b): the dump refreshed from Jake's store export (cut at the 2026-10-13 as-of) — the stored history his backfills and replays wrote; Sky's insider share of circulating"
+},
+"audit|A3 Revenue Buyback|Trend — a3_net_absorption (arrow · QoQ · 4Q growth/yr · quarters improved; Trajectory tab)": {
+"date": "2026-11-16",
+"from": "– · 4Q n/a · 2/2 improved · QoQ +3.3%",
+"to": "– · 4Q n/a · 2/2 improved · QoQ +3.4%",
+"why": "R7C (Jake 2026-11-16, decision 1b): the dump refreshed from Jake's store export (cut at the 2026-10-13 as-of) — the stored history his backfills and replays wrote; Sky's insider share of circulating"
+},
+"audit|A3 Revenue Buyback|Trend — a3_retire_vs_dilution (arrow · QoQ · 4Q growth/yr · quarters improved; Trajectory tab)": {
+"date": "2026-11-16",
+"from": "– · NEW since Q-3 · 0/2 improved · QoQ -25.0%",
+"to": "– · NEW since Q-3 · 0/2 improved · QoQ -25.3%",
+"why": "R7C (Jake 2026-11-16, decision 1b): the dump refreshed from Jake's store export (cut at the 2026-10-13 as-of) — the stored history his backfills and replays wrote; Sky's insider share of circulating"
+},
+"audit|A3 Revenue Buyback|Trend — a3_retire_vs_dilution_now (arrow · QoQ · 4Q growth/yr · quarters improved; Trajectory tab)": {
+"date": "2026-11-16",
+"from": "– · 4Q n/a · QoQ n/a — Q0 is part-held",
+"to": "– · NEW since Q-3 · 1/2 improved · QoQ +60.9%",
+"why": "R7C (Jake 2026-11-16, decision 1b): the dump refreshed from Jake's store export (cut at the 2026-10-13 as-of) — the stored history his backfills and replays wrote; Sky's insider share of circulating"
+},
+"audit|A3 Revenue Buyback|Trend — a3_retired_tokens (arrow · QoQ · 4Q growth/yr · quarters improved; Trajectory tab)": {
+"date": "2026-11-16",
+"from": "– · NEW since Q-2 · 0/2 improved · QoQ -34.0%",
+"to": "– · NEW since Q-2 · 0/2 improved · QoQ -33.5%",
+"why": "R7C (Jake 2026-11-16, decision 1b): the dump refreshed from Jake's store export (cut at the 2026-10-13 as-of) — the stored history his backfills and replays wrote; Sky's insider share of circulating"
+},
+"audit|A4 Permanent Burn|Burn as share of fees (measured)": {
+"date": "2026-11-16",
+"from": 0.013919765,
+"to": 0.013901961,
+"why": "R7C (Jake 2026-11-16, decision 1b): the dump refreshed from Jake's store export (cut at the 2026-10-13 as-of) — the stored history his backfills and replays wrote; Sky's insider share of circulating"
+},
+"audit|A4 Permanent Burn|Circulating supply (used, tokens)": {
+"date": "2026-11-16",
+"from": 23291979600.0,
+"to": 23312121800.0,
+"why": "R6 (Jake 2026-11-16): Sky's revenue lines from Block Analitica's P&L (S13), emissions and vest steps corrected, the Pause Proxy a held buyback in circulating, live references"
+},
+"audit|A4 Permanent Burn|Cross-check: Δ implied circulating supply Q0 vs Q1 (CoinGecko mcap ÷ price)": {
+"date": "2026-11-16",
+"from": 151350753.0,
+"to": 151373094.0,
+"why": "R7C (Jake 2026-11-16, decision 1b): the dump refreshed from Jake's store export (cut at the 2026-10-13 as-of) — the stored history his backfills and replays wrote; Sky's insider share of circulating"
+},
+"audit|A4 Permanent Burn|Fees Q0 ($)": {
+"date": "2026-11-16",
+"from": 80642566.0,
+"to": 82580976.0,
+"why": "R7C (Jake 2026-11-16, decision 1b): the dump refreshed from Jake's store export (cut at the 2026-10-13 as-of) — the stored history his backfills and replays wrote; Sky's insider share of circulating"
+},
+"audit|A4 Permanent Burn|ISSUANCE − BURN, annualised % of circulating (signed; + is net inflation; the cell says 'burn only' where nothing is minted)": {
+"date": "2026-11-16",
+"from": -0.00263607438,
+"to": -0.00263379675,
+"why": "R6 (Jake 2026-11-16): Sky's revenue lines from Block Analitica's P&L (S13), emissions and vest steps corrected, the Pause Proxy a held buyback in circulating, live references"
+},
+"audit|A4 Permanent Burn|Issuance Δ30d": {
+"date": "2026-11-16",
+"from": "n/a — a ratio over zero: gross_issuance_tokens (now) is 0 in the window it reads",
+"to": "BLOCKED — unequal coverage: NOW (gross_issuance_tokens, now) covers 15 days of a 30-day window — holes: 2026-09-14..09-18, 2026-09-21..09-25, 2026-09-28..10-01, 2026-10-05; M1 (gross_issuance_tokens, m1) covers 30 days of a 30-day window",
+"why": "R7C (Jake 2026-11-16, decision 1b): the dump refreshed from Jake's store export (cut at the 2026-10-13 as-of) — the stored history his backfills and replays wrote; Sky's insider share of circulating"
+},
+"audit|A4 Permanent Burn|Issuance Δ3m": {
+"date": "2026-11-16",
+"from": "n/a — a ratio over zero: gross_issuance_tokens (q0) is 0 in the window it reads",
+"to": "BLOCKED — unequal coverage: Q0 (gross_issuance_tokens, q0) covers 75 days of a 90-day window — holes: 2026-09-14..09-18, 2026-09-21..09-25, 2026-09-28..10-01, 2026-10-05; Q1 (gross_issuance_tokens, q1) covers 90 days of a 90-day window",
+"why": "R7C (Jake 2026-11-16, decision 1b): the dump refreshed from Jake's store export (cut at the 2026-10-13 as-of) — the stored history his backfills and replays wrote; Sky's insider share of circulating"
+},
+"audit|A4 Permanent Burn|Issuance Δ6m": {
+"date": "2026-11-16",
+"from": "n/a — a ratio over zero: gross_issuance_tokens (q0) is 0 in the window it reads",
+"to": "BLOCKED — unequal coverage: Q0 (gross_issuance_tokens, q0) covers 75 days of a 90-day window — holes: 2026-09-14..09-18, 2026-09-21..09-25, 2026-09-28..10-01, 2026-10-05; Q2 (gross_issuance_tokens, q2) covers 90 days of a 90-day window",
+"why": "R7C (Jake 2026-11-16, decision 1b): the dump refreshed from Jake's store export (cut at the 2026-10-13 as-of) — the stored history his backfills and replays wrote; Sky's insider share of circulating"
+},
+"audit|A4 Permanent Burn|Issuance Δ9m": {
+"date": "2026-11-16",
+"from": "n/a — a ratio over zero: gross_issuance_tokens (q0) is 0 in the window it reads",
+"to": "BLOCKED — unequal coverage: Q0 (gross_issuance_tokens, q0) covers 75 days of a 90-day window — holes: 2026-09-14..09-18, 2026-09-21..09-25, 2026-09-28..10-01, 2026-10-05; Q3 (gross_issuance_tokens, q3) covers 90 days of a 90-day window",
+"why": "R7C (Jake 2026-11-16, decision 1b): the dump refreshed from Jake's store export (cut at the 2026-10-13 as-of) — the stored history his backfills and replays wrote; Sky's insider share of circulating"
+},
+"audit|A4 Permanent Burn|Issuance − burn ($, each day's issuance − burn × that day's price)": {
+"date": "2026-11-16",
+"from": -775988.318,
+"to": "BLOCKED — unequal coverage: issuance (gross_issuance_day_priced_usd, q0) covers 75 days of a 90-day window — holes: 2026-09-14..09-18, 2026-09-21..09-25, 2026-09-28..10-01, 2026-10-05; burn (gross_burn_day_priced_usd, q0) covers 90 days of a 90-day window",
+"why": "R7C (Jake 2026-11-16, decision 1b): the dump refreshed from Jake's store export (cut at the 2026-10-13 as-of) — the stored history his backfills and replays wrote; Sky's insider share of circulating"
+},
+"audit|A4 Permanent Burn|Market cap ($)": {
+"date": "2026-11-16",
+"from": 1782269860.0,
+"to": 1766207550.0,
+"why": "R7C (Jake 2026-11-16, decision 1b): the dump refreshed from Jake's store export (cut at the 2026-10-13 as-of) — the stored history his backfills and replays wrote; Sky's insider share of circulating"
+},
+"audit|A4 Permanent Burn|PERMANENT BURN YIELD = burn as % of supply (annualised, tokens)": {
+"date": "2026-11-16",
+"from": 0.00263607438,
+"to": 0.00263379675,
+"why": "R6 (Jake 2026-11-16): Sky's revenue lines from Block Analitica's P&L (S13), emissions and vest steps corrected, the Pause Proxy a held buyback in circulating, live references"
+},
+"audit|A4 Permanent Burn|Price — 90d average ($)": {
+"date": "2026-11-16",
+"from": 0.0659372422,
+"to": 0.0659288519,
+"why": "R7C (Jake 2026-11-16, decision 1b): the dump refreshed from Jake's store export (cut at the 2026-10-13 as-of) — the stored history his backfills and replays wrote; Sky's insider share of circulating"
+},
+"audit|A4 Permanent Burn|Price — spot ($)": {
+"date": "2026-11-16",
+"from": 0.0765186085,
+"to": 0.0757634832,
+"why": "R7C (Jake 2026-11-16, decision 1b): the dump refreshed from Jake's store export (cut at the 2026-10-13 as-of) — the stored history his backfills and replays wrote; Sky's insider share of circulating"
+},
+"audit|A4 Permanent Burn|Q0 WINDOW CAVEAT — read before the yield and crossover": {
+"date": "2026-11-16",
+"from": "NOT A STABLE RATE YET — BURN is 2 discrete event(s) in the window, not a rate. Burn yield and burn ÷ issuance show what actually happened in this window on both sides, with no padding; they will move as the window fills even if nothing changes, and are not comparable across periods until at least 3 burn events are in it.",
+"to": "NOT A STABLE RATE YET — ISSUANCE covers 75 of 90 days, so annualised as if full it reads 0/yr against a 0/yr run-rate (1.20x low); BURN is 2 discrete event(s) in the window, not a rate. Burn yield and burn ÷ issuance show what actually happened in this window on both sides, with no padding; they will move as the window fills even if nothing changes, and are not comparable across periods until the issuance window fills (15 more day(s)) and at least 3 burn events are in it.",
+"why": "R7C (Jake 2026-11-16, decision 1b): the dump refreshed from Jake's store export (cut at the 2026-10-13 as-of) — the stored history his backfills and replays wrote; Sky's insider share of circulating"
+},
+"audit|A4 Permanent Burn|Treasury governance could redeploy ($, spot)": {
+"date": "2026-11-16",
+"from": 1541255.09,
+"to": 1545568.34,
+"why": "R7C (Jake 2026-11-16, decision 1b): the dump refreshed from Jake's store export (cut at the 2026-10-13 as-of) — the stored history his backfills and replays wrote; Sky's insider share of circulating"
+},
+"audit|A4 Permanent Burn|Treasury governance could redeploy (tokens) — discretionary issuer-side wallets": {
+"date": "2026-11-16",
+"from": 20142225.8,
+"to": 20399911.3,
+"why": "R7C (Jake 2026-11-16, decision 1b): the dump refreshed from Jake's store export (cut at the 2026-10-13 as-of) — the stored history his backfills and replays wrote; Sky's insider share of circulating"
+},
+"audit|CP Comparability|BUSINESS 1 — core usage (a stock: now; a flow: Q0 annualised over its covered days)": {
+"date": "2026-11-16",
+"from": 7142776780.0,
+"to": 7154463750.0,
+"why": "R7C (Jake 2026-11-16, decision 1b): the dump refreshed from Jake's store export (cut at the 2026-10-13 as-of) — the stored history his backfills and replays wrote; Sky's insider share of circulating"
+},
+"audit|CP Comparability|BUYING PRESSURE ON FLOAT, % a year = all market buybacks (burned + held + distributed, tokens, annualised) ÷ tradeable float (P4-Q5c)": {
+"date": "2026-11-16",
+"from": 0.0638516021,
+"to": 0.0651792324,
+"why": "R7C (Jake 2026-11-16, decision 1b): the dump refreshed from Jake's store export (cut at the 2026-10-13 as-of) — the stored history his backfills and replays wrote; Sky's insider share of circulating"
+},
+"audit|CP Comparability|Burn rate (every burn, fee-market included — A1's basis, annualised) ÷ circulating": {
+"date": "2026-11-16",
+"from": 0.00263607438,
+"to": 0.00263379675,
+"why": "R6 (Jake 2026-11-16): Sky's revenue lines from Block Analitica's P&L (S13), emissions and vest steps corrected, the Pause Proxy a held buyback in circulating, live references"
+},
+"audit|CP Comparability|Burn rate (every burn, fee-market included — A1's basis, annualised) ÷ tradeable float": {
+"date": "2026-11-16",
+"from": 0.0103745863,
+"to": 0.0104413971,
+"why": "R7C (Jake 2026-11-16, decision 1b): the dump refreshed from Jake's store export (cut at the 2026-10-13 as-of) — the stored history his backfills and replays wrote; Sky's insider share of circulating"
+},
+"audit|CP Comparability|Circulating supply (tokens) — our convention, the figure in use": {
+"date": "2026-11-16",
+"from": 23291979600.0,
+"to": 23312121800.0,
+"why": "R6 (Jake 2026-11-16): Sky's revenue lines from Block Analitica's P&L (S13), emissions and vest steps corrected, the Pause Proxy a held buyback in circulating, live references"
+},
+"audit|CP Comparability|Dilution (c) demand-side incentives (annualised) ÷ circulating": {
+"date": "2026-11-16",
+"from": 0.0,
+"to": 0.0319224615,
+"why": "R7C (Jake 2026-11-16, decision 1b): the dump refreshed from Jake's store export (cut at the 2026-10-13 as-of) — the stored history his backfills and replays wrote; Sky's insider share of circulating"
+},
+"audit|CP Comparability|Dilution (c) demand-side incentives (annualised) ÷ tradeable float": {
+"date": "2026-11-16",
+"from": 0.0,
+"to": 0.126553082,
+"why": "R7C (Jake 2026-11-16, decision 1b): the dump refreshed from Jake's store export (cut at the 2026-10-13 as-of) — the stored history his backfills and replays wrote; Sky's insider share of circulating"
+},
+"audit|CP Comparability|Dilution (d) ecosystem / grant spend (annualised) ÷ circulating": {
+"date": "2026-11-16",
+"from": "n/a — outflow_d_tokens (q0): BLOCKED — BLOCKED — outflow (d) is not formed: sky_ecosystem_out_tokens: no rows stored",
+"to": 0.0,
+"why": "R7C (Jake 2026-11-16, decision 1b): the dump refreshed from Jake's store export (cut at the 2026-10-13 as-of) — the stored history his backfills and replays wrote; Sky's insider share of circulating"
+},
+"audit|CP Comparability|Dilution (d) ecosystem / grant spend (annualised) ÷ tradeable float": {
+"date": "2026-11-16",
+"from": "n/a — outflow_d_tokens (q0): BLOCKED — BLOCKED — outflow (d) is not formed: sky_ecosystem_out_tokens: no rows stored",
+"to": 0.0,
+"why": "R7C (Jake 2026-11-16, decision 1b): the dump refreshed from Jake's store export (cut at the 2026-10-13 as-of) — the stored history his backfills and replays wrote; Sky's insider share of circulating"
+},
+"audit|CP Comparability|Discretionary supply (tokens) — issuer-side wallets with no published release schedule": {
+"date": "2026-11-16",
+"from": 20142225.8,
+"to": 20399911.3,
+"why": "R7C (Jake 2026-11-16, decision 1b): the dump refreshed from Jake's store export (cut at the 2026-10-13 as-of) — the stored history his backfills and replays wrote; Sky's insider share of circulating"
+},
+"audit|CP Comparability|Discretionary supply ÷ circulating": {
+"date": "2026-11-16",
+"from": 0.000864770888,
+"to": 0.000875077418,
+"why": "R7C (Jake 2026-11-16, decision 1b): the dump refreshed from Jake's store export (cut at the 2026-10-13 as-of) — the stored history his backfills and replays wrote; Sky's insider share of circulating"
+},
+"audit|CP Comparability|Discretionary supply — which wallets": {
+"date": "2026-11-16",
+"from": "the Pause Proxy treasury",
+"to": "the Pause Proxy (the Flapper's held buyback, in circulating and off float, R6.3)",
+"why": "R6 (Jake 2026-11-16): Sky's revenue lines from Block Analitica's P&L (S13), emissions and vest steps corrected, the Pause Proxy a held buyback in circulating, live references"
+},
+"audit|CP Comparability|ETF / ETP holdings ÷ circulating": {
+"date": "2026-11-16",
+"from": 2.92943328e-05,
+"to": 2.92690218e-05,
+"why": "R6 (Jake 2026-11-16): Sky's revenue lines from Block Analitica's P&L (S13), emissions and vest steps corrected, the Pause Proxy a held buyback in circulating, live references"
+},
+"audit|CP Comparability|FEES Q0 ($) — S13 line 1: all fees paid by users of the protocol": {
+"date": "2026-11-16",
+"from": "not yet split — Sky's three revenue lines come in its own round; its existing revenue cell (Master 'Revenue Q0 ($)', revenue_usd) is REVENUE: DefiLlama's Sky revenue: interest earned less the savings rate paid out, before Sky's own expenses and distributions (Block Analitica's 'revenue' is the reference) — not yet checked against the definition line by line (its own round)",
+"to": 99290589.0,
+"why": "R6 (Jake 2026-11-16): Sky's revenue lines from Block Analitica's P&L (S13), emissions and vest steps corrected, the Pause Proxy a held buyback in circulating, live references"
+},
+"audit|CP Comparability|Flow demand — buyback $ (every funding source, annualised) ÷ market cap": {
+"date": "2026-11-16",
+"from": 0.0144810756,
+"to": 0.0146815727,
+"why": "R7C (Jake 2026-11-16, decision 1b): the dump refreshed from Jake's store export (cut at the 2026-10-13 as-of) — the stored history his backfills and replays wrote; Sky's insider share of circulating"
+},
+"audit|CP Comparability|HOLDER REVENUE Q0 ($) — S13 line 3: the part of revenue reaching token holders": {
+"date": "2026-11-16",
+"from": "not yet split — Sky's three revenue lines come in its own round; its existing revenue cell (Master 'Revenue Q0 ($)', revenue_usd) is REVENUE: DefiLlama's Sky revenue: interest earned less the savings rate paid out, before Sky's own expenses and distributions (Block Analitica's 'revenue' is the reference) — not yet checked against the definition line by line (its own round)",
+"to": 10659872.3,
+"why": "R7C (Jake 2026-11-16, decision 1b): the dump refreshed from Jake's store export (cut at the 2026-10-13 as-of) — the stored history his backfills and replays wrote; Sky's insider share of circulating"
+},
+"audit|CP Comparability|HOLDER SHARE = holder revenue ÷ revenue, per covered day (S13)": {
+"date": "2026-11-16",
+"from": "not yet split — Sky's three revenue lines come in its own round; its existing revenue cell (Master 'Revenue Q0 ($)', revenue_usd) is REVENUE: DefiLlama's Sky revenue: interest earned less the savings rate paid out, before Sky's own expenses and distributions (Block Analitica's 'revenue' is the reference) — not yet checked against the definition line by line (its own round)",
+"to": 0.153181144,
+"why": "R7C (Jake 2026-11-16, decision 1b): the dump refreshed from Jake's store export (cut at the 2026-10-13 as-of) — the stored history his backfills and replays wrote; Sky's insider share of circulating"
+},
+"audit|CP Comparability|HOLDER VALUE YIELD = revenue-funded $ retired + $ distributed + liquid bribes to voters (annualised) ÷ market cap — treasury- or emissions-funded buybacks are NOT credited (LITMUS A); fee-market burns are on A1 net issuance": {
+"date": "2026-11-16",
+"from": 0.024104831,
+"to": 0.0244771372,
+"why": "R7C (Jake 2026-11-16, decision 1b): the dump refreshed from Jake's store export (cut at the 2026-10-13 as-of) — the stored history his backfills and replays wrote; Sky's insider share of circulating"
+},
+"audit|CP Comparability|Held buyback inside circulating (tokens) — out of the tradeable float while held (P4-Q5b)": {
+"date": "2026-11-16",
+"from": 0.0,
+"to": 20399911.3,
+"why": "R7C (Jake 2026-11-16, decision 1b): the dump refreshed from Jake's store export (cut at the 2026-10-13 as-of) — the stored history his backfills and replays wrote; Sky's insider share of circulating"
+},
+"audit|CP Comparability|Holding demand — lock rate = locked ÷ circulating": {
+"date": "2026-11-16",
+"from": 0.745910409,
+"to": 0.745258632,
+"why": "R7C (Jake 2026-11-16, decision 1b): the dump refreshed from Jake's store export (cut at the 2026-10-13 as-of) — the stored history his backfills and replays wrote; Sky's insider share of circulating"
+},
+"audit|CP Comparability|Insider share of circulating = insider-held tokens counted inside circulating ÷ circulating": {
+"date": "2026-11-16",
+"from": 0.0,
+"to": 0.127338976,
+"why": "R7C (Jake 2026-11-16, decision 1b): the dump refreshed from Jake's store export (cut at the 2026-10-13 as-of) — the stored history his backfills and replays wrote; Sky's insider share of circulating"
+},
+"audit|CP Comparability|Insider share of staked / locked supply": {
+"date": "2026-11-16",
+"from": "n/a — sky_endowment_locked_tokens (now): no rows stored",
+"to": 0.16869085,
+"why": "R7C (Jake 2026-11-16, decision 1b): the dump refreshed from Jake's store export (cut at the 2026-10-13 as-of) — the stored history his backfills and replays wrote; Sky's insider share of circulating"
+},
+"audit|CP Comparability|LEAKAGE (ii) — incentive spend not returned as revenue = max(0, 1 − subsidy cover) (PROPOSED)": {
+"date": "2026-11-16",
+"from": "n/a — no supply-side incentive (b) series on file; outflows held: (c) demand-side incentives, (d) ecosystem / grant spend, (e) unlocks — see the outflow basis column",
+"to": "n/a — no supply-side incentive (b) series on file; outflows held: (c) demand-side incentives, (d) ecosystem / grant spend — see the outflow basis column",
+"why": "R7B (Jake 2026-11-16): Sky's endowments circulating and off the float; Hyperliquid's revenue streams counted once, no CoinGecko fallback, the declared handovers"
+},
+"audit|CP Comparability|Leakage (i) — insider share of distributed holder value = insider share of the stake x distributed ÷ credited holder value, Q0 (PROPOSED)": {
+"date": "2026-11-16",
+"from": "n/a — sky_endowment_locked_tokens (now): no rows stored",
+"to": 0.134839235,
+"why": "R7C (Jake 2026-11-16, decision 1b): the dump refreshed from Jake's store export (cut at the 2026-10-13 as-of) — the stored history his backfills and replays wrote; Sky's insider share of circulating"
+},
+"audit|CP Comparability|MARKET SHARE vs its category (90-day mean; a shifted quarter: that quarter's mean) — peer set beside": {
+"date": "2026-11-16",
+"from": 0.0371711011,
+"to": 0.0378075863,
+"why": "R7C (Jake 2026-11-16, decision 1b): the dump refreshed from Jake's store export (cut at the 2026-10-13 as-of) — the stored history his backfills and replays wrote; Sky's insider share of circulating"
+},
+"audit|CP Comparability|Market cap ($)": {
+"date": "2026-11-16",
+"from": 1782269860.0,
+"to": 1766207550.0,
+"why": "R7C (Jake 2026-11-16, decision 1b): the dump refreshed from Jake's store export (cut at the 2026-10-13 as-of) — the stored history his backfills and replays wrote; Sky's insider share of circulating"
+},
+"audit|CP Comparability|Market share, 30-day mean — the daily shares held in the 30 days to the latest day (where the headline is the 90-day mean, config.MARKET_SHARE_MEAN)": {
+"date": "2026-11-16",
+"from": 0.0367753297,
+"to": 0.0374267995,
+"why": "R7C (Jake 2026-11-16, decision 1b): the dump refreshed from Jake's store export (cut at the 2026-10-13 as-of) — the stored history his backfills and replays wrote; Sky's insider share of circulating"
+},
+"audit|CP Comparability|Market share, 60-day mean — the daily shares held in the 60 days to the latest day (where the headline is the 90-day mean, config.MARKET_SHARE_MEAN)": {
+"date": "2026-11-16",
+"from": 0.037009171,
+"to": 0.0376189167,
+"why": "R7C (Jake 2026-11-16, decision 1b): the dump refreshed from Jake's store export (cut at the 2026-10-13 as-of) — the stored history his backfills and replays wrote; Sky's insider share of circulating"
+},
+"audit|CP Comparability|NET HOLDER YIELD = holder value yield − dilution (outflows a+b+c+d+e at each day's price, annualised) ÷ market cap": {
+"date": "2026-11-16",
+"from": "n/a — outflow (d) = sky_ecosystem_out_tokens has no value in this window: BLOCKED — outflow (d) is not formed: sky_ecosystem_out_tokens: no rows stored",
+"to": -0.00242506988,
+"why": "R7C (Jake 2026-11-16, decision 1b): the dump refreshed from Jake's store export (cut at the 2026-10-13 as-of) — the stored history his backfills and replays wrote; Sky's insider share of circulating"
+},
+"audit|CP Comparability|Outflow (c) demand-side incentives — $ a year (each day's tokens x that day's price, annualised)": {
+"date": "2026-11-16",
+"from": 0.0,
+"to": 47514881.2,
+"why": "R7C (Jake 2026-11-16, decision 1b): the dump refreshed from Jake's store export (cut at the 2026-10-13 as-of) — the stored history his backfills and replays wrote; Sky's insider share of circulating"
+},
+"audit|CP Comparability|Outflow (d) ecosystem / grant spend — $ a year (each day's tokens x that day's price, annualised)": {
+"date": "2026-11-16",
+"from": "n/a — outflow_d_usd (q0): BLOCKED — BLOCKED — outflow (d) is not formed: sky_ecosystem_out_tokens: no rows stored",
+"to": 0.0,
+"why": "R7C (Jake 2026-11-16, decision 1b): the dump refreshed from Jake's store export (cut at the 2026-10-13 as-of) — the stored history his backfills and replays wrote; Sky's insider share of circulating"
+},
+"audit|CP Comparability|Outflow categories — basis and what has no series yet (config OUTFLOW_CATEGORIES)": {
+"date": "2026-11-16",
+"from": "(c) emissions_mint_funded_tokens, (d) sky_ecosystem_out_tokens, (e) emissions_treasury_funded_tokens; SKY rewards split by funding period (config.REWARD_FUNDING): minted (to 2025-06-02) = (c); paid from Pause Proxy reserves = a treasury release (e); paid from SKY bought back out of revenue (from 2026-08-17) = a distribution of the buyback, credited once as the buyback — not dilution. The USDS -> SKY farm 0x0650CAF1… stopped paying 2026-01-26; LSSKY -> SKY vests 17/18 since",
+"to": "(c) emissions_tokens, (d) sky_ecosystem_out_tokens; SKY rewards to stakers are emissions — outflow (c) in every funding period (R6.2, Jake 2026-11-16: released from the treasury, not an unlock): minted to 2025-06-01, paid from Pause Proxy reserves, or from SKY bought back (from 2026-08-17; the buyback is credited once, as holder revenue). The USDS -> SKY farm 0x0650CAF1… stopped paying 2026-01-26; LSSKY -> SKY vests 17/18 since R7B.B1 (2026-11-16): no unlock — the endowments are circulating, so their releases are not unlocks",
+"why": "R7B (Jake 2026-11-16): Sky's endowments circulating and off the float; Hyperliquid's revenue streams counted once, no CoinGecko fallback, the declared handovers"
+},
+"audit|CP Comparability|Payout ratio — gross = credited holder value ÷ fees": {
+"date": "2026-11-16",
+"from": 0.128440807,
+"to": 0.129083874,
+"why": "R7C (Jake 2026-11-16, decision 1b): the dump refreshed from Jake's store export (cut at the 2026-10-13 as-of) — the stored history his backfills and replays wrote; Sky's insider share of circulating"
+},
+"audit|CP Comparability|Payout ratio — the project's own net basis = credited holder value ÷ revenue (config revenue basis)": {
+"date": "2026-11-16",
+"from": "n/a — net_revenue_pre_distribution_usd (q0): no rows stored",
+"to": 0.18953285,
+"why": "R7C (Jake 2026-11-16, decision 1b): the dump refreshed from Jake's store export (cut at the 2026-10-13 as-of) — the stored history his backfills and replays wrote; Sky's insider share of circulating"
+},
+"audit|CP Comparability|Price — spot ($)": {
+"date": "2026-11-16",
+"from": 0.0765186085,
+"to": 0.0757634832,
+"why": "R7C (Jake 2026-11-16, decision 1b): the dump refreshed from Jake's store export (cut at the 2026-10-13 as-of) — the stored history his backfills and replays wrote; Sky's insider share of circulating"
+},
+"audit|CP Comparability|REVENUE Q0 ($) — S13 line 2, THE HEADLINE: fees − the cost of delivering them": {
+"date": "2026-11-16",
+"from": "not yet split — Sky's three revenue lines come in its own round; its existing revenue cell (Master 'Revenue Q0 ($)', revenue_usd) is REVENUE: DefiLlama's Sky revenue: interest earned less the savings rate paid out, before Sky's own expenses and distributions (Block Analitica's 'revenue' is the reference) — not yet checked against the definition line by line (its own round)",
+"to": 56698931.3,
+"why": "R7C (Jake 2026-11-16, decision 1b): the dump refreshed from Jake's store export (cut at the 2026-10-13 as-of) — the stored history his backfills and replays wrote; Sky's insider share of circulating"
+},
+"audit|CP Comparability|Retirement rate (RETIRED buyback tokens, burned + held, annualised) ÷ circulating": {
+"date": "2026-11-16",
+"from": 0.00600331786,
+"to": 0.00597351528,
+"why": "R7C (Jake 2026-11-16, decision 1b): the dump refreshed from Jake's store export (cut at the 2026-10-13 as-of) — the stored history his backfills and replays wrote; Sky's insider share of circulating"
+},
+"audit|CP Comparability|Retirement rate (RETIRED buyback tokens, burned + held, annualised) ÷ tradeable float": {
+"date": "2026-11-16",
+"from": 0.0236267761,
+"to": 0.0236813433,
+"why": "R7C (Jake 2026-11-16, decision 1b): the dump refreshed from Jake's store export (cut at the 2026-10-13 as-of) — the stored history his backfills and replays wrote; Sky's insider share of circulating"
+},
+"audit|CP Comparability|SUBSIDY COVER = revenue ÷ $ supply-side incentives (b), per covered day": {
+"date": "2026-11-16",
+"from": "n/a — no supply-side incentive (b) series on file; outflows held: (c) demand-side incentives, (d) ecosystem / grant spend, (e) unlocks — see the outflow basis column",
+"to": "n/a — no supply-side incentive (b) series on file; outflows held: (c) demand-side incentives, (d) ecosystem / grant spend — see the outflow basis column",
+"why": "R7B (Jake 2026-11-16): Sky's endowments circulating and off the float; Hyperliquid's revenue streams counted once, no CoinGecko fallback, the declared handovers"
+},
+"audit|CP Comparability|Spread over the 3-month T-bill: Net holder yield": {
+"date": "2026-11-16",
+"from": "n/a — outflow_d_usd (q0): BLOCKED — BLOCKED — outflow (d) is not formed: sky_ecosystem_out_tokens: no rows stored",
+"to": "n/a — tbill_3m_yield (now): no rows stored",
+"why": "R7C (Jake 2026-11-16, decision 1b): the dump refreshed from Jake's store export (cut at the 2026-10-13 as-of) — the stored history his backfills and replays wrote; Sky's insider share of circulating"
+},
+"audit|CP Comparability|Staked / locked inside circulating (tokens)": {
+"date": "2026-11-16",
+"from": 17373730000.0,
+"to": 17373560000.0,
+"why": "R7C (Jake 2026-11-16, decision 1b): the dump refreshed from Jake's store export (cut at the 2026-10-13 as-of) — the stored history his backfills and replays wrote; Sky's insider share of circulating"
+},
+"audit|CP Comparability|Staker yield — protocol, tokens (A3)": {
+"date": "2026-11-16",
+"from": 0.0495536588,
+"to": 0.0494513942,
+"why": "R7C (Jake 2026-11-16, decision 1b): the dump refreshed from Jake's store export (cut at the 2026-10-13 as-of) — the stored history his backfills and replays wrote; Sky's insider share of circulating"
+},
+"audit|CP Comparability|Subsidy cover incl. demand-side = revenue ÷ $ (b + c), per covered day": {
+"date": "2026-11-16",
+"from": "n/a — no supply-side incentive (b) series on file; outflows held: (c) demand-side incentives, (d) ecosystem / grant spend, (e) unlocks — see the outflow basis column",
+"to": "n/a — no supply-side incentive (b) series on file; outflows held: (c) demand-side incentives, (d) ecosystem / grant spend — see the outflow basis column",
+"why": "R7B (Jake 2026-11-16): Sky's endowments circulating and off the float; Hyperliquid's revenue streams counted once, no CoinGecko fallback, the declared handovers"
+},
+"audit|CP Comparability|Supplier payout per $ of fees = (fees to suppliers + incentive $ to suppliers (b)) ÷ fees, per covered day (PROPOSED)": {
+"date": "2026-11-16",
+"from": "n/a — net_revenue_pre_distribution_usd (q0): no rows stored",
+"to": 0.461393435,
+"why": "R7C (Jake 2026-11-16, decision 1b): the dump refreshed from Jake's store export (cut at the 2026-10-13 as-of) — the stored history his backfills and replays wrote; Sky's insider share of circulating"
+},
+"audit|CP Comparability|Supplier payout, fees only = (fees − revenue) ÷ fees, per covered day": {
+"date": "2026-11-16",
+"from": "n/a — net_revenue_pre_distribution_usd (q0): no rows stored",
+"to": 0.461393435,
+"why": "R7C (Jake 2026-11-16, decision 1b): the dump refreshed from Jake's store export (cut at the 2026-10-13 as-of) — the stored history his backfills and replays wrote; Sky's insider share of circulating"
+},
+"audit|CP Comparability|TOTAL DILUTION = outflows a+b+c+d+e (annualised) ÷ circulating": {
+"date": "2026-11-16",
+"from": "n/a — outflow_d_tokens (q0): BLOCKED — BLOCKED — outflow (d) is not formed: sky_ecosystem_out_tokens: no rows stored",
+"to": 0.0319224615,
+"why": "R7C (Jake 2026-11-16, decision 1b): the dump refreshed from Jake's store export (cut at the 2026-10-13 as-of) — the stored history his backfills and replays wrote; Sky's insider share of circulating"
+},
+"audit|CP Comparability|TOTAL DILUTION = outflows a+b+c+d+e (annualised) ÷ tradeable float": {
+"date": "2026-11-16",
+"from": "n/a — outflow_d_tokens (q0): BLOCKED — BLOCKED — outflow (d) is not formed: sky_ecosystem_out_tokens: no rows stored",
+"to": 0.126553082,
+"why": "R7C (Jake 2026-11-16, decision 1b): the dump refreshed from Jake's store export (cut at the 2026-10-13 as-of) — the stored history his backfills and replays wrote; Sky's insider share of circulating"
+},
+"audit|CP Comparability|TRADEABLE FLOAT = circulating − staked/locked − protocol/treasury-held (tokens) — protocol/treasury-held is already out of circulating by the convention, so this is A2's free float": {
+"date": "2026-11-16",
+"from": 5918249560.0,
+"to": 5880380760.0,
+"why": "R7C (Jake 2026-11-16, decision 1b): the dump refreshed from Jake's store export (cut at the 2026-10-13 as-of) — the stored history his backfills and replays wrote; Sky's insider share of circulating"
+},
+"audit|CP Comparability|Tradeable float ÷ circulating": {
+"date": "2026-11-16",
+"from": 0.254089591,
+"to": 0.252245626,
+"why": "R7C (Jake 2026-11-16, decision 1b): the dump refreshed from Jake's store export (cut at the 2026-10-13 as-of) — the stored history his backfills and replays wrote; Sky's insider share of circulating"
+},
+"audit|CP Comparability|Treasury-company (DAT) holdings ÷ circulating": {
+"date": "2026-11-16",
+"from": 0.0996871342,
+"to": 0.0996010021,
+"why": "R6 (Jake 2026-11-16): Sky's revenue lines from Block Analitica's P&L (S13), emissions and vest steps corrected, the Pause Proxy a held buyback in circulating, live references"
+},
+"audit|CP Comparability|Trend — cp_business_1 (arrow · QoQ · 4Q growth/yr · quarters improved; Trajectory tab)": {
+"date": "2026-11-16",
+"from": "▲ · +16%/yr (4Q) · 3/4 improved · QoQ +12.6%",
+"to": "▲ · +16%/yr (4Q) · 3/4 improved · QoQ +12.7%",
+"why": "R7C (Jake 2026-11-16, decision 1b): the dump refreshed from Jake's store export (cut at the 2026-10-13 as-of) — the stored history his backfills and replays wrote; Sky's insider share of circulating"
+},
+"audit|CP Comparability|Trend — cp_market_share (arrow · QoQ · 4Q growth/yr · quarters improved; Trajectory tab)": {
+"date": "2026-11-16",
+"from": "▲ · +11%/yr (4Q) · 3/4 improved · QoQ -9.7%",
+"to": "▲ · +12%/yr (4Q) · 3/4 improved · QoQ -9.7%",
+"why": "R7C (Jake 2026-11-16, decision 1b): the dump refreshed from Jake's store export (cut at the 2026-10-13 as-of) — the stored history his backfills and replays wrote; Sky's insider share of circulating"
+},
+"audit|CP Comparability|UNIFORMITY = whole-token yield ÷ staker yield (1 = every holder alike) (PROPOSED)": {
+"date": "2026-11-16",
+"from": 0.369119095,
+"to": 0.368793886,
+"why": "R7C (Jake 2026-11-16, decision 1b): the dump refreshed from Jake's store export (cut at the 2026-10-13 as-of) — the stored history his backfills and replays wrote; Sky's insider share of circulating"
+},
+"audit|CP Comparability|Whole-token yield — protocol = staker yield × reward-bearing stake ÷ circulating (now)": {
+"date": "2026-11-16",
+"from": 0.0182912017,
+"to": 0.0182373718,
+"why": "R7C (Jake 2026-11-16, decision 1b): the dump refreshed from Jake's store export (cut at the 2026-10-13 as-of) — the stored history his backfills and replays wrote; Sky's insider share of circulating"
+},
+"audit|Master|Actual buyback Q0 ($) — observed": {
+"date": "2026-11-16",
+"from": 6293198.45,
+"to": 6393872.34,
+"why": "R7C (Jake 2026-11-16, decision 1b): the dump refreshed from Jake's store export (cut at the 2026-10-13 as-of) — the stored history his backfills and replays wrote; Sky's insider share of circulating"
+},
+"audit|Master|Buyback % of supply (annualised, implied, split as at this window)": {
+"date": "2026-11-16",
+"from": 0.0118695572,
+"to": 0.011860531,
+"why": "R7C (Jake 2026-11-16, decision 1b): the dump refreshed from Jake's store export (cut at the 2026-10-13 as-of) — the stored history his backfills and replays wrote; Sky's insider share of circulating"
+},
+"audit|Master|Circulating supply (used)": {
+"date": "2026-11-16",
+"from": 23291979600.0,
+"to": 23312121800.0,
+"why": "R6 (Jake 2026-11-16): Sky's revenue lines from Block Analitica's P&L (S13), emissions and vest steps corrected, the Pause Proxy a held buyback in circulating, live references"
+},
+"audit|Master|Circulating supply — CoinGecko (cross-check)": {
+"date": "2026-11-16",
+"from": 23432332800.0,
+"to": 23432032000.0,
+"why": "R7C (Jake 2026-11-16, decision 1b): the dump refreshed from Jake's store export (cut at the 2026-10-13 as-of) — the stored history his backfills and replays wrote; Sky's insider share of circulating"
+},
+"audit|Master|FDV ($)": {
+"date": "2026-11-16",
+"from": 1794547460.0,
+"to": 1776837930.0,
+"why": "R7C (Jake 2026-11-16, decision 1b): the dump refreshed from Jake's store export (cut at the 2026-10-13 as-of) — the stored history his backfills and replays wrote; Sky's insider share of circulating"
+},
+"audit|Master|Fees Q0 ($)": {
+"date": "2026-11-16",
+"from": 80642566.0,
+"to": 82580976.0,
+"why": "R7C (Jake 2026-11-16, decision 1b): the dump refreshed from Jake's store export (cut at the 2026-10-13 as-of) — the stored history his backfills and replays wrote; Sky's insider share of circulating"
+},
+"audit|Master|Fees ÷ FDV (annualised)": {
+"date": "2026-11-16",
+"from": 0.186388702,
+"to": 0.188487498,
+"why": "R7C (Jake 2026-11-16, decision 1b): the dump refreshed from Jake's store export (cut at the 2026-10-13 as-of) — the stored history his backfills and replays wrote; Sky's insider share of circulating"
+},
+"audit|Master|Fees ÷ issuance ($, Q0; issuance at each day's price)": {
+"date": "2026-11-16",
+"from": "n/a — a ratio over zero: gross_issuance_tokens (q0) is 0 in the window it reads",
+"to": "BLOCKED — unequal coverage: fees (fees_usd, q0) covers 90 days of a 90-day window; issuance (gross_issuance_tokens, q0) covers 75 days of a 90-day window — holes: 2026-09-14..09-18, 2026-09-21..09-25, 2026-09-28..10-01, 2026-10-05; issuance $ (gross_issuance_day_priced_usd, q0) covers 75 days of a 90-day window — holes: 2026-09-14..09-18, 2026-09-21..09-25, 2026-09-28..10-01, 2026-10-05",
+"why": "R7C (Jake 2026-11-16, decision 1b): the dump refreshed from Jake's store export (cut at the 2026-10-13 as-of) — the stored history his backfills and replays wrote; Sky's insider share of circulating"
+},
+"audit|Master|Fees Δ30d": {
+"date": "2026-11-16",
+"from": 0.0149364418,
+"to": 0.0190827337,
+"why": "R7C (Jake 2026-11-16, decision 1b): the dump refreshed from Jake's store export (cut at the 2026-10-13 as-of) — the stored history his backfills and replays wrote; Sky's insider share of circulating"
+},
+"audit|Master|Fees Δ3m": {
+"date": "2026-11-16",
+"from": -0.129798551,
+"to": -0.128617557,
+"why": "R7C (Jake 2026-11-16, decision 1b): the dump refreshed from Jake's store export (cut at the 2026-10-13 as-of) — the stored history his backfills and replays wrote; Sky's insider share of circulating"
+},
+"audit|Master|Fees Δ6m": {
+"date": "2026-11-16",
+"from": -0.20297423,
+"to": -0.201936444,
+"why": "R7C (Jake 2026-11-16, decision 1b): the dump refreshed from Jake's store export (cut at the 2026-10-13 as-of) — the stored history his backfills and replays wrote; Sky's insider share of circulating"
+},
+"audit|Master|Fees Δ9m": {
+"date": "2026-11-16",
+"from": -0.222470537,
+"to": -0.221474772,
+"why": "R7C (Jake 2026-11-16, decision 1b): the dump refreshed from Jake's store export (cut at the 2026-10-13 as-of) — the stored history his backfills and replays wrote; Sky's insider share of circulating"
+},
+"audit|Master|Implied buyback Q0 ($) = revenue × the split that applied to this window": {
+"date": "2026-11-16",
+"from": 4594800.5,
+"to": 4594692.1,
+"why": "R7C (Jake 2026-11-16, decision 1b): the dump refreshed from Jake's store export (cut at the 2026-10-13 as-of) — the stored history his backfills and replays wrote; Sky's insider share of circulating"
+},
+"audit|Master|Issuance − burn, annualised % of circulating — a component, NOT the net supply change": {
+"date": "2026-11-16",
+"from": -0.00263607438,
+"to": -0.00263379675,
+"why": "R6 (Jake 2026-11-16): Sky's revenue lines from Block Analitica's P&L (S13), emissions and vest steps corrected, the Pause Proxy a held buyback in circulating, live references"
+},
+"audit|Master|Market cap ($)": {
+"date": "2026-11-16",
+"from": 1782269860.0,
+"to": 1766207550.0,
+"why": "R7C (Jake 2026-11-16, decision 1b): the dump refreshed from Jake's store export (cut at the 2026-10-13 as-of) — the stored history his backfills and replays wrote; Sky's insider share of circulating"
+},
+"audit|Master|Market cap — CoinGecko ($, cross-check: price x CoinGecko's circulating)": {
+"date": "2026-11-16",
+"from": 1792924480.0,
+"to": 1775383320.0,
+"why": "R7C (Jake 2026-11-16, decision 1b): the dump refreshed from Jake's store export (cut at the 2026-10-13 as-of) — the stored history his backfills and replays wrote; Sky's insider share of circulating"
+},
+"audit|Master|Price — 90d average ($)": {
+"date": "2026-11-16",
+"from": 0.0659372422,
+"to": 0.0659288519,
+"why": "R7C (Jake 2026-11-16, decision 1b): the dump refreshed from Jake's store export (cut at the 2026-10-13 as-of) — the stored history his backfills and replays wrote; Sky's insider share of circulating"
+},
+"audit|Master|Price — spot ($)": {
+"date": "2026-11-16",
+"from": 0.0765186085,
+"to": 0.0757634832,
+"why": "R7C (Jake 2026-11-16, decision 1b): the dump refreshed from Jake's store export (cut at the 2026-10-13 as-of) — the stored history his backfills and replays wrote; Sky's insider share of circulating"
+},
+"audit|Master|Revenue Q0 ($)": {
+"date": "2026-11-16",
+"from": 39945787.0,
+"to": 40821671.0,
+"why": "R7C (Jake 2026-11-16, decision 1b): the dump refreshed from Jake's store export (cut at the 2026-10-13 as-of) — the stored history his backfills and replays wrote; Sky's insider share of circulating"
+},
+"audit|Master|TVL ($) — chain for A1 names, protocol otherwise": {
+"date": "2026-11-16",
+"from": 6228807860.0,
+"to": 6009384720.0,
+"why": "R7C (Jake 2026-11-16, decision 1b): the dump refreshed from Jake's store export (cut at the 2026-10-13 as-of) — the stored history his backfills and replays wrote; Sky's insider share of circulating"
+},
+"audit|Master|Trading volume, 30d ($) — CoinGecko spot, all venues": {
+"date": "2026-11-16",
+"from": 683470788.0,
+"to": 696431856.0,
+"why": "R7C (Jake 2026-11-16, decision 1b): the dump refreshed from Jake's store export (cut at the 2026-10-13 as-of) — the stored history his backfills and replays wrote; Sky's insider share of circulating"
+},
+"audit|Master|Trend — master_actual_buyback_q0_observed (arrow · QoQ · 4Q growth/yr · quarters improved; Trajectory tab)": {
+"date": "2026-11-16",
+"from": "▼ · -88%/yr (4Q) · 2/4 improved · QoQ +87.1%",
+"to": "▼ · -88%/yr (4Q) · 2/4 improved · QoQ +90.1%",
+"why": "R7C (Jake 2026-11-16, decision 1b): the dump refreshed from Jake's store export (cut at the 2026-10-13 as-of) — the stored history his backfills and replays wrote; Sky's insider share of circulating"
+},
+"audit|Master|Trend — master_fdv (arrow · QoQ · 4Q growth/yr · quarters improved; Trajectory tab)": {
+"date": "2026-11-16",
+"from": "▲ · +23%/yr (4Q) · 3/4 improved · QoQ +25.3%",
+"to": "▲ · +22%/yr (4Q) · 3/4 improved · QoQ +24.1%",
+"why": "R7C (Jake 2026-11-16, decision 1b): the dump refreshed from Jake's store export (cut at the 2026-10-13 as-of) — the stored history his backfills and replays wrote; Sky's insider share of circulating"
+},
+"audit|Master|Trend — master_fees_fdv_annualised (arrow · QoQ · 4Q growth/yr · quarters improved; Trajectory tab)": {
+"date": "2026-11-16",
+"from": "▼ · -42%/yr (4Q) · 1/4 improved · QoQ -30.6%",
+"to": "▼ · -41%/yr (4Q) · 1/4 improved · QoQ -29.8%",
+"why": "R7C (Jake 2026-11-16, decision 1b): the dump refreshed from Jake's store export (cut at the 2026-10-13 as-of) — the stored history his backfills and replays wrote; Sky's insider share of circulating"
+},
+"audit|Master|Trend — master_fees_q0 (arrow · QoQ · 4Q growth/yr · quarters improved; Trajectory tab)": {
+"date": "2026-11-16",
+"from": "▼ · -31%/yr (4Q) · 1/4 improved · QoQ -14.9%",
+"to": "▼ · -29%/yr (4Q) · 1/4 improved · QoQ -12.9%",
+"why": "R7C (Jake 2026-11-16, decision 1b): the dump refreshed from Jake's store export (cut at the 2026-10-13 as-of) — the stored history his backfills and replays wrote; Sky's insider share of circulating"
+},
+"audit|Master|Trend — master_price_spot (arrow · QoQ · 4Q growth/yr · quarters improved; Trajectory tab)": {
+"date": "2026-11-16",
+"from": "▲ · +23%/yr (4Q) · 3/4 improved · QoQ +25.4%",
+"to": "▲ · +22%/yr (4Q) · 3/4 improved · QoQ +24.1%",
+"why": "R7C (Jake 2026-11-16, decision 1b): the dump refreshed from Jake's store export (cut at the 2026-10-13 as-of) — the stored history his backfills and replays wrote; Sky's insider share of circulating"
+},
+"audit|Master|Trend — master_revenue_q0 (arrow · QoQ · 4Q growth/yr · quarters improved; Trajectory tab)": {
+"date": "2026-11-16",
+"from": "▼ · -47%/yr (4Q) · 1/4 improved · QoQ -4.5%",
+"to": "▼ · -45%/yr (4Q) · 0/4 improved · QoQ -2.4%",
+"why": "R7C (Jake 2026-11-16, decision 1b): the dump refreshed from Jake's store export (cut at the 2026-10-13 as-of) — the stored history his backfills and replays wrote; Sky's insider share of circulating"
+},
+"audit|Master|Trend — master_tvl_chain_for_a1_names_protocol_otherwise (arrow · QoQ · 4Q growth/yr · quarters improved; Trajectory tab)": {
+"date": "2026-11-16",
+"from": "▼ · -5%/yr (4Q) · 3/4 improved · QoQ +1.9%",
+"to": "▼ · -9%/yr (4Q) · 2/4 improved · QoQ -1.6%",
+"why": "R7C (Jake 2026-11-16, decision 1b): the dump refreshed from Jake's store export (cut at the 2026-10-13 as-of) — the stored history his backfills and replays wrote; Sky's insider share of circulating"
+},
+"audit|Master|Turnover = 30d volume ÷ market cap (x)": {
+"date": "2026-11-16",
+"from": 0.383483334,
+"to": 0.394309184,
+"why": "R7C (Jake 2026-11-16, decision 1b): the dump refreshed from Jake's store export (cut at the 2026-10-13 as-of) — the stored history his backfills and replays wrote; Sky's insider share of circulating"
+},
+"reader|A3 Revenue Buyback|Actual buyback, 90 days (tokens)": {
+"date": "2026-11-16",
+"from": 93178286.1,
+"to": 94507077.8,
+"why": "R7C (Jake 2026-11-16, decision 1b): the dump refreshed from Jake's store export (cut at the 2026-10-13 as-of) — the stored history his backfills and replays wrote; Sky's insider share of circulating"
+},
+"reader|A3 Revenue Buyback|Actual buyback, last 90 days": {
+"date": "2026-11-16",
+"from": 6293198.45,
+"to": 6393872.34,
+"why": "R7C (Jake 2026-11-16, decision 1b): the dump refreshed from Jake's store export (cut at the 2026-10-13 as-of) — the stored history his backfills and replays wrote; Sky's insider share of circulating"
+},
+"reader|A3 Revenue Buyback|Bought back and burned (tokens)": {
+"date": "2026-11-16",
+"from": 13129546.1,
+"to": 13371144.6,
+"why": "R7C (Jake 2026-11-16, decision 1b): the dump refreshed from Jake's store export (cut at the 2026-10-13 as-of) — the stored history his backfills and replays wrote; Sky's insider share of circulating"
+},
+"reader|A3 Revenue Buyback|Bought back, paid to stakers": {
+"date": "2026-11-16",
+"from": 59082957.4,
+"to": 60170150.6,
+"why": "R7C (Jake 2026-11-16, decision 1b): the dump refreshed from Jake's store export (cut at the 2026-10-13 as-of) — the stored history his backfills and replays wrote; Sky's insider share of circulating"
+},
+"reader|A3 Revenue Buyback|Burned ÷ (emis + unlocks), latest": {
+"date": "2026-11-16",
+"from": 0.133403179,
+"to": 0.134348416,
+"why": "R7C (Jake 2026-11-16, decision 1b): the dump refreshed from Jake's store export (cut at the 2026-10-13 as-of) — the stored history his backfills and replays wrote; Sky's insider share of circulating"
+},
+"reader|A3 Revenue Buyback|Burned ÷ (emis + unlocks), −1 qtr": {
+"date": "2026-11-16",
+"from": "n/a",
+"to": 0.0,
+"why": "R7C (Jake 2026-11-16, decision 1b): the dump refreshed from Jake's store export (cut at the 2026-10-13 as-of) — the stored history his backfills and replays wrote; Sky's insider share of circulating"
+},
+"reader|A3 Revenue Buyback|Burned ÷ (emis + unlocks), −2 qtrs": {
+"date": "2026-11-16",
+"from": "n/a",
+"to": 0.0,
+"why": "R7C (Jake 2026-11-16, decision 1b): the dump refreshed from Jake's store export (cut at the 2026-10-13 as-of) — the stored history his backfills and replays wrote; Sky's insider share of circulating"
+},
+"reader|A3 Revenue Buyback|Burned ÷ (emis + unlocks), −3 qtrs": {
+"date": "2026-11-16",
+"from": "n/a",
+"to": 0.0,
+"why": "R7C (Jake 2026-11-16, decision 1b): the dump refreshed from Jake's store export (cut at the 2026-10-13 as-of) — the stored history his backfills and replays wrote; Sky's insider share of circulating"
+},
+"reader|A3 Revenue Buyback|Burned ÷ (emissions + unlocks) (x)": {
+"date": "2026-11-16",
+"from": 0.133403179,
+"to": 0.134348416,
+"why": "R7C (Jake 2026-11-16, decision 1b): the dump refreshed from Jake's store export (cut at the 2026-10-13 as-of) — the stored history his backfills and replays wrote; Sky's insider share of circulating"
+},
+"reader|A3 Revenue Buyback|Buyback ÷ revenue (x)": {
+"date": "2026-11-16",
+"from": "n/a",
+"to": 0.121361572,
+"why": "R7C (Jake 2026-11-16, decision 1b): the dump refreshed from Jake's store export (cut at the 2026-10-13 as-of) — the stored history his backfills and replays wrote; Sky's insider share of circulating"
+},
+"reader|A3 Revenue Buyback|Buying pressure on float, % a year": {
+"date": "2026-11-16",
+"from": 0.0638516021,
+"to": 0.0651792324,
+"why": "R7C (Jake 2026-11-16, decision 1b): the dump refreshed from Jake's store export (cut at the 2026-10-13 as-of) — the stored history his backfills and replays wrote; Sky's insider share of circulating"
+},
+"reader|A3 Revenue Buyback|Circulating supply": {
+"date": "2026-11-16",
+"from": 23291979600.0,
+"to": 23312121800.0,
+"why": "R6 (Jake 2026-11-16): Sky's revenue lines from Block Analitica's P&L (S13), emissions and vest steps corrected, the Pause Proxy a held buyback in circulating, live references"
+},
+"reader|A3 Revenue Buyback|Effective float (tokens)": {
+"date": "2026-11-16",
+"from": 5918249560.0,
+"to": 5918161880.0,
+"why": "R7C (Jake 2026-11-16, decision 1b): the dump refreshed from Jake's store export (cut at the 2026-10-13 as-of) — the stored history his backfills and replays wrote; Sky's insider share of circulating"
+},
+"reader|A3 Revenue Buyback|FDV": {
+"date": "2026-11-16",
+"from": 1794547460.0,
+"to": 1776837930.0,
+"why": "R7C (Jake 2026-11-16, decision 1b): the dump refreshed from Jake's store export (cut at the 2026-10-13 as-of) — the stored history his backfills and replays wrote; Sky's insider share of circulating"
+},
+"reader|A3 Revenue Buyback|Fees ÷ FDV, a year": {
+"date": "2026-11-16",
+"from": 0.186388702,
+"to": 0.188487498,
+"why": "R7C (Jake 2026-11-16, decision 1b): the dump refreshed from Jake's store export (cut at the 2026-10-13 as-of) — the stored history his backfills and replays wrote; Sky's insider share of circulating"
+},
+"reader|A3 Revenue Buyback|Fees, last 90 days": {
+"date": "2026-11-16",
+"from": 80642566.0,
+"to": 82580976.0,
+"why": "R7C (Jake 2026-11-16, decision 1b): the dump refreshed from Jake's store export (cut at the 2026-10-13 as-of) — the stored history his backfills and replays wrote; Sky's insider share of circulating"
+},
+"reader|A3 Revenue Buyback|Holder value yield": {
+"date": "2026-11-16",
+"from": 0.024104831,
+"to": 0.0244771372,
+"why": "R7C (Jake 2026-11-16, decision 1b): the dump refreshed from Jake's store export (cut at the 2026-10-13 as-of) — the stored history his backfills and replays wrote; Sky's insider share of circulating"
+},
+"reader|A3 Revenue Buyback|Implied buyback, % of supply a year": {
+"date": "2026-11-16",
+"from": 0.0118695572,
+"to": 0.011860531,
+"why": "R7C (Jake 2026-11-16, decision 1b): the dump refreshed from Jake's store export (cut at the 2026-10-13 as-of) — the stored history his backfills and replays wrote; Sky's insider share of circulating"
+},
+"reader|A3 Revenue Buyback|Implied buyback, 90 days (tokens)": {
+"date": "2026-11-16",
+"from": 69684450.7,
+"to": 69691674.7,
+"why": "R7C (Jake 2026-11-16, decision 1b): the dump refreshed from Jake's store export (cut at the 2026-10-13 as-of) — the stored history his backfills and replays wrote; Sky's insider share of circulating"
+},
+"reader|A3 Revenue Buyback|Implied buyback, last 90 days": {
+"date": "2026-11-16",
+"from": 4594800.5,
+"to": 4594692.1,
+"why": "R7C (Jake 2026-11-16, decision 1b): the dump refreshed from Jake's store export (cut at the 2026-10-13 as-of) — the stored history his backfills and replays wrote; Sky's insider share of circulating"
+},
+"reader|A3 Revenue Buyback|Implied minus actual buyback ($)": {
+"date": "2026-11-16",
+"from": -966506.653,
+"to": -966615.056,
+"why": "R7C (Jake 2026-11-16, decision 1b): the dump refreshed from Jake's store export (cut at the 2026-10-13 as-of) — the stored history his backfills and replays wrote; Sky's insider share of circulating"
+},
+"reader|A3 Revenue Buyback|Lock rate, % of circulating": {
+"date": "2026-11-16",
+"from": 0.745910409,
+"to": 0.745258632,
+"why": "R7C (Jake 2026-11-16, decision 1b): the dump refreshed from Jake's store export (cut at the 2026-10-13 as-of) — the stored history his backfills and replays wrote; Sky's insider share of circulating"
+},
+"reader|A3 Revenue Buyback|Market cap": {
+"date": "2026-11-16",
+"from": 1782269860.0,
+"to": 1766207550.0,
+"why": "R7C (Jake 2026-11-16, decision 1b): the dump refreshed from Jake's store export (cut at the 2026-10-13 as-of) — the stored history his backfills and replays wrote; Sky's insider share of circulating"
+},
+"reader|A3 Revenue Buyback|Net absorption, 90 days (tokens)": {
+"date": "2026-11-16",
+"from": -149401186.0,
+"to": -149159587.0,
+"why": "R7C (Jake 2026-11-16, decision 1b): the dump refreshed from Jake's store export (cut at the 2026-10-13 as-of) — the stored history his backfills and replays wrote; Sky's insider share of circulating"
+},
+"reader|A3 Revenue Buyback|Net absorption, implied (tokens)": {
+"date": "2026-11-16",
+"from": -126973466.0,
+"to": -126966242.0,
+"why": "R7C (Jake 2026-11-16, decision 1b): the dump refreshed from Jake's store export (cut at the 2026-10-13 as-of) — the stored history his backfills and replays wrote; Sky's insider share of circulating"
+},
+"reader|A3 Revenue Buyback|Payout ratio": {
+"date": "2026-11-16",
+"from": "n/a",
+"to": 0.18953285,
+"why": "R7C (Jake 2026-11-16, decision 1b): the dump refreshed from Jake's store export (cut at the 2026-10-13 as-of) — the stored history his backfills and replays wrote; Sky's insider share of circulating"
+},
+"reader|A3 Revenue Buyback|Price": {
+"date": "2026-11-16",
+"from": 0.0765186085,
+"to": 0.0757634832,
+"why": "R7C (Jake 2026-11-16, decision 1b): the dump refreshed from Jake's store export (cut at the 2026-10-13 as-of) — the stored history his backfills and replays wrote; Sky's insider share of circulating"
+},
+"reader|A3 Revenue Buyback|Price, 90-day average": {
+"date": "2026-11-16",
+"from": 0.0659372422,
+"to": 0.0659288519,
+"why": "R7C (Jake 2026-11-16, decision 1b): the dump refreshed from Jake's store export (cut at the 2026-10-13 as-of) — the stored history his backfills and replays wrote; Sky's insider share of circulating"
+},
+"reader|A3 Revenue Buyback|Quarter change: FDV retirement": {
+"date": "2026-11-16",
+"from": -0.339746302,
+"to": -0.335067764,
+"why": "R7C (Jake 2026-11-16, decision 1b): the dump refreshed from Jake's store export (cut at the 2026-10-13 as-of) — the stored history his backfills and replays wrote; Sky's insider share of circulating"
+},
+"reader|A3 Revenue Buyback|Quarter change: net absorption": {
+"date": "2026-11-16",
+"from": 0.0328095443,
+"to": 0.0343735999,
+"why": "R7C (Jake 2026-11-16, decision 1b): the dump refreshed from Jake's store export (cut at the 2026-10-13 as-of) — the stored history his backfills and replays wrote; Sky's insider share of circulating"
+},
+"reader|A3 Revenue Buyback|Quarter change: retired %": {
+"date": "2026-11-16",
+"from": -0.338573048,
+"to": -0.334461734,
+"why": "R7C (Jake 2026-11-16, decision 1b): the dump refreshed from Jake's store export (cut at the 2026-10-13 as-of) — the stored history his backfills and replays wrote; Sky's insider share of circulating"
+},
+"reader|A3 Revenue Buyback|Rank in A3": {
+"date": "2026-11-16",
+"from": 1.0,
+"to": 2.0,
+"why": "R7C (Jake 2026-11-16, decision 1b): the dump refreshed from Jake's store export (cut at the 2026-10-13 as-of) — the stored history his backfills and replays wrote; Sky's insider share of circulating"
+},
+"reader|A3 Revenue Buyback|Retired ÷ (emis + unlocks), change": {
+"date": "2026-11-16",
+"from": -0.250294876,
+"to": -0.253371571,
+"why": "R7C (Jake 2026-11-16, decision 1b): the dump refreshed from Jake's store export (cut at the 2026-10-13 as-of) — the stored history his backfills and replays wrote; Sky's insider share of circulating"
+},
+"reader|A3 Revenue Buyback|Retired ÷ (emis + unlocks), latest": {
+"date": "2026-11-16",
+"from": 0.187896878,
+"to": 0.187125773,
+"why": "R7C (Jake 2026-11-16, decision 1b): the dump refreshed from Jake's store export (cut at the 2026-10-13 as-of) — the stored history his backfills and replays wrote; Sky's insider share of circulating"
+},
+"reader|A3 Revenue Buyback|Retired ÷ (emissions + unlocks)": {
+"date": "2026-11-16",
+"from": 0.346426694,
+"to": 0.345005003,
+"why": "R7C (Jake 2026-11-16, decision 1b): the dump refreshed from Jake's store export (cut at the 2026-10-13 as-of) — the stored history his backfills and replays wrote; Sky's insider share of circulating"
+},
+"reader|A3 Revenue Buyback|Retired, % of supply a year": {
+"date": "2026-11-16",
+"from": 0.00593661433,
+"to": 0.00597351528,
+"why": "R7C (Jake 2026-11-16, decision 1b): the dump refreshed from Jake's store export (cut at the 2026-10-13 as-of) — the stored history his backfills and replays wrote; Sky's insider share of circulating"
+},
+"reader|A3 Revenue Buyback|Retired: burned + held (tokens)": {
+"date": "2026-11-16",
+"from": 34095328.7,
+"to": 34336927.2,
+"why": "R7C (Jake 2026-11-16, decision 1b): the dump refreshed from Jake's store export (cut at the 2026-10-13 as-of) — the stored history his backfills and replays wrote; Sky's insider share of circulating"
+},
+"reader|A3 Revenue Buyback|Retirement rate ($), % of FDV": {
+"date": "2026-11-16",
+"from": 0.00484680554,
+"to": 0.00488250177,
+"why": "R7C (Jake 2026-11-16, decision 1b): the dump refreshed from Jake's store export (cut at the 2026-10-13 as-of) — the stored history his backfills and replays wrote; Sky's insider share of circulating"
+},
+"reader|A3 Revenue Buyback|Retirement rate ($), % of mkt cap": {
+"date": "2026-11-16",
+"from": 0.00488019392,
+"to": 0.0049118884,
+"why": "R7C (Jake 2026-11-16, decision 1b): the dump refreshed from Jake's store export (cut at the 2026-10-13 as-of) — the stored history his backfills and replays wrote; Sky's insider share of circulating"
+},
+"reader|A3 Revenue Buyback|Retirement rate, % of FDV supply": {
+"date": "2026-11-16",
+"from": 0.00589599834,
+"to": 0.00593777721,
+"why": "R7C (Jake 2026-11-16, decision 1b): the dump refreshed from Jake's store export (cut at the 2026-10-13 as-of) — the stored history his backfills and replays wrote; Sky's insider share of circulating"
+},
+"reader|A3 Revenue Buyback|Retirement rate, % of circulating": {
+"date": "2026-11-16",
+"from": 0.00593661433,
+"to": 0.00597351528,
+"why": "R7C (Jake 2026-11-16, decision 1b): the dump refreshed from Jake's store export (cut at the 2026-10-13 as-of) — the stored history his backfills and replays wrote; Sky's insider share of circulating"
+},
+"reader|A3 Revenue Buyback|Revenue base, last 90 days": {
+"date": "2026-11-16",
+"from": 28469423.7,
+"to": 28468786.5,
+"why": "R7C (Jake 2026-11-16, decision 1b): the dump refreshed from Jake's store export (cut at the 2026-10-13 as-of) — the stored history his backfills and replays wrote; Sky's insider share of circulating"
+},
+"reader|A3 Revenue Buyback|Revenue growth, selected period": {
+"date": "2026-11-16",
+"from": -0.0233387979,
+"to": -0.0238735933,
+"why": "R7C (Jake 2026-11-16, decision 1b): the dump refreshed from Jake's store export (cut at the 2026-10-13 as-of) — the stored history his backfills and replays wrote; Sky's insider share of circulating"
+},
+"reader|A3 Revenue Buyback|Revenue share applied, 90 days": {
+"date": "2026-11-16",
+"from": 0.161394222,
+"to": 0.161394027,
+"why": "R7C (Jake 2026-11-16, decision 1b): the dump refreshed from Jake's store export (cut at the 2026-10-13 as-of) — the stored history his backfills and replays wrote; Sky's insider share of circulating"
+},
+"reader|A3 Revenue Buyback|Staking yield ($)": {
+"date": "2026-11-16",
+"from": 0.0495536588,
+"to": 0.0494513942,
+"why": "R7C (Jake 2026-11-16, decision 1b): the dump refreshed from Jake's store export (cut at the 2026-10-13 as-of) — the stored history his backfills and replays wrote; Sky's insider share of circulating"
+},
+"reader|A3 Revenue Buyback|Staking yield (tokens)": {
+"date": "2026-11-16",
+"from": 0.0495536588,
+"to": 0.0494513942,
+"why": "R7C (Jake 2026-11-16, decision 1b): the dump refreshed from Jake's store export (cut at the 2026-10-13 as-of) — the stored history his backfills and replays wrote; Sky's insider share of circulating"
+},
+"reader|A3 Revenue Buyback|Tokens locked or staked": {
+"date": "2026-11-16",
+"from": 17373730000.0,
+"to": 17373560000.0,
+"why": "R7C (Jake 2026-11-16, decision 1b): the dump refreshed from Jake's store export (cut at the 2026-10-13 as-of) — the stored history his backfills and replays wrote; Sky's insider share of circulating"
+},
+"reader|A4 Permanent Burn|90-day window caveat": {
+"date": "2026-11-16",
+"from": "NOT A STABLE RATE YET — BURN is 2 discrete event(s) in the window, not a rate. Burn yield and burn ÷ issuance show what ",
+"to": "NOT A STABLE RATE YET — ISSUANCE covers 75 of 90 days, so annualised as if full it reads 0/yr against a 0/yr run-rate (1",
+"why": "R7C (Jake 2026-11-16, decision 1b): the dump refreshed from Jake's store export (cut at the 2026-10-13 as-of) — the stored history his backfills and replays wrote; Sky's insider share of circulating"
+},
+"reader|A4 Permanent Burn|Burn share of fees": {
+"date": "2026-11-16",
+"from": 0.013919765,
+"to": 0.013901961,
+"why": "R7C (Jake 2026-11-16, decision 1b): the dump refreshed from Jake's store export (cut at the 2026-10-13 as-of) — the stored history his backfills and replays wrote; Sky's insider share of circulating"
+},
+"reader|A4 Permanent Burn|Circulating supply": {
+"date": "2026-11-16",
+"from": 23291979600.0,
+"to": 23312121800.0,
+"why": "R6 (Jake 2026-11-16): Sky's revenue lines from Block Analitica's P&L (S13), emissions and vest steps corrected, the Pause Proxy a held buyback in circulating, live references"
+},
+"reader|A4 Permanent Burn|FDV": {
+"date": "2026-11-16",
+"from": 1794547460.0,
+"to": 1776837930.0,
+"why": "R7C (Jake 2026-11-16, decision 1b): the dump refreshed from Jake's store export (cut at the 2026-10-13 as-of) — the stored history his backfills and replays wrote; Sky's insider share of circulating"
+},
+"reader|A4 Permanent Burn|Fees ÷ FDV, a year": {
+"date": "2026-11-16",
+"from": 0.186388702,
+"to": 0.188487498,
+"why": "R7C (Jake 2026-11-16, decision 1b): the dump refreshed from Jake's store export (cut at the 2026-10-13 as-of) — the stored history his backfills and replays wrote; Sky's insider share of circulating"
+},
+"reader|A4 Permanent Burn|Fees, last 90 days": {
+"date": "2026-11-16",
+"from": 80642566.0,
+"to": 82580976.0,
+"why": "R7C (Jake 2026-11-16, decision 1b): the dump refreshed from Jake's store export (cut at the 2026-10-13 as-of) — the stored history his backfills and replays wrote; Sky's insider share of circulating"
+},
+"reader|A4 Permanent Burn|Implied circulating change check": {
+"date": "2026-11-16",
+"from": 151350753.0,
+"to": 151373094.0,
+"why": "R7C (Jake 2026-11-16, decision 1b): the dump refreshed from Jake's store export (cut at the 2026-10-13 as-of) — the stored history his backfills and replays wrote; Sky's insider share of circulating"
+},
+"reader|A4 Permanent Burn|Issuance − burn ($)": {
+"date": "2026-11-16",
+"from": -775988.318,
+"to": "blocked",
+"why": "R7C (Jake 2026-11-16, decision 1b): the dump refreshed from Jake's store export (cut at the 2026-10-13 as-of) — the stored history his backfills and replays wrote; Sky's insider share of circulating"
+},
+"reader|A4 Permanent Burn|Issuance − burn, % a year": {
+"date": "2026-11-16",
+"from": -0.00263607438,
+"to": -0.00263379675,
+"why": "R6 (Jake 2026-11-16): Sky's revenue lines from Block Analitica's P&L (S13), emissions and vest steps corrected, the Pause Proxy a held buyback in circulating, live references"
+},
+"reader|A4 Permanent Burn|Market cap": {
+"date": "2026-11-16",
+"from": 1782269860.0,
+"to": 1766207550.0,
+"why": "R7C (Jake 2026-11-16, decision 1b): the dump refreshed from Jake's store export (cut at the 2026-10-13 as-of) — the stored history his backfills and replays wrote; Sky's insider share of circulating"
+},
+"reader|A4 Permanent Burn|Permanent burn yield": {
+"date": "2026-11-16",
+"from": 0.00263607438,
+"to": 0.00263379675,
+"why": "R6 (Jake 2026-11-16): Sky's revenue lines from Block Analitica's P&L (S13), emissions and vest steps corrected, the Pause Proxy a held buyback in circulating, live references"
+},
+"reader|A4 Permanent Burn|Price": {
+"date": "2026-11-16",
+"from": 0.0765186085,
+"to": 0.0757634832,
+"why": "R7C (Jake 2026-11-16, decision 1b): the dump refreshed from Jake's store export (cut at the 2026-10-13 as-of) — the stored history his backfills and replays wrote; Sky's insider share of circulating"
+},
+"reader|A4 Permanent Burn|Price, 90-day average": {
+"date": "2026-11-16",
+"from": 0.0659372422,
+"to": 0.0659288519,
+"why": "R7C (Jake 2026-11-16, decision 1b): the dump refreshed from Jake's store export (cut at the 2026-10-13 as-of) — the stored history his backfills and replays wrote; Sky's insider share of circulating"
+},
+"reader|A4 Permanent Burn|Treasury can redeploy ($)": {
+"date": "2026-11-16",
+"from": 1541255.09,
+"to": 1545568.34,
+"why": "R7C (Jake 2026-11-16, decision 1b): the dump refreshed from Jake's store export (cut at the 2026-10-13 as-of) — the stored history his backfills and replays wrote; Sky's insider share of circulating"
+},
+"reader|A4 Permanent Burn|Treasury governance can redeploy": {
+"date": "2026-11-16",
+"from": 20142225.8,
+"to": 20399911.3,
+"why": "R7C (Jake 2026-11-16, decision 1b): the dump refreshed from Jake's store export (cut at the 2026-10-13 as-of) — the stored history his backfills and replays wrote; Sky's insider share of circulating"
+},
+"reader|Business|Fees, last 90 days": {
+"date": "2026-11-16",
+"from": 80642566.0,
+"to": 82580976.0,
+"why": "R7C (Jake 2026-11-16, decision 1b): the dump refreshed from Jake's store export (cut at the 2026-10-13 as-of) — the stored history his backfills and replays wrote; Sky's insider share of circulating"
+},
+"reader|Business|Holder revenue (S13), 90 days": {
+"date": "2026-11-16",
+"from": "not yet split",
+"to": 10659872.3,
+"why": "R7C (Jake 2026-11-16, decision 1b): the dump refreshed from Jake's store export (cut at the 2026-10-13 as-of) — the stored history his backfills and replays wrote; Sky's insider share of circulating"
+},
+"reader|Business|Holder share (S13)": {
+"date": "2026-11-16",
+"from": "not yet split",
+"to": 0.153181144,
+"why": "R7C (Jake 2026-11-16, decision 1b): the dump refreshed from Jake's store export (cut at the 2026-10-13 as-of) — the stored history his backfills and replays wrote; Sky's insider share of circulating"
+},
+"reader|Business|Price change, selected period": {
+"date": "2026-11-16",
+"from": 0.253748173,
+"to": 0.241375537,
+"why": "R7C (Jake 2026-11-16, decision 1b): the dump refreshed from Jake's store export (cut at the 2026-10-13 as-of) — the stored history his backfills and replays wrote; Sky's insider share of circulating"
+},
+"reader|Business|Protocol revenue, annualised": {
+"date": "2026-11-16",
+"from": 165684230.0,
+"to": 165554555.0,
+"why": "R7C (Jake 2026-11-16, decision 1b): the dump refreshed from Jake's store export (cut at the 2026-10-13 as-of) — the stored history his backfills and replays wrote; Sky's insider share of circulating"
+},
+"reader|Business|Protocol revenue, last 90 days": {
+"date": "2026-11-16",
+"from": 39945787.0,
+"to": 40821671.0,
+"why": "R7C (Jake 2026-11-16, decision 1b): the dump refreshed from Jake's store export (cut at the 2026-10-13 as-of) — the stored history his backfills and replays wrote; Sky's insider share of circulating"
+},
+"reader|Business|Revenue change, 30d vs prior 30d": {
+"date": "2026-11-16",
+"from": 0.00685077914,
+"to": 0.00489104586,
+"why": "R7C (Jake 2026-11-16, decision 1b): the dump refreshed from Jake's store export (cut at the 2026-10-13 as-of) — the stored history his backfills and replays wrote; Sky's insider share of circulating"
+},
+"reader|Business|Revenue growth, selected period": {
+"date": "2026-11-16",
+"from": -0.0233387979,
+"to": -0.0238735933,
+"why": "R7C (Jake 2026-11-16, decision 1b): the dump refreshed from Jake's store export (cut at the 2026-10-13 as-of) — the stored history his backfills and replays wrote; Sky's insider share of circulating"
+},
+"reader|Business|Revenue per unit of demand": {
+"date": "2026-11-16",
+"from": 0.0231960532,
+"to": 0.0231400368,
+"why": "R7C (Jake 2026-11-16, decision 1b): the dump refreshed from Jake's store export (cut at the 2026-10-13 as-of) — the stored history his backfills and replays wrote; Sky's insider share of circulating"
+},
+"reader|Business|TVL": {
+"date": "2026-11-16",
+"from": 6228807860.0,
+"to": 6009384720.0,
+"why": "R7C (Jake 2026-11-16, decision 1b): the dump refreshed from Jake's store export (cut at the 2026-10-13 as-of) — the stored history his backfills and replays wrote; Sky's insider share of circulating"
+},
+"reader|Business|TVL change, selected period": {
+"date": "2026-11-16",
+"from": 0.0278952663,
+"to": -0.0164694286,
+"why": "R7C (Jake 2026-11-16, decision 1b): the dump refreshed from Jake's store export (cut at the 2026-10-13 as-of) — the stored history his backfills and replays wrote; Sky's insider share of circulating"
+},
+"reader|Business|Unit of demand, value": {
+"date": "2026-11-16",
+"from": 7142776780.0,
+"to": 7154463750.0,
+"why": "R7C (Jake 2026-11-16, decision 1b): the dump refreshed from Jake's store export (cut at the 2026-10-13 as-of) — the stored history his backfills and replays wrote; Sky's insider share of circulating"
+},
+"reader|Comparison|Buying pressure on float, % a year": {
+"date": "2026-11-16",
+"from": 0.0638516021,
+"to": 0.0651792324,
+"why": "R7C (Jake 2026-11-16, decision 1b): the dump refreshed from Jake's store export (cut at the 2026-10-13 as-of) — the stored history his backfills and replays wrote; Sky's insider share of circulating"
+},
+"reader|Comparison|Fees (S13), 90 days": {
+"date": "2026-11-16",
+"from": "not yet split",
+"to": 99290589.0,
+"why": "R6 (Jake 2026-11-16): Sky's revenue lines from Block Analitica's P&L (S13), emissions and vest steps corrected, the Pause Proxy a held buyback in circulating, live references"
+},
+"reader|Comparison|Fees ÷ FDV, a year": {
+"date": "2026-11-16",
+"from": 0.186388702,
+"to": 0.188487498,
+"why": "R7C (Jake 2026-11-16, decision 1b): the dump refreshed from Jake's store export (cut at the 2026-10-13 as-of) — the stored history his backfills and replays wrote; Sky's insider share of circulating"
+},
+"reader|Comparison|Holder revenue (S13), 90 days": {
+"date": "2026-11-16",
+"from": "not yet split",
+"to": 10659872.3,
+"why": "R7C (Jake 2026-11-16, decision 1b): the dump refreshed from Jake's store export (cut at the 2026-10-13 as-of) — the stored history his backfills and replays wrote; Sky's insider share of circulating"
+},
+"reader|Comparison|Holder share (S13)": {
+"date": "2026-11-16",
+"from": "not yet split",
+"to": 0.153181144,
+"why": "R7C (Jake 2026-11-16, decision 1b): the dump refreshed from Jake's store export (cut at the 2026-10-13 as-of) — the stored history his backfills and replays wrote; Sky's insider share of circulating"
+},
+"reader|Comparison|Holder value yield": {
+"date": "2026-11-16",
+"from": 0.024104831,
+"to": 0.0244771372,
+"why": "R7C (Jake 2026-11-16, decision 1b): the dump refreshed from Jake's store export (cut at the 2026-10-13 as-of) — the stored history his backfills and replays wrote; Sky's insider share of circulating"
+},
+"reader|Comparison|Insider share of stake": {
+"date": "2026-11-16",
+"from": "n/a",
+"to": 0.16869085,
+"why": "R7C (Jake 2026-11-16, decision 1b): the dump refreshed from Jake's store export (cut at the 2026-10-13 as-of) — the stored history his backfills and replays wrote; Sky's insider share of circulating"
+},
+"reader|Comparison|Lock rate, % of circulating": {
+"date": "2026-11-16",
+"from": 0.745910409,
+"to": 0.745258632,
+"why": "R7C (Jake 2026-11-16, decision 1b): the dump refreshed from Jake's store export (cut at the 2026-10-13 as-of) — the stored history his backfills and replays wrote; Sky's insider share of circulating"
+},
+"reader|Comparison|Net holder yield": {
+"date": "2026-11-16",
+"from": "blocked",
+"to": -0.00242506988,
+"why": "R7C (Jake 2026-11-16, decision 1b): the dump refreshed from Jake's store export (cut at the 2026-10-13 as-of) — the stored history his backfills and replays wrote; Sky's insider share of circulating"
+},
+"reader|Comparison|Payout ratio": {
+"date": "2026-11-16",
+"from": "n/a",
+"to": 0.18953285,
+"why": "R7C (Jake 2026-11-16, decision 1b): the dump refreshed from Jake's store export (cut at the 2026-10-13 as-of) — the stored history his backfills and replays wrote; Sky's insider share of circulating"
+},
+"reader|Comparison|Revenue (S13), 90 days": {
+"date": "2026-11-16",
+"from": "not yet split",
+"to": 56698931.3,
+"why": "R7C (Jake 2026-11-16, decision 1b): the dump refreshed from Jake's store export (cut at the 2026-10-13 as-of) — the stored history his backfills and replays wrote; Sky's insider share of circulating"
+},
+"reader|Comparison|Revenue ÷ market cap, a year": {
+"date": "2026-11-16",
+"from": 0.092962482,
+"to": 0.0937344849,
+"why": "R7C (Jake 2026-11-16, decision 1b): the dump refreshed from Jake's store export (cut at the 2026-10-13 as-of) — the stored history his backfills and replays wrote; Sky's insider share of circulating"
+},
+"reader|Comparison|Total dilution, % of float": {
+"date": "2026-11-16",
+"from": "blocked",
+"to": 0.126553082,
+"why": "R7C (Jake 2026-11-16, decision 1b): the dump refreshed from Jake's store export (cut at the 2026-10-13 as-of) — the stored history his backfills and replays wrote; Sky's insider share of circulating"
+},
+"reader|Summary|Archetype key": {
+"date": "2026-11-16",
+"from": 0.133403179,
+"to": 0.134348416,
+"why": "R7C (Jake 2026-11-16, decision 1b): the dump refreshed from Jake's store export (cut at the 2026-10-13 as-of) — the stored history his backfills and replays wrote; Sky's insider share of circulating"
+},
+"reader|Summary|Confidence (share green)": {
+"date": "2026-11-16",
+"from": 1.0,
+"to": 0.666666667,
+"why": "R7C (Jake 2026-11-16, decision 1b): the dump refreshed from Jake's store export (cut at the 2026-10-13 as-of) — the stored history his backfills and replays wrote; Sky's insider share of circulating"
+},
+"reader|Summary|FDV": {
+"date": "2026-11-16",
+"from": 1794547460.0,
+"to": 1776837930.0,
+"why": "R7C (Jake 2026-11-16, decision 1b): the dump refreshed from Jake's store export (cut at the 2026-10-13 as-of) — the stored history his backfills and replays wrote; Sky's insider share of circulating"
+},
+"reader|Summary|Holder value yield": {
+"date": "2026-11-16",
+"from": 0.024104831,
+"to": 0.0244771372,
+"why": "R7C (Jake 2026-11-16, decision 1b): the dump refreshed from Jake's store export (cut at the 2026-10-13 as-of) — the stored history his backfills and replays wrote; Sky's insider share of circulating"
+},
+"reader|Summary|Market cap": {
+"date": "2026-11-16",
+"from": 1782269860.0,
+"to": 1766207550.0,
+"why": "R7C (Jake 2026-11-16, decision 1b): the dump refreshed from Jake's store export (cut at the 2026-10-13 as-of) — the stored history his backfills and replays wrote; Sky's insider share of circulating"
+},
+"reader|Summary|Net holder yield": {
+"date": "2026-11-16",
+"from": "blocked",
+"to": -0.00242506988,
+"why": "R7C (Jake 2026-11-16, decision 1b): the dump refreshed from Jake's store export (cut at the 2026-10-13 as-of) — the stored history his backfills and replays wrote; Sky's insider share of circulating"
+},
+"reader|Summary|Payout ratio": {
+"date": "2026-11-16",
+"from": "n/a",
+"to": 0.18953285,
+"why": "R7C (Jake 2026-11-16, decision 1b): the dump refreshed from Jake's store export (cut at the 2026-10-13 as-of) — the stored history his backfills and replays wrote; Sky's insider share of circulating"
+},
+"reader|Summary|Price change, selected period": {
+"date": "2026-11-16",
+"from": 0.253748173,
+"to": 0.241375537,
+"why": "R7C (Jake 2026-11-16, decision 1b): the dump refreshed from Jake's store export (cut at the 2026-10-13 as-of) — the stored history his backfills and replays wrote; Sky's insider share of circulating"
+},
+"reader|Summary|Protocol revenue, annualised": {
+"date": "2026-11-16",
+"from": 165684230.0,
+"to": 165554555.0,
+"why": "R7C (Jake 2026-11-16, decision 1b): the dump refreshed from Jake's store export (cut at the 2026-10-13 as-of) — the stored history his backfills and replays wrote; Sky's insider share of circulating"
+},
+"reader|Summary|Rank in archetype": {
+"date": "2026-11-16",
+"from": 1.0,
+"to": 2.0,
+"why": "R7C (Jake 2026-11-16, decision 1b): the dump refreshed from Jake's store export (cut at the 2026-10-13 as-of) — the stored history his backfills and replays wrote; Sky's insider share of circulating"
+},
+"reader|Summary|Revenue growth, selected period": {
+"date": "2026-11-16",
+"from": -0.0233387979,
+"to": -0.0238735933,
+"why": "R7C (Jake 2026-11-16, decision 1b): the dump refreshed from Jake's store export (cut at the 2026-10-13 as-of) — the stored history his backfills and replays wrote; Sky's insider share of circulating"
+},
+"reader|Summary|Total dilution, % of float": {
+"date": "2026-11-16",
+"from": "blocked",
+"to": 0.126553082,
+"why": "R7C (Jake 2026-11-16, decision 1b): the dump refreshed from Jake's store export (cut at the 2026-10-13 as-of) — the stored history his backfills and replays wrote; Sky's insider share of circulating"
+},
+"reader|Summary|Total dilution, tokens a year": {
+"date": "2026-11-16",
+"from": "blocked",
+"to": 744180309.0,
+"why": "R7C (Jake 2026-11-16, decision 1b): the dump refreshed from Jake's store export (cut at the 2026-10-13 as-of) — the stored history his backfills and replays wrote; Sky's insider share of circulating"
+},
+"reader|Summary|What changed": {
+"date": "2026-11-16",
+"from": "over 90D: Price +25% · Fees -13% · ",
+"to": "over 90D: Price +24% · Fees -13% · ",
+"why": "R7C (Jake 2026-11-16, decision 1b): the dump refreshed from Jake's store export (cut at the 2026-10-13 as-of) — the stored history his backfills and replays wrote; Sky's insider share of circulating"
+}
+}

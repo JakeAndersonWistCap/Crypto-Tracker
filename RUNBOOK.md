@@ -540,6 +540,7 @@ Nothing in this round was pushed before the full gate passed on it. What changed
 "Net supply change" cells read n/a with a declared reason until 2026-12-29 (they form on their own then);
 store_export.py now puts the macro rows (the 3-month T-bill) into every project export, so a build from an export
 reads "Staking yield minus T-bill" as your store does; a later move of a frozen cell is appended to its record.
+Sky (482 cells) and Hyperliquid (616) are frozen from this round, on your R7C exports.
 `gcloud auth application-default login` comes first: near_bigquery failed on your 11-16 run for want of it.
 
 ```
@@ -550,9 +551,9 @@ gcloud auth application-default login
 git switch claude/crypto-metrics-supply-demand-ovkg8g
 git pull
 git log --oneline -1
-#   expect: the line ends "R7D: gate fixes, frozen moves kept on record, Hyperliquid net supply declared to 2026-12-29; RUNBOOK 11ev"
+#   expect: the line ends "R7D: Sky and Hyperliquid frozen (482 and 616 cells); RUNBOOK 11ev"
 python -c "import config; print(config.CIRC_CHANGE_DECLARED_GAP['Hyperliquid']['clear_by'], sorted(config.FROZEN_PROJECTS))"
-#   expect: 2026-12-29 ['Fluid', 'Maple', 'Morpho', 'Pendle', 'Uniswap']
+#   expect: 2026-12-29 ['Fluid', 'Hyperliquid', 'Maple', 'Morpho', 'Pendle', 'Sky', 'Uniswap']
 python circ_legs.py Sky
 #   expect: every leg "450 of 450", none missing
 python token_metrics.py
@@ -584,6 +585,8 @@ python project_freeze.py --compare Fluid      # expect: Fluid: 353 cells, 0 unde
 python project_freeze.py --compare Maple      # expect: Maple: 360 cells, 0 undeclared move(s)
 python project_freeze.py --compare Morpho     # expect: Morpho: 285 cells, 0 undeclared move(s)
 python project_freeze.py --compare Pendle     # expect: Pendle: 373 cells, 0 undeclared move(s)
+python project_freeze.py --compare Sky        # expect: Sky: 482 cells, 0 undeclared move(s)
+python project_freeze.py --compare Hyperliquid  # expect: Hyperliquid: 616 cells, 0 undeclared move(s)
 ```
 
 

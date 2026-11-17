@@ -71,7 +71,7 @@ def test_a1_only_sky_and_hyperliquid_are_refreshed_all_at_the_common_asof():
     for f in sorted((ROOT / "fixtures").glob("real_*.json")):
         meta = json.loads(f.read_text(encoding="utf-8"))["meta"]
         asofs[meta["project"]] = str(meta["asof"])[:10]
-        if meta["project"] in config.FROZEN_PROJECTS:
+        if meta["project"] in config.FROZEN_BEFORE_R7D:      # frozen when the two dumps were refreshed
             assert "refreshed_from_export" not in meta, meta["project"]
     for p in ("Sky", "Hyperliquid"):
         m = real_dump.load(p)["meta"]
@@ -143,7 +143,7 @@ def test_b1_sky_insider_share_is_the_endowments_over_circulating(built):
     assert isinstance(share, float) and share == pytest.approx(endow / c, rel=1e-6)
     assert 0.10 < share < 0.15                                   # ~12.7%: 2.97B of ~23.4B
     # a frozen project's cell is untouched: none is in the map
-    assert not set(config.INSIDER_INSIDE_CIRCULATING) & set(config.FROZEN_PROJECTS)
+    assert not set(config.INSIDER_INSIDE_CIRCULATING) & set(config.FROZEN_BEFORE_R7D)
 
 
 # ======================================================================================== C3: the USDH reserve yield
