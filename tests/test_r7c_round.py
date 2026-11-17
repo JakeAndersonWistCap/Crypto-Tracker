@@ -87,7 +87,7 @@ def test_a1_only_sky_and_hyperliquid_are_refreshed_all_at_the_common_asof():
 def test_a1_the_rank_moves_are_declared_with_their_cause():
     for p, to in (("Fluid", 4.0), ("Maple", 3.0)):
         for k in ("reader|A3 Revenue Buyback|Rank in A3", "reader|Summary|Rank in archetype"):
-            d = config.FROZEN_MOVES[p][k]
+            d = config.FROZEN_MOVES[p][k]["then"][-1]         # R7D.A1: appended; the earlier declaration stays
             assert d["to"] == to and "R7C.A1" in d["why"] and "values are unchanged" in d["why"]
 
 

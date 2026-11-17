@@ -169,7 +169,12 @@ def test_round_1_renames_against_the_committed_guard_baseline(round_1_renames):
                      declared=declared)
     assert not [b for b in bad if b.startswith("HEADLINE LOST")], bad
     n = sum(k in back.values() for cells in old.values() for k in cells)
-    assert n >= 14 and len(declared) == n
+    # R7C.A1b: Sky's and Hyperliquid's baseline entries were rewritten on their refreshed dumps, so they already hold
+    # the header in force (the 90-day-mean market share) — the 12 other market-share headers are round 1's, and with
+    # those two every one of the 14 is accounted for
+    current = sum("MARKET SHARE vs its category (90-day mean" in k for p in ("Sky", "Hyperliquid")
+                  for k in base["headlines"][p])
+    assert current == 2 and n + current >= 14 and len(declared) == n
 
 
 def test_sanity_and_continuity_read_a_value_held_under_an_older_declared_name(round_1_renames):

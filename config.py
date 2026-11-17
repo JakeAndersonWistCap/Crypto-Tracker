@@ -43385,9 +43385,21 @@ REVENUE_SPLIT["Hyperliquid"]["revenue"]["route"] = REVENUE_SPLIT["Hyperliquid"][
 _R7C_RANK_WHY = ("R7C.A1 (Jake 2026-11-16, decision 1b): the Sky and Hyperliquid dumps are refreshed from Jake's store "
                  "exports (cut at the 2026-10-13 as-of); Hyperliquid's float and total dilution now form, so it enters "
                  "the A3 ranking (was unranked: blocked) — this project's values are unchanged, its rank moves down one")
+# R7D.A1 (Jake 2026-11-16: "keep superseded moves on record, so every declaration stays"): a later move of a cell that
+# already carries a declaration is APPENDED under "then" (date, to, why) — the earlier declaration stays as declared
+# (the baseline still holds its value); project_freeze.undeclared judges the cell against the LATEST declared value.
+def declare_later_move(project: str, key: str, to, why: str, date: str) -> None:
+    d = FROZEN_MOVES[project].get(key)
+    step = {"date": date, "to": to, "why": why}
+    if d is None:
+        FROZEN_MOVES[project][key] = step
+    else:
+        d.setdefault("then", []).append(step)
+
+
 for _p, _to in (("Fluid", 4.0), ("Maple", 3.0)):
     for _k in ("reader|A3 Revenue Buyback|Rank in A3", "reader|Summary|Rank in archetype"):
-        FROZEN_MOVES[_p][_k] = {"date": "2026-11-16", "to": _to, "why": _R7C_RANK_WHY}
+        declare_later_move(_p, _k, _to, _R7C_RANK_WHY, "2026-11-16")
 # R7C.B2 SKY'S MKR DETAIL ROWS: A DECLARED HANDOVER (Jake's run on df26e6f, 2026-11-16: archive_backfill "MKR backing Sky:
 # 1708 row(s) … reached the start of the window", then done_check — 3 BROKEN on A3's detail rows, "measuring point
 # changed"). The R7.B2 backfill (fetch/sky_mkr.backing_history) wrote all four series under the BACKING's source; the live
@@ -43407,3 +43419,20 @@ for _m, _live in SKY_MKR_DETAIL_POINTS.items():
                "block",
         "composition_change": "none: the same contract call, read at the day's first block (archive) vs during the run",
         "declared": "2026-11-16", "decided": "Jake 2026-11-16 (R7C addendum: declare the handover; don't hide it)"}
+# R7D.A2 HYPERLIQUID'S NET SUPPLY CHANGE: DECLARED n/a UNTIL 2026-12-29 (Jake 2026-11-16, decision 1c on R7C.C1). Our
+# circulating (the first-party figure, restated: R7.C1) is stored from 2026-09-30; no public source holds the Assistance
+# Fund's history before that day (the info API keeps a user's latest 10,000 fills — about 9 days of the Fund's; its
+# ledger holds only transfers in; totalSupply and futureEmissions are point reads). No CoinGecko fallback (another
+# basis). A full quarter of our own data exists on 2026-12-29 (2026-09-30 + 90 days): the two cells form on their own
+# then. The text is appended to the cell's own n/a reason (build_workbook._circ_change_gap_text); done_check reads its
+# clear-by date and stops allowing it the day after.
+CIRC_CHANGE_DECLARED_GAP = {
+    "Hyperliquid": {
+        "first_stored": "2026-09-30", "clear_by": "2026-12-29", "decided": "Jake 2026-11-16 (R7D decision 1c)",
+        "text": "DECLARED (Jake 2026-11-16): history too short — our circulating is stored from 2026-09-30, and no "
+                "public source holds the Assistance Fund's history before our first stored day (Hyperliquid's API keeps "
+                "about 9 days of its fills). A full quarter of our own data exists on 2026-12-29; the cell forms on "
+                "its own then",
+        "source": "https://api.hyperliquid.xyz/info (userFillsByTime: the latest 10,000 fills only; "
+                  "userNonFundingLedgerUpdates: transfers in only — read 2026-11-16); SPEC R7C.C1"},
+}

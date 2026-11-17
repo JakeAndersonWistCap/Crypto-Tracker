@@ -88,6 +88,8 @@ def undeclared(base: dict, now: dict, declared: dict) -> list[str]:
         if b == n:
             continue
         d = declared.get(k)
+        if d is not None and d.get("then"):               # R7D.A1: a later declared move of the same cell — the
+            d = d["then"][-1]                             # earlier declaration stays on record; the latest is judged
         if d is not None and _norm(d.get("to")) == n and d.get("why") and d.get("date"):
             continue
         bad.append(f"{k}: {b!r} -> {n!r}")

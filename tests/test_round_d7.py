@@ -277,11 +277,21 @@ def test_2_hyperliquids_burn_over_issuance_is_blocked_with_both_legs_holes_on_th
     v = X.value("A4 Permanent Burn", row, col)
     # R7.C2: with option C in force (read-to-read basis) the issuance leg is option C's, which needs the unlock
     # release the 10-13 dump does not hold — still blocked, never a ratio over unequal windows, naming the leg
-    assert isinstance(v, str) and ("BLOCKED" in v), v
-    assert ("covers" in v and "gross_burn_tokens" in v) or "no rows for unlock_release_tokens" in v, v
-    assert "holes: 2026-09-13" not in v                       # P5-1.13: the burn's rederived rows have no such hole
-    if "covers" in v:                                         # the release leg's own holes, where it is the leg
-        assert "holes: 2026-10-02..10-05, 2026-10-12" in v, v
+    # R7C.A1: the dump refreshed from Jake's export holds the legs' replayed history, so both legs cover the window and
+    # the ratio is a number — a number only then; otherwise blocked, naming the short leg (never over unequal windows)
+    if isinstance(v, str):
+        assert "BLOCKED" in v, v
+        assert ("covers" in v and "gross_burn_tokens" in v) or "no rows for unlock_release_tokens" in v, v
+        assert "holes: 2026-09-13" not in v                   # P5-1.13: the burn's rederived rows have no such hole
+        if "covers" in v:                                     # the release leg's own holes, where it is the leg
+            assert "holes: 2026-10-02..10-05, 2026-10-12" in v, v
+    else:
+        data = wb["Data"]
+        cov_c = next(c for c in range(1, data.max_column + 1)
+                     if str(data.cell(1, c).value or "").startswith("Q0: days of the 90"))
+        days = [X.value("Data", r, cov_c) for r in range(2, data.max_row + 1)
+                if data.cell(r, 1).value in ("Hyperliquid|gross_burn_tokens", "Hyperliquid|issuance_option_c_tokens")]
+        assert len(days) == 2 and abs(days[0] - days[1]) <= 9 and 0 < v < 5, (days, v)
 
 
 # ============================================================================================ 3 CCIP: a record

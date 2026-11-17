@@ -424,7 +424,11 @@ def test_0_newer_series_lists_what_the_store_holds_past_the_fixtures(tmp_path):
     con.close()
     got = mg.newer_series(str(db))
     assert [(p, m) for p, m, _d, _f in got] == [("Hyperliquid", "hyperevm_priority_burn_tokens")]
-    assert got[0][3] == "none"
+    # the fourth field names the fixture's own last day of that series ("none" where the dump lacks it; the dump
+    # refreshed from Jake's export holds it to its as-of, R7C.A1)
+    from real_dump import load
+    days = [r["date"][:10] for r in load("Hyperliquid")["metrics"] if r["metric"] == "hyperevm_priority_burn_tokens"]
+    assert got[0][3] == (max(days) if days else "none") and got[0][3] < "2026-10-19"
 
 
 # ======================================================================================== 4b wiring

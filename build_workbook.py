@@ -9436,8 +9436,11 @@ def _circ_change_gap_text(p: dict) -> str:
     if not gaps:
         return "the circulating change does not cover every day of the window"
     shown = "; ".join(f"{x.date()}: {why}" for x, why in gaps[:3]) + (f"; +{len(gaps) - 3} more" if len(gaps) > 3 else "")
-    return ("closing − opening circulating is not measured on one basis over the window (" + shown + ")").replace('"',
-                                                                                                             "'")
+    text = "closing − opening circulating is not measured on one basis over the window (" + shown + ")"
+    decl = (getattr(config, "CIRC_CHANGE_DECLARED_GAP", {}) or {}).get(p["name"])
+    if decl:                                               # R7D.A2: a declared, dated reason (Hyperliquid, decision 1c)
+        text += " — " + decl["text"]
+    return text.replace('"', "'")
 
 
 def _net_supply_circ(R: Refs, r: int, p: dict, pct: bool = False) -> str:
@@ -9449,7 +9452,11 @@ def _net_supply_circ(R: Refs, r: int, p: dict, pct: bool = False) -> str:
     why = ("the circulating change does not cover every day of that quarter on one basis" if _SHIFT["k"]
            else _circ_change_gap_text(p))
     val = f"{q}*365/{n}/({_circ(R, r, p)})" if pct else q
-    return f'=IFERROR(IF(AND(ISNUMBER({cov}),{cov}={n}),{val},"n/a — {why}"),"n/a — {why}")'
+    # R7D.A2: a string constant in a formula is at most 255 characters — a longer reason (a declared, dated gap) is
+    # joined from pieces
+    full = f"n/a — {why}"
+    lit = "&".join(f'"{full[i:i + 200]}"' for i in range(0, len(full), 200))
+    return f'=IFERROR(IF(AND(ISNUMBER({cov}),{cov}={n}),{val},{lit}),{lit})'
 
 
 def _net_supply_circ_note(p: dict) -> str:

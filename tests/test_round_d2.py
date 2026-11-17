@@ -286,9 +286,15 @@ def test_4d_sky_insider_share_reads_the_endowments_locked_share(tmp_path, monkey
     asof = str(pd.Timestamp(p["meta"]["asof"]).date())
     locked = [r for r in p["metrics"] if r["metric"] == "locked_tokens" and r["date"][:10] <= asof]
     last = max(locked, key=lambda r: r["date"])
-    wb, X, _ = _build_with(tmp_path, monkeypatch, "Sky", [("sky_endowment_locked_tokens", asof, 2_930_760_603.60)])
+    # the row is planted only where the dump lacks the series (the 10-13 dump did; the dump refreshed from Jake's export
+    # holds its own archive reads, R7C.A1 — a second row from another source there is a change of measuring point)
+    held = [r for r in p["metrics"] if r["metric"] == "sky_endowment_locked_tokens" and r["date"][:10] <= asof]
+    extra = [] if held else [("sky_endowment_locked_tokens", asof, 2_930_760_603.60)]
+    endow = float(max(held, key=lambda r: r["date"])["value"]) if held else 2_930_760_603.60
+    wb, X, _ = _build_with(tmp_path, monkeypatch, "Sky", extra)
     cell = _get(_row(wb, X, "CP Comparability", "Sky"), "Insider share of staked / locked supply")
-    assert cell == pytest.approx(2_930_760_603.60 / float(last["value"]), rel=1e-9)
+    assert cell == pytest.approx(endow / float(last["value"]), rel=1e-9)
+    assert endow == pytest.approx(2_930_760_603.60, rel=1e-6)                 # the same read, to the unit
 
 
 def test_4f_near_payer_scan_counts_operators_and_names_every_other_receiver(monkeypatch):

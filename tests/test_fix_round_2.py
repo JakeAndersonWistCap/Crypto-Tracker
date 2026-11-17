@@ -32,7 +32,7 @@ import config  # noqa: E402
 _CACHE: dict = {}
 
 
-def _groups(project: str, extra_rows: list | None = None) -> dict:
+def _groups(project: str, extra_rows: list | None = None, drop: tuple = ()) -> dict:
     """The build's groups (every read-time view applied: build_workbook._LAST_GROUPS) for one real dump, built the way
     tests/test_alignment.py builds it; cached per (project, extra rows)."""
     import tempfile
@@ -41,10 +41,12 @@ def _groups(project: str, extra_rows: list | None = None) -> dict:
     import store as sm
     from real_dump import load, to_store
     import real_dump
-    key = (project, repr(extra_rows), real_dump.VINTAGE)
+    key = (project, repr(extra_rows), real_dump.VINTAGE, tuple(drop))
     if key in _CACHE:
         return _CACHE[key]
     payload = load(project)
+    if drop:                                               # a build WITHOUT these stored series (a leg not read)
+        payload = {**payload, "metrics": [r for r in payload["metrics"] if r["metric"] not in drop]}
     if extra_rows:
         payload = {**payload, "metrics": payload["metrics"] + extra_rows}
     d = Path(tempfile.mkdtemp())
@@ -248,15 +250,30 @@ def test_hyperliquid_fdv_excludes_the_assistance_fund():
     # 2026-10-13 16:22 UTC (308,538.17 HYPE). The 10-13 dump predates that series, so the row is added as read.
     burn = [{"date": "2026-10-13", "metric": "hyperevm_zero_address_balance", "value": 308_538.17,
              "source": "hyperevm:eth_getBalance(0x0000…)", "tier": 1, "fetched_at": "2026-10-13T16:22:00Z"}]
+    # R7C.A1: the dump refreshed from Jake's export holds the burn read itself — the row is added only where the dump
+    # lacks it (never a second value on a stored day), and the three legs are read from the rows the build read
+    from real_dump import load
+    held = {(r["metric"], r["date"][:10]): float(r["value"]) for r in load("Hyperliquid")["metrics"]
+            if r["metric"] in ("hyperevm_zero_address_balance", "total_supply_gross", "burn_address_balance")}
+    if ("hyperevm_zero_address_balance", "2026-10-13") in held:
+        burn = []
+    else:
+        held[("hyperevm_zero_address_balance", "2026-10-13")] = 308_538.17
     g = _groups("Hyperliquid", burn)
     f = g[("Hyperliquid", "fdv_usd")]
     last = f.assign(d=pd.to_datetime(f["date"])).sort_values("d").iloc[-1]
     px = g[("Hyperliquid", "price_usd")]
     p = float(px[pd.to_datetime(px["date"]) == last["d"]]["value"].iloc[-1])
-    assert float(last["value"]) == pytest.approx(p * (998_862_059.4027 - 48_007_021.5047 - 308_538.17), rel=1e-6)
+    day = str(last["d"].date())
+    net = (held[("total_supply_gross", day)] - held[("burn_address_balance", day)]
+           - held[("hyperevm_zero_address_balance", day)])
+    assert 9.4e8 < net < 9.6e8                                # gross ~998.9M less the Fund ~48.0M less the EVM burn
+    assert float(last["value"]) == pytest.approx(p * net, rel=1e-6)
     assert "total_supply_gross-burn_address_balance-hyperevm_zero_address_balance" in str(last["source"])
     # without the burn leg there is no total — and no FDV on CoinGecko's gross figure in its place
-    g0 = _groups("Hyperliquid")
+    # (the leg is taken out of the build: the refreshed dump holds it; CoinGecko's total, stored under either name,
+    # never stands in for ours)
+    g0 = _groups("Hyperliquid", drop=("hyperevm_zero_address_balance",))
     t0 = g0.get(("Hyperliquid", "total_supply"))
     assert t0 is None or t0.empty
 

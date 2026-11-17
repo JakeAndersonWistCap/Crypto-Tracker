@@ -42,6 +42,15 @@ def export(project: str, db: str = "metrics.db", out_dir: str | Path = "exports"
             raise SystemExit(f"no rows for {project!r} in {db}")
         for r in met:
             r["source"] = _redact(r["source"])
+        # R7D.B (Jake's R7C Sky export: "Staking yield minus T-bill" read n/a on it — the T-bill is a MACRO row, stored
+        # under config.MACRO_PROJECT, so no project's export carried it): the macro series every project's cells read
+        # travel with each export, under their own key (tests/real_dump.to_store loads them under the macro project)
+        import config                                      # noqa: PLC0415
+        macro = _rows(con, "SELECT date, metric, value, source, tier, fetched_at FROM metrics WHERE project = ? "
+                           "AND metric IN (%s) ORDER BY metric, date" % ",".join("?" * len(config.MACRO_METRICS)),
+                      (config.MACRO_PROJECT, *config.MACRO_METRICS))
+        for r in macro:
+            r["source"] = _redact(r["source"])
         rq = _rows(con, "SELECT * FROM review_queue WHERE project = ? ORDER BY ts", (project,))
         mo = _rows(con, "SELECT * FROM manual_overrides WHERE project = ? ORDER BY date", (project,))
         since = (now - timedelta(days=30)).strftime("%Y-%m-%d")
@@ -71,8 +80,9 @@ def export(project: str, db: str = "metrics.db", out_dir: str | Path = "exports"
                         "first_date": min(dates), "last_date": max(dates), "metrics_filter": [],
                         "not_included": "other projects' rows, explorer_routes.json, .env, keys",
                         "counts": {"metrics": len(met), "review_queue": len(rq), "manual_overrides": len(mo),
-                                   "run_log": len(rl), "gap_report": len(gaps), "manual_references": 0}},
-               "metrics": met, "review_queue": rq, "manual_overrides": mo, "run_log": rl, "gap_report": gaps,
+                                   "run_log": len(rl), "gap_report": len(gaps), "manual_references": 0,
+                                   "macro_metrics": len(macro)}},
+               "macro_metrics": macro, "metrics": met, "review_queue": rq, "manual_overrides": mo, "run_log": rl, "gap_report": gaps,
                "manual_references": []}
     # R7C (Jake 2026-11-16, the export bug): a name UNIQUE PER RUN — date, UTC time and commit. A fixed
     # "<project>-<date>.json.gz" collided with the same name already tracked on data/store-exports, and `git switch`

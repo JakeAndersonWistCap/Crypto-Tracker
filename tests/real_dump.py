@@ -57,6 +57,12 @@ def to_store(payload: dict, db: Path) -> None:
                         "VALUES (?, ?, ?, ?, ?, ?, ?)",
                         [(r["date"], project, r["metric"], r["value"], r["source"], r["tier"], r["fetched_at"])
                          for r in payload["metrics"]])
+        if payload.get("macro_metrics"):                  # R7D.B: a store export's macro rows (the T-bill), their project
+            import config                                  # noqa: PLC0415
+            con.executemany("INSERT OR REPLACE INTO metrics (date, project, metric, value, source, tier, fetched_at) "
+                            "VALUES (?, ?, ?, ?, ?, ?, ?)",
+                            [(r["date"], config.MACRO_PROJECT, r["metric"], r["value"], r["source"], r["tier"],
+                              r["fetched_at"]) for r in payload["macro_metrics"]])
         for table in ("review_queue", "manual_overrides", "gap_report", "run_log"):
             rows = payload.get(table) or []
             if not rows:

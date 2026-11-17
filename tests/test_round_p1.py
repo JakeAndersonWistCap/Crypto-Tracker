@@ -559,9 +559,22 @@ def test_p2b_3_hyperliquid_a4_key_is_blocked_with_each_legs_covered_days(built):
     cell = ws.cell(rows["Hyperliquid"], kc)
     # R7.C2: with option C in force the issuance leg is option C's, which waits on the unlock release the dumps do not
     # hold — still never a ratio over a common window: blocked, naming the leg(s) short of the window
-    assert cell.value in ("blocked", "n/a"), cell.value
-    covered = re.findall(r"covers (\d+) days of a 90-day window", cell.comment.text)
-    assert len(covered) == 2 or "no rows for" in cell.comment.text, cell.comment.text
+    # R7C.A1: on the dump refreshed from Jake's export both legs cover the window, so the key is a number — a number
+    # only then (the audit cell's own coverage guard), else blocked with each leg's covered days
+    if cell.value in ("blocked", "n/a"):
+        covered = re.findall(r"covers (\d+) days of a 90-day window", cell.comment.text)
+        assert len(covered) == 2 or "no rows for" in cell.comment.text, cell.comment.text
+    else:
+        assert isinstance(cell.value, str) and cell.value.startswith("=_data!"), cell.value
+        a = openpyxl.load_workbook(built["audit"])
+        data = a["Data"]
+        hdr = {str(data.cell(1, c).value): c for c in range(1, data.max_column + 1)}
+        cov_c = next(c for h, c in hdr.items() if h.startswith("Q0: days of the 90"))
+        import xlcalc
+        X = xlcalc.Workbook(a)
+        days = [X.value("Data", r, cov_c) for r in range(2, data.max_row + 1)
+                if data.cell(r, 1).value in ("Hyperliquid|gross_burn_tokens", "Hyperliquid|issuance_option_c_tokens")]
+        assert len(days) == 2 and all(isinstance(d, (int, float)) for d in days) and abs(days[0] - days[1]) <= 9, days
     assert "COMMON" not in cell.comment.text.upper()
 
 

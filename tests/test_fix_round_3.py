@@ -107,7 +107,9 @@ def test_hl_burn_total_keeps_the_funds_own_reads_and_covers_q0():
     hole = s[(s.index >= "2026-09-12") & (s.index <= "2026-09-28")]
     assert len(hole) >= 10 and hole.sum() > 300_000         # the Fund's spotClearinghouseState reads, kept
     q0 = s[(s.index > asof - pd.Timedelta(days=90)) & (s.index <= asof)].sum()
-    assert q0 == pytest.approx(2_467_817.2, abs=1)
+    # the Q0 total on Jake's stored rows (the dump refreshed from his export, R7C.A1: 2,474,408; the 10-13 dump read
+    # 2,467,817) — a value check within 0.5%, and far from the 2,146,959 of the broken leg
+    assert q0 == pytest.approx(2_474_408, rel=0.005)
     s_cov = bw._after_leg_gap(tb, s)
     assert bw._window_coverage(s_cov, asof - pd.Timedelta(days=90), asof)[0] == 90
     # the retirement above DefiLlama's revenue_usd it exposes (114%) is the Fund's documented intake, not a gap

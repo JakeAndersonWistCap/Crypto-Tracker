@@ -534,6 +534,59 @@ A Plume seed started on code older than 2026-10-01 saved its state only at the e
 or stop it and start again on the new code. Don't run both at once: they write the same state file.
 
 
+## 11ev. Round 7D — gate green, Hyperliquid's net supply declared, exports carry the T-bill (2026-11-17)
+
+Nothing in this round was pushed before the full gate passed on it. What changed for your run: Hyperliquid's two
+"Net supply change" cells read n/a with a declared reason until 2026-12-29 (they form on their own then);
+store_export.py now puts the macro rows (the 3-month T-bill) into every project export, so a build from an export
+reads "Staking yield minus T-bill" as your store does; a later move of a frozen cell is appended to its record.
+`gcloud auth application-default login` comes first: near_bigquery failed on your 11-16 run for want of it.
+
+```
+cd C:\Users\jake\Crypto-Tracker
+.venv\Scripts\Activate.ps1
+gcloud auth application-default login
+#   expect: a browser sign-in, then "Credentials saved to file"
+git switch claude/crypto-metrics-supply-demand-ovkg8g
+git pull
+git log --oneline -1
+#   expect: the line ends "R7D: gate fixes, frozen moves kept on record, Hyperliquid net supply declared to 2026-12-29; RUNBOOK 11ev"
+python -c "import config; print(config.CIRC_CHANGE_DECLARED_GAP['Hyperliquid']['clear_by'], sorted(config.FROZEN_PROJECTS))"
+#   expect: 2026-12-29 ['Fluid', 'Maple', 'Morpho', 'Pendle', 'Uniswap']
+python circ_legs.py Sky
+#   expect: every leg "450 of 450", none missing
+python token_metrics.py
+#   expect: the run ends without error; near_bigquery no longer fails on credentials; an hl_stats line per stats-data path
+python token_metrics.py --no-fetch
+#   expect: no error
+python -c "import sqlite3; c=sqlite3.connect('metrics.db'); [print(r) for r in c.execute('select ts, status, message from run_log where source=? order by rowid desc limit 8', ('hl_stats',))]"
+#   expect: up to 8 lines naming each stats-data path's HTTP status and first-record keys - paste them back
+python done_check.py --verbose | Select-String "^(Uniswap|Fluid|Maple|Morpho|Pendle|Sky|Hyperliquid|Aerodrome|Near)" -Context 0,8
+#   expect: Uniswap, Fluid, Maple, Morpho, Pendle, Sky and Hyperliquid READY; Aerodrome and Near NOT READY with their lists - paste it back
+New-Item -ItemType Directory -Force ..\tm-exports | Out-Null
+python store_export.py --project Sky --out-dir ..\tm-exports
+#   expect: a line starting "wrote ../tm-exports/sky-" ... "macro_metrics" above 0
+python store_export.py --project Aerodrome --out-dir ..\tm-exports
+#   expect: a line starting "wrote ../tm-exports/aerodrome-"
+python store_export.py --project Near --out-dir ..\tm-exports
+#   expect: a line starting "wrote ../tm-exports/near-"
+git switch data/store-exports
+git pull
+Copy-Item ..\tm-exports\*.json.gz exports\
+git add -f exports
+git commit -m "data: Sky, Aerodrome and Near store exports (R7D)"
+git push
+git switch claude/crypto-metrics-supply-demand-ovkg8g
+git log --oneline -1
+#   expect: the same line as above
+python project_freeze.py --compare Uniswap    # expect: Uniswap: 309 cells, 0 undeclared move(s)
+python project_freeze.py --compare Fluid      # expect: Fluid: 353 cells, 0 undeclared move(s)
+python project_freeze.py --compare Maple      # expect: Maple: 360 cells, 0 undeclared move(s)
+python project_freeze.py --compare Morpho     # expect: Morpho: 285 cells, 0 undeclared move(s)
+python project_freeze.py --compare Pendle     # expect: Pendle: 373 cells, 0 undeclared move(s)
+```
+
+
 ## 11eu. Round 7C — the gate, Sky's MKR handover, safe exports (2026-11-16)
 
 The round's commit: the test dumps of Sky and Hyperliquid refreshed from your store exports (cut at the dumps'

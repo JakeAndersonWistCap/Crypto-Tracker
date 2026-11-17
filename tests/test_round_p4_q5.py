@@ -309,7 +309,15 @@ def test_fixture_keys_and_ranks(built):
     # 90 — the two sides of the ratio cover different days, so it is BLOCKED (rule 9), never a 0 over unequal spans
     assert isinstance(val["Pendle"], str) and val["Pendle"].startswith("BLOCKED — unequal coverage")
     assert "buyback_burned_tokens, q0) covers 68 days" in val["Pendle"]
-    assert isinstance(val["Hyperliquid"], str) and val["Hyperliquid"].startswith("BLOCKED — unequal coverage")
+    # Hyperliquid: BLOCKED while its legs cover unequal days; a number once they cover the same days (the dump
+    # refreshed from Jake's export, R7C.A1: the burned buyback and option C's issuance both over the window)
+    hl = val["Hyperliquid"]
+    if isinstance(hl, str):
+        assert hl.startswith("BLOCKED — unequal coverage")
+    else:
+        cb = _data(built, "Hyperliquid|buyback_burned_tokens", "Q0: days of the 90")
+        ci = _data(built, "Hyperliquid|issuance_option_c_tokens", "Q0: days of the 90")
+        assert abs(cb - ci) <= 9 and 0 < hl < 5, (cb, ci, hl)
     # PR1.S1 (Jake 2026-11-05): each leg a rate over the days its rows cover (the days after a leg's last row are not
     # covered); the ratio of the 90-day sums was 0.6250996672617004
     def rate(m):
@@ -324,14 +332,19 @@ def test_fixture_keys_and_ranks(built):
     sr, sk, sn = sh["Rank in archetype"], sh["Archetype key"], sh["Net holder yield"]
     a3 = [n for n in srows if n in P and reader._primary(P[n]) == 3 and not reader.parked_reason(n)]
     rank = {n: XR.value("Summary", srows[n], sr) for n in a3}
-    assert rank["Sky"] == 1.0
-    zeros = sorted((n for n in a3 if XR.value("Summary", srows[n], sk) == 0.0), key=lambda n: rank[n])
+    # the projects with a measured key above 0 rank first, by the key, high to low (Sky; and Hyperliquid once its key
+    # is a number — the dump refreshed from Jake's export, R7C.A1); the zeros follow on consecutive ranks
+    keyv = {n: XR.value("Summary", srows[n], sk) for n in a3}
+    keyed = sorted((n for n in a3 if isinstance(keyv[n], float) and keyv[n] > 0), key=lambda n: -keyv[n])
+    assert "Sky" in keyed and [rank[n] for n in keyed] == [1.0 + i for i in range(len(keyed))]
+    zeros = sorted((n for n in a3 if keyv[n] == 0.0), key=lambda n: rank[n])
     assert set(zeros) >= {"Maple", "Fluid", "Ether.fi"}
-    assert [rank[n] for n in zeros] == [2.0 + i for i in range(len(zeros))]
+    assert [rank[n] for n in zeros] == [len(keyed) + 1.0 + i for i in range(len(zeros))]
     nhy = [XR.value("Summary", srows[n], sn) for n in zeros]
     nums = [v for v in nhy if isinstance(v, float)]
     assert nums == sorted(nums, reverse=True) and nhy[:len(nums)] == nums
-    assert rank["Hyperliquid"] == "unranked" and rank["Pendle"] == "unranked"      # PR1.S1: Pendle's key BLOCKED
+    assert rank["Pendle"] == "unranked"                                             # PR1.S1: Pendle's key BLOCKED
+    assert (rank["Hyperliquid"] == "unranked") == (not isinstance(keyv["Hyperliquid"], float))   # ranked iff measured
     trows, tr = _rows(t), _col(t, lambda h: h == "Rank in A3")
     for n in a3:
         assert XR.value(t.title, trows[n], tr) == rank[n], n

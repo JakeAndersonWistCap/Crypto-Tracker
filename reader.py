@@ -2548,7 +2548,18 @@ def _write_arch_tab(sh: Sheet, ctx: Ctx, spec: TabSpec) -> None:
                 basis = config.crossover_issuance_metric(name)
                 c_use = {"pool_release_tokens": h[2], "unlock_release_tokens": h[3]}.get(basis) or h[1]
                 src = A.at(tab, r_a, c_use) if c_use else None
+                opt_c = (getattr(config, "OPTION_C_ISSUANCE", {}).get(name) or {}).get("metric")
+                if opt_c and basis == opt_c:
+                    # R7D.A1 (the s9 contradiction: Hyperliquid read "0 — fixed supply" here beside a key dividing by
+                    # option C's issuance): the key's own denominator — option C's issuance over the window, read from
+                    # the Data tab's row (no audit column holds it)
+                    dr = A.data_row(f"{name}|{opt_c}")
+                    dc = next((c for hh, c in A._cols["Data"].items() if str(hh or "").startswith("Q0 (")), None)
+                    src = A.at("Data", dr, dc) if dr and dc else None
+                    c_use = None
                 put_src(sh, data, row, col, p, src, extra=(
+                    "Option C (P5-1.5): the issuance the key divides by is shown — the issuer's releases + the staking "
+                    "reward (issuance_option_c_tokens), not minted supply." if (opt_c and basis == opt_c) else
                     "A pre-minted supply: the pool release is shown (released from pre-minted pools, not minted)."
                     if c_use == h[2] else
                     "A pre-minted supply that mints nothing: the releases into circulating the key divides by are shown "
