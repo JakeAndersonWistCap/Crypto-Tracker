@@ -178,6 +178,24 @@ def _work(a) -> int:
         db.save()
         n = ar._write_new(st, pd.DataFrame(rows)) if rows else 0
         print(f"  MKR backing {p['name']}: {n} row(s) (4 per day: MKR supply, Pause Proxy MKR, fee, the backing) — {why}")
+    # R8 item 2 AERODROME'S SUPPLY SERIES, DAY BY DAY (it stopped on 2026-10-29: each epoch-scan timeout dropped the
+    # day's supply rows): total, non-circulating, the filing wallets' locked AERO and the two non-circulating legs, read
+    # at each past day's first block (found by timestamp) through archive eth_calls on Base, newest first back to the
+    # migration cutover. Never overwrites a stored leg; each day is written as it lands. It has the run's budget from
+    # its own start (bf.run above may have spent the shared one), so a pass is at most --budget-min longer.
+    for p in projects:
+        if p["name"] != config.AERODROME_MIGRATION["project"]:
+            continue
+        from fetch import aero_v3
+        have = {m: {d[:10] for (d,) in st.conn.execute(
+            "SELECT date FROM metrics WHERE project=? AND metric=?", (p["name"], m))} for m in aero_v3.SUPPLY_LEGS}
+        wrote = [0]
+
+        def _land(day_rows, _wrote=wrote):
+            _wrote[0] += ar._write_new(st, pd.DataFrame(day_rows))
+        rows, why = aero_v3.supply_history(p, have, deadline=time.monotonic() + a.budget_min * 60, write=_land)
+        print(f"  Aerodrome supply {p['name']}: {wrote[0]} row(s) written over "
+              f"{len({str(r['date'])[:10] for r in rows})} day(s) (legs: {', '.join(aero_v3.SUPPLY_LEGS)}) — {why}")
     if a.near:
         near = config.PROJECT_BY_NAME.get("Near")
         if near and near in projects:

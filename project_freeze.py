@@ -127,27 +127,42 @@ def main(argv=None) -> int:
     import config
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     g = ap.add_mutually_exclusive_group(required=True)
-    g.add_argument("--compare", metavar="PROJECT")
+    # R8.6 (Jake 2026-11-17): several projects in one call — the 15 dumps are built ONCE for all of them (each compare
+    # rebuilt them, about 6 minutes each: 42 minutes for seven). `all` = every frozen project.
+    g.add_argument("--compare", metavar="PROJECT", nargs="+", help="one or more frozen projects, or: all")
     g.add_argument("--write", metavar="PROJECT")
     a = ap.parse_args(argv)
-    project = a.compare or a.write
-    if project not in config.FROZEN_PROJECTS:
-        print(f"{project} is not frozen (config.FROZEN_PROJECTS: {', '.join(config.FROZEN_PROJECTS)})")
-        return 2
+    projects = [a.write] if a.write else list(a.compare)
+    if projects == ["all"]:
+        projects = sorted(config.FROZEN_PROJECTS)
+    for project in projects:
+        if project not in config.FROZEN_PROJECTS:
+            print(f"{project} is not frozen (config.FROZEN_PROJECTS: {', '.join(config.FROZEN_PROJECTS)})")
+            return 2
     with tempfile.TemporaryDirectory(prefix="freeze_") as d:
         print("building the 15 dumps (about 6 minutes) ...")
-        now = cells(*_build(d), project)
-    path = baseline_path(project)
+        audit, reader = _build(d)
+        now = {project: cells(audit, reader, project) for project in projects}
     if a.write:
-        path.write_text(json.dumps(now, indent=0, sort_keys=True, ensure_ascii=False) + "\n", encoding="utf-8")
-        print(f"wrote {len(now)} cells to {path.relative_to(ROOT)}")
+        path = baseline_path(a.write)
+        path.write_text(json.dumps(now[a.write], indent=0, sort_keys=True, ensure_ascii=False) + "\n", encoding="utf-8")
+        print(f"wrote {len(now[a.write])} cells to {path.relative_to(ROOT)}")
         return 0
-    base = json.loads(path.read_text(encoding="utf-8"))
-    bad = undeclared(base, now, config.FROZEN_MOVES.get(project, {}))
-    print(f"{project}: {len(now)} cells, {len(bad)} undeclared move(s)")
-    for line in bad:
-        print("  " + line)
-    return 1 if bad else 0
+    return report(now)
+
+
+def report(now: dict) -> int:
+    """Print one line per project (and its undeclared moves); 1 when any project has one."""
+    import config
+    code = 0
+    for project, got in now.items():
+        base = json.loads(baseline_path(project).read_text(encoding="utf-8"))
+        bad = undeclared(base, got, config.FROZEN_MOVES.get(project, {}))
+        print(f"{project}: {len(got)} cells, {len(bad)} undeclared move(s)")
+        for line in bad:
+            print("  " + line)
+        code = code or (1 if bad else 0)
+    return code
 
 
 if __name__ == "__main__":

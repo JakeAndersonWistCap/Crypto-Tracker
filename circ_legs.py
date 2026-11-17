@@ -21,7 +21,10 @@ from fetch.archive import _ranges, catch_up_bounds
 def legs(project: str) -> list[tuple[str, str]]:
     """[(metric, role)] — the legs of `project`'s on-chain circulating, in order."""
     spec = config.circulating_onchain(project) or {}
-    out = [(spec.get("total", "total_supply"), "total")]
+    # R8.5c: a first-party figure (Hyperliquid) has no total leg — the published figure itself is the first leg (the
+    # line "total_supply 0 of 450" named a series its circulating never reads)
+    first = spec.get("metric") if spec.get("status") == "first_party" and not spec.get("total") else None
+    out = [(first, "first-party figure")] if first else [(spec.get("total", "total_supply"), "total")]
     out += [(m, "subtract") for m in spec.get("subtract") or ()]
     out += [(m, "add") for m in spec.get("add") or ()]
     swc = spec.get("subtract_when_complete") or {}

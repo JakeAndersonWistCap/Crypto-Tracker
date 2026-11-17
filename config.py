@@ -43467,3 +43467,263 @@ def _frozen_moves_record(slug: str) -> dict:
 
 FROZEN_MOVES["Sky"] = _frozen_moves_record("sky")
 FROZEN_MOVES["Hyperliquid"] = _frozen_moves_record("hyperliquid")
+
+
+# =====================================================================================================================
+# R8 THE RULE: CIRCULATING AND FREE FLOAT (Jake 2026-11-17, final). Written once here and in SPEC ("Round 8"); it replaces
+# every earlier circulating convention (the 2026-10-11 "not yet transferable" rule, the 2026-11-16 "released to its
+# holder" test). A position is classified by classify_position(): OUT of circulating only when unvested / unreleased AND
+# immovable AND idle; BURNED = out of circulating and of total; everything else circulating, and OFF FREE FLOAT when it
+# is staked, locked or earning, or held by the issuer / foundation / treasury (bought-back tokens held included).
+CIRCULATING_RULE = {
+    "decided": "Jake 2026-11-17 (final)",
+    "out_only_if_all": ("not yet vested or released", "nobody can move it", "earns nothing (idle)"),
+    "burned": "destroyed, or at an address nobody controls: out of circulating and of total supply",
+    "off_float": ("staked, locked or earning (staking yield, fees, allocation rewards)",
+                  "an issuer, foundation or treasury holding, bought-back tokens held (not burned) included"),
+    "free_float": "circulating − everything off free float; the figure the analysis runs on",
+    "never": "an exclusion from circulating is never invented",
+    "cross_check": "CoinGecko, CoinMarketCap and the project's own figure; every gap over 2% named by wallet",
+}
+
+
+def classify_position(*, burned: bool = False, unreleased: bool = False, immovable: bool = False, idle: bool = False,
+                      staked_locked_or_earning: bool = False, issuer_held: bool = False) -> dict:
+    """The rule applied to one position: {"circulating": bool, "in_total": bool, "off_float": bool, "why": str}."""
+    if burned:
+        return {"circulating": False, "in_total": False, "off_float": True, "why": "burned"}
+    if unreleased and immovable and idle:
+        return {"circulating": False, "in_total": True, "off_float": True,
+                "why": "unreleased, immovable and idle — all three hold"}
+    failing = [n for n, ok in (("released", not unreleased), ("movable", not immovable), ("earning", not idle)) if ok]
+    off = bool(staked_locked_or_earning or issuer_held or not idle and unreleased)
+    return {"circulating": True, "in_total": True, "off_float": off,
+            "why": "circulating: " + ", ".join(failing) + ("; off free float" if off else "; free float")}
+
+
+# R8.5b HYPERLIQUID'S FOUR stats-data FEE PATHS: SWITCHED OFF (a declared change; Jake 2026-11-17: "find the real
+# published paths with evidence, or switch those four off. No daily failures left running"). Read 2026-11-17: the
+# published path list is hyperliquid-dex/hyperliquid-stats-web constants/api.ts (base d2v1fiwobg9w6.cloudfront.net) —
+# 42 paths, 38 answer, and its only fee path (total_accrued_fees) answers 403; most series end 2026-04-03.
+# stats-data.hyperliquid.xyz/Mainnet/ serves only leaderboard and vaults — its 403 is the bucket's answer for a path
+# that does not exist (the four names were guesses). The info API has no fee type (exchangeFees / totalFees / feeStats /
+# accruedFees / dailyFees: 422). So no first-party endpoint publishes daily fees, a perps / spot split or the HIP-3
+# deployer share: the four series are retired (no read, no metric, no daily failure); REVENUE stays on DefiLlama
+# (secondary, named). hl_exchange_volume_usd and hl_hip3_dex_count (info API) stay.
+HL_STATS_RETIRED = {
+    "series": tuple(HL_STATS["series"]), "retired_on": "2026-11-17", "decided": "Jake 2026-11-17 (R8.5b)",
+    "evidence": "github.com/hyperliquid-dex/hyperliquid-stats-web constants/api.ts (42 paths; total_accrued_fees 403); "
+                "stats-data.hyperliquid.xyz/Mainnet serves leaderboard and vaults only; info API fee types 422 — "
+                "read 2026-11-17"}
+for _m in HL_STATS_RETIRED["series"]:
+    METRICS.pop(_m, None)
+    NOT_SHOWN.pop(("Hyperliquid", _m), None)
+HL_STATS["series"] = {}
+
+
+# R8.4 THE RULE AGAINST THE SEVEN FROZEN PROJECTS — THE AUDIT (read 2026-11-17: Ethereum block 26,434,142, Base,
+# Arbitrum, Hyperliquid's info API; every wallet with its address, balance, who can move it and whether it earns is in
+# docs/r8_rule_audit.md). Each leg the build still takes OUT of circulating that the rule puts IN (off free float), and
+# what stays out. `circulating`: (today's basis, the rule's) in tokens at that read. NOT YET APPLIED TO THE BUILD: each
+# move restates a frozen project's circulating and every cell divided by it, so each is applied as its own declared
+# move (project_freeze) with its references re-based — `applied` is False until then; no figure reads the rule's value
+# before that. tests/test_r8_round.py keeps this list and the build's subtract legs in step.
+RULE_AUDIT_R8 = {
+    "read_on": "2026-11-17", "evidence": "docs/r8_rule_audit.md", "applied": False,
+    "projects": {
+        "Uniswap": {
+            "circulating": (623_329_650, 885_794_419),
+            "moves_in": (("treasury_holding_tokens", 262_247_996.31, "the governance Timelock 0x1a9C8182…: vesting "
+                          "ended (the four vesting contracts hold 0); Governor Bravo can move it (2-day delay); idle"),
+                         ("noncirculating_holding_tokens", 216_772.09, "the airdrop merkle distributor 0x090D4613…: "
+                          "released, claimable")),
+            "burned": (("burn_address_balance", 114_205_581.21, "0x…dEaD: no key"),), "stays_out": ()},
+        "Fluid": {
+            "circulating": (77_985_705, 100_000_000),
+            "moves_in": (("treasury_holding_tokens", 16_303_003.18, "the Treasury DSA 0x28849D2b… (holds the bought-back "
+                          "FLUID): governance can move it — a held buyback, in circulating and off float"),
+                         ("noncirculating_holding_tokens", 711_292.18, "Team Multisig 0x4F6F977a… 579,773.48 (its owner "
+                          "can move it) + five Merkle distributors 131,518.70 (claimable)"),
+                         ("noncirculating_igp137_tokens", 5_000_000.00, "IGP-137 wallet 0xCaBebC7f…: the lock to 2030 "
+                          "is legal only — its owner key can move it on chain")),
+            "burned": (), "stays_out": ()},
+        "Maple": {
+            "circulating": (1_225_418_278, 1_267_875_000),
+            "moves_in": (("treasury_holding_tokens_chain", 42_290_111.33, "the DAO multisig 0xd6d4Bcde… (Safe 4-of-7 "
+                          "can move it; 0 stSYRUP)"),
+                         ("noncirculating_holding_tokens", 166_610.40, "syrupDrip 0x509712F3…: undistributed rewards")),
+            "burned": (), "stays_out": ()},
+        "Morpho": {
+            "circulating": (549_062_109, 999_999_999.80),
+            "moves_in": (("noncirculating_holding_tokens", 283_719_215.78, "the DAO 0xcBa28b38… (new + legacy + Base): "
+                          "Safe 6-of-10 can move it; idle"),
+                         ("morpho_relocked_tokens", 110_700_000.00, "the founders' / cohort 3 relock (MODELLED): no "
+                          "wallet or contract is published, so 'nobody can move it' cannot be shown — an exclusion is "
+                          "never invented"),
+                         ("morpho_undistributed_tokens", 56_518_674.89, "Contributor Grants Safes 52,811,613.39, the "
+                          "Rewards Safe 2,566,170.49, Merkl / URD distributors 1,140,891.01: Safes and claimable")),
+            "burned": (), "stays_out": ()},
+        "Pendle": {
+            "circulating": (245_655_386, 281_527_448),
+            "moves_in": (("noncirculating_holding_tokens", 35_872_062.07, "the Ecosystem Fund 0x399Be606… 16,120,440.00 "
+                          "(Safe 2-of-4) + the Governance multisig 0x8119EC16… 19,751,622.07 (Safe 3-of-5): movable, "
+                          "idle (no sPENDLE / vePENDLE)"),),
+            "burned": (), "stays_out": ()},
+        "Sky": {
+            "circulating": (23_312_121_777, 23_353_293_829),
+            "moves_in": (("sky_converter_take_tokens", 39_982_641.85, "the MKR_SKY converter's accrued fee take(): "
+                          "collect(to) is open to its wards (the Pause Proxy) — NOT STORED YET (no series)"),
+                         ("sky_issuer_mkr_backing_tokens", 1_189_410.00, "the SKY backing the Pause Proxy's 49.56 MKR: "
+                          "governance can convert — NOT STORED YET")),
+            "burned": (),
+            "stays_out": (("converter fee on unconverted MKR", 99_138_086.35, "unreleased, idle, and governance can only "
+                           "burn it (MkrSky source, Sourcify): all three hold"),)},
+        "Hyperliquid": {
+            "circulating": (301_180_000, 539_530_000),
+            "moves_in": (("team_wallet_tokens", 238_246_928.78, "the team wallet 0x43e9abea…: unvested, but staked across "
+                          "23 validators and earning (delegatorRewards 14,232 HYPE on the last day, 439,864 in 30 days)"),
+                         ("excluded_wallets_spot_tokens", 105_001.00, "Community Grants' spot HYPE 0xa20fcfa0…: idle, "
+                          "but a keyed wallet the Foundation can move")),
+            "burned": (("af_noncirc_listed_tokens", 49_030_908.79, "the Assistance Fund 0xfefe…fefe: a system address "
+                        "with no key; its ledger since 2025-12-27 holds 3,082 entries, all inbound, none out"),),
+            "stays_out": (("futureEmissions", 409_852_654.15, "the protocol's unreleased reserve: no wallet, idle"),)},
+    },
+}
+# Bought-back tokens HELD (not burned), every project (R8.4a): the wallet, its balance on 2026-11-17 and how the build
+# treats it. Only Fluid's is still out of circulating (it moves in with Fluid's declared move).
+HELD_BUYBACKS_R8 = (
+    ("Fluid", "Treasury DSA 0x28849D2b…", 16_303_003.18, "OUT of circulating", "pending: in, off float"),
+    ("Maple", "SSF Safe 0x58BE0049…", 48_624_987.59, "in circulating, off float", "compliant"),
+    ("Sky", "MCD Pause Proxy 0xBE8E3e36…", 35_259_586.38, "in circulating, off float", "compliant"),
+    ("Near", "fefundsadmin.sputnik-dao.near", 2_026_707.84, "in circulating, off float", "compliant"),
+    ("Near", "buybacks.multisignature.near", 2_318_834.77, "in circulating, off float", "compliant"),
+    ("Near", "1csfundsadmin.sputnik-dao.near", 270.88, "in circulating, off float", "compliant"),
+    ("Hyperliquid", "Assistance Fund 0xfefe…fefe", 49_030_908.79, "burned (out of circulating and total)", "compliant"),
+    ("Uniswap", "none: the burn goes to 0x…dEaD", 0.0, "burned", "compliant"),
+    ("Morpho", "none on file", 0.0, "-", "-"), ("Pendle", "none on file", 0.0, "-", "-"),
+)
+
+
+
+# ===== R8 item 2 (2026-11-17): THE TWO LEGS OF AERODROME'S NON-CIRCULATING NEW AERO (fetch/aero_v3.py). =====
+# Stored by the daily supply read (aero_v3:supply_once's block) and by archive_backfill.py's Aerodrome hook
+# (fetch.aero_v3.supply_history). fetch/aero_v3.py writes each leg only once it is declared here; a leg whose read
+# failed is not written (never 0). Sources: aero_v3:token.balanceOf(noncirc wallets) /
+# aero_v3:token.balanceOf(velodrome_migration), plus the `archive` marker on backfilled days.
+METRICS["aero_issuer_liquid_tokens"] = {
+    "label": "NEW AERO held liquid by Aerodrome's non-circulating (issuer) wallets — the config noncirc_* wallets' "
+             "balanceOf on the new token at the supply's block (supply_once's new_noncirc input): the part of "
+             "noncirculating_holding_tokens that is not the unclaimed Velodrome allocation",
+    "kind": "stock", "unit": "tokens", "archetypes": [3], "tiers": [2], "sanity_min": 0, "sanity_max": 2.5e9,
+    "only_projects": ("Aerodrome",), "view_only": True}
+METRICS["aero_velo_reserve_tokens"] = {
+    "label": "NEW AERO of the Velodrome allocation not yet claimed — the new token's balanceOf(VELODROME_MIGRATION()) "
+             "at the supply's block (supply_once's velo_held input)",
+    "kind": "stock", "unit": "tokens", "archetypes": [3], "tiers": [2], "sanity_min": 0, "sanity_max": 2.5e9,
+    "only_projects": ("Aerodrome",), "view_only": True}
+
+
+# =====================================================================================================================
+# R8.1 AERODROME (AERO) UNDER THE RULE (Jake 2026-11-17). Evidence, wallet by wallet: docs/r8_aero_evidence.md (Base
+# block 58,602,907, Optimism block 159,656,128, read 2026-11-17).
+#   CIRCULATING = total_supply as stored (fetch/aero_v3.supply_once's total: the new token's supply − the AERO-side swap
+#   reserve + the legacy AERO still unswapped at 1:1, capped at that reserve). Nothing issuer-side is OUT: no wallet is
+#   unreleased, immovable AND idle — the issuer wallets' 503.09M of sAERO stakes earn (1,445,923 USDC paid into their
+#   Relays since launch) and their 37.81M liquid AERO can be moved; all of it is circulating, OFF FREE FLOAT.
+#   THE VELODROME SIDE: the unclaimed Velodrome allocation (20,467,891.56 in the migration contract) is the swap reserve
+#   of the VELO not yet swapped; unswapped VELO x 0.044 = 20,646,952.31 (Optimism: 469,248,916.13 VELO), above the
+#   reserve, so the cap binds and the reserve itself stands for the unswapped VELO claim — it stays inside total_supply
+#   and is no longer subtracted (issuer-held VELO is not identified: gross; VELO v1 and bridged VELO not read).
+#   BURNED: 407,815.83 AERO (two VotingEscrow.burnFees calls) — already out of the token's totalSupply.
+# The whole series is restated (a declared handover of the basis, 2026-11-17). NOT YET ON THE MERGED BASIS BEFORE
+# 2026-10-22: the days before the migration hold Aerodrome's legacy supply only — Velodrome's VELO x 0.044 history is
+# not stored (its Optimism archive read is not built), so the series steps by the Velodrome allocation at the cutover.
+CIRCULATING_ONCHAIN["Aerodrome"].update({
+    "subtract": (),
+    "decision": "THE RULE (Jake 2026-11-17, R8.1): circulating = total_supply (the new supply − the AERO swap reserve + "
+                "unswapped legacy AERO; the Velodrome reserve stands for unswapped VELO x 0.044). No issuer-side position "
+                "is out: staked or earning, or movable — circulating, off free float. WAS (2026-10-07): total − the six "
+                "filing wallets' liquid AERO − the AERO they staked",
+    "decided_by": "Jake 2026-11-17 (R8.1)",
+    "missing": "merged-basis history before 2026-10-22 (VELO x 0.044); legacy veAERO / veVELO locks as their own off-float "
+               "leg (38.50M + 3.78M on 2026-11-17)"})
+CIRCULATING_ONCHAIN["Aerodrome"].pop("locked_excluded_metrics", None)     # the issuer stakes are inside the lock, once
+AERO_RULE_READ = {
+    "read_on": "2026-11-17", "base_block": 58_602_907, "optimism_block": 159_656_128,
+    "total_supply_new": 2_143_944_219.92, "aero_swap_reserve": 312_940_289.06, "velo_swap_reserve": 20_467_891.56,
+    "unswapped_legacy_nonissuer": 310_497_097.74, "unswapped_velo_x0044": 20_646_952.31,
+    "circulating": 2_141_501_028.60, "burned": 407_815.83,
+    "off_float": {"sAERO (issuer 503,094,190.55 + others)": 1_078_003_471.89, "legacy veAERO locks": 38_501_469.56,
+                  "legacy veVELO locks x0.044": 3_779_663.65, "issuer liquid": 37_810_154.01},
+    "free_float": 983_406_269.50, "issuer_share_of_sAERO": 0.4667,
+    "legacy_venfts": {"count": 64_514, "owners": 38_176, "issuer_side": "one: Flight School #17385, 2,016.88 AERO"},
+    "references": {
+        "coingecko_aero": (724_166_549.93, "its total 2,135,578,125 − sAERO − both reserves",
+                           {"sAERO": 1_078.00e6, "unswapped legacy AERO": 310.50e6, "unswapped VELO": 20.47e6,
+                            "CoinGecko's stale total": 8.37e6}),
+        "coinmarketcap_now": (753_016_672.62, "total − sAERO − the AERO reserve (its basis changed; Jake read 1,065.8M "
+                              "= total − sAERO)", {"sAERO": 1_078.00e6, "unswapped legacy AERO": 310.50e6,
+                                                   "their later total": -0.02e6}),
+    },
+}
+# Issuer liquid AERO: circulating, off the float. The stored noncirculating_holding_tokens (the issuer wallets' liquid
+# AERO + the unclaimed Velodrome allocation since the migration) less the Velodrome allocation (aero_velo_reserve_tokens,
+# stored from R8.2; it did not exist before the cutover: a measured 0).
+DIFFERENCE_VIEWS[("Aerodrome", "aero_issuer_held_tokens")] = ("noncirculating_holding_tokens", "aero_velo_reserve_tokens")
+DIFFERENCE_ZERO_BEFORE = {("Aerodrome", "aero_velo_reserve_tokens"): "2026-10-22"}
+for _m, _lab in (("aero_issuer_held_tokens", "AERO held liquid by Aerodrome's issuer-side wallets (noncirculating_holding_"
+                                             "tokens − the unclaimed Velodrome allocation) — circulating, off the float "
+                                             "(R8.1)"),
+                 ("aero_released_held_tokens", "Aerodrome's issuer-held liquid AERO — in circulating, out of the "
+                                               "tradeable float (R8.1)")):
+    METRICS[_m] = {"label": _lab, "kind": "stock", "unit": "tokens", "archetypes": [3], "tiers": [2], "sanity_min": 0,
+                   "sanity_max": 2.5e9, "only_projects": ("Aerodrome",), "view_only": True}
+FLOAT_RELEASED_HELD["Aerodrome"] = {
+    "metric": "aero_released_held_tokens", "from": "aero_issuer_held_tokens",
+    "why": "the issuer-side wallets' liquid AERO (Team / Foundation, Public Goods Fund, Flight School, the Velodrome "
+           "Foundation airdrop wallet, the TGE incentives wallet): movable, so circulating (the rule); an issuer holding, "
+           "so off the float. Their sAERO stakes are already off the float as locked"}
+# R8.1 THE COINGECKO LISTING: `aerodrome-finance` is the LEGACY token's listing since the migration (272.6M); the merged
+# token is `aero` (724.2M on 2026-11-17). Re-pointed — a declared handover at 2026-10-22 (the cutover); the two tokens
+# swap 1:1, so the price is one series.
+PROJECT_BY_NAME["Aerodrome"]["coingecko_id_was"] = PROJECT_BY_NAME["Aerodrome"]["coingecko_id"]
+PROJECT_BY_NAME["Aerodrome"]["coingecko_id"] = "aero"
+PROJECT_BY_NAME["Aerodrome"]["coingecko_id_handover"] = {
+    "from": "aerodrome-finance", "to": "aero", "at": "2026-10-22", "declared": "2026-11-17",
+    "why": "CoinGecko lists the merged token as `aero`; `aerodrome-finance` follows the legacy AERO (R8.1)"}
+# R8.3 AERODROME'S THREE REVENUE LINES (S13; Jake 2026-11-17), on the merged basis (DefiLlama's parent 'aero-protocol' =
+# Velodrome V1-V3 + Aerodrome V1 / Slipstream + Aero Slipstream / Basic; the stored fees_usd / revenue_usd /
+# holders_revenue_usd equal the parent to the dollar from 2022-06-01: one restated series, no break at 2026-10-22).
+REVENUE_SPLIT["Aerodrome"] = {
+    "round": "R8.3 (Jake 2026-11-17)",
+    "fees": {"metric": "fees_usd", "primary": False,
+             "route": "all swap fees on every Aero chain, staked and unstaked pools, plus incentives paid to voters "
+                      "(DefiLlama 'aero-protocol' dailyFees — SECONDARY). NAMED DIFFERENCE: DefiLlama counts Foundation-"
+                      "funded incentives too (measured on Base 2026-11-17: the TGE wallet 0x7269… created 119 of 244 "
+                      "programmes, $132,757 since launch — to come out once the incentive read is stored)"},
+    "revenue": {"metric": "revenue_usd", "primary": False,
+                "route": "fees less what unstaked LPs keep (DefiLlama dailyRevenue; the unstaked-LP share measured "
+                         "21.5% over 30 days and 23.3% over 90 on DefiLlama's figures — not the ~29% expected)"},
+    "holder_revenue": {"metric": "holders_revenue_usd", "primary": False,
+                       "route": "everything paid to sAERO stakers / voters, GROSS (fees of staked pools + incentives; "
+                                "DefiLlama dailyHoldersRevenue). The on-chain weekly read (voter_rewards_onchain_usd, "
+                                "fetch/aero_v3 epoch tier) is the first-party check once a v3 epoch is stored. Revenue − "
+                                "holder revenue ($295,309 over 30 days) = fees locked in the dead legacy gauges"},
+    "holder_share": {"route": "holder revenue ÷ revenue per covered day; insider share beside it: the issuer wallets hold "
+                              "46.67% of sAERO (2026-11-17)"},
+    "other_recipients": "unstaked LPs (their pools' fees); LPs of gauged pools receive AERO emissions — supply-side "
+                        "incentive (b), not a revenue line",
+    "crosscheck": "the on-chain voter rewards (fees + incentives per weekly epoch) beside HOLDER REVENUE",
+}
+# R8.1: Aerodrome's insider-held supply inside circulating = the issuer wallets' sAERO stakes + their liquid AERO
+INSIDER_INSIDE_CIRCULATING["Aerodrome"] = {
+    "held": ("filing_managed_lock_tokens", "aero_issuer_held_tokens"),
+    "what": "the issuer-side wallets' sAERO stakes (direct + Relay principal) + their liquid AERO — circulating under "
+            "the rule (R8.1)", "decided": "Jake 2026-11-17 (R8.1)"}
+# R8.1 UNPARK (Jake 2026-11-17: "unpark by reconciling to CoinMarketCap's formula, with gaps named"): the reconciliation
+# is AERO_RULE_READ["references"] (CoinMarketCap = total − sAERO, since changed by it to total − sAERO − the AERO
+# reserve; CoinGecko `aero` = total − sAERO − both reserves — every gap named leg by leg). The "no primary source"
+# blocker is closed.
+AERODROME_MIGRATION["unpark_blockers"] = ()
+AERODROME_UNPARKED = {"on": "2026-11-17", "decided": "Jake 2026-11-17 (R8.1)", "by": "the reconciliation to "
+                      "CoinMarketCap's and CoinGecko's formulas, every gap named (config.AERO_RULE_READ)"}

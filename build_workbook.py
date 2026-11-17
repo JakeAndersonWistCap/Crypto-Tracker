@@ -4872,11 +4872,19 @@ NEAR_LOCKUP_FRESH_DAYS = 10        # a weekly read, plus slack: older than this 
 LOCKUP_AGE_AMBER: dict = {}
 
 
+def _as_tuple(x) -> tuple:
+    return (x,) if isinstance(x, str) else tuple(x)
+
+
 def _difference_views(groups: dict) -> None:
     """R7B.B1 (config.DIFFERENCE_VIEWS): a read-time series = a stock − a part of it, per day both are held (Sky's
     endowments' LIQUID SKY = their total − their SKY locked in Lockstake). A day missing either is no value."""
     for (name, metric), (whole, part) in config.DIFFERENCE_VIEWS.items():
         a, b = _daily(groups.get((name, whole))), _daily(groups.get((name, part)))
+        zb = (getattr(config, "DIFFERENCE_ZERO_BEFORE", {}) or {}).get((name, part))
+        if zb and not a.empty:                             # R8.1: the part did not exist before a declared day — a
+            early = a.index[a.index < pd.Timestamp(zb)]    # measured 0 there (never on or after it: unread is unknown)
+            b = pd.concat([pd.Series(0.0, index=early), b[b.index >= pd.Timestamp(zb)]]).sort_index()
         idx = a.index.intersection(b.index)
         if idx.empty:
             continue
@@ -12903,7 +12911,8 @@ def _cp_cols(R: Refs, data_by_key: dict) -> list[tuple]:
         # C5: insider holdings INSIDE circulating — by the convention every identified issuer / insider wallet is
         # outside circulating, so where circulating is our on-chain set the share is 0 by construction
         ("Insider share of circulating = insider-held tokens counted inside circulating ÷ circulating",
-         lambda r, p: (calc(f"{R.D(r, config.INSIDER_INSIDE_CIRCULATING[p['name']]['held'], 'now')}/({circ(r, p)})")
+         lambda r, p: (calc("(" + "+".join(R.D(r, m, "now") for m in _as_tuple(
+                           config.INSIDER_INSIDE_CIRCULATING[p["name"]]["held"])) + f")/({circ(r, p)})")
                        # R7C.B1: released insider holdings an on-chain circulating counts (Sky's endowments)
                        if p["name"] in config.INSIDER_INSIDE_CIRCULATING else "=0" if (config.CIRCULATING_ONCHAIN.get(p["name"]) or {}).get("status") == "established"
                        and config.circulating_primary_metric(p["name"]) in ("circulating_supply_onchain",)

@@ -1181,10 +1181,7 @@ def _tier_note(project: dict, metric: str, scrape_entries: dict) -> tuple[str, s
     for _m in ("hl_exchange_volume_usd", "hl_hip3_dex_count"):
         r3[_m] = ("Hyperliquid's info API (fetch/hl_stats.py) stored nothing this run (userFees / perpDexs did not answer)",
                   "Check the Run Log's hl_stats line for {name}.")
-    for _m in ("hl_fees_daily_usd", "hl_fees_perps_usd", "hl_fees_spot_usd", "hl_hip3_deployer_fees_usd"):
-        r3[_m] = ("Hyperliquid's stats-data path is not confirmed yet (config HL_STATS: stored only once its date / value "
-                  "keys are read on Jake's machine), or it did not answer",
-                  "Paste the Run Log's hl_stats lines for {name} back: each names the path's status and its keys.")
+    # (R8.5b: the four stats-data fee series are retired — config.HL_STATS_RETIRED)
     # R7.A2a: the like-for-like legs of Pendle's revenue row (Jake 2026-11-16)
     r3["pendle_epoch_market_revenue_unpriced_usd"] = (
         "the sPENDLE epoch reader (fetch/pendle_epochs.py) stored no complete epoch's revenue on Robinhood Chain / "

@@ -100,7 +100,8 @@ def test_c2_hyperliquids_own_stats_store_only_confirmed_shapes():
     assert f[f.metric == "hl_exchange_volume_usd"]["value"].tolist() == pytest.approx([6_888_770_628.6, 5_488_584_292.4])
     assert f[f.metric == "hl_hip3_dex_count"]["value"].tolist() == [2.0]
     assert not f.metric.str.startswith("hl_fees").any()                       # unconfirmed: nothing stored
-    assert any("UNCONFIRMED" in e.message and "first record keys" in e.message for e in out.log)
+    # R8.5b: the four guessed stats-data paths are retired — no read is made, so nothing fails daily
+    assert config.HL_STATS["series"] == {} and not any(e.status == "failed" for e in out.log)
 
 
 # ====================================================================================== C3: declared n/a

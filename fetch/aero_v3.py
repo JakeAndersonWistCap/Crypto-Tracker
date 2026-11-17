@@ -113,7 +113,32 @@ FILING_CALLS = {
     "idToManaged": ("idToManaged(uint256)", ("uint256",), LEGACY_REPO, "contracts/VotingEscrow.sol", 108),
     "weights": ("weights(uint256,uint256)", ("uint256",), LEGACY_REPO, "contracts/VotingEscrow.sol", 110),
 }
+# R8 item 2 (2026-11-17): THE SECOND RELAY IMPLEMENTATION HAS NO pendingDeposits(uint256). Jake's 2026-11-16 run:
+# "filing_managed_lock_tokens at Base block 58,376,623: execution reverted: Multicall3: call failed". Replayed at that
+# block: the RelayFactoryRegistry lists a second factory (0xa5283582951ae0cf72be4bea54da63d199264b78, 9 more Relays);
+# its Relays are EIP-1167 proxies of implementation 0x3909f8b833a8beba57cef8c6e713e885b6c359ce, whose dispatch table has
+# no selector 0xa7932794 (pendingDeposits(uint256), present in the first implementation 0x3de62ff7...) and has
+# 0xb02c43d0 = deposits(uint256) instead, answering the same four words (receiver, queued-at, token id, amount; zero
+# past the tail, queued-at 0 once consumed). Two of those Relays held live deposit queues (65 and 180 ids), so every
+# pendingDeposits call on them reverted and, with allowFailure false, the whole batch. OBSERVED ON-CHAIN, not transcribed
+# from a published source (the fixture of FILING_CALLS is the pinned source's; this getter is kept apart from it).
+OBSERVED_CALLS = {
+    "deposits": ("deposits(uint256)", ("address", "uint48", "uint128", "uint128"),
+                 "Relay implementation 0x3909f8b833a8beba57cef8c6e713e885b6c359ce on Base, selector 0xb02c43d0 "
+                 "(read at block 58,376,623, 2026-11-17)"),
+}
+PENDING_GETTERS = ("pendingDeposits", "deposits")       # tried in this order, per queue entry
 MULTICALL3 = "0xca11bde05977b3631167028862be2a173976ca11"
+# R8 item 2: THE SUPPLY SERIES (what circulating_supply_onchain is built from), written by the live read and by the
+# archive backfill (supply_history). The two aero_* legs are stored only once config.METRICS declares them.
+SUPPLY_LEGS = ("total_supply", "noncirculating_holding_tokens", "filing_managed_lock_tokens",
+               "aero_issuer_liquid_tokens", "aero_velo_reserve_tokens")
+EPOCH_METRICS = ("voter_rewards_onchain_fees_usd", "voter_rewards_onchain_bribes_usd", "voter_rewards_onchain_usd",
+                 "voter_rewards_unpriced_count", "voter_rewards_onchain_apr")
+EPOCH_SOURCE = "aero_v3_epoch"   # the tier name of the weekly epoch read (fetch/__init__.py); rows keep SOURCE's prefix
+EPOCH_BUDGET_S = 200             # the epoch tier stops ITSELF here (its tier budget is 240 s) with its scan saved
+EPOCHS_BACK = 8                  # complete epochs looked at each run, newest first; stored ones cost nothing
+LOG_CHUNK, LOG_CHUNK_MIN, LOG_CHUNK_MAX = 5_000, 500, 50_000
 MAX_PENDING_SCAN = 1000          # deposit-queue ids walked per Relay; a longer live queue is a named failure, never 0
 # THE LEGACY CONTRACTS the migration must name (config Aerodrome contracts token / ve): AERO v2 and veAERO on Base
 LEGACY_TOKEN = "0x940181a94a35a4569e4529a3cdfb74e38fd98631"
@@ -132,7 +157,7 @@ def _keccak(text: str) -> str:
 
 
 def selector(name: str) -> str:
-    return _keccak((CALLS.get(name) or FILING_CALLS[name])[0])[:10]
+    return _keccak((CALLS.get(name) or FILING_CALLS.get(name) or OBSERVED_CALLS[name])[0])[:10]
 
 
 def topic0(name: str) -> str:
@@ -252,11 +277,31 @@ def multichain_total(chain_tokens: dict, escrows: list, read_supply, read_balanc
     return total, read, missing
 
 
+class EpochBudgetSpent(RuntimeError):
+    """The epoch tier's own budget ran out; what it scanned is saved and the next run continues from there."""
+
+
+def _is_revert(err) -> bool:
+    t = str(err).lower()
+    return "revert" in t or "call failed" in t
+
+
+def _slim(lg: dict) -> dict:
+    """What a cached log keeps (fetch/logcache): the block, the emitter, the topics and the data."""
+    b = lg.get("blockNumber")
+    return {"blockNumber": int(b, 16) if isinstance(b, str) else int(b or 0), "address": str(lg.get("address", "")).lower(),
+            "topics": list(lg.get("topics") or ()), "data": lg.get("data", "0x")}
+
+
 class AeroV3:
-    """Daily state reads + the last complete voter epoch, once the switch file is complete."""
+    """Daily state reads + the supply across the migration (part "state"), and the complete voter epochs not yet stored
+    (part "epoch") — TWO TIERS (R8 item 2, fetch/__init__.py aero_v3 / aero_v3_epoch): a tier that times out has its
+    stock rows dropped (_drop_stocks), so the weekly epoch scan must never share a tier with the day's supply rows.
+    part None runs both in one call (a one-off read; the tests of earlier rounds)."""
 
     def __init__(self, prior_values: dict | None = None, prior_dates: dict | None = None, rpc=None, prices=None,
-                 state: dict | None = None, now: int | None = None):
+                 state: dict | None = None, now: int | None = None, part: str | None = None, stored_long=None,
+                 cache=None, clock=time.monotonic, **_ignored):
         self.http = Http(min_interval=0.2)
         self.prior = prior_values or {}
         self.prior_dates = prior_dates or {}
@@ -264,6 +309,15 @@ class AeroV3:
         self._prices = prices
         self.state = state
         self.now = now
+        self.part = part
+        self.stored = stored_long
+        self._cache = cache
+        self._clock = clock
+        self.deadline = None                 # monotonic; set by the epoch tier (EPOCH_BUDGET_S)
+        self._ts: dict[int, int] = {}        # block -> timestamp, every header read by this reader
+        self._head = None
+        self._chunk = LOG_CHUNK
+        self._chunk_cap = LOG_CHUNK_MAX
 
     # ---------------------------------------------------------------- transport
     def rpc(self, method: str, params: list):
@@ -292,23 +346,54 @@ class AeroV3:
         return decode_words(self.rpc("eth_call", [{"to": to, "data": self.calldata(name, *args)}, tag]),
                             CALLS[name][1])
 
-    def multi(self, calls: list, block: int, chunk: int = 150) -> list:
-        """[(to, name, args)] -> [raw hex return], through Multicall3.aggregate3 at ONE block with allowFailure false:
-        any call that reverts reverts the whole batch, so a part is never silently missing (P2b-1)."""
+    @staticmethod
+    def name_call(to: str, name: str, args) -> str:
+        """A sub-call as a failure names it: function(arguments) [selector] on address."""
+        return f"{name}({', '.join(str(x) for x in args)}) [selector {selector(name)}] on {to}"
+
+    def _aggregate(self, part: list, block: int, allow: bool) -> list:
         from eth_abi import decode, encode                # noqa: PLC0415
+        data = _keccak("aggregate3((address,bool,bytes)[])")[:10] + encode(["(address,bool,bytes)[]"], [[
+            (to, allow, bytes.fromhex(self.calldata(name, *args)[2:])) for to, name, args in part]]).hex()
+        res = self.rpc("eth_call", [{"to": MULTICALL3, "data": data}, hex(block)])
+        if not res or res == "0x":
+            raise RuntimeError(f"Multicall3 answered nothing at block {block:,}")
+        (got,) = decode(["(bool,bytes)[]"], bytes.fromhex(res[2:]))
+        if len(got) != len(part):
+            raise RuntimeError(f"Multicall3 returned {len(got)} result(s) for {len(part)} call(s)")
+        return got
+
+    def multi_try(self, calls: list, block: int, chunk: int = 150) -> list:
+        """[(to, name, args)] -> [raw hex return, or None for a sub-call that FAILED], through Multicall3.aggregate3 at
+        ONE block. Each batch is asked with allowFailure false first (one call, the usual case); when it reverts it is
+        asked again with allowFailure true so the failing sub-call is known by name instead of the whole batch being
+        lost behind "Multicall3: call failed" (R8 item 2). A sub-call that answers no data at all (no contract, no such
+        function behind a fallback) counts as failed. Never a default: the caller decides what an unread call means."""
         out = []
         for i in range(0, len(calls), chunk):
             part = calls[i:i + chunk]
-            data = _keccak("aggregate3((address,bool,bytes)[])")[:10] + encode(["(address,bool,bytes)[]"], [[
-                (to, False, bytes.fromhex(self.calldata(name, *args)[2:])) for to, name, args in part]]).hex()
-            res = self.rpc("eth_call", [{"to": MULTICALL3, "data": data}, hex(block)])
-            if not res or res == "0x":
-                raise RuntimeError(f"Multicall3 answered nothing at block {block:,}")
-            (got,) = decode(["(bool,bytes)[]"], bytes.fromhex(res[2:]))
-            if len(got) != len(part) or not all(ok for ok, _ in got):
-                raise RuntimeError(f"Multicall3 returned {len(got)} result(s) for {len(part)} call(s), or a failure")
-            out += ["0x" + ret.hex() for _ok, ret in got]
+            try:
+                got = self._aggregate(part, block, False)
+            except Exception as e:  # noqa: BLE001
+                if not _is_revert(e):
+                    raise
+                try:
+                    got = self._aggregate(part, block, True)
+                except Exception as e2:  # noqa: BLE001
+                    raise RuntimeError(f"a Multicall3 batch of {len(part)} call(s) reverted at block {block:,} "
+                                       f"({str(e)[:120]}) and could not be re-read call by call ({str(e2)[:120]})") from e2
+            out += [("0x" + ret.hex()) if ok and ret else None for ok, ret in got]
         return out
+
+    def multi(self, calls: list, block: int, chunk: int = 150) -> list:
+        """[(to, name, args)] -> [raw hex return] at ONE block; ANY failed sub-call raises, NAMING it (function,
+        arguments, selector, address) — a part is never silently missing (P2b-1) and never a zero (R8 item 2)."""
+        res = self.multi_try(calls, block, chunk)
+        bad = [self.name_call(*c) for c, r in zip(calls, res) if r is None]
+        if bad:
+            raise RuntimeError(f"{len(bad)} of {len(calls)} Multicall3 sub-call(s) failed at block {block:,}: "
+                               + "; ".join(bad[:3]) + (f"; and {len(bad) - 3} more" if len(bad) > 3 else ""))
+        return res
 
     def prices(self, tokens: list, ts: int) -> dict:
         """{token: (price_usd, decimals)} from DefiLlama's coins API at `ts` (base: chain)."""
@@ -322,6 +407,13 @@ class AeroV3:
                 out[k.split(":", 1)[1].lower()] = (float(v["price"]), int(v.get("decimals") or 18))
         return out
 
+    @property
+    def cache(self):
+        if self._cache is None:
+            from .logcache import LogCache  # noqa: PLC0415
+            self._cache = LogCache()
+        return self._cache
+
     # ---------------------------------------------------------------- run
     def run(self, projects: list[dict], window_days, out):
         from .validate import _migration_switch_missing  # noqa: PLC0415
@@ -330,11 +422,17 @@ class AeroV3:
         day = pd.Timestamp(today())
         if day < pd.Timestamp(m["cutover_utc"]) or st.get("launched") is not True:
             return
+        src_name = EPOCH_SOURCE if self.part == "epoch" else SOURCE
         missing = _migration_switch_missing(st, day)
         if missing:
-            out.unconfigured(SOURCE, m["project"], f"aero_migration.json incomplete: {'; '.join(missing)}", TIER)
+            if self.part != "epoch":                       # said once, by the daily tier
+                out.unconfigured(SOURCE, m["project"], f"aero_migration.json incomplete: {'; '.join(missing)}", TIER)
             return
         name, a = m["project"], {k: v.lower() for k, v in st["addresses"].items()}
+        epoch_ready = bool(st.get("voting_rewards_factory") and st.get("deploy_block"))
+        if self.part == "epoch" and epoch_ready and not self._epochs_due(name):
+            self._epoch(name, a, st, out)                   # every epoch is stored: marked current, NO chain read
+            return
         # EVERY ADDRESS MUST HOLD CODE ON BASE before anything is read from it (Round G 2.10): a well-formed address
         # that is not the deployed contract would answer eth_call with nothing or with another contract's figures
         extra = [(k, st[k]) for k in ("voting_rewards_factory", "relay_factory_registry") if st.get(k)]
@@ -342,31 +440,47 @@ class AeroV3:
             empty = [k for k, v in [*a.items(), *extra]
                      if str(self.rpc("eth_getCode", [v, "latest"]) or "0x") in ("0x", "0x0")]
         except Exception as e:  # noqa: BLE001
-            out.fail(SOURCE, name, f"aero_migration.json addresses: eth_getCode could not be read — {e}", TIER)
+            out.fail(src_name, name, f"aero_migration.json addresses: eth_getCode could not be read — {e}", TIER)
             return
         if empty:
-            out.fail(SOURCE, name, f"aero_migration.json: no contract code on Base at {', '.join(empty)} — nothing "
-                                   f"read; check the addresses against Aero's publication", TIER)
+            out.fail(src_name, name, f"aero_migration.json: no contract code on Base at {', '.join(empty)} — nothing "
+                                     f"read; check the addresses against Aero's publication", TIER)
             return
-        try:
-            self._state_reads(name, a, out)
-        except Exception as e:  # noqa: BLE001 — a failed source must not kill the run
-            out.fail(SOURCE, name, f"state reads: {e}", TIER)
-        try:
-            self._supply(name, a, out, st)
-        except Exception as e:  # noqa: BLE001
-            out.fail(SOURCE, name, f"supply across the migration: {e} — total_supply / noncirculating_holding_tokens "
-                                   f"NOT written (legacy rows of the day are refused, so the day reads n/a)", TIER)
-        if st.get("voting_rewards_factory") and st.get("deploy_block"):
+        if self.part in (None, "state"):
+            try:
+                self._state_reads(name, a, out)
+            except Exception as e:  # noqa: BLE001 — a failed source must not kill the run
+                out.fail(SOURCE, name, f"state reads: {e}", TIER)
+            try:
+                self._supply(name, a, out, st)
+            except Exception as e:  # noqa: BLE001
+                out.fail(SOURCE, name, f"supply across the migration: {e} — total_supply / "
+                                       f"noncirculating_holding_tokens NOT written (legacy rows of the day are refused, "
+                                       f"so the day reads n/a)", TIER)
+        if self.part == "state":
+            return
+        if epoch_ready:
+            if self.part == "epoch":
+                self.deadline = self._clock() + EPOCH_BUDGET_S
             try:
                 self._epoch(name, a, st, out)
             except Exception as e:  # noqa: BLE001
-                out.fail(SOURCE, name, f"voter epoch: {e}", TIER)
+                out.fail(src_name, name, f"voter epoch: {e}", TIER)
         else:
             out.gap(name, "voter_rewards_onchain_usd", tiers_attempted="2",
                     reason="aero_migration.json has no voting_rewards_factory / deploy_block: the VotingRewardsManagers "
                            "(one per gauge) are found only from VotingRewardsFactory.VotingRewardsCreated logs",
                     suggestion="add both from Aero's published deployment (RUNBOOK 11bx)")
+
+    def _voter_weight(self, a: dict, block="latest", now: int | None = None) -> tuple[str, float]:
+        """(Voter address, total weight in AERO) resolved to `now` from Voter.totalPoint() read at `block`."""
+        ve = a["voting_escrow"]
+        voter = self.call(ve, "VOTER", block=block)[0]
+        bias, slope, ts, perm = self.call(voter, "totalPoint", block=block)
+        now = now or self.now or int(time.time())
+        w = walk_point(bias, slope, ts, perm, now,
+                       lambda t: self.call(voter, "totalSlopeChanges", t, block=block)[0]) / WAD
+        return voter, w
 
     def _state_reads(self, name: str, a: dict, out) -> None:
         when = today()
@@ -399,21 +513,17 @@ class AeroV3:
         held = self.call(a["token"], "balanceOf", ve)[0] / WAD
         out.add(point(name, "locked_tokens", held, f"{SOURCE}:token.balanceOf(sAERO)", TIER, when), SOURCE, name,
                 f"locked_tokens={held:,.4f}", TIER)
-        voter = self.call(ve, "VOTER")[0]
-        bias, slope, ts, perm = self.call(voter, "totalPoint")
-        now = self.now or int(time.time())
-        w = walk_point(bias, slope, ts, perm, now, lambda t: self.call(voter, "totalSlopeChanges", t)[0]) / WAD
+        voter, w = self._voter_weight(a)
         out.add(point(name, "voter_total_weight_tokens", w, f"{SOURCE}:voter.totalPoint[resolved]", TIER, when),
                 SOURCE, name, f"voter_total_weight_tokens={w:,.4f}", TIER)
         self.voter, self.weight = voter, w
 
-    def _supply(self, name: str, a: dict, out, st: dict | None = None) -> None:
-        """G2-D5: total_supply and noncirculating_holding_tokens with each AERO counted once (supply_once). The
+    # ---------------------------------------------------------------- supply
+    def _supply_terms(self, name: str, a: dict, blk: int) -> dict:
+        """Every Base term of supply_once read at ONE block `blk` (G2-D5e) — the reads only, nothing written. The
         migration contract is read from the new token (MIGRATION()) and must name the legacy token, the legacy escrow
-        and the file's token, hold code, and match an `addresses.migration` in the file when one is given."""
-        # ONE BLOCK FOR EVERY TERM (G2-D5e, Jake 2026-10-18): the reserve is new AERO's balanceOf(MIGRATION()) read
-        # on-chain at this block, and every other term is read at the same block, so the sum is one instant's supply
-        blk = int(self.rpc("eth_blockNumber", []), 16)
+        and the file's token, hold code, and match an `addresses.migration` in the file when one is given. Any failed
+        read raises: no term is ever assumed (a leg that was not read is not stored)."""
         c = lambda to, fn, *args: self.call(to, fn, *args, block=blk)  # noqa: E731
         tok = a["token"]
         mig = c(tok, "MIGRATION")[0].lower()
@@ -455,8 +565,52 @@ class AeroV3:
         new_nc = sum(c(tok, "balanceOf", w)[0] for w in wallets) / WAD
         old_nc = sum(c(LEGACY_TOKEN, "balanceOf", w)[0] for w in wallets) / WAD
         r = supply_once(new_total, reserve, velo_held, new_nc, old_total, old_nc, held_old, ratio)
+        return {"blk": blk, "r": r, "mig": mig, "velo": velo, "ratio": ratio, "ratio_src": ratio_src, "reserve": reserve,
+                "held_old": held_old, "new_total": new_total, "old_total": old_total, "velo_held": velo_held,
+                "wallets": len(wallets), "new_nc": new_nc, "old_nc": old_nc,
+                "src": f"{SOURCE}:supply_once[ratio {ratio:g}]"}
+
+    @staticmethod
+    def _supply_msg(t: dict) -> str:
+        r = t["r"]
+        return (f"at Base block {t['blk']:,}: reserve = new AERO balanceOf(migration {t['mig']}) = {t['reserve']:,.4f}, "
+                f"read on-chain at that block (remaining() agrees); new {t['new_total']:,.4f} − reserve + "
+                f"min({t['ratio']:g} × (old {t['old_total']:,.4f} − held {t['held_old']:,.4f}), reserve) = "
+                f"{r['total']:,.4f}; ratio {t['ratio_src']}; circulating {r['circulating']:,.4f} (Velodrome allocation "
+                f"held {t['velo_held']:,.4f}, {t['wallets']} wallets new {t['new_nc']:,.4f} / old {t['old_nc']:,.4f})")
+
+    def _supply_frames(self, name: str, t: dict, when, mark: str | None = None) -> list:
+        """[(frame, log message)] of one supply reading: total, non-circulating, and the two legs of the non-circulating
+        NEW AERO the owner's circulating rule needs (R8 item 2) — the issuer wallets' liquid new AERO (supply_once's
+        new_noncirc input) and the unclaimed Velodrome allocation (its velo_held input). The two legs are written only
+        once config.METRICS declares them; supply_once's own outputs are unchanged."""
+        src = t["src"] if not mark else config.mark_source(t["src"], mark)
+        r = t["r"]
+        legs = (("aero_issuer_liquid_tokens", t["new_nc"], f"{SOURCE}:token.balanceOf(noncirc wallets)",
+                 f"the {t['wallets']} non-circulating wallets' liquid NEW AERO (supply_once new_noncirc)"),
+                ("aero_velo_reserve_tokens", t["velo_held"], f"{SOURCE}:token.balanceOf(velodrome_migration)",
+                 f"new AERO still held by the token's VELODROME_MIGRATION() {t['velo']} (supply_once velo_held)"))
+        out = [(point(name, "total_supply", r["total"], src, TIER, when), f"total_supply: {self._supply_msg(t)}"),
+               (point(name, "noncirculating_holding_tokens", r["noncirculating"], src, TIER, when),
+                f"noncirculating_holding_tokens = total − circulating = {r['noncirculating']:,.4f}")]
+        for metric, v, leg_src, what in legs:
+            if metric in config.METRICS:
+                out.append((point(name, metric, v, leg_src if not mark else config.mark_source(leg_src, mark), TIER,
+                                  when), f"{metric} at Base block {t['blk']:,} = {v:,.4f}: {what}"))
+            else:
+                out.append((None, f"{metric} = {v:,.4f} read at Base block {t['blk']:,} but NOT stored: the metric is "
+                                  f"not declared in config.METRICS"))
+        return out
+
+    def _supply(self, name: str, a: dict, out, st: dict | None = None) -> None:
+        """G2-D5: total_supply and noncirculating_holding_tokens with each AERO counted once (supply_once), plus the
+        two legs of _supply_frames and the filing wallets' locked AERO — all at ONE block (G2-D5e, Jake 2026-10-18):
+        the reserve is new AERO's balanceOf(MIGRATION()) read on-chain at this block, and every other term is read at
+        the same block, so the sum is one instant's supply."""
+        blk = int(self.rpc("eth_blockNumber", []), 16)
+        t = self._supply_terms(name, a, blk)
+        r = t["r"]
         when = today()
-        src = f"{SOURCE}:supply_once[ratio {ratio:g}]"
         st = st or {}
         ct = {k.lower(): v for k, v in (st.get("chain_tokens") or {}).items()}
         if ct:
@@ -464,42 +618,64 @@ class AeroV3:
                                                     self._chain_balance)
             r["total"] += extra
             r["circulating"] += extra
-            src += f"+chains[{','.join(read)}]" + (":PARTIAL" if missing else "")
+            t["src"] += f"+chains[{','.join(read)}]" + (":PARTIAL" if missing else "")
             out.log.append(LogEntry(SOURCE, name, 0, "ok",
                                     f"total_supply: the unified AERO on {len(read) + 1} chain(s) (base + "
                                     f"{', '.join(read) or 'none'}) adds {extra:,.4f} net of bridge escrows"
                                     + (f"; NOT READ — {'; '.join(missing)} (the total is PARTIAL)" if missing else ""),
                                     TIER))
-        msg = (f"at Base block {blk:,}: reserve = new AERO balanceOf(migration {mig}) = {reserve:,.4f}, read on-chain at "
-               f"that block (remaining() agrees); new {new_total:,.4f} − reserve + min({ratio:g} × (old {old_total:,.4f} "
-               f"− held {held_old:,.4f}), reserve) = {r['total']:,.4f}; ratio {ratio_src}; circulating "
-               f"{r['circulating']:,.4f} (Velodrome allocation held {velo_held:,.4f}, {len(wallets)} wallets new "
-               f"{new_nc:,.4f} / old {old_nc:,.4f})")
-        out.add(point(name, "total_supply", r["total"], src, TIER, when), SOURCE, name, f"total_supply: {msg}", TIER)
-        out.add(point(name, "noncirculating_holding_tokens", r["noncirculating"], src, TIER, when), SOURCE, name,
-                f"noncirculating_holding_tokens = total − circulating = {r['noncirculating']:,.4f}", TIER)
+        for frame, msg in self._supply_frames(name, t, when):
+            if frame is None:
+                out.log.append(LogEntry(SOURCE, name, 0, "skipped", msg, TIER))
+            else:
+                out.add(frame, SOURCE, name, msg, TIER)
         # P2b-1: the filing wallets' LOCKED AERO at the SAME block (circulating subtracts it as filing_managed_lock_tokens)
         try:
             self._filing_locks(name, blk, out, st)
         except Exception as e:  # noqa: BLE001 — never a partial or zero figure: the day reads n/a
-            out.fail(SOURCE, name, f"filing_managed_lock_tokens at Base block {blk:,}: {str(e)[:200]} — NOT written "
+            out.fail(SOURCE, name, f"filing_managed_lock_tokens at Base block {blk:,}: {str(e)[:600]} — NOT written "
                                    f"(circulating reads n/a that day; unknown, never 0)", TIER)
 
-    def _filing_locks(self, name: str, blk: int, out, st: dict) -> None:
+    def _pending_deposits(self, pend_ids: list, blk: int) -> tuple[list, dict]:
+        """The live deposit-queue entries [(relay, id)] -> ([raw return], {getter: entries it read}). Each entry is asked
+        through PENDING_GETTERS in order (the first Relay implementation's pendingDeposits(uint256), then the second's
+        deposits(uint256) — OBSERVED_CALLS); an entry NO getter answers raises, naming the Relay, the id and every
+        selector tried — never a zero amount."""
+        res: list = [None] * len(pend_ids)
+        used: dict = {}
+        for fn in PENDING_GETTERS:
+            todo = [k for k, x in enumerate(res) if x is None]
+            if not todo:
+                break
+            got = self.multi_try([(pend_ids[k][0], fn, (pend_ids[k][1],)) for k in todo], blk)
+            for k, x in zip(todo, got):
+                if x is not None and len(x) >= 2 + 64 * 4:
+                    res[k] = x
+                    used[fn] = used.get(fn, 0) + 1
+        bad = [pend_ids[k] for k, x in enumerate(res) if x is None]
+        if bad:
+            tried = ", ".join(f"{fn} [selector {selector(fn)}]" for fn in PENDING_GETTERS)
+            raise RuntimeError(f"{len(bad)} of {len(pend_ids)} Relay deposit-queue entr(ies) could not be read at block "
+                               f"{blk:,} — first: Relay {bad[0][0]} id {bad[0][1]}; tried {tried}; the pending leg is "
+                               f"unknown, so no figure is written")
+        return res, used
+
+    def _filing_read(self, name: str, blk: int, st: dict) -> tuple[float, str]:
         """P2b-1 (2026-10-27): THE AERO THE BLOCKWORKS FILING WALLETS HOLD LOCKED, across the migration, at Base block
-        `blk` (the block _supply reads every other term at). Traced at block 53,174,900: the wallets withdrew their
-        managed veAERO (weight + locked managed reward, legacy VotingEscrow.withdrawManaged L182-204), migrated each
-        veNFT to themselves as a decaying sAERO (AerodromeMigration._settleStake -> createStake), then moved those
-        stakes into Aero ProtocolRelays ('Autopilot Internal 001-007') with VotingEscrow.rebalanceUnderlying; the Relay
-        owns the sAERO and the wallet holds its principal token (PT). So, summed over the filing wallets
-        (config ve_managed_holdings owners):
+        `blk` (the block _supply reads every other term at) -> (tokens, the log line). Traced at block 53,174,900: the
+        wallets withdrew their managed veAERO (weight + locked managed reward, legacy VotingEscrow.withdrawManaged
+        L182-204), migrated each veNFT to themselves as a decaying sAERO (AerodromeMigration._settleStake ->
+        createStake), then moved those stakes into Aero ProtocolRelays ('Autopilot Internal 001-007') with
+        VotingEscrow.rebalanceUnderlying; the Relay owns the sAERO and the wallet holds its principal token (PT). So,
+        summed over the filing wallets (config ve_managed_holdings owners):
             legacy  weights(tokenId, idToManaged) on the OLD escrow — managed deposits not yet withdrawn (old AERO,
                     counted inside supply_once's old term)
             direct  sAERO.staked(id).amount for every sAERO the wallet owns (ERC721Enumerable)
             relay   PT.balanceOf(wallet) x totalBacking / PT.totalSupply for every Relay of every factory the
                     RelayFactoryRegistry lists (relay_claim)
             pending live Relay deposit-queue entries naming the wallet (weight moved, PT not yet minted)
-        Every read goes through Multicall3 at `blk` with allowFailure false; any failure writes nothing."""
+        Every read goes through Multicall3 at `blk`; any sub-call that fails raises with its name (multi), so nothing
+        is written from a partial read."""
         spec = config.PROJECT_BY_NAME[name].get("ve_managed_holdings") or {}
         labels = {o.lower(): v for o, v in (spec.get("owners") or {}).items()}
         owners = list(labels)
@@ -552,8 +728,9 @@ class AeroV3:
             if tail - max(head, 1) + 1 > MAX_PENDING_SCAN:
                 raise RuntimeError(f"Relay {r}: deposit queue spans {tail - head + 1} ids (> {MAX_PENDING_SCAN})")
             pend_ids += [(r, i) for i in range(max(head, 1), tail + 1)]
-        r5 = self.multi([(pt, "totalSupply", ()) for pt in pts] + [(pt, "balanceOf", (o,)) for pt in pts for o in owners]
-                        + [(r, "pendingDeposits", (i,)) for r, i in pend_ids], blk)
+        r5 = self.multi([(pt, "totalSupply", ()) for pt in pts] + [(pt, "balanceOf", (o,)) for pt in pts for o in owners],
+                        blk)
+        pend, getters = self._pending_deposits(pend_ids, blk)
         sup = [W(x)[0] for x in r5[:len(pts)]]
         bals = r5[len(pts):len(pts) + len(pts) * len(owners)]
         by = {o: [0, 0, 0, 0] for o in owners}                       # legacy, direct, relay, pending (wei)
@@ -568,20 +745,26 @@ class AeroV3:
                 if c:
                     by[o][2] += c
                     held_in.append(f"{r[:10]}… {labels[o]} {c / WAD:,.2f}")
-        for (r, _i), x in zip(pend_ids, r5[len(pts) + len(pts) * len(owners):]):
+        for (r, _i), x in zip(pend_ids, pend):
             rec, at, _tid, amt = decode_words(x, FILING_CALLS["pendingDeposits"][1])
             if at and rec.lower() in by:
                 by[rec.lower()][3] += amt
         parts = [sum(v[i] for v in by.values()) / WAD for i in range(4)]
         total = sum(parts)
-        when = today()
-        out.add(point(name, "filing_managed_lock_tokens", total, f"{SOURCE}:filing_locks", TIER, when), SOURCE, name,
-                f"filing_managed_lock_tokens at Base block {blk:,} = {total:,.4f}: legacy managed veAERO "
-                f"{parts[0]:,.4f} ({len(managed)} veNFT(s)) + sAERO stakes {parts[1]:,.4f} ({len(new_ids)} sAERO) + "
-                f"Relay principal {parts[2]:,.4f} ({len(relays)} Relay(s) of {len(factories)} factory(ies)) + pending "
-                f"Relay deposits {parts[3]:,.4f}; by wallet: "
-                + "; ".join(f"{labels[o]} {sum(v) / WAD:,.2f}" for o, v in by.items() if sum(v))
-                + (f"; Relays: {'; '.join(held_in)}" if held_in else ""), TIER)
+        return total, (
+            f"filing_managed_lock_tokens at Base block {blk:,} = {total:,.4f}: legacy managed veAERO "
+            f"{parts[0]:,.4f} ({len(managed)} veNFT(s)) + sAERO stakes {parts[1]:,.4f} ({len(new_ids)} sAERO) + "
+            f"Relay principal {parts[2]:,.4f} ({len(relays)} Relay(s) of {len(factories)} factory(ies)) + pending "
+            f"Relay deposits {parts[3]:,.4f}"
+            + (f" ({len(pend_ids)} queue entr(ies) read: "
+               + ", ".join(f"{n} by {fn}" for fn, n in getters.items()) + ")" if pend_ids else "")
+            + "; by wallet: " + "; ".join(f"{labels[o]} {sum(v) / WAD:,.2f}" for o, v in by.items() if sum(v))
+            + (f"; Relays: {'; '.join(held_in)}" if held_in else ""))
+
+    def _filing_locks(self, name: str, blk: int, out, st: dict) -> None:
+        total, msg = self._filing_read(name, blk, st)
+        out.add(point(name, "filing_managed_lock_tokens", total, f"{SOURCE}:filing_locks", TIER, today()), SOURCE, name,
+                msg, TIER)
 
     def _chain_call(self, chain: str, to: str, data: str) -> int:
         from .chain import rpc_endpoints  # noqa: PLC0415
@@ -607,60 +790,225 @@ class AeroV3:
     def _chain_balance(self, chain: str, token: str, holder: str) -> float:
         return self._chain_call(chain, token, selector("balanceOf") + holder.lower()[2:].rjust(64, "0")) / 1e18
 
+    # ---------------------------------------------------------------- blocks by timestamp
+    def _block_ts(self, n: int) -> int:
+        if n not in self._ts:
+            blk = self.rpc("eth_getBlockByNumber", [hex(n), False])
+            if not blk or "timestamp" not in blk:
+                raise RuntimeError(f"Base block {n:,} has no header on this endpoint")
+            self._ts[n] = int(blk["timestamp"], 16)
+        return self._ts[n]
+
     def _block_at(self, ts: int) -> int:
-        hi = int(self.rpc("eth_blockNumber", []), 16)
-        lo = max(0, hi - 40 * 86400)                      # Base: 2 s blocks, 40 days back is enough for an epoch
+        """The FIRST Base block whose timestamp is >= ts — a binary search on the block TIMESTAMPS over the whole chain
+        (block 0 to the head), narrowed by every header this reader has already read. R8 item 2: never from a block
+        time. The search this replaces looked only 3,456,000 blocks back on a 2 s block time; Base has made 0.2 s
+        blocks since about 2026-11-05, so that window was ~8 days and a week-old boundary could fall outside it."""
+        if self._head is None:
+            self._head = int(self.rpc("eth_blockNumber", []), 16)
+        lo, hi = 0, self._head
+        if self._block_ts(hi) < ts:
+            raise RuntimeError(f"timestamp {ts} is after the head block {hi:,} ({self._block_ts(hi)})")
+        for b, t in self._ts.items():
+            if t < ts and b + 1 > lo:
+                lo = b + 1
+            elif t >= ts and b < hi:
+                hi = b
         while lo < hi:
             mid = (lo + hi) // 2
-            if int(self.rpc("eth_getBlockByNumber", [hex(mid), False])["timestamp"], 16) >= ts:
+            if self._block_ts(mid) >= ts:
                 hi = mid
             else:
                 lo = mid + 1
         return lo
 
-    def _logs(self, address, topics, lo: int, hi: int, chunk: int = 5000) -> list:
-        got, b = [], lo
+    # ---------------------------------------------------------------- logs, cached
+    def _spent(self) -> bool:
+        return self.deadline is not None and self._clock() > self.deadline
+
+    def _logs(self, address, topics, lo: int, hi: int, stream: tuple | None = None) -> list:
+        """eth_getLogs over [lo, hi], cached per stream (fetch/logcache.LogCache) so a run asks only for blocks after the
+        last one scanned, and saved as it goes so a run cut by the budget continues instead of starting over. The block
+        span of a request adapts: it widens while the endpoint answers and narrows when a request is refused."""
+        from .logcache import stream_id  # noqa: PLC0415
+        sid = stream_id(*(stream or ("base", address if isinstance(address, str) else ",".join(address), topics, lo)))
+        cached = self.cache.load(sid)
+        events, done = list(cached["events"]), cached["scanned_to"]
+        b = lo if done is None else max(lo, int(done) + 1)
+        calls = 0
         while b <= hi:
-            e = min(hi, b + chunk - 1)
-            got += self.rpc("eth_getLogs", [{"address": address, "topics": topics, "fromBlock": hex(b),
-                                              "toBlock": hex(e)}])
+            if self._spent():
+                self.cache.save(sid, events, b - 1, b - 1)
+                raise EpochBudgetSpent(f"the epoch tier's {EPOCH_BUDGET_S}s were spent with the log scan at block "
+                                       f"{b - 1:,} of {hi:,}; the scan is saved and the next run continues from there")
+            e = min(hi, b + self._chunk - 1)
+            try:
+                got = self.rpc("eth_getLogs", [{"address": address, "topics": topics, "fromBlock": hex(b),
+                                                "toBlock": hex(e)}])
+            except Exception:  # noqa: BLE001 — a span the endpoint refuses: narrow it, down to LOG_CHUNK_MIN
+                if self._chunk <= LOG_CHUNK_MIN:
+                    self.cache.save(sid, events, b - 1, b - 1)
+                    raise
+                self._chunk_cap = max(LOG_CHUNK_MIN, self._chunk // 2)
+                self._chunk = max(LOG_CHUNK_MIN, self._chunk // 4)
+                continue
+            events += [_slim(lg) for lg in got or ()]
             b = e + 1
-        return got
+            calls += 1
+            self._chunk = min(self._chunk * 2, self._chunk_cap)
+            if calls % 25 == 0:
+                self.cache.save(sid, events, b - 1, b - 1)
+        if calls or done is None:
+            # nothing to reconcile these events against (no balance they must sum to), so what is scanned is "proven"
+            self.cache.save(sid, events, max(hi, int(done or 0)), max(hi, int(done or 0)))
+        return [lg for lg in events if lo <= lg["blockNumber"] <= hi]
+
+    # ---------------------------------------------------------------- the voter epochs
+    def _stored_epochs(self, name: str) -> set:
+        """The epoch start dates ('YYYY-MM-DD') whose voter_rewards_onchain_usd row, written by this reader, the store
+        already holds. No store handed in (a one-off read) -> none, so the epoch is read."""
+        f = self.stored
+        if f is None or not len(f):
+            return set()
+        rows = f[(f["project"] == name) & (f["metric"] == "voter_rewards_onchain_usd")
+                 & f["source"].astype(str).str.startswith(SOURCE + ":")]
+        return set(pd.to_datetime(rows["date"]).dt.strftime("%Y-%m-%d"))
+
+    def _epochs(self) -> list:
+        """[(start, end)] of the last EPOCHS_BACK complete v3 epochs, newest first, none before the cutover."""
+        now = self.now or int(time.time())
+        cut = int(pd.Timestamp(config.AERODROME_MIGRATION["cutover_utc"]).timestamp())
+        last = now // WEEK * WEEK
+        return [(e - WEEK, e) for e in (last - k * WEEK for k in range(EPOCHS_BACK)) if e - WEEK >= cut]
+
+    def _epochs_due(self, name: str) -> list:
+        have = self._stored_epochs(name)
+        return [(s, e) for s, e in self._epochs() if str(pd.Timestamp(s, unit="s").date()) not in have]
+
+    def _programs(self, mgrs: list) -> list:
+        """Every IncentiveStreaming program of every manager, in two rounds of Multicall3 batches at one block
+        (incentiveCount per manager, then incentive(id) per program) — R8 item 2: this was one eth_call a manager and
+        one a program, in sequence. A failed sub-call raises with its name (multi)."""
+        if getattr(self, "_progs", None) is None:
+            blk = int(self.rpc("eth_blockNumber", []), 16)
+            counts = [_words_of(x)[0] for x in self.multi([(mg, "incentiveCount", ()) for mg in mgrs], blk)]
+            ids = [(mg, pid) for mg, n in zip(mgrs, counts) for pid in range(1, n + 1)]
+            self._progs = [decode_words(x, CALLS["incentive"][1])
+                           for x in self.multi([(mg, "incentive", (pid,)) for mg, pid in ids], blk)]
+        return self._progs
 
     def _epoch(self, name: str, a: dict, st: dict, out) -> None:
-        now = self.now or int(time.time())
-        end = now // WEEK * WEEK
-        start = end - WEEK
-        if start < int(pd.Timestamp(config.AERODROME_MIGRATION["cutover_utc"]).timestamp()):
+        """The complete voter epochs the store does not hold yet, newest first. An epoch already stored is skipped
+        BEFORE any chain read (R8 item 2: the scan ran again every day of the week for an epoch read on Thursday)."""
+        src_name = EPOCH_SOURCE if self.part == "epoch" else SOURCE
+        epochs, due = self._epochs(), self._epochs_due(name)
+        if not epochs:
             return                                        # no complete v3 epoch yet
-        b0, b1 = self._block_at(start), self._block_at(end) - 1
-        mgrs = ["0x" + lg["topics"][2][-40:] for lg in
-                self._logs(st["voting_rewards_factory"], [topic0("VotingRewardsCreated")], int(st["deploy_block"]), b1)]
-        fees = self._logs(mgrs, [topic0("NotifyFeesAmount")], b0, b1) if mgrs else []
-        progs = []
-        for mg in mgrs:
-            for pid in range(1, self.call(mg, "incentiveCount")[0] + 1):
-                progs.append(self.call(mg, "incentive", pid))
-        amounts = epoch_rewards(fees, progs, start, end)
-        px = self.prices(sorted(set(amounts) | {a["token"]}), end)
-        fee_usd = bribe_usd = 0.0
-        unpriced = 0
-        for tok, (f, i) in amounts.items():
-            if tok not in px:
-                unpriced += 1
-                continue
-            p, dec = px[tok]
-            fee_usd += f / 10 ** dec * p
-            bribe_usd += i / 10 ** dec * p
-        when = pd.Timestamp(start, unit="s").normalize()
-        src = f"{SOURCE}:epoch[{len(mgrs)} managers]"
-        for metric, v in (("voter_rewards_onchain_fees_usd", fee_usd), ("voter_rewards_onchain_bribes_usd", bribe_usd),
-                          ("voter_rewards_onchain_usd", fee_usd + bribe_usd),
-                          ("voter_rewards_unpriced_count", float(unpriced))):
-            out.add(point(name, metric, v, src, TIER, when), SOURCE, name, f"{metric}={v:,.2f}", TIER)
-        aero_px = px.get(a["token"], (None, 18))[0]
-        w = getattr(self, "weight", None)
-        if aero_px and w:
-            apr = (fee_usd + bribe_usd) * 52 / (w * aero_px)
-            out.add(point(name, "voter_rewards_onchain_apr", apr, src, TIER, when), SOURCE, name, f"apr={apr:.4%}",
-                    TIER)
+        if epochs[0] not in due:
+            when = pd.Timestamp(epochs[0][0], unit="s").normalize()
+            for metric in EPOCH_METRICS:
+                out.mark_current(src_name, name, metric, f"epoch {when.date()} stored already — not scanned again", TIER)
+        if not due:
+            return
+        factory, deploy = st["voting_rewards_factory"], int(st["deploy_block"])
+        created = topic0("VotingRewardsCreated")
+        newest_end = self._block_at(due[0][1]) - 1
+        mgrs = sorted({"0x" + lg["topics"][2][-40:] for lg in self._logs(
+            factory, [created], deploy, newest_end, stream=("base", factory, [created], deploy))})
+        for k, (start, end) in enumerate(due):
+            if self._spent():
+                raise EpochBudgetSpent(f"the epoch tier's {EPOCH_BUDGET_S}s were spent before the epoch of "
+                                       f"{pd.Timestamp(start, unit='s').date()}; the next run reads it")
+            b0, b1 = self._block_at(start), self._block_at(end) - 1
+            fees = self._logs(mgrs, [topic0("NotifyFeesAmount")], b0, b1) if mgrs else []
+            progs = self._programs(mgrs) if mgrs else []
+            amounts = epoch_rewards(fees, progs, start, end)
+            px = self.prices(sorted(set(amounts) | {a["token"]}), end)
+            fee_usd = bribe_usd = 0.0
+            unpriced = 0
+            for tok, (f, i) in amounts.items():
+                if tok not in px:
+                    unpriced += 1
+                    continue
+                p, dec = px[tok]
+                fee_usd += f / 10 ** dec * p
+                bribe_usd += i / 10 ** dec * p
+            when = pd.Timestamp(start, unit="s").normalize()
+            src = f"{SOURCE}:epoch[{len(mgrs)} managers]"
+            for metric, v in (("voter_rewards_onchain_fees_usd", fee_usd),
+                              ("voter_rewards_onchain_bribes_usd", bribe_usd),
+                              ("voter_rewards_onchain_usd", fee_usd + bribe_usd),
+                              ("voter_rewards_unpriced_count", float(unpriced))):
+                out.add(point(name, metric, v, src, TIER, when), src_name, name,
+                        f"{metric}={v:,.2f} (epoch {when.date()}, Base blocks {b0:,}-{b1:,})", TIER)
+            aero_px = px.get(a["token"], (None, 18))[0]
+            # the stake the APR is over: the newest epoch against the weight now (as before); an older, missed epoch
+            # against Voter.totalPoint at that epoch's last block, resolved to its end
+            try:
+                w = (getattr(self, "weight", None) or self._voter_weight(a)[1]) if (start, end) == epochs[0] \
+                    else self._voter_weight(a, block=b1, now=end)[1]
+            except Exception as e:  # noqa: BLE001 — no weight, no APR row (never an APR over a guessed stake)
+                w = None
+                out.log.append(LogEntry(src_name, name, 0, "failed",
+                                        f"voter_rewards_onchain_apr of epoch {when.date()} NOT written: the voter "
+                                        f"weight could not be read ({str(e)[:160]})", TIER))
+            if aero_px and w:
+                apr = (fee_usd + bribe_usd) * 52 / (w * aero_px)
+                out.add(point(name, "voter_rewards_onchain_apr", apr, src, TIER, when), src_name, name,
+                        f"apr={apr:.4%} (epoch {when.date()})", TIER)
+
+
+def supply_history(project: dict, have: dict, deadline: float | None = None, reader=None, write=None,
+                   state: dict | None = None, clock=time.monotonic) -> tuple[list, str]:
+    """R8 item 2: AERODROME'S SUPPLY SERIES ON PAST DAYS (the series stopped on 2026-10-29 — every epoch-scan timeout
+    dropped the day's supply rows with it). Each missing day's SUPPLY_LEGS are read exactly as the live read makes
+    them, through archive eth_calls at that day's FIRST block (found by timestamp, AeroV3._block_at): the supply terms
+    at one block, then the filing wallets' locked AERO at the same block. Newest day first, back to the migration
+    cutover; a leg the store already holds for a day is never written again (`have`: {metric: {'YYYY-MM-DD'}}), and a
+    day holding every leg costs no call. Stops at `deadline` (monotonic) or at the first day whose supply cannot be
+    read (an endpoint without archive state) and says so; a day whose filing leg alone fails gets its other legs and
+    is named. Rows carry the live source plus the `archive` marker. `write(rows)` is called per day as it lands."""
+    name = project["name"]
+    st = state if state is not None else config.aerodrome_migration_state()
+    rdr = reader or AeroV3(state=st)
+    a = {k: v.lower() for k, v in (st.get("addresses") or {}).items()}
+    if st.get("chain_tokens"):
+        return [], ("not backfilled: aero_migration.json names AERO on other chains (chain_tokens), whose past supply "
+                    "this hook does not read — total_supply of a past day would be partial")
+    legs = [m for m in SUPPLY_LEGS if m in config.METRICS]
+    cut = pd.Timestamp(config.AERODROME_MIGRATION["cutover_utc"])
+    rows, why, unread = [], f"reached the migration cutover ({cut.date()})", []
+    day = pd.Timestamp(today()).normalize() - pd.Timedelta(days=1)
+    while day >= cut:
+        if deadline is not None and clock() > deadline:
+            why = "time budget spent; re-run to continue"
+            break
+        key = str(day.date())
+        need = [m for m in legs if key not in (have.get(m) or ())]
+        if need:
+            try:
+                blk = rdr._block_at(int(day.tz_localize("UTC").timestamp()))
+                got = []
+                if set(need) - {"filing_managed_lock_tokens"}:
+                    t = rdr._supply_terms(name, a, blk)
+                    got += [f for f, _msg in rdr._supply_frames(name, t, day, mark="archive") if f is not None]
+            except Exception as e:  # noqa: BLE001
+                why = f"stopped at {key}: the supply is not readable there ({str(e)[:200]})"
+                break
+            if "filing_managed_lock_tokens" in need:
+                try:
+                    total, _msg = rdr._filing_read(name, blk, st)
+                    got.append(point(name, "filing_managed_lock_tokens", total,
+                                     config.mark_source(f"{SOURCE}:filing_locks", "archive"), TIER, day))
+                except Exception as e:  # noqa: BLE001 — unknown, never 0: the day keeps no filing row
+                    unread.append(f"{key} ({str(e)[:160]})")
+            new = [f.iloc[0] for f in got if f["metric"].iloc[0] in need]
+            if new:
+                rows += new
+                if write is not None:
+                    write(new)
+        day -= pd.Timedelta(days=1)
+    if unread:
+        why += (f"; filing_managed_lock_tokens NOT read on {len(unread)} day(s), left unwritten: "
+                + "; ".join(unread[:3]) + (" …" if len(unread) > 3 else ""))
+    return rows, why

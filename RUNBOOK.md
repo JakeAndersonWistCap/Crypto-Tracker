@@ -534,6 +534,58 @@ A Plume seed started on code older than 2026-10-01 saved its state only at the e
 or stop it and start again on the new code. Don't run both at once: they write the same state file.
 
 
+## 11ew. Round 8 — Aerodrome under the rule, aero_v3 fixed, one freeze compare for all (2026-11-17)
+
+The rule for circulating and free float is in SPEC ("Round 8") and config.CIRCULATING_RULE. Aerodrome is rebuilt on it
+and unparked; its supply read no longer fails or loses the day's rows, and its history from 2026-10-22 is backfilled
+by the step below. The audit of the rule against the seven frozen projects is docs/r8_rule_audit.md — its moves are
+NOT applied to the build yet (config.RULE_AUDIT_R8). The four Hyperliquid stats-data reads are retired.
+`project_freeze.py --compare all` builds the dumps once for every frozen project.
+
+```
+cd C:\Users\jake\Crypto-Tracker
+.venv\Scripts\Activate.ps1
+gcloud auth application-default login
+#   expect: a browser sign-in, then "Credentials saved to file"
+gcloud auth application-default set-quota-project near-data-510309
+#   expect: "Credentials saved to file" and a line naming the quota project near-data-510309
+git switch claude/crypto-metrics-supply-demand-ovkg8g
+git pull
+git log --oneline -1
+#   expect: the line ends "R8: Aerodrome under the rule and unparked, aero_v3 reads fixed, the rule audited on the frozen projects; RUNBOOK 11ew"
+python -c "import config; print(config.circulating_onchain('Aerodrome')['subtract'], config.PROJECT_BY_NAME['Aerodrome']['coingecko_id'], config.HL_STATS['series'], config.RULE_AUDIT_R8['applied'], len(config.FROZEN_PROJECTS))"
+#   expect: () aero {} False 7
+python circ_legs.py Aerodrome
+#   expect: total_supply listed, days missing from 2026-11-12 (read-only; the backfill below fills them)
+python circ_legs.py Hyperliquid
+#   expect: the first line names circulating_supply_first_party (no total_supply line)
+python token_metrics.py
+#   expect: the run ends without error; aero_v3 stores total_supply and filing_managed_lock_tokens (no "Multicall3: call failed"); no hl_stats failure
+python archive_backfill.py --run --project Aerodrome --budget-min 30
+#   expect: a line per backfilled Aerodrome supply day back to 2026-10-22; rerun until it reports nothing left
+python circ_legs.py Aerodrome
+#   expect: total_supply: none missing from 2026-10-22
+python token_metrics.py --no-fetch
+#   expect: no error; Aerodrome circulating about 2,141M
+python done_check.py --verbose | Select-String "^(Uniswap|Fluid|Maple|Morpho|Pendle|Sky|Hyperliquid|Aerodrome|Near)" -Context 0,8
+#   expect: the seven frozen projects READY; Aerodrome NOT READY with its list (no longer PARKED); Near NOT READY - paste it back
+New-Item -ItemType Directory -Force ..\tm-exports | Out-Null
+python store_export.py --project Aerodrome --out-dir ..\tm-exports
+#   expect: a line starting "wrote ../tm-exports/aerodrome-"
+git switch data/store-exports
+git pull
+Copy-Item ..\tm-exports\aerodrome-*.json.gz exports\
+git add -f exports
+git commit -m "data: Aerodrome store export (R8)"
+git push
+git switch claude/crypto-metrics-supply-demand-ovkg8g
+git log --oneline -1
+#   expect: the same line as above
+python project_freeze.py --compare all
+#   expect: seven lines, each "0 undeclared move(s)": Fluid 353, Hyperliquid 616, Maple 360, Morpho 285, Pendle 373, Sky 482, Uniswap 309 cells
+```
+
+
 ## 11ev. Round 7D — gate green, Hyperliquid's net supply declared, exports carry the T-bill (2026-11-17)
 
 Nothing in this round was pushed before the full gate passed on it. What changed for your run: Hyperliquid's two
