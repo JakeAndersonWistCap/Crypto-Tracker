@@ -4187,6 +4187,30 @@ def _modelled_lock_views(groups: dict) -> None:
     groups[(name, spec["metric"])] = _as_stored(view, tot.columns)
 
 
+def _derived_leg_views(groups: dict) -> None:
+    """R9.2 (config.DERIVED_LEGS): a circulating leg that follows from series already stored — a linear combination of
+    them on the days every input is held (Sky: the converter's accrued fee = its SKY − MKR outstanding x 24,000; the
+    Pause Proxy's MKR backing = its MKR x 24,000). A negative result is not a balance: that day has no value."""
+    for name, legs in config.DERIVED_LEGS.items():
+        if name not in {p["name"] for p in scoped_projects()}:
+            continue
+        for metric, terms in legs.items():
+            parts = [_daily(groups.get((name, m))) for m, _k in terms]
+            if any(s.empty for s in parts):
+                continue
+            idx = parts[0].index
+            for s in parts[1:]:
+                idx = idx.intersection(s.index)
+            v = sum(s.reindex(idx) * k for s, (_m, k) in zip(parts, terms))
+            v = v[v >= 0]
+            if v.empty:
+                continue
+            cols = groups[(name, terms[0][0])].columns
+            groups[(name, metric)] = _as_stored(pd.DataFrame(
+                {"date": v.index, "project": name, "metric": metric, "value": v.values, "tier": 2,
+                 "source": "derived:leg[" + " ".join(f"{k:+g}x{m}" for m, k in terms) + "]"}), cols)
+
+
 def _circulating_views(groups: dict) -> None:
     """circulating_supply_onchain := on-chain total − the documented non-circulating set, per day
     (M, Jake 2026-09-30; fetch/circulating.py). Only days where every input was read."""
@@ -6728,6 +6752,7 @@ def aggregate(long: pd.DataFrame, fetch_status: pd.DataFrame, asof: pd.Timestamp
     _wm_total_supply_views(groups)    # Round G7 0a: World Mobile's total = option C, option B its own row
     _modelled_lock_views(groups)  # PR4C.1: Morpho's relocked MORPHO, modelled, before circulating subtracts it
     _difference_views(groups)     # R7B.B1: e.g. Sky's endowments' liquid SKY, before the floats read it
+    _derived_leg_views(groups)    # R9.2: Sky's converter fee and issuer MKR backing, from stored series
     _circulating_views(groups)
     _rule_in_views(groups)        # R9.2: the issuer-side stock the rule counts in circulating, off the floats (after
                                   # the circulating view: a switched leg's state is known then)

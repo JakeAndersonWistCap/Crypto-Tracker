@@ -240,3 +240,52 @@ def test_2_pendle_multisigs_are_in_and_come_off_the_float_with_the_released_wall
     held = bw._released_held(R(), 5, {"name": "Pendle"})
     # both come off the float: the wallets released per Pendle's docs (R5.1) and the stock the rule moved in
     assert "D[rule_in_off_float_tokens]" in held and config.FLOAT_RELEASED_HELD["Pendle"]["metric"] in held
+
+
+# ============================================================================= 2: Sky — two legs from stored series
+def test_2_sky_take_and_issuer_backing_follow_from_stored_series_and_the_float_does_not_move(monkeypatch):
+    """The audit's read (2026-11-17): converter SKY 2,023,933,778.79; MKR outstanding 82,664.63, the Pause Proxy's
+    49.56; rate 24,000, fee 5%. take() read directly: 39,982,641.85."""
+    monkeypatch.setattr(bw, "scoped_projects", lambda: [config.PROJECT_BY_NAME["Sky"]])
+    day = [("2026-11-17", 0)]
+    mk = lambda m, v: _g("Sky", m, [(d, v) for d, _ in day])  # noqa: E731
+    out_mkr, iss_mkr, conv, total = 82_664.63, 49.56, 2_023_933_778.79, 23_452_431_915.61
+    g = {("Sky", "total_supply"): mk("total_supply", total),
+         ("Sky", "noncirculating_holding_tokens"): mk("noncirculating_holding_tokens", conv),
+         ("Sky", "mkr_outstanding_tokens"): mk("mkr_outstanding_tokens", out_mkr),
+         ("Sky", "mkr_issuer_tokens"): mk("mkr_issuer_tokens", iss_mkr),
+         ("Sky", "sky_mkr_nonissuer_backing_tokens"): mk("sky_mkr_nonissuer_backing_tokens",
+                                                         (out_mkr - iss_mkr) * 24_000 * 0.95)}
+    bw._derived_leg_views(g)
+    take = g[("Sky", "sky_converter_take_tokens")]["value"].iloc[0]
+    back = g[("Sky", "sky_issuer_mkr_backing_tokens")]["value"].iloc[0]
+    assert take == pytest.approx(39_982_641.85, abs=25.0)          # the direct take() read, to the MKR supply's 2 decimals
+    assert back == pytest.approx(1_189_410.0, abs=50.0)
+    bw._circulating_views(g)
+    circ = g[("Sky", "circulating_supply_onchain")]["value"].iloc[0]
+    stays_out = (out_mkr - iss_mkr) * 24_000 * 0.05                 # the fee on unconverted non-issuer MKR only
+    assert circ == pytest.approx(total - stays_out, abs=1.0)
+    assert stays_out == pytest.approx(config.RULE_IN["Sky"]["stays_out"], rel=1e-4)
+    before = total - conv + (out_mkr - iss_mkr) * 24_000 * 0.95
+    bw._rule_in_views(g)
+    off = g[("Sky", "rule_in_off_float_tokens")]["value"].iloc[0]
+    assert circ - before == pytest.approx(off, abs=1e-3) == pytest.approx(take + back)   # in circulating = off the float
+    assert "does not move" in config.RULE_IN["Sky"]["float_answer"]
+
+
+def test_2_a_derived_leg_is_no_value_where_an_input_is_missing_or_it_would_be_negative(monkeypatch):
+    monkeypatch.setattr(bw, "scoped_projects", lambda: [config.PROJECT_BY_NAME["Sky"]])
+    g = {("Sky", "noncirculating_holding_tokens"): _g("Sky", "noncirculating_holding_tokens",
+                                                      [("2026-11-16", 2.0e9), ("2026-11-17", 1.0e9)]),
+         ("Sky", "mkr_outstanding_tokens"): _g("Sky", "mkr_outstanding_tokens", [("2026-11-17", 82_664.63)])}
+    bw._derived_leg_views(g)
+    assert ("Sky", "sky_converter_take_tokens") not in g            # 11-16 has no MKR read; 11-17 would be negative
+    assert ("Sky", "sky_issuer_mkr_backing_tokens") not in g        # the Pause Proxy's MKR was not read
+
+
+def test_2_sky_references_are_inside_two_percent_and_named():
+    spec = config.RULE_IN["Sky"]
+    for key in ("coingecko", "coinmarketcap"):
+        ref, legs = spec["references"][key]
+        assert abs(ref / spec["circulating"][1] - 1) < 0.02
+        assert ref + sum(legs.values()) == pytest.approx(spec["circulating"][1], rel=0.001), key

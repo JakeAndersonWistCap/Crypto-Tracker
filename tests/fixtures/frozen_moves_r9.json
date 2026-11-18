@@ -1729,6 +1729,456 @@
 }
 ]
 },
+"Sky": {
+"audit|A3 Revenue Buyback|Actual buyback as % of supply (annualised) — RETIRED (burned + held) only": [
+{
+"date": "2026-11-18",
+"from": 0.00597351528,
+"to": 0.00596322808,
+"why": "R9.2 (the rule, Jake 2026-11-17): the MKR_SKY converter's accrued fee take() (39.98M SKY: the Pause Proxy, a ward, can collect it) and the SKY backing the Pause Proxy's 49.56 MKR (1.19M: governance can convert) are IN circulating and OFF the free float; the fee on unconverted non-issuer MKR (99.14M) stays out. The float does not move. Evidence: docs/r8_rule_audit.md §6"
+}
+],
+"audit|A3 Revenue Buyback|BUYBACK AS % OF SUPPLY (annualised, implied)": [
+{
+"date": "2026-11-18",
+"from": 0.011860531,
+"to": 0.0118401056,
+"why": "R9.2 (the rule, Jake 2026-11-17): the MKR_SKY converter's accrued fee take() (39.98M SKY: the Pause Proxy, a ward, can collect it) and the SKY backing the Pause Proxy's 49.56 MKR (1.19M: governance can convert) are IN circulating and OFF the free float; the fee on unconverted non-issuer MKR (99.14M) stays out. The float does not move. Evidence: docs/r8_rule_audit.md §6"
+}
+],
+"audit|A3 Revenue Buyback|CIRCULATING RETIREMENT RATE (tokens) = RETIRED buyback tokens (burned + held, annualised) ÷ circulating — primary": [
+{
+"date": "2026-11-18",
+"from": 0.00597351528,
+"to": 0.00596322808,
+"why": "R9.2 (the rule, Jake 2026-11-17): the MKR_SKY converter's accrued fee take() (39.98M SKY: the Pause Proxy, a ward, can collect it) and the SKY backing the Pause Proxy's 49.56 MKR (1.19M: governance can convert) are IN circulating and OFF the free float; the fee on unconverted non-issuer MKR (99.14M) stays out. The float does not move. Evidence: docs/r8_rule_audit.md §6"
+}
+],
+"audit|A3 Revenue Buyback|Circulating retirement rate ($) = RETIRED buyback $ (burned + held, annualised) ÷ market cap — alongside": [
+{
+"date": "2026-11-18",
+"from": 0.0049118884,
+"to": 0.00490342946,
+"why": "R9.2 (the rule, Jake 2026-11-17): the MKR_SKY converter's accrued fee take() (39.98M SKY: the Pause Proxy, a ward, can collect it) and the SKY backing the Pause Proxy's 49.56 MKR (1.19M: governance can convert) are IN circulating and OFF the free float; the fee on unconverted non-issuer MKR (99.14M) stays out. The float does not move. Evidence: docs/r8_rule_audit.md §6"
+}
+],
+"audit|A3 Revenue Buyback|Circulating supply": [
+{
+"date": "2026-11-18",
+"from": 23312121800.0,
+"to": 23352337700.0,
+"why": "R9.2 (the rule, Jake 2026-11-17): the MKR_SKY converter's accrued fee take() (39.98M SKY: the Pause Proxy, a ward, can collect it) and the SKY backing the Pause Proxy's 49.56 MKR (1.19M: governance can convert) are IN circulating and OFF the free float; the fee on unconverted non-issuer MKR (99.14M) stays out. The float does not move. Evidence: docs/r8_rule_audit.md §6"
+}
+],
+"audit|A3 Revenue Buyback|Lock rate = locked inside circulating ÷ circulating (stake held by wallets outside circulating excluded)": [
+{
+"date": "2026-11-18",
+"from": 0.745258632,
+"to": 0.743975195,
+"why": "R9.2 (the rule, Jake 2026-11-17): the MKR_SKY converter's accrued fee take() (39.98M SKY: the Pause Proxy, a ward, can collect it) and the SKY backing the Pause Proxy's 49.56 MKR (1.19M: governance can convert) are IN circulating and OFF the free float; the fee on unconverted non-issuer MKR (99.14M) stays out. The float does not move. Evidence: docs/r8_rule_audit.md §6"
+}
+],
+"audit|A3 Revenue Buyback|Market cap ($)": [
+{
+"date": "2026-11-18",
+"from": 1766207550.0,
+"to": 1769254440.0,
+"why": "R9.2 (the rule, Jake 2026-11-17): the MKR_SKY converter's accrued fee take() (39.98M SKY: the Pause Proxy, a ward, can collect it) and the SKY backing the Pause Proxy's 49.56 MKR (1.19M: governance can convert) are IN circulating and OFF the free float; the fee on unconverted non-issuer MKR (99.14M) stays out. The float does not move. Evidence: docs/r8_rule_audit.md §6"
+}
+],
+"audit|A3 Revenue Buyback|Trend — a3_actual_buyback_pct (arrow · QoQ · 4Q growth/yr · quarters improved; Trajectory tab)": [
+{
+"date": "2026-11-18",
+"from": "– · NEW since Q-2 · 0/2 improved · QoQ -33.4%",
+"to": "– · NEW since Q-2 · 0/2 improved · QoQ -33.6%",
+"why": "R9.2 (the rule, Jake 2026-11-17): the MKR_SKY converter's accrued fee take() (39.98M SKY: the Pause Proxy, a ward, can collect it) and the SKY backing the Pause Proxy's 49.56 MKR (1.19M: governance can convert) are IN circulating and OFF the free float; the fee on unconverted non-issuer MKR (99.14M) stays out. The float does not move. Evidence: docs/r8_rule_audit.md §6"
+}
+],
+"audit|A3 Revenue Buyback|Trend — a3_circ_retirement (arrow · QoQ · 4Q growth/yr · quarters improved; Trajectory tab)": [
+{
+"date": "2026-11-18",
+"from": "– · NEW since Q-2 · 0/2 improved · QoQ -33.4%",
+"to": "– · NEW since Q-2 · 0/2 improved · QoQ -33.6%",
+"why": "R9.2 (the rule, Jake 2026-11-17): the MKR_SKY converter's accrued fee take() (39.98M SKY: the Pause Proxy, a ward, can collect it) and the SKY backing the Pause Proxy's 49.56 MKR (1.19M: governance can convert) are IN circulating and OFF the free float; the fee on unconverted non-issuer MKR (99.14M) stays out. The float does not move. Evidence: docs/r8_rule_audit.md §6"
+}
+],
+"audit|A4 Permanent Burn|Circulating supply (used, tokens)": [
+{
+"date": "2026-11-18",
+"from": 23312121800.0,
+"to": 23352337700.0,
+"why": "R9.2 (the rule, Jake 2026-11-17): the MKR_SKY converter's accrued fee take() (39.98M SKY: the Pause Proxy, a ward, can collect it) and the SKY backing the Pause Proxy's 49.56 MKR (1.19M: governance can convert) are IN circulating and OFF the free float; the fee on unconverted non-issuer MKR (99.14M) stays out. The float does not move. Evidence: docs/r8_rule_audit.md §6"
+}
+],
+"audit|A4 Permanent Burn|ISSUANCE − BURN, annualised % of circulating (signed; + is net inflation; the cell says 'burn only' where nothing is minted)": [
+{
+"date": "2026-11-18",
+"from": -0.00263379675,
+"to": -0.00262926099,
+"why": "R9.2 (the rule, Jake 2026-11-17): the MKR_SKY converter's accrued fee take() (39.98M SKY: the Pause Proxy, a ward, can collect it) and the SKY backing the Pause Proxy's 49.56 MKR (1.19M: governance can convert) are IN circulating and OFF the free float; the fee on unconverted non-issuer MKR (99.14M) stays out. The float does not move. Evidence: docs/r8_rule_audit.md §6"
+}
+],
+"audit|A4 Permanent Burn|Market cap ($)": [
+{
+"date": "2026-11-18",
+"from": 1766207550.0,
+"to": 1769254440.0,
+"why": "R9.2 (the rule, Jake 2026-11-17): the MKR_SKY converter's accrued fee take() (39.98M SKY: the Pause Proxy, a ward, can collect it) and the SKY backing the Pause Proxy's 49.56 MKR (1.19M: governance can convert) are IN circulating and OFF the free float; the fee on unconverted non-issuer MKR (99.14M) stays out. The float does not move. Evidence: docs/r8_rule_audit.md §6"
+}
+],
+"audit|A4 Permanent Burn|PERMANENT BURN YIELD = burn as % of supply (annualised, tokens)": [
+{
+"date": "2026-11-18",
+"from": 0.00263379675,
+"to": 0.00262926099,
+"why": "R9.2 (the rule, Jake 2026-11-17): the MKR_SKY converter's accrued fee take() (39.98M SKY: the Pause Proxy, a ward, can collect it) and the SKY backing the Pause Proxy's 49.56 MKR (1.19M: governance can convert) are IN circulating and OFF the free float; the fee on unconverted non-issuer MKR (99.14M) stays out. The float does not move. Evidence: docs/r8_rule_audit.md §6"
+}
+],
+"audit|CP Comparability|Burn rate (every burn, fee-market included — A1's basis, annualised) ÷ circulating": [
+{
+"date": "2026-11-18",
+"from": 0.00263379675,
+"to": 0.00262926099,
+"why": "R9.2 (the rule, Jake 2026-11-17): the MKR_SKY converter's accrued fee take() (39.98M SKY: the Pause Proxy, a ward, can collect it) and the SKY backing the Pause Proxy's 49.56 MKR (1.19M: governance can convert) are IN circulating and OFF the free float; the fee on unconverted non-issuer MKR (99.14M) stays out. The float does not move. Evidence: docs/r8_rule_audit.md §6"
+}
+],
+"audit|CP Comparability|Circulating supply (tokens) — our convention, the figure in use": [
+{
+"date": "2026-11-18",
+"from": 23312121800.0,
+"to": 23352337700.0,
+"why": "R9.2 (the rule, Jake 2026-11-17): the MKR_SKY converter's accrued fee take() (39.98M SKY: the Pause Proxy, a ward, can collect it) and the SKY backing the Pause Proxy's 49.56 MKR (1.19M: governance can convert) are IN circulating and OFF the free float; the fee on unconverted non-issuer MKR (99.14M) stays out. The float does not move. Evidence: docs/r8_rule_audit.md §6"
+}
+],
+"audit|CP Comparability|Dilution (c) demand-side incentives (annualised) ÷ circulating": [
+{
+"date": "2026-11-18",
+"from": 0.0319224615,
+"to": 0.0318674866,
+"why": "R9.2 (the rule, Jake 2026-11-17): the MKR_SKY converter's accrued fee take() (39.98M SKY: the Pause Proxy, a ward, can collect it) and the SKY backing the Pause Proxy's 49.56 MKR (1.19M: governance can convert) are IN circulating and OFF the free float; the fee on unconverted non-issuer MKR (99.14M) stays out. The float does not move. Evidence: docs/r8_rule_audit.md §6"
+}
+],
+"audit|CP Comparability|Discretionary supply ÷ circulating": [
+{
+"date": "2026-11-18",
+"from": 0.000875077418,
+"to": 0.000873570416,
+"why": "R9.2 (the rule, Jake 2026-11-17): the MKR_SKY converter's accrued fee take() (39.98M SKY: the Pause Proxy, a ward, can collect it) and the SKY backing the Pause Proxy's 49.56 MKR (1.19M: governance can convert) are IN circulating and OFF the free float; the fee on unconverted non-issuer MKR (99.14M) stays out. The float does not move. Evidence: docs/r8_rule_audit.md §6"
+}
+],
+"audit|CP Comparability|ETF / ETP holdings ÷ circulating": [
+{
+"date": "2026-11-18",
+"from": 2.92690218e-05,
+"to": 2.92186165e-05,
+"why": "R9.2 (the rule, Jake 2026-11-17): the MKR_SKY converter's accrued fee take() (39.98M SKY: the Pause Proxy, a ward, can collect it) and the SKY backing the Pause Proxy's 49.56 MKR (1.19M: governance can convert) are IN circulating and OFF the free float; the fee on unconverted non-issuer MKR (99.14M) stays out. The float does not move. Evidence: docs/r8_rule_audit.md §6"
+}
+],
+"audit|CP Comparability|Flow demand — buyback $ (every funding source, annualised) ÷ market cap": [
+{
+"date": "2026-11-18",
+"from": 0.0146815727,
+"to": 0.014656289,
+"why": "R9.2 (the rule, Jake 2026-11-17): the MKR_SKY converter's accrued fee take() (39.98M SKY: the Pause Proxy, a ward, can collect it) and the SKY backing the Pause Proxy's 49.56 MKR (1.19M: governance can convert) are IN circulating and OFF the free float; the fee on unconverted non-issuer MKR (99.14M) stays out. The float does not move. Evidence: docs/r8_rule_audit.md §6"
+}
+],
+"audit|CP Comparability|HOLDER VALUE YIELD = revenue-funded $ retired + $ distributed + liquid bribes to voters (annualised) ÷ market cap — treasury- or emissions-funded buybacks are NOT credited (LITMUS A); fee-market burns are on A1 net issuance": [
+{
+"date": "2026-11-18",
+"from": 0.0244771372,
+"to": 0.0244349843,
+"why": "R9.2 (the rule, Jake 2026-11-17): the MKR_SKY converter's accrued fee take() (39.98M SKY: the Pause Proxy, a ward, can collect it) and the SKY backing the Pause Proxy's 49.56 MKR (1.19M: governance can convert) are IN circulating and OFF the free float; the fee on unconverted non-issuer MKR (99.14M) stays out. The float does not move. Evidence: docs/r8_rule_audit.md §6"
+}
+],
+"audit|CP Comparability|Holding demand — lock rate = locked ÷ circulating": [
+{
+"date": "2026-11-18",
+"from": 0.745258632,
+"to": 0.743975195,
+"why": "R9.2 (the rule, Jake 2026-11-17): the MKR_SKY converter's accrued fee take() (39.98M SKY: the Pause Proxy, a ward, can collect it) and the SKY backing the Pause Proxy's 49.56 MKR (1.19M: governance can convert) are IN circulating and OFF the free float; the fee on unconverted non-issuer MKR (99.14M) stays out. The float does not move. Evidence: docs/r8_rule_audit.md §6"
+}
+],
+"audit|CP Comparability|Insider share of circulating = insider-held tokens counted inside circulating ÷ circulating": [
+{
+"date": "2026-11-18",
+"from": 0.127338976,
+"to": 0.128841817,
+"why": "R9.2 (the rule, Jake 2026-11-17): the MKR_SKY converter's accrued fee take() (39.98M SKY: the Pause Proxy, a ward, can collect it) and the SKY backing the Pause Proxy's 49.56 MKR (1.19M: governance can convert) are IN circulating and OFF the free float; the fee on unconverted non-issuer MKR (99.14M) stays out. The float does not move. Evidence: docs/r8_rule_audit.md §6"
+}
+],
+"audit|CP Comparability|Market cap ($)": [
+{
+"date": "2026-11-18",
+"from": 1766207550.0,
+"to": 1769254440.0,
+"why": "R9.2 (the rule, Jake 2026-11-17): the MKR_SKY converter's accrued fee take() (39.98M SKY: the Pause Proxy, a ward, can collect it) and the SKY backing the Pause Proxy's 49.56 MKR (1.19M: governance can convert) are IN circulating and OFF the free float; the fee on unconverted non-issuer MKR (99.14M) stays out. The float does not move. Evidence: docs/r8_rule_audit.md §6"
+}
+],
+"audit|CP Comparability|NET HOLDER YIELD = holder value yield − dilution (outflows a+b+c+d+e at each day's price, annualised) ÷ market cap": [
+{
+"date": "2026-11-18",
+"from": -0.00242506988,
+"to": -0.00242089358,
+"why": "R9.2 (the rule, Jake 2026-11-17): the MKR_SKY converter's accrued fee take() (39.98M SKY: the Pause Proxy, a ward, can collect it) and the SKY backing the Pause Proxy's 49.56 MKR (1.19M: governance can convert) are IN circulating and OFF the free float; the fee on unconverted non-issuer MKR (99.14M) stays out. The float does not move. Evidence: docs/r8_rule_audit.md §6"
+}
+],
+"audit|CP Comparability|Retirement rate (RETIRED buyback tokens, burned + held, annualised) ÷ circulating": [
+{
+"date": "2026-11-18",
+"from": 0.00597351528,
+"to": 0.00596322808,
+"why": "R9.2 (the rule, Jake 2026-11-17): the MKR_SKY converter's accrued fee take() (39.98M SKY: the Pause Proxy, a ward, can collect it) and the SKY backing the Pause Proxy's 49.56 MKR (1.19M: governance can convert) are IN circulating and OFF the free float; the fee on unconverted non-issuer MKR (99.14M) stays out. The float does not move. Evidence: docs/r8_rule_audit.md §6"
+}
+],
+"audit|CP Comparability|TOTAL DILUTION = outflows a+b+c+d+e (annualised) ÷ circulating": [
+{
+"date": "2026-11-18",
+"from": 0.0319224615,
+"to": 0.0318674866,
+"why": "R9.2 (the rule, Jake 2026-11-17): the MKR_SKY converter's accrued fee take() (39.98M SKY: the Pause Proxy, a ward, can collect it) and the SKY backing the Pause Proxy's 49.56 MKR (1.19M: governance can convert) are IN circulating and OFF the free float; the fee on unconverted non-issuer MKR (99.14M) stays out. The float does not move. Evidence: docs/r8_rule_audit.md §6"
+}
+],
+"audit|CP Comparability|Tradeable float ÷ circulating": [
+{
+"date": "2026-11-18",
+"from": 0.252245626,
+"to": 0.251811225,
+"why": "R9.2 (the rule, Jake 2026-11-17): the MKR_SKY converter's accrued fee take() (39.98M SKY: the Pause Proxy, a ward, can collect it) and the SKY backing the Pause Proxy's 49.56 MKR (1.19M: governance can convert) are IN circulating and OFF the free float; the fee on unconverted non-issuer MKR (99.14M) stays out. The float does not move. Evidence: docs/r8_rule_audit.md §6"
+}
+],
+"audit|CP Comparability|Treasury-company (DAT) holdings ÷ circulating": [
+{
+"date": "2026-11-18",
+"from": 0.0996010021,
+"to": 0.0994294757,
+"why": "R9.2 (the rule, Jake 2026-11-17): the MKR_SKY converter's accrued fee take() (39.98M SKY: the Pause Proxy, a ward, can collect it) and the SKY backing the Pause Proxy's 49.56 MKR (1.19M: governance can convert) are IN circulating and OFF the free float; the fee on unconverted non-issuer MKR (99.14M) stays out. The float does not move. Evidence: docs/r8_rule_audit.md §6"
+}
+],
+"audit|CP Comparability|Trend — cp_float (arrow · QoQ · 4Q growth/yr · quarters improved; Trajectory tab)": [
+{
+"date": "2026-11-18",
+"from": "– · NEW since Q0 · QoQ n/a — NEW since Q0",
+"to": "– · 4Q n/a · QoQ n/a — Q0 is part-held",
+"why": "R9.2 (the rule, Jake 2026-11-17): the MKR_SKY converter's accrued fee take() (39.98M SKY: the Pause Proxy, a ward, can collect it) and the SKY backing the Pause Proxy's 49.56 MKR (1.19M: governance can convert) are IN circulating and OFF the free float; the fee on unconverted non-issuer MKR (99.14M) stays out. The float does not move. Evidence: docs/r8_rule_audit.md §6"
+}
+],
+"audit|CP Comparability|UNIFORMITY = whole-token yield ÷ staker yield (1 = every holder alike) (PROPOSED)": [
+{
+"date": "2026-11-18",
+"from": 0.368793886,
+"to": 0.368158773,
+"why": "R9.2 (the rule, Jake 2026-11-17): the MKR_SKY converter's accrued fee take() (39.98M SKY: the Pause Proxy, a ward, can collect it) and the SKY backing the Pause Proxy's 49.56 MKR (1.19M: governance can convert) are IN circulating and OFF the free float; the fee on unconverted non-issuer MKR (99.14M) stays out. The float does not move. Evidence: docs/r8_rule_audit.md §6"
+}
+],
+"audit|CP Comparability|Whole-token yield — protocol = staker yield × reward-bearing stake ÷ circulating (now)": [
+{
+"date": "2026-11-18",
+"from": 0.0182373718,
+"to": 0.0182059646,
+"why": "R9.2 (the rule, Jake 2026-11-17): the MKR_SKY converter's accrued fee take() (39.98M SKY: the Pause Proxy, a ward, can collect it) and the SKY backing the Pause Proxy's 49.56 MKR (1.19M: governance can convert) are IN circulating and OFF the free float; the fee on unconverted non-issuer MKR (99.14M) stays out. The float does not move. Evidence: docs/r8_rule_audit.md §6"
+}
+],
+"audit|Master|Buyback % of supply (annualised, implied, split as at this window)": [
+{
+"date": "2026-11-18",
+"from": 0.011860531,
+"to": 0.0118401056,
+"why": "R9.2 (the rule, Jake 2026-11-17): the MKR_SKY converter's accrued fee take() (39.98M SKY: the Pause Proxy, a ward, can collect it) and the SKY backing the Pause Proxy's 49.56 MKR (1.19M: governance can convert) are IN circulating and OFF the free float; the fee on unconverted non-issuer MKR (99.14M) stays out. The float does not move. Evidence: docs/r8_rule_audit.md §6"
+}
+],
+"audit|Master|Circulating supply (used)": [
+{
+"date": "2026-11-18",
+"from": 23312121800.0,
+"to": 23352337700.0,
+"why": "R9.2 (the rule, Jake 2026-11-17): the MKR_SKY converter's accrued fee take() (39.98M SKY: the Pause Proxy, a ward, can collect it) and the SKY backing the Pause Proxy's 49.56 MKR (1.19M: governance can convert) are IN circulating and OFF the free float; the fee on unconverted non-issuer MKR (99.14M) stays out. The float does not move. Evidence: docs/r8_rule_audit.md §6"
+}
+],
+"audit|Master|Issuance − burn, annualised % of circulating — a component, NOT the net supply change": [
+{
+"date": "2026-11-18",
+"from": -0.00263379675,
+"to": -0.00262926099,
+"why": "R9.2 (the rule, Jake 2026-11-17): the MKR_SKY converter's accrued fee take() (39.98M SKY: the Pause Proxy, a ward, can collect it) and the SKY backing the Pause Proxy's 49.56 MKR (1.19M: governance can convert) are IN circulating and OFF the free float; the fee on unconverted non-issuer MKR (99.14M) stays out. The float does not move. Evidence: docs/r8_rule_audit.md §6"
+}
+],
+"audit|Master|Market cap ($)": [
+{
+"date": "2026-11-18",
+"from": 1766207550.0,
+"to": 1769254440.0,
+"why": "R9.2 (the rule, Jake 2026-11-17): the MKR_SKY converter's accrued fee take() (39.98M SKY: the Pause Proxy, a ward, can collect it) and the SKY backing the Pause Proxy's 49.56 MKR (1.19M: governance can convert) are IN circulating and OFF the free float; the fee on unconverted non-issuer MKR (99.14M) stays out. The float does not move. Evidence: docs/r8_rule_audit.md §6"
+}
+],
+"audit|Master|Turnover = 30d volume ÷ market cap (x)": [
+{
+"date": "2026-11-18",
+"from": 0.394309184,
+"to": 0.39363013,
+"why": "R9.2 (the rule, Jake 2026-11-17): the MKR_SKY converter's accrued fee take() (39.98M SKY: the Pause Proxy, a ward, can collect it) and the SKY backing the Pause Proxy's 49.56 MKR (1.19M: governance can convert) are IN circulating and OFF the free float; the fee on unconverted non-issuer MKR (99.14M) stays out. The float does not move. Evidence: docs/r8_rule_audit.md §6"
+}
+],
+"reader|A3 Revenue Buyback|Circulating supply": [
+{
+"date": "2026-11-18",
+"from": 23312121800.0,
+"to": 23352337700.0,
+"why": "R9.2 (the rule, Jake 2026-11-17): the MKR_SKY converter's accrued fee take() (39.98M SKY: the Pause Proxy, a ward, can collect it) and the SKY backing the Pause Proxy's 49.56 MKR (1.19M: governance can convert) are IN circulating and OFF the free float; the fee on unconverted non-issuer MKR (99.14M) stays out. The float does not move. Evidence: docs/r8_rule_audit.md §6"
+}
+],
+"reader|A3 Revenue Buyback|Holder value yield": [
+{
+"date": "2026-11-18",
+"from": 0.0244771372,
+"to": 0.0244349843,
+"why": "R9.2 (the rule, Jake 2026-11-17): the MKR_SKY converter's accrued fee take() (39.98M SKY: the Pause Proxy, a ward, can collect it) and the SKY backing the Pause Proxy's 49.56 MKR (1.19M: governance can convert) are IN circulating and OFF the free float; the fee on unconverted non-issuer MKR (99.14M) stays out. The float does not move. Evidence: docs/r8_rule_audit.md §6"
+}
+],
+"reader|A3 Revenue Buyback|Implied buyback, % of supply a year": [
+{
+"date": "2026-11-18",
+"from": 0.011860531,
+"to": 0.0118401056,
+"why": "R9.2 (the rule, Jake 2026-11-17): the MKR_SKY converter's accrued fee take() (39.98M SKY: the Pause Proxy, a ward, can collect it) and the SKY backing the Pause Proxy's 49.56 MKR (1.19M: governance can convert) are IN circulating and OFF the free float; the fee on unconverted non-issuer MKR (99.14M) stays out. The float does not move. Evidence: docs/r8_rule_audit.md §6"
+}
+],
+"reader|A3 Revenue Buyback|Lock rate, % of circulating": [
+{
+"date": "2026-11-18",
+"from": 0.745258632,
+"to": 0.743975195,
+"why": "R9.2 (the rule, Jake 2026-11-17): the MKR_SKY converter's accrued fee take() (39.98M SKY: the Pause Proxy, a ward, can collect it) and the SKY backing the Pause Proxy's 49.56 MKR (1.19M: governance can convert) are IN circulating and OFF the free float; the fee on unconverted non-issuer MKR (99.14M) stays out. The float does not move. Evidence: docs/r8_rule_audit.md §6"
+}
+],
+"reader|A3 Revenue Buyback|Market cap": [
+{
+"date": "2026-11-18",
+"from": 1766207550.0,
+"to": 1769254440.0,
+"why": "R9.2 (the rule, Jake 2026-11-17): the MKR_SKY converter's accrued fee take() (39.98M SKY: the Pause Proxy, a ward, can collect it) and the SKY backing the Pause Proxy's 49.56 MKR (1.19M: governance can convert) are IN circulating and OFF the free float; the fee on unconverted non-issuer MKR (99.14M) stays out. The float does not move. Evidence: docs/r8_rule_audit.md §6"
+}
+],
+"reader|A3 Revenue Buyback|Quarter change: retired %": [
+{
+"date": "2026-11-18",
+"from": -0.334461734,
+"to": -0.335607882,
+"why": "R9.2 (the rule, Jake 2026-11-17): the MKR_SKY converter's accrued fee take() (39.98M SKY: the Pause Proxy, a ward, can collect it) and the SKY backing the Pause Proxy's 49.56 MKR (1.19M: governance can convert) are IN circulating and OFF the free float; the fee on unconverted non-issuer MKR (99.14M) stays out. The float does not move. Evidence: docs/r8_rule_audit.md §6"
+}
+],
+"reader|A3 Revenue Buyback|Retired, % of supply a year": [
+{
+"date": "2026-11-18",
+"from": 0.00597351528,
+"to": 0.00596322808,
+"why": "R9.2 (the rule, Jake 2026-11-17): the MKR_SKY converter's accrued fee take() (39.98M SKY: the Pause Proxy, a ward, can collect it) and the SKY backing the Pause Proxy's 49.56 MKR (1.19M: governance can convert) are IN circulating and OFF the free float; the fee on unconverted non-issuer MKR (99.14M) stays out. The float does not move. Evidence: docs/r8_rule_audit.md §6"
+}
+],
+"reader|A3 Revenue Buyback|Retirement rate ($), % of mkt cap": [
+{
+"date": "2026-11-18",
+"from": 0.0049118884,
+"to": 0.00490342946,
+"why": "R9.2 (the rule, Jake 2026-11-17): the MKR_SKY converter's accrued fee take() (39.98M SKY: the Pause Proxy, a ward, can collect it) and the SKY backing the Pause Proxy's 49.56 MKR (1.19M: governance can convert) are IN circulating and OFF the free float; the fee on unconverted non-issuer MKR (99.14M) stays out. The float does not move. Evidence: docs/r8_rule_audit.md §6"
+}
+],
+"reader|A3 Revenue Buyback|Retirement rate, % of circulating": [
+{
+"date": "2026-11-18",
+"from": 0.00597351528,
+"to": 0.00596322808,
+"why": "R9.2 (the rule, Jake 2026-11-17): the MKR_SKY converter's accrued fee take() (39.98M SKY: the Pause Proxy, a ward, can collect it) and the SKY backing the Pause Proxy's 49.56 MKR (1.19M: governance can convert) are IN circulating and OFF the free float; the fee on unconverted non-issuer MKR (99.14M) stays out. The float does not move. Evidence: docs/r8_rule_audit.md §6"
+}
+],
+"reader|A4 Permanent Burn|Circulating supply": [
+{
+"date": "2026-11-18",
+"from": 23312121800.0,
+"to": 23352337700.0,
+"why": "R9.2 (the rule, Jake 2026-11-17): the MKR_SKY converter's accrued fee take() (39.98M SKY: the Pause Proxy, a ward, can collect it) and the SKY backing the Pause Proxy's 49.56 MKR (1.19M: governance can convert) are IN circulating and OFF the free float; the fee on unconverted non-issuer MKR (99.14M) stays out. The float does not move. Evidence: docs/r8_rule_audit.md §6"
+}
+],
+"reader|A4 Permanent Burn|Issuance − burn, % a year": [
+{
+"date": "2026-11-18",
+"from": -0.00263379675,
+"to": -0.00262926099,
+"why": "R9.2 (the rule, Jake 2026-11-17): the MKR_SKY converter's accrued fee take() (39.98M SKY: the Pause Proxy, a ward, can collect it) and the SKY backing the Pause Proxy's 49.56 MKR (1.19M: governance can convert) are IN circulating and OFF the free float; the fee on unconverted non-issuer MKR (99.14M) stays out. The float does not move. Evidence: docs/r8_rule_audit.md §6"
+}
+],
+"reader|A4 Permanent Burn|Market cap": [
+{
+"date": "2026-11-18",
+"from": 1766207550.0,
+"to": 1769254440.0,
+"why": "R9.2 (the rule, Jake 2026-11-17): the MKR_SKY converter's accrued fee take() (39.98M SKY: the Pause Proxy, a ward, can collect it) and the SKY backing the Pause Proxy's 49.56 MKR (1.19M: governance can convert) are IN circulating and OFF the free float; the fee on unconverted non-issuer MKR (99.14M) stays out. The float does not move. Evidence: docs/r8_rule_audit.md §6"
+}
+],
+"reader|A4 Permanent Burn|Permanent burn yield": [
+{
+"date": "2026-11-18",
+"from": 0.00263379675,
+"to": 0.00262926099,
+"why": "R9.2 (the rule, Jake 2026-11-17): the MKR_SKY converter's accrued fee take() (39.98M SKY: the Pause Proxy, a ward, can collect it) and the SKY backing the Pause Proxy's 49.56 MKR (1.19M: governance can convert) are IN circulating and OFF the free float; the fee on unconverted non-issuer MKR (99.14M) stays out. The float does not move. Evidence: docs/r8_rule_audit.md §6"
+}
+],
+"reader|Comparison|Holder value yield": [
+{
+"date": "2026-11-18",
+"from": 0.0244771372,
+"to": 0.0244349843,
+"why": "R9.2 (the rule, Jake 2026-11-17): the MKR_SKY converter's accrued fee take() (39.98M SKY: the Pause Proxy, a ward, can collect it) and the SKY backing the Pause Proxy's 49.56 MKR (1.19M: governance can convert) are IN circulating and OFF the free float; the fee on unconverted non-issuer MKR (99.14M) stays out. The float does not move. Evidence: docs/r8_rule_audit.md §6"
+}
+],
+"reader|Comparison|Lock rate, % of circulating": [
+{
+"date": "2026-11-18",
+"from": 0.745258632,
+"to": 0.743975195,
+"why": "R9.2 (the rule, Jake 2026-11-17): the MKR_SKY converter's accrued fee take() (39.98M SKY: the Pause Proxy, a ward, can collect it) and the SKY backing the Pause Proxy's 49.56 MKR (1.19M: governance can convert) are IN circulating and OFF the free float; the fee on unconverted non-issuer MKR (99.14M) stays out. The float does not move. Evidence: docs/r8_rule_audit.md §6"
+}
+],
+"reader|Comparison|Net holder yield": [
+{
+"date": "2026-11-18",
+"from": -0.00242506988,
+"to": -0.00242089358,
+"why": "R9.2 (the rule, Jake 2026-11-17): the MKR_SKY converter's accrued fee take() (39.98M SKY: the Pause Proxy, a ward, can collect it) and the SKY backing the Pause Proxy's 49.56 MKR (1.19M: governance can convert) are IN circulating and OFF the free float; the fee on unconverted non-issuer MKR (99.14M) stays out. The float does not move. Evidence: docs/r8_rule_audit.md §6"
+}
+],
+"reader|Comparison|Revenue ÷ market cap, a year": [
+{
+"date": "2026-11-18",
+"from": 0.0937344849,
+"to": 0.0935730614,
+"why": "R9.2 (the rule, Jake 2026-11-17): the MKR_SKY converter's accrued fee take() (39.98M SKY: the Pause Proxy, a ward, can collect it) and the SKY backing the Pause Proxy's 49.56 MKR (1.19M: governance can convert) are IN circulating and OFF the free float; the fee on unconverted non-issuer MKR (99.14M) stays out. The float does not move. Evidence: docs/r8_rule_audit.md §6"
+}
+],
+"reader|Summary|Holder value yield": [
+{
+"date": "2026-11-18",
+"from": 0.0244771372,
+"to": 0.0244349843,
+"why": "R9.2 (the rule, Jake 2026-11-17): the MKR_SKY converter's accrued fee take() (39.98M SKY: the Pause Proxy, a ward, can collect it) and the SKY backing the Pause Proxy's 49.56 MKR (1.19M: governance can convert) are IN circulating and OFF the free float; the fee on unconverted non-issuer MKR (99.14M) stays out. The float does not move. Evidence: docs/r8_rule_audit.md §6"
+}
+],
+"reader|Summary|Market cap": [
+{
+"date": "2026-11-18",
+"from": 1766207550.0,
+"to": 1769254440.0,
+"why": "R9.2 (the rule, Jake 2026-11-17): the MKR_SKY converter's accrued fee take() (39.98M SKY: the Pause Proxy, a ward, can collect it) and the SKY backing the Pause Proxy's 49.56 MKR (1.19M: governance can convert) are IN circulating and OFF the free float; the fee on unconverted non-issuer MKR (99.14M) stays out. The float does not move. Evidence: docs/r8_rule_audit.md §6"
+}
+],
+"reader|Summary|Net holder yield": [
+{
+"date": "2026-11-18",
+"from": -0.00242506988,
+"to": -0.00242089358,
+"why": "R9.2 (the rule, Jake 2026-11-17): the MKR_SKY converter's accrued fee take() (39.98M SKY: the Pause Proxy, a ward, can collect it) and the SKY backing the Pause Proxy's 49.56 MKR (1.19M: governance can convert) are IN circulating and OFF the free float; the fee on unconverted non-issuer MKR (99.14M) stays out. The float does not move. Evidence: docs/r8_rule_audit.md §6"
+}
+]
+},
 "Uniswap": {
 "audit|A4 Permanent Burn|Circulating supply (used, tokens)": [
 {

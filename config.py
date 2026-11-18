@@ -44004,3 +44004,52 @@ declare_rule_in("Pendle", ("treasury_holding_tokens", "noncirculating_holding_to
                                                              "the Governance multisig": 19_751_622,
                                                              "the Team multisig + fee wallet": 7_746_793,
                                                              "not named": 585_422})})
+
+
+# ---------------------------------------------------------------------------------------------------------------------
+# R9.2 SKY UNDER THE RULE (Jake 2026-11-17). docs/r8_rule_audit.md §6 (Ethereum, read 2026-11-17). The MKR_SKY converter
+# 0xA1Ea1bA1… holds 2,023,933,778.79 SKY; the 140,310,138 of it that circulating left out splits exactly three ways:
+#   STAYS OUT: the fee on still-unconverted non-issuer MKR, 99,138,086.35 — unreleased, idle, and governance can only
+#     burn it (MkrSky source, Sourcify): all three hold.
+#   IN, off float: the accrued fee take() 39,982,641.85 — collect(to) is open to the converter's wards and the Pause
+#     Proxy is a ward (wards = 1); the SKY backing the Pause Proxy's 49.56 MKR, 1,189,410 — governance can convert.
+# Neither needs a new read: both follow from series already stored on the same days (rate() is 24,000, an immutable
+# of the converter):
+#     sky_converter_take_tokens      = the converter's SKY − MKR outstanding x 24,000
+#                                      (2,023,933,778.79 − 82,664.63 x 24,000 = 39,982,659 against take() 39,982,641.85:
+#                                       17 SKY, the 2 decimals of the MKR supply quoted)
+#     sky_issuer_mkr_backing_tokens  = the Pause Proxy's MKR x 24,000 (the whole backing: fee and net)
+# Circulating = total − the converter's SKY + non-issuer backing + take + issuer backing
+#             = total − (MKR outstanding − the Pause Proxy's MKR) x 24,000 x fee:  23,312,121,777 -> 23,353,293,829.
+# THE FLOAT DOES NOT MOVE: the two legs enter circulating and leave the float on the same days (the R8 report's "float
+# rises 41.2M" was wrong — the 41.17M is the rise of CIRCULATING; held issuer wallets are in circulating, off float).
+SKY_MKR_RATE = 24_000
+DERIVED_LEGS = {
+    "Sky": {"sky_converter_take_tokens": (("noncirculating_holding_tokens", 1.0), ("mkr_outstanding_tokens", -float(SKY_MKR_RATE))),
+            "sky_issuer_mkr_backing_tokens": (("mkr_issuer_tokens", float(SKY_MKR_RATE)),)}}
+METRICS["sky_converter_take_tokens"] = {
+    "label": "The MKR_SKY converter's accrued fee (take()) = the converter's SKY − MKR outstanding x 24,000 — the Pause "
+             "Proxy can collect it: in circulating, off the float (R9.2)",
+    "kind": "stock", "unit": "tokens", "archetypes": [3, 4], "tiers": [2], "sanity_min": 0, "sanity_max": 1e10,
+    "only_projects": ("Sky",), "view_only": True}
+METRICS["sky_issuer_mkr_backing_tokens"] = {
+    "label": "SKY backing the Pause Proxy's MKR = its MKR x 24,000 — governance can convert: in circulating, off the "
+             "float (R9.2)",
+    "kind": "stock", "unit": "tokens", "archetypes": [3, 4], "tiers": [2], "sanity_min": 0, "sanity_max": 1e10,
+    "only_projects": ("Sky",), "view_only": True}
+CIRCULATING_ONCHAIN["Sky"]["add"] = tuple(CIRCULATING_ONCHAIN["Sky"]["add"]) + (
+    "sky_converter_take_tokens", "sky_issuer_mkr_backing_tokens")
+declare_rule_in("Sky", (), "docs/r8_rule_audit.md §6: take() 39,982,641.85 — collect(to) is open to wards and the Pause "
+                "Proxy is a ward; the Pause Proxy's 49.56 MKR backs 1,189,410 SKY it can convert. The fee on unconverted "
+                "non-issuer MKR (99,138,086.35) stays out: unreleased, idle, burn-only",
+                off_float=("sky_converter_take_tokens", "sky_issuer_mkr_backing_tokens"),
+                circulating=(23_312_121_777, 23_353_293_829), stays_out=99_138_086.35,
+                references={"coingecko": (23_417_172_329, {"the Pause Proxy 0xBE8E3e36… (held buyback: CoinGecko leaves it out)": 35_259_586,
+                                                            "the fee on unconverted MKR (ours leaves it out)": -99_138_086}),
+                            "coinmarketcap": (23_417_236_509, {"the Pause Proxy 0xBE8E3e36…": 35_259_586,
+                                                                "the fee on unconverted MKR": -99_138_086})},
+                float_answer="the float does not move: +41.17M enters circulating and the same 41.17M leaves the float")
+INSIDER_INSIDE_CIRCULATING["Sky"]["held"] = ("sky_endowment_tokens", "sky_converter_take_tokens",
+                                             "sky_issuer_mkr_backing_tokens")
+INSIDER_INSIDE_CIRCULATING["Sky"]["what"] += ("; R9.2: + the converter's accrued fee and the SKY backing the Pause "
+                                              "Proxy's MKR (issuer-controlled, in circulating by the rule)")
