@@ -14822,8 +14822,14 @@ def flow_statements(groups: dict, asof) -> list[dict]:
                     issuer_side = {f["what"] for f in p.get("one_off_flows") or () if f.get("from_stock")}
                     v -= sum(t for day, t, _f, w in _ONE_OFF_IN_SERIES.get((name, m), ())
                              if start < day <= end and w in issuer_side)
+                # R9.2: a declared EVENT series on the statement (Maple's mints to the DAO multisig, config.ISSUER_MINTS
+                # kind "events"): a day with no row is a day with no event — a measured 0, not a coverage gap
+                events = (_rule_flow(name) and m == "issuer_mint_tokens"
+                          and (config.ISSUER_MINTS.get(name) or {}).get("kind") == "events")
+                if events and v is None:
+                    v = 0.0
                 leg_vals[lab].append(v if v is not None else None)
-                if n < period:
+                if n < period and not events:
                     n_eff, lag = _flow_days(groups.get((name, m)), d(m), start, end, k)
                     if n_eff + lag < period:
                         why.append(f"{m} covers {n_eff}/{period} days" + (f" (+{lag} day(s) of read lag)" if lag else ""))

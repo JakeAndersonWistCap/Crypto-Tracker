@@ -200,3 +200,28 @@ def test_2_fluid_igp137_wallet_is_in_on_the_proposal_text_and_its_signer():
         ("total_supply", 100e6), ("treasury_holding_tokens", 16.3e6), ("noncirculating_holding_tokens", 0.7e6),
         ("noncirculating_igp137_tokens", 5e6))])
     assert list(C.series(h, "Fluid")) == [100e6]
+
+
+def test_2_maple_mints_to_the_dao_multisig_enter_circulating_when_minted():
+    """Maple under the rule: the DAO multisig is circulating, so a RecapitalizationModule mint to it is a circulating
+    change on its day — the statement balances on it, and a quarter with no mint event reads 0 (not a coverage gap)."""
+    spec = config.RULE_IN["Maple"]
+    assert spec["legs"] == ("treasury_holding_tokens_chain", "noncirculating_holding_tokens")
+    assert spec["flow_in"][0][1] == "issuer_mint_tokens"
+    asof = pd.Timestamp("2026-11-09")
+    days = pd.date_range("2026-01-01", "2026-11-09")
+    mint_day = pd.Timestamp("2026-10-09")
+    circ = [1_244_000_000.0 + (23_000_000.0 if d >= mint_day else 0.0) for d in days]
+    g = {("Maple", "circulating_supply_used"): _g("Maple", "circulating_supply_used", list(zip(days, circ)),
+                                                  "derived:circulating_onchain"),
+         ("Maple", "issuer_mint_tokens"): _g("Maple", "issuer_mint_tokens", [(mint_day, 23_000_000.0)]),
+         ("Maple", "unlock_release_tokens"): _g("Maple", "unlock_release_tokens", [(d, 100_000.0) for d in days])}
+    tf = _flow_rows("Maple", g, asof)
+    line = next(k for k in tf if k.startswith("+ minted to the DAO multisig"))
+    assert tf[line]["Q0"] == 23_000_000.0 and tf[line]["Q-1"] == 0.0
+    assert not any(k.startswith("+ released") for k in tf)                 # the multisig's releases move the float only
+    for q in ("Q0", "Q-1"):
+        assert abs(tf["Residual ÷ opening"][q]) < 1e-9 and tf["Status"][q].startswith("OK"), tf["Status"][q]
+    for key in ("coingecko", "coinmarketcap"):
+        ref, legs = spec["references"][key]
+        assert ref + sum(legs.values()) == pytest.approx(spec["circulating"][1], rel=0.005), key

@@ -827,6 +827,344 @@
 }
 ]
 },
+"Maple": {
+"audit|A3 Revenue Buyback|Actual buyback as % of supply (annualised) — RETIRED (burned + held) only": [
+{
+"date": "2026-11-18",
+"from": 0.0136953005,
+"to": 0.0127114564,
+"why": "R9.2 (the rule, Jake 2026-11-17): Maple's DAO multisig 0xd6d4Bcde… (42.29M SYRUP: a Safe, threshold 4, can move it; idle) and syrupDrip 0x509712F3… (0.17M) are IN circulating and OFF the free float; the float and the unlock legs do not move. Evidence: docs/r8_rule_audit.md §3"
+}
+],
+"audit|A3 Revenue Buyback|Buyback % supply at Q1 (−3m window, split as at Q1)": [
+{
+"date": "2026-11-18",
+"from": 0.0201740909,
+"to": 0.0187248229,
+"why": "R9.2 (the rule, Jake 2026-11-17): Maple's DAO multisig 0xd6d4Bcde… (42.29M SYRUP: a Safe, threshold 4, can move it; idle) and syrupDrip 0x509712F3… (0.17M) are IN circulating and OFF the free float; the float and the unlock legs do not move. Evidence: docs/r8_rule_audit.md §3"
+}
+],
+"audit|A3 Revenue Buyback|Buyback % supply at Q2 (−6m, split as at Q2)": [
+{
+"date": "2026-11-18",
+"from": 0.0215223491,
+"to": 0.0199762248,
+"why": "R9.2 (the rule, Jake 2026-11-17): Maple's DAO multisig 0xd6d4Bcde… (42.29M SYRUP: a Safe, threshold 4, can move it; idle) and syrupDrip 0x509712F3… (0.17M) are IN circulating and OFF the free float; the float and the unlock legs do not move. Evidence: docs/r8_rule_audit.md §3"
+}
+],
+"audit|A3 Revenue Buyback|Buyback % supply at Q3 (−9m, split as at Q3)": [
+{
+"date": "2026-11-18",
+"from": 0.017001215,
+"to": 0.0157798803,
+"why": "R9.2 (the rule, Jake 2026-11-17): Maple's DAO multisig 0xd6d4Bcde… (42.29M SYRUP: a Safe, threshold 4, can move it; idle) and syrupDrip 0x509712F3… (0.17M) are IN circulating and OFF the free float; the float and the unlock legs do not move. Evidence: docs/r8_rule_audit.md §3"
+}
+],
+"audit|A3 Revenue Buyback|CIRCULATING RETIREMENT RATE (tokens) = RETIRED buyback tokens (burned + held, annualised) ÷ circulating — primary": [
+{
+"date": "2026-11-18",
+"from": 0.0136953005,
+"to": 0.0127114564,
+"why": "R9.2 (the rule, Jake 2026-11-17): Maple's DAO multisig 0xd6d4Bcde… (42.29M SYRUP: a Safe, threshold 4, can move it; idle) and syrupDrip 0x509712F3… (0.17M) are IN circulating and OFF the free float; the float and the unlock legs do not move. Evidence: docs/r8_rule_audit.md §3"
+}
+],
+"audit|A3 Revenue Buyback|Circulating retirement rate ($) = RETIRED buyback $ (burned + held, annualised) ÷ market cap — alongside": [
+{
+"date": "2026-11-18",
+"from": 0.00927769893,
+"to": 0.00861120682,
+"why": "R9.2 (the rule, Jake 2026-11-17): Maple's DAO multisig 0xd6d4Bcde… (42.29M SYRUP: a Safe, threshold 4, can move it; idle) and syrupDrip 0x509712F3… (0.17M) are IN circulating and OFF the free float; the float and the unlock legs do not move. Evidence: docs/r8_rule_audit.md §3"
+}
+],
+"audit|A3 Revenue Buyback|Circulating supply": [
+{
+"date": "2026-11-18",
+"from": 1176793290.0,
+"to": 1267875000.0,
+"why": "R9.2 (the rule, Jake 2026-11-17): Maple's DAO multisig 0xd6d4Bcde… (42.29M SYRUP: a Safe, threshold 4, can move it; idle) and syrupDrip 0x509712F3… (0.17M) are IN circulating and OFF the free float; the float and the unlock legs do not move. Evidence: docs/r8_rule_audit.md §3"
+}
+],
+"audit|A3 Revenue Buyback|Market cap ($)": [
+{
+"date": "2026-11-18",
+"from": 284064402.0,
+"to": 306050482.0,
+"why": "R9.2 (the rule, Jake 2026-11-17): Maple's DAO multisig 0xd6d4Bcde… (42.29M SYRUP: a Safe, threshold 4, can move it; idle) and syrupDrip 0x509712F3… (0.17M) are IN circulating and OFF the free float; the float and the unlock legs do not move. Evidence: docs/r8_rule_audit.md §3"
+}
+],
+"audit|CP Comparability|Circulating supply (tokens) — our convention, the figure in use": [
+{
+"date": "2026-11-18",
+"from": 1176793290.0,
+"to": 1267875000.0,
+"why": "R9.2 (the rule, Jake 2026-11-17): Maple's DAO multisig 0xd6d4Bcde… (42.29M SYRUP: a Safe, threshold 4, can move it; idle) and syrupDrip 0x509712F3… (0.17M) are IN circulating and OFF the free float; the float and the unlock legs do not move. Evidence: docs/r8_rule_audit.md §3"
+}
+],
+"audit|CP Comparability|Dilution (e) unlocks (annualised) ÷ circulating": [
+{
+"date": "2026-11-18",
+"from": 0.041355323,
+"to": 0.0383844359,
+"why": "R9.2 (the rule, Jake 2026-11-17): Maple's DAO multisig 0xd6d4Bcde… (42.29M SYRUP: a Safe, threshold 4, can move it; idle) and syrupDrip 0x509712F3… (0.17M) are IN circulating and OFF the free float; the float and the unlock legs do not move. Evidence: docs/r8_rule_audit.md §3"
+}
+],
+"audit|CP Comparability|Discretionary supply ÷ circulating": [
+{
+"date": "2026-11-18",
+"from": 0.0773982228,
+"to": 0.0718380829,
+"why": "R9.2 (the rule, Jake 2026-11-17): Maple's DAO multisig 0xd6d4Bcde… (42.29M SYRUP: a Safe, threshold 4, can move it; idle) and syrupDrip 0x509712F3… (0.17M) are IN circulating and OFF the free float; the float and the unlock legs do not move. Evidence: docs/r8_rule_audit.md §3"
+}
+],
+"audit|CP Comparability|ETF / ETP holdings ÷ circulating": [
+{
+"date": "2026-11-18",
+"from": 0.00399604299,
+"to": 0.00370897493,
+"why": "R9.2 (the rule, Jake 2026-11-17): Maple's DAO multisig 0xd6d4Bcde… (42.29M SYRUP: a Safe, threshold 4, can move it; idle) and syrupDrip 0x509712F3… (0.17M) are IN circulating and OFF the free float; the float and the unlock legs do not move. Evidence: docs/r8_rule_audit.md §3"
+}
+],
+"audit|CP Comparability|Flow demand — buyback $ (every funding source, annualised) ÷ market cap": [
+{
+"date": "2026-11-18",
+"from": 0.00927769893,
+"to": 0.00861120682,
+"why": "R9.2 (the rule, Jake 2026-11-17): Maple's DAO multisig 0xd6d4Bcde… (42.29M SYRUP: a Safe, threshold 4, can move it; idle) and syrupDrip 0x509712F3… (0.17M) are IN circulating and OFF the free float; the float and the unlock legs do not move. Evidence: docs/r8_rule_audit.md §3"
+}
+],
+"audit|CP Comparability|HOLDER VALUE YIELD = revenue-funded $ retired + $ distributed + liquid bribes to voters (annualised) ÷ market cap — treasury- or emissions-funded buybacks are NOT credited (LITMUS A); fee-market burns are on A1 net issuance": [
+{
+"date": "2026-11-18",
+"from": 0.00920206551,
+"to": 0.00854100677,
+"why": "R9.2 (the rule, Jake 2026-11-17): Maple's DAO multisig 0xd6d4Bcde… (42.29M SYRUP: a Safe, threshold 4, can move it; idle) and syrupDrip 0x509712F3… (0.17M) are IN circulating and OFF the free float; the float and the unlock legs do not move. Evidence: docs/r8_rule_audit.md §3"
+}
+],
+"audit|CP Comparability|Insider share of circulating = insider-held tokens counted inside circulating ÷ circulating": [
+{
+"date": "2026-11-18",
+"from": 0.0,
+"to": 0.0718380829,
+"why": "R9.2 (the rule, Jake 2026-11-17): Maple's DAO multisig 0xd6d4Bcde… (42.29M SYRUP: a Safe, threshold 4, can move it; idle) and syrupDrip 0x509712F3… (0.17M) are IN circulating and OFF the free float; the float and the unlock legs do not move. Evidence: docs/r8_rule_audit.md §3"
+}
+],
+"audit|CP Comparability|Market cap ($)": [
+{
+"date": "2026-11-18",
+"from": 284064402.0,
+"to": 306050482.0,
+"why": "R9.2 (the rule, Jake 2026-11-17): Maple's DAO multisig 0xd6d4Bcde… (42.29M SYRUP: a Safe, threshold 4, can move it; idle) and syrupDrip 0x509712F3… (0.17M) are IN circulating and OFF the free float; the float and the unlock legs do not move. Evidence: docs/r8_rule_audit.md §3"
+}
+],
+"audit|CP Comparability|Retirement rate (RETIRED buyback tokens, burned + held, annualised) ÷ circulating": [
+{
+"date": "2026-11-18",
+"from": 0.013583654,
+"to": 0.0126078303,
+"why": "R9.2 (the rule, Jake 2026-11-17): Maple's DAO multisig 0xd6d4Bcde… (42.29M SYRUP: a Safe, threshold 4, can move it; idle) and syrupDrip 0x509712F3… (0.17M) are IN circulating and OFF the free float; the float and the unlock legs do not move. Evidence: docs/r8_rule_audit.md §3"
+}
+],
+"audit|Master|Circulating supply (used)": [
+{
+"date": "2026-11-18",
+"from": 1176793290.0,
+"to": 1267875000.0,
+"why": "R9.2 (the rule, Jake 2026-11-17): Maple's DAO multisig 0xd6d4Bcde… (42.29M SYRUP: a Safe, threshold 4, can move it; idle) and syrupDrip 0x509712F3… (0.17M) are IN circulating and OFF the free float; the float and the unlock legs do not move. Evidence: docs/r8_rule_audit.md §3"
+}
+],
+"audit|Master|Market cap ($)": [
+{
+"date": "2026-11-18",
+"from": 284064402.0,
+"to": 306050482.0,
+"why": "R9.2 (the rule, Jake 2026-11-17): Maple's DAO multisig 0xd6d4Bcde… (42.29M SYRUP: a Safe, threshold 4, can move it; idle) and syrupDrip 0x509712F3… (0.17M) are IN circulating and OFF the free float; the float and the unlock legs do not move. Evidence: docs/r8_rule_audit.md §3"
+}
+],
+"audit|Master|NET SUPPLY CHANGE Q0 (tokens) = closing − opening circulating supply": [
+{
+"date": "2026-11-18",
+"from": 12000000.0,
+"to": 23197507.5,
+"why": "R9.2 (the rule, Jake 2026-11-17): Maple's DAO multisig 0xd6d4Bcde… (42.29M SYRUP: a Safe, threshold 4, can move it; idle) and syrupDrip 0x509712F3… (0.17M) are IN circulating and OFF the free float; the float and the unlock legs do not move. Evidence: docs/r8_rule_audit.md §3"
+}
+],
+"audit|Master|Net supply change, annualised % of circulating": [
+{
+"date": "2026-11-18",
+"from": 0.041355323,
+"to": 0.0742019366,
+"why": "R9.2 (the rule, Jake 2026-11-17): Maple's DAO multisig 0xd6d4Bcde… (42.29M SYRUP: a Safe, threshold 4, can move it; idle) and syrupDrip 0x509712F3… (0.17M) are IN circulating and OFF the free float; the float and the unlock legs do not move. Evidence: docs/r8_rule_audit.md §3"
+}
+],
+"audit|Master|Trend — master_circulating_supply_used (arrow · QoQ · 4Q growth/yr · quarters improved; Trajectory tab)": [
+{
+"date": "2026-11-18",
+"from": "↑ · +3%/yr (4Q) · QoQ +1.0%",
+"to": "↑ · +6%/yr (4Q) · QoQ +1.9%",
+"why": "R9.2 (the rule, Jake 2026-11-17): Maple's DAO multisig 0xd6d4Bcde… (42.29M SYRUP: a Safe, threshold 4, can move it; idle) and syrupDrip 0x509712F3… (0.17M) are IN circulating and OFF the free float; the float and the unlock legs do not move. Evidence: docs/r8_rule_audit.md §3"
+}
+],
+"audit|Master|Trend — master_market_cap (arrow · QoQ · 4Q growth/yr · quarters improved; Trajectory tab)": [
+{
+"date": "2026-11-18",
+"from": "▼ · -44%/yr (4Q) · 2/4 improved · QoQ +27.5%",
+"to": "▼ · -42%/yr (4Q) · 2/4 improved · QoQ +28.5%",
+"why": "R9.2 (the rule, Jake 2026-11-17): Maple's DAO multisig 0xd6d4Bcde… (42.29M SYRUP: a Safe, threshold 4, can move it; idle) and syrupDrip 0x509712F3… (0.17M) are IN circulating and OFF the free float; the float and the unlock legs do not move. Evidence: docs/r8_rule_audit.md §3"
+}
+],
+"audit|Master|Trend — master_net_supply_change_annualised_of_circulating (arrow · QoQ · 4Q growth/yr · quarters improved; Trajectory tab)": [
+{
+"date": "2026-11-18",
+"from": "▲ · -82%/yr (4Q) · 2/3 improved · QoQ lumpy (100.0% of the window on 2 days)",
+"to": "– · NEW since Q-1 · QoQ n/a — NEW since Q-1",
+"why": "R9.2 (the rule, Jake 2026-11-17): Maple's DAO multisig 0xd6d4Bcde… (42.29M SYRUP: a Safe, threshold 4, can move it; idle) and syrupDrip 0x509712F3… (0.17M) are IN circulating and OFF the free float; the float and the unlock legs do not move. Evidence: docs/r8_rule_audit.md §3"
+}
+],
+"audit|Master|Trend — master_net_supply_change_q0_tokens_closing_opening_circulating_supp (arrow · QoQ · 4Q growth/yr · quarters improved; Trajectory tab)": [
+{
+"date": "2026-11-18",
+"from": "▲ · -82%/yr (4Q) · 2/3 improved · QoQ lumpy (100.0% of the window on 2 days)",
+"to": "– · NEW since Q-1 · QoQ n/a — NEW since Q-1",
+"why": "R9.2 (the rule, Jake 2026-11-17): Maple's DAO multisig 0xd6d4Bcde… (42.29M SYRUP: a Safe, threshold 4, can move it; idle) and syrupDrip 0x509712F3… (0.17M) are IN circulating and OFF the free float; the float and the unlock legs do not move. Evidence: docs/r8_rule_audit.md §3"
+}
+],
+"audit|Master|Turnover = 30d volume ÷ market cap (x)": [
+{
+"date": "2026-11-18",
+"from": 1.04180854,
+"to": 0.966967016,
+"why": "R9.2 (the rule, Jake 2026-11-17): Maple's DAO multisig 0xd6d4Bcde… (42.29M SYRUP: a Safe, threshold 4, can move it; idle) and syrupDrip 0x509712F3… (0.17M) are IN circulating and OFF the free float; the float and the unlock legs do not move. Evidence: docs/r8_rule_audit.md §3"
+}
+],
+"reader|A3 Revenue Buyback|Circulating supply": [
+{
+"date": "2026-11-18",
+"from": 1176793290.0,
+"to": 1267875000.0,
+"why": "R9.2 (the rule, Jake 2026-11-17): Maple's DAO multisig 0xd6d4Bcde… (42.29M SYRUP: a Safe, threshold 4, can move it; idle) and syrupDrip 0x509712F3… (0.17M) are IN circulating and OFF the free float; the float and the unlock legs do not move. Evidence: docs/r8_rule_audit.md §3"
+}
+],
+"reader|A3 Revenue Buyback|Holder value yield": [
+{
+"date": "2026-11-18",
+"from": 0.00920206551,
+"to": 0.00854100677,
+"why": "R9.2 (the rule, Jake 2026-11-17): Maple's DAO multisig 0xd6d4Bcde… (42.29M SYRUP: a Safe, threshold 4, can move it; idle) and syrupDrip 0x509712F3… (0.17M) are IN circulating and OFF the free float; the float and the unlock legs do not move. Evidence: docs/r8_rule_audit.md §3"
+}
+],
+"reader|A3 Revenue Buyback|Implied buyback %, 3 months ago": [
+{
+"date": "2026-11-18",
+"from": 0.0201740909,
+"to": 0.0187248229,
+"why": "R9.2 (the rule, Jake 2026-11-17): Maple's DAO multisig 0xd6d4Bcde… (42.29M SYRUP: a Safe, threshold 4, can move it; idle) and syrupDrip 0x509712F3… (0.17M) are IN circulating and OFF the free float; the float and the unlock legs do not move. Evidence: docs/r8_rule_audit.md §3"
+}
+],
+"reader|A3 Revenue Buyback|Implied buyback %, 6 months ago": [
+{
+"date": "2026-11-18",
+"from": 0.0215223491,
+"to": 0.0199762248,
+"why": "R9.2 (the rule, Jake 2026-11-17): Maple's DAO multisig 0xd6d4Bcde… (42.29M SYRUP: a Safe, threshold 4, can move it; idle) and syrupDrip 0x509712F3… (0.17M) are IN circulating and OFF the free float; the float and the unlock legs do not move. Evidence: docs/r8_rule_audit.md §3"
+}
+],
+"reader|A3 Revenue Buyback|Implied buyback %, 9 months ago": [
+{
+"date": "2026-11-18",
+"from": 0.017001215,
+"to": 0.0157798803,
+"why": "R9.2 (the rule, Jake 2026-11-17): Maple's DAO multisig 0xd6d4Bcde… (42.29M SYRUP: a Safe, threshold 4, can move it; idle) and syrupDrip 0x509712F3… (0.17M) are IN circulating and OFF the free float; the float and the unlock legs do not move. Evidence: docs/r8_rule_audit.md §3"
+}
+],
+"reader|A3 Revenue Buyback|Market cap": [
+{
+"date": "2026-11-18",
+"from": 284064402.0,
+"to": 306050482.0,
+"why": "R9.2 (the rule, Jake 2026-11-17): Maple's DAO multisig 0xd6d4Bcde… (42.29M SYRUP: a Safe, threshold 4, can move it; idle) and syrupDrip 0x509712F3… (0.17M) are IN circulating and OFF the free float; the float and the unlock legs do not move. Evidence: docs/r8_rule_audit.md §3"
+}
+],
+"reader|A3 Revenue Buyback|Retired, % of supply a year": [
+{
+"date": "2026-11-18",
+"from": 0.0136953005,
+"to": 0.0127114564,
+"why": "R9.2 (the rule, Jake 2026-11-17): Maple's DAO multisig 0xd6d4Bcde… (42.29M SYRUP: a Safe, threshold 4, can move it; idle) and syrupDrip 0x509712F3… (0.17M) are IN circulating and OFF the free float; the float and the unlock legs do not move. Evidence: docs/r8_rule_audit.md §3"
+}
+],
+"reader|A3 Revenue Buyback|Retirement rate ($), % of mkt cap": [
+{
+"date": "2026-11-18",
+"from": 0.00927769893,
+"to": 0.00861120682,
+"why": "R9.2 (the rule, Jake 2026-11-17): Maple's DAO multisig 0xd6d4Bcde… (42.29M SYRUP: a Safe, threshold 4, can move it; idle) and syrupDrip 0x509712F3… (0.17M) are IN circulating and OFF the free float; the float and the unlock legs do not move. Evidence: docs/r8_rule_audit.md §3"
+}
+],
+"reader|A3 Revenue Buyback|Retirement rate, % of circulating": [
+{
+"date": "2026-11-18",
+"from": 0.0136953005,
+"to": 0.0127114564,
+"why": "R9.2 (the rule, Jake 2026-11-17): Maple's DAO multisig 0xd6d4Bcde… (42.29M SYRUP: a Safe, threshold 4, can move it; idle) and syrupDrip 0x509712F3… (0.17M) are IN circulating and OFF the free float; the float and the unlock legs do not move. Evidence: docs/r8_rule_audit.md §3"
+}
+],
+"reader|Comparison|Holder value yield": [
+{
+"date": "2026-11-18",
+"from": 0.00920206551,
+"to": 0.00854100677,
+"why": "R9.2 (the rule, Jake 2026-11-17): Maple's DAO multisig 0xd6d4Bcde… (42.29M SYRUP: a Safe, threshold 4, can move it; idle) and syrupDrip 0x509712F3… (0.17M) are IN circulating and OFF the free float; the float and the unlock legs do not move. Evidence: docs/r8_rule_audit.md §3"
+}
+],
+"reader|Comparison|Revenue ÷ market cap, a year": [
+{
+"date": "2026-11-18",
+"from": 0.0615817906,
+"to": 0.0571578728,
+"why": "R9.2 (the rule, Jake 2026-11-17): Maple's DAO multisig 0xd6d4Bcde… (42.29M SYRUP: a Safe, threshold 4, can move it; idle) and syrupDrip 0x509712F3… (0.17M) are IN circulating and OFF the free float; the float and the unlock legs do not move. Evidence: docs/r8_rule_audit.md §3"
+}
+],
+"reader|Summary|Holder value yield": [
+{
+"date": "2026-11-18",
+"from": 0.00920206551,
+"to": 0.00854100677,
+"why": "R9.2 (the rule, Jake 2026-11-17): Maple's DAO multisig 0xd6d4Bcde… (42.29M SYRUP: a Safe, threshold 4, can move it; idle) and syrupDrip 0x509712F3… (0.17M) are IN circulating and OFF the free float; the float and the unlock legs do not move. Evidence: docs/r8_rule_audit.md §3"
+}
+],
+"reader|Summary|Market cap": [
+{
+"date": "2026-11-18",
+"from": 284064402.0,
+"to": 306050482.0,
+"why": "R9.2 (the rule, Jake 2026-11-17): Maple's DAO multisig 0xd6d4Bcde… (42.29M SYRUP: a Safe, threshold 4, can move it; idle) and syrupDrip 0x509712F3… (0.17M) are IN circulating and OFF the free float; the float and the unlock legs do not move. Evidence: docs/r8_rule_audit.md §3"
+}
+],
+"reader|Summary|Net supply change, % a year": [
+{
+"date": "2026-11-18",
+"from": 0.041355323,
+"to": 0.0742019366,
+"why": "R9.2 (the rule, Jake 2026-11-17): Maple's DAO multisig 0xd6d4Bcde… (42.29M SYRUP: a Safe, threshold 4, can move it; idle) and syrupDrip 0x509712F3… (0.17M) are IN circulating and OFF the free float; the float and the unlock legs do not move. Evidence: docs/r8_rule_audit.md §3"
+}
+],
+"reader|Summary|Net supply change, 90 days": [
+{
+"date": "2026-11-18",
+"from": 12000000.0,
+"to": 23197507.5,
+"why": "R9.2 (the rule, Jake 2026-11-17): Maple's DAO multisig 0xd6d4Bcde… (42.29M SYRUP: a Safe, threshold 4, can move it; idle) and syrupDrip 0x509712F3… (0.17M) are IN circulating and OFF the free float; the float and the unlock legs do not move. Evidence: docs/r8_rule_audit.md §3"
+}
+],
+"reader|Summary|What changed": [
+{
+"date": "2026-11-18",
+"from": "over 90D: Price +26% · Market cap +27% · Fees +11% · TVL +27% · ",
+"to": "over 90D: Price +26% · Market cap +29% · Fees +11% · TVL +27% · ",
+"why": "R9.2 (the rule, Jake 2026-11-17): Maple's DAO multisig 0xd6d4Bcde… (42.29M SYRUP: a Safe, threshold 4, can move it; idle) and syrupDrip 0x509712F3… (0.17M) are IN circulating and OFF the free float; the float and the unlock legs do not move. Evidence: docs/r8_rule_audit.md §3"
+}
+]
+},
 "Morpho": {
 "audit|CP Comparability|Circulating supply (tokens) — our convention, the figure in use": [
 {

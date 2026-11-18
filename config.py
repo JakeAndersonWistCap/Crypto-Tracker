@@ -43956,3 +43956,28 @@ declare_rule_in("Fluid", ("treasury_holding_tokens", "noncirculating_holding_tok
                 circulating=(77_985_705, 100_000_000),
                 references={"coingecko": (83_696_997, {"the Treasury DSA 0x28849D2b…": 16_303_003}),
                             "coinmarketcap": (83_696_997, {"the Treasury DSA 0x28849D2b…": 16_303_003})})
+
+
+# ---------------------------------------------------------------------------------------------------------------------
+# R9.2 MAPLE UNDER THE RULE (Jake 2026-11-17). docs/r8_rule_audit.md §3 (Ethereum, read 2026-11-17):
+#   IN, off float: the DAO multisig 0xd6d4Bcde… 42,290,111.33 SYRUP (a Safe, threshold 4, can move it; 0 stSYRUP, idle);
+#     syrupDrip 0x509712F3… 166,610.40 (undistributed rewards). The registry, Migrator, RecapitalizationModule, governor
+#     timelock and two admins hold 0.
+#   ALREADY IN, off float (unchanged): the SSF Safe 0x58BE0049… 48,624,987.59 — the bought-back SYRUP held.
+# Circulating -> the total supply (SYRUP has no burn); the float does not move. A mint to the DAO multisig now enters
+# circulating when minted; its later release dilutes the float and stays the unlock leg (R9.3).
+declare_rule_in("Maple", ("treasury_holding_tokens_chain", "noncirculating_holding_tokens"),
+                "docs/r8_rule_audit.md §3: the DAO multisig 0xd6d4Bcde… is a Safe (threshold 4), idle (0 stSYRUP); "
+                "syrupDrip 0x509712F3… holds undistributed rewards",
+                circulating=(1_225_418_278, 1_267_875_000),
+                references={"coingecko": (1_167_271_959, {"the DAO multisig 0xd6d4Bcde…": 42_290_111,
+                                                           "the SSF Safe 0x58BE0049… (held buyback)": 48_624_988,
+                                                           "syrupDrip 0x509712F3…": 166_610, "not named": 9_521_332}),
+                            "coinmarketcap": (1_191_009_307, {"the DAO multisig": 42_290_111,
+                                                               "CoinMarketCap's total is 23.2M under the on-chain supply "
+                                                               "(no method published) and the rest is not established":
+                                                               34_575_582})})
+# Maple's token-flow statement on the rule: a RecapitalizationModule mint to the DAO multisig enters circulating when
+# minted (the multisig is circulating) — the mint line of the statement, no longer a memo outside it.
+RULE_IN["Maple"]["flow_in"] = (("+ minted to the DAO multisig (circulating under the rule; MIP-009/010 mints)",
+                                "issuer_mint_tokens"),)
