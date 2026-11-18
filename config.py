@@ -19341,8 +19341,10 @@ AERODROME_MIGRATION["unpark_blockers"] = (
      "that basis here (total less permanent locks) is ~1,150M, which does not tie"),
 )
 # The reader's one plain sentence for the same state (P2c-3: no figures, no "now", "still" or "fixed").
-AERODROME_PARK_PLAIN = ("PARKED — migration: no primary source publishes Aerodrome's circulating supply on this "
-                        "file's basis, so its figures are shown but not ranked or charted.")
+# R9.1: the "no primary source" blocker closed in R8.1 — the one state that still parks it is a build dated before the
+# switch file's verified date (old dumps), and the sentence says that.
+AERODROME_PARK_PLAIN = ("PARKED — migration: the switch to the merged AERO token is not verified on this build's "
+                        "date, so its figures are shown but not ranked or charted.")
 
 
 def aerodrome_park_reason(state: dict | None = None, day=None) -> str:

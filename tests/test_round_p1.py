@@ -671,7 +671,10 @@ def test_p2c_3_4_aerodrome_park_statement_audit_only_and_parked_headlines(built)
     note = next(row[hdr["Notes"] - 1].value for row in ws.iter_rows(min_row=5) if row[0].value == "Aerodrome")
     # (the build's as-of predates the switch file's verified date, so it is parked; R8.1 closed the "primary source"
     # blocker, so its figures are no longer in the statement — the open condition is)
-    assert note.startswith("PARKED — migration:") and reader.parked_reason("Aerodrome")[:40] in note
+    assert note.startswith("PARKED — migration:") and "verified is not a date on or before today" in note
+    # the reader's plain sentence names the same open condition (the switch is not verified on this build's date)
+    assert reader.parked_reason("Aerodrome").startswith("PARKED — migration:") and \
+        "not verified on this build's date" in reader.parked_reason("Aerodrome")
     # the reader says it in one plain sentence, without the audit figures
     a3 = r["A3 Revenue Buyback"]
     rows = _rows_of(a3)
