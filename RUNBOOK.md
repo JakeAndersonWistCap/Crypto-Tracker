@@ -534,6 +534,56 @@ A Plume seed started on code older than 2026-10-01 saved its state only at the e
 or stop it and start again on the new code. Don't run both at once: they write the same state file.
 
 
+## 11ex. Round 9 — the rule on the seven frozen projects, Aerodrome's revenue lines on chain (2026-11-18)
+
+All seven frozen projects now run on the circulating rule: issuer, foundation and treasury wallets that can be moved or
+that earn are IN circulating and OFF the free float (config.RULE_IN; the evidence per wallet is docs/r8_rule_audit.md,
+"Round 9"). Circulating rises for each; no tradeable float and no unlock figure moves. Sky needs no new read: its two
+new legs are computed from series already stored. The token-flow statement no longer counts a release from a wallet
+that is already circulating. Aerodrome's three revenue lines read the on-chain voter-epoch read (DefiLlama is the
+cross-check on the same epochs): they read n/a until the epoch scan has stored a v3 epoch, which the daily run
+continues by itself. Hyperliquid's HOLDER REVENUE and REVENUE cells are read to the last day both hold.
+
+```
+cd C:\Users\jake\Crypto-Tracker
+.venv\Scripts\Activate.ps1
+gcloud auth application-default login
+#   expect: a browser sign-in, then "Credentials saved to file"
+gcloud auth application-default set-quota-project near-data-510309
+#   expect: "Credentials saved to file" and a line naming the quota project near-data-510309
+git switch claude/crypto-metrics-supply-demand-ovkg8g
+git pull
+git log --oneline -1
+#   expect: the line ends "R9: Aerodrome revenue lines on chain, Hyperliquid same covered days, the vote date labelled; RUNBOOK 11ex"
+python -c "import config; print(sorted(config.RULE_IN), config.RULE_AUDIT_R8['applied'], config.R9_MOVES_DECLARED, config.HL_VOTE_DATE['status'])"
+#   expect: ['Aerodrome', 'Fluid', 'Hyperliquid', 'Maple', 'Morpho', 'Pendle', 'Sky', 'Uniswap'] True 320 UNVERIFIED
+python circ_legs.py Fluid
+#   expect: the three wallet legs each "[in circulating by the rule, off the float]", none missing
+python circ_legs.py Sky
+#   expect: sky_converter_take_tokens and sky_issuer_mkr_backing_tokens "built at read time (no stored rows) - a view"; the stored legs none missing
+python token_metrics.py
+#   expect: the run ends without error; an aero_v3_epoch line - either epoch rows stored, or "the scan is saved and the next run continues from there" with a higher block than 53,523,726
+python token_metrics.py --no-fetch
+#   expect: no error
+python done_check.py --verbose | Select-String "^(Uniswap|Fluid|Maple|Morpho|Pendle|Sky|Hyperliquid|Aerodrome|Near)" -Context 0,8
+#   expect: Sky, Hyperliquid, Morpho and Pendle READY (checked on your exports); Uniswap, Fluid and Maple READY (no export of theirs to check - paste back any list); Aerodrome NOT READY with its list, the three S13 lines in it until a v3 epoch is stored; Near NOT READY (round 10)
+New-Item -ItemType Directory -Force ..\tm-exports | Out-Null
+python store_export.py --project Aerodrome --out-dir ..\tm-exports
+#   expect: a line starting "wrote ../tm-exports/aerodrome-"
+git switch data/store-exports
+git pull
+Copy-Item ..\tm-exports\aerodrome-*.json.gz exports\
+git add -f exports
+git commit -m "data: Aerodrome store export (R9)"
+git push
+git switch claude/crypto-metrics-supply-demand-ovkg8g
+git log --oneline -1
+#   expect: the same line as above
+python project_freeze.py --compare all
+#   expect: seven lines, each "0 undeclared move(s)": Fluid 353, Hyperliquid 616, Maple 360, Morpho 285, Pendle 373, Sky 482, Uniswap 309 cells
+```
+
+
 ## 11ew. Round 8 — Aerodrome under the rule, aero_v3 fixed, one freeze compare for all (2026-11-17)
 
 The rule for circulating and free float is in SPEC ("Round 8") and config.CIRCULATING_RULE. Aerodrome is rebuilt on it

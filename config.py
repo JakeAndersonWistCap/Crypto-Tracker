@@ -44059,3 +44059,118 @@ INSIDER_INSIDE_CIRCULATING["Sky"]["what"] += ("; R9.2: + the converter's accrued
 RULE_AUDIT_R8["applied"] = True
 RULE_AUDIT_R8["applied_on"] = "2026-11-18"
 RULE_AUDIT_R8["applied_as"] = "config.RULE_IN (the legs stay listed; circulating no longer subtracts them, the float does)"
+
+
+# =====================================================================================================================
+# R9.4 AERODROME'S THREE REVENUE LINES — THE ON-CHAIN READ IS THE SOURCE OF RECORD (Jake 2026-11-17).
+#   (a) source of record = the on-chain voter-epoch read (fetch/aero_v3 epoch tier: NotifyFeesAmount on every reward
+#       manager + each IncentiveStreaming programme's rate x its overlap with the epoch); DefiLlama's three figures summed
+#       over the SAME epochs are the cross-check, stored beside them. Only an epoch held by both is a covered day.
+#   (b) FEES counts THIRD-PARTY incentives only: an incentive an issuer wallet created is the issuer's spend, not a fee a
+#       user paid — voter_rewards_onchain_bribes_issuer_usd per epoch (the creator of each programme), reported as its
+#       own line and taken out of all three lines. Measured on Base 2026-11-17 since the v3 launch: 244 programmes,
+#       $415,996; the TGE wallet 0x7269de76… created 119 of them, $132,757 (31.9%).
+#   (c) what unstaked LPs keep is MEASURED (DefiLlama fees − revenue on the same days): 21.5% of fees over 30 days and
+#       23.3% over 90 (to 2026-11-16). The 29% expected before is not confirmed and is not used anywhere.
+#   (d) HOLDER REVENUE is GROSS — everything paid to sAERO stakers; the insider share (the issuer wallets' part of the
+#       stake, 46.67% on 2026-11-17) is its own line over the same epochs, never netted off.
+#   FEES >= REVENUE >= HOLDER REVENUE on every epoch by construction (each line is the one below + a measured leg >= 0).
+# NOT MEASURED: an epoch of the LEGACY voter (before 2026-10-22) — its bribes' funder was never read, so the third-party
+# part of its incentives is unknown and no line forms on it (unknown is never 0). The leaf chains' incentives.
+def aero_issuer_incentive_creators() -> tuple:
+    """The Aerodrome issuer wallets (its Blockworks filing) — lower-case; an incentive one of them created is
+    issuer-funded."""
+    own = PROJECT_BY_NAME["Aerodrome"]["ve_managed_holdings"]["owners"]
+    return tuple(sorted(a.lower() for a in own))
+
+
+S13_ONCHAIN = {
+    "Aerodrome": {
+        "fees": "voter_rewards_onchain_fees_usd", "incentives": "voter_rewards_onchain_bribes_usd",
+        "issuer_incentives": "voter_rewards_onchain_bribes_issuer_usd", "epoch_days": 7,
+        "defillama": {"fees": "fees_usd", "revenue": "revenue_usd", "holder_revenue": "holders_revenue_usd"},
+        "insider_share": ("filing_managed_lock_tokens", "locked_tokens"),
+        "views": {"fees": "s13_fees_usd", "revenue": "s13_revenue_usd", "holder_revenue": "s13_holder_revenue_usd",
+                  "issuer": "s13_issuer_incentives_usd", "insider": "s13_holder_revenue_insider_usd",
+                  "dl_fees": "s13_fees_defillama_usd", "dl_revenue": "s13_revenue_defillama_usd",
+                  "dl_holder_revenue": "s13_holder_revenue_defillama_usd"},
+        "foundation_funded_read": {"on": "2026-11-17", "programmes": 244, "usd": 415_996, "tge_wallet_programmes": 119,
+                                   "tge_wallet_usd": 132_757, "chain": "Base", "not_read": "the leaf chains"},
+        "unstaked_lp_share": {"30d": 0.215, "90d": 0.233, "to": "2026-11-16", "was_expected": 0.29,
+                              "basis": "DefiLlama (fees − revenue) ÷ fees"},
+        "insider_stake_share": {"on": "2026-11-17", "share": 0.4667},
+        "decided": "Jake 2026-11-17 (R9.4)"}}
+METRICS["voter_rewards_onchain_bribes_issuer_usd"] = {
+    "label": "Incentives an ISSUER wallet created, one voter epoch (IncentiveStreaming creator in Aerodrome's filing "
+             "wallets) — Foundation-funded: out of FEES, REVENUE and HOLDER REVENUE (R9.4)",
+    "kind": "flow", "unit": "usd", "archetypes": [3], "tiers": [2], "sanity_min": 0, "sanity_max": 1e9,
+    "only_projects": ("Aerodrome",)}
+for _k, _lab in (
+        ("s13_fees_usd", "FEES (S13), per on-chain epoch = revenue + what unstaked LPs keep (DefiLlama fees − revenue on "
+                         "the epoch's days); third-party incentives only"),
+        ("s13_revenue_usd", "REVENUE (S13), per on-chain epoch = holder revenue + fees locked in dead legacy gauges "
+                            "(DefiLlama revenue − holders revenue on the epoch's days)"),
+        ("s13_holder_revenue_usd", "HOLDER REVENUE (S13), per on-chain epoch, GROSS = fees to voters + incentives − "
+                                   "incentives an issuer wallet created"),
+        ("s13_issuer_incentives_usd", "Foundation-funded incentives, per on-chain epoch (reported; out of the lines)"),
+        ("s13_holder_revenue_insider_usd", "The issuer wallets' part of HOLDER REVENUE = holder revenue x their share "
+                                           "of the stake at the epoch's start (reported; the line stays gross)"),
+        ("s13_fees_defillama_usd", "DefiLlama fees over the same on-chain epochs (cross-check of FEES)"),
+        ("s13_revenue_defillama_usd", "DefiLlama revenue over the same on-chain epochs (cross-check of REVENUE)"),
+        ("s13_holder_revenue_defillama_usd", "DefiLlama holders revenue over the same on-chain epochs (cross-check of "
+                                             "HOLDER REVENUE)")):
+    METRICS[_k] = {"label": _lab + " (R9.4)", "kind": "flow", "unit": "usd", "archetypes": [3], "tiers": [2],
+                   "sanity_min": 0, "sanity_max": 1e10, "only_projects": ("Aerodrome",), "view_only": True}
+REVENUE_SPLIT["Aerodrome"] = {
+    "round": "R9.4 (Jake 2026-11-17)",
+    "fees": {"metric": "s13_fees_usd", "primary": True,
+             "route": "per on-chain voter epoch: REVENUE + what unstaked LPs keep (DefiLlama fees − revenue on the "
+                      "epoch's days: measured 21.5% of fees over 30 days, 23.3% over 90 — the 29% expected is not "
+                      "confirmed). Third-party incentives only: incentives an issuer wallet created are out "
+                      "(s13_issuer_incentives_usd). Cross-check: s13_fees_defillama_usd on the same epochs"},
+    "revenue": {"metric": "s13_revenue_usd", "primary": True,
+                "route": "per on-chain voter epoch: HOLDER REVENUE + the fees locked in the dead legacy gauges "
+                         "(DefiLlama revenue − holders revenue on the epoch's days). Cross-check: "
+                         "s13_revenue_defillama_usd on the same epochs"},
+    "holder_revenue": {"metric": "s13_holder_revenue_usd", "primary": True,
+                       "route": "per on-chain voter epoch, GROSS: fees notified to the reward managers "
+                                "(NotifyFeesAmount) + incentive programmes' streams − the programmes an issuer wallet "
+                                "created. The issuer wallets' own part (their share of the stake, 46.67% on "
+                                "2026-11-17) is s13_holder_revenue_insider_usd — reported beside it, never netted "
+                                "off. Cross-check: s13_holder_revenue_defillama_usd on the same epochs"},
+    "holder_share": {"route": "holder revenue ÷ revenue over the on-chain epochs stored; insider share beside it"},
+    "other_recipients": "unstaked LPs (their pools' fees); LPs of gauged pools receive AERO emissions — supply-side "
+                        "incentive (b), not a revenue line",
+    "crosscheck": "DefiLlama's three figures summed over the same on-chain epochs (s13_*_defillama_usd)"}
+
+
+# R9.5 HYPERLIQUID — HOLDER REVENUE AND REVENUE ON THE SAME COVERED DAYS (Jake 2026-11-17). The two cells read different
+# days (the Fund's buybacks 90 days, 226.49M; revenue 89 days, 224.46M — its last day is a read lag), so HOLDER REVENUE
+# read above REVENUE for a reason that was only coverage. Each is now read to the last day BOTH hold (89 days: 224.32M
+# against 224.46M). Days inside are left as stored (a buyback row per read: a quiet day has no row). Never capped: where
+# holder revenue is above revenue on the same days, it reads so.
+S13_SAME_DAYS = {"Hyperliquid": ("revenue", "holder_revenue")}
+for _m in ("revenue_total_usd", "holder_value_revenue_usd"):
+    METRICS[f"{_m}_s13d"] = {
+        "label": f"{_m} over the days every S13 line compared with it holds (R9.5: same covered days, never capped)",
+        "kind": "flow", "unit": "usd", "archetypes": [1, 2, 3, 4], "tiers": [2], "sanity_min": 0,
+        "sanity_max": METRICS[_m].get("sanity_max", 1e12), "view_only": True, "only_projects": ("Hyperliquid",)}
+
+
+# R9.5b THE DATE OF THE VALIDATORS' VOTE ON THE ASSISTANCE FUND (Jake 2026-11-17: correct 12-27 to 12-24 only on a primary
+# post by the Hyper Foundation or Hyperliquid; otherwise keep it and label it unverified). NO PRIMARY POST COULD BE READ
+# (2026-11-18): the Foundation's proposal post x.com/hyperfnd/status/2001127850754367525 (linked by Cointelegraph,
+# 2025-12-17) answers HTTP 402 to this machine, and neither Hyperliquid's docs nor the Foundation's site carries the
+# result. SECONDARY reports point to 12-24: crypto.news published "Hyper Foundation confirms HYPE burn as validators
+# back Assistance Fund vote" on 2025-12-24 12:10 UTC (85% for, 7% against, 8% abstaining), three days BEFORE 12-27.
+# So: the date stays 2025-12-27 and is LABELLED UNVERIFIED; nothing dated reads it as a measured fact.
+HL_VOTE_DATE = {
+    "in_use": "2025-12-27", "status": "UNVERIFIED", "likely": "2025-12-24",
+    "primary_tried": "x.com/hyperfnd/status/2001127850754367525 (HTTP 402, not readable, 2026-11-18)",
+    "secondary": "crypto.news 2025-12-24 12:10 UTC: the Foundation confirmed the burn after the vote (85% / 7% / 8%); "
+                 "Cointelegraph 2025-12-17: the proposal",
+    "rule": "corrected only on a primary post (Jake 2026-11-17)"}
+PROJECT_BY_NAME["Hyperliquid"]["notes"] = PROJECT_BY_NAME["Hyperliquid"]["notes"].replace(
+    "validators voted 27 Dec 2025,",
+    "validators voted 27 Dec 2025 (DATE UNVERIFIED: secondary reports put the vote's close on 24 Dec; no primary post "
+    "could be read — config.HL_VOTE_DATE),", 1)

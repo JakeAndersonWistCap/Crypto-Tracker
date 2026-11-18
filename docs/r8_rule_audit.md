@@ -160,3 +160,33 @@ Near wallets read by `view_account` on rpc.fastnear.com; staking-pool delegation
 - MkrSky source: https://sourcify.dev/server/v2/contract/1/0xA1Ea1bA18E88C381C724a75F23a130420C403f9a
 - CoinGecko: https://api.coingecko.com/api/v3/coins/markets ; CoinMarketCap: https://api.coinmarketcap.com/data-api/v3/cryptocurrency/detail
 - Repo: `/home/user/Crypto-Tracker/config.py` (`CIRCULATING_ONCHAIN`, `MORPHO_RELOCK`, `HYPERLIQUID_CIRC_R7`), `/home/user/Crypto-Tracker/SPEC.md` (R7B, PR4C.1)
+
+## Round 9: the audit applied (2026-11-18)
+
+All seven frozen projects now run on the rule (`config.RULE_IN`). The wallets listed above as "MOVES IN" are counted in circulating and taken off the free float on the same days. Every moved frozen cell is declared in `tests/fixtures/frozen_moves_r9.json`, with every earlier declaration kept.
+
+| Project | Circulating on the test dumps, before → after | Tradeable float | Unlocks Q0 | Cells declared |
+|---|---|---|---|---|
+| Hyperliquid | 301,673,350 → 539,758,896 | 99,462,452, unchanged | 5,476,192, unchanged | 79 (+ 4 Notes cells: the vote date labelled unverified) |
+| Morpho | 574,801,147 → 878,800,000 | 426,052,377, unchanged | 27,000,000, unchanged | 20 |
+| Uniswap | 612,409,760 → 887,142,419 | 612,409,760, unchanged | 5,057,505, unchanged | 45 |
+| Fluid | 77,971,195 → 100,000,000 | 77,971,195, unchanged | 140,838, unchanged | 24 |
+| Maple | 1,176,793,290 → 1,267,875,000 | effective float 1,176,793,290, unchanged | 12,000,000, unchanged | 42 |
+| Pendle | 237,886,870 → 281,527,448 | 143,108,807, unchanged | 1,675,300, unchanged | 50 |
+| Sky | 23,312,121,800 → 23,352,337,700 | 5,880,380,760, unchanged | none (no vesting wallet set) | 56 |
+
+### Decisions applied
+
+- **Fluid, the IGP-137 wallet `0xCaBebC7f76D53582a4be7d9972A2b4F531753fd7` (5,000,000 FLUID): in.** It was carried as a lock outside circulating; that label was wrong.
+  - Proposal text (Instadapp/fluid-governance, IGP-137 description): 5,000,000 FLUID (5% of supply) is withdrawn from the Treasury DSA `0x28849D2b…` to the Team Multisig `0x4F6F977a…`, "subsequently moved into a dedicated wallet before distribution to the relevant custodial partners". "These tokens will be legally locked for at least 4 years until 2030."
+  - Signers: the wallet is an Avocado smart wallet. `owner()` is `0x8ae21fc31f41791578fecd0509ec0f59781cedfc`, an externally owned account (no code; `getOwners()` and `getThreshold()` do not answer). One key signs. There is no multisig and no on-chain lock or vesting contract.
+  - Balance: exactly 5,000,000 at Ethereum block 26,441,359.
+  - The lock is a legal undertaking only, so the key can move the tokens and the rule counts them in.
+- **Morpho, the relock (110.7M, modelled): stays out.** Findings: no wallet or contract is published for the relock; MORPHO has no staking; none of the disclosed Morpho wallets is staked or in a yield position (read 2026-11-17). No wallet and no earning evidence was found, so nothing changes.
+- **Sky.** The accrued converter fee `take()` (39,982,641.85) and the SKY backing the Pause Proxy's 49.56 MKR (1,189,410) are in circulating and off the float. The fee on unconverted non-issuer MKR (99,138,086.35) stays out. Both new legs are computed from series already stored: take = the converter's SKY − MKR outstanding × 24,000 (39,982,659 against the direct read, a 17 SKY difference from the two decimals of the MKR supply); issuer backing = the Pause Proxy's MKR × 24,000.
+  - **The float answer.** The Round 8 text said Sky's float rises 41.2M. That was wrong: 41.17M is the rise of circulating. The same amount leaves the float on the same days, so the float does not move (5,880,380,760 before and after on the dumps).
+- **Dilution.** Scheduled vesting releases stay the unlock legs even where the wallet is now in circulating (option a). Every unlock figure above is unchanged.
+
+### The token-flow statement
+
+A release from a wallet counted in circulating no longer changes circulating; it dilutes the float. The statement for a rule project is: opening + minted + released from wallets still outside circulating − burned. Per project: Morpho keeps the relock's releases; Hyperliquid counts every staking reward; Maple counts mints to the DAO multisig when minted; Uniswap's 100,000,000 burn from the Timelock (2025-12-27) is a circulating burn. Not on the statement: the Sky conversion fee moving into `take()` (5% of the MKR converted).

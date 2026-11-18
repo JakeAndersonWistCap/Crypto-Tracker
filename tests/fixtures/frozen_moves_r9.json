@@ -234,6 +234,14 @@
 "why": "R9.2 (the rule, Jake 2026-11-17): Hyperliquid's team wallet 0x43e9abea… (238.25M, unvested but staked on 23 validators and earning) and Community Grants' spot (0.11M) are counted in circulating, off the free float — docs/r8_rule_audit.md §7; circulating about 301M -> about 540M, the float unchanged"
 }
 ],
+"audit|A1 Infrastructure|Notes": [
+{
+"date": "2026-11-18",
+"from": "DESTINATION RESOLVED: validators voted 27 Dec 2025, 85% of staked weight in favour, to formally recognise all Assistance Fund HYPE — past and future — as permanently burned. Independently corroborated by an SEC-filed exhibit from Hyperliquid Strategies Inc dated 7 May 2026. Lifetime burned (the Assistance Fund's HYPE, HyperCore info API spotClearinghouseState of 0xfefe…fefe): 47,590,997.04 on 2026-09-30 and 48,145,239.17 on 2026-10-20 09:02 UTC, c.4.81% of the 1bn max supply (G8 1: replaces an unsourced \"48.42m as of 6 Sep 2026\" that exceeded every later read). Assistance Fund absorbs 99% of net protocol fees (historical range 97-99%). Own L1 + HyperEVM hence the 1 block. SECOND REVENUE LEG: AQAv2 from 26 Aug 2026 accrues c.90% of cost-adjusted reserve yield on platform USDC, first payment due 3 Oct 2026 — accruing but NOT yet booked.",
+"to": "DESTINATION RESOLVED: validators voted 27 Dec 2025 (DATE UNVERIFIED: secondary reports put the vote's close on 24 Dec; no primary post could be read — config.HL_VOTE_DATE), 85% of staked weight in favour, to formally recognise all Assistance Fund HYPE — past and future — as permanently burned. Independently corroborated by an SEC-filed exhibit from Hyperliquid Strategies Inc dated 7 May 2026. Lifetime burned (the Assistance Fund's HYPE, HyperCore info API spotClearinghouseState of 0xfefe…fefe): 47,590,997.04 on 2026-09-30 and 48,145,239.17 on 2026-10-20 09:02 UTC, c.4.81% of the 1bn max supply (G8 1: replaces an unsourced \"48.42m as of 6 Sep 2026\" that exceeded every later read). Assistance Fund absorbs 99% of net protocol fees (historical range 97-99%). Own L1 + HyperEVM hence the 1 block. SECOND REVENUE LEG: AQAv2 from 26 Aug 2026 accrues c.90% of cost-adjusted reserve yield on platform USDC, first payment due 3 Oct 2026 — accruing but NOT yet booked.",
+"why": "R9.5b (Jake 2026-11-17): the vote date is labelled UNVERIFIED in the project's notes (no primary post could be read)"
+}
+],
 "audit|A1 Infrastructure|Resulting float = circulating − staked inside circulating": [
 {
 "date": "2026-11-18",
@@ -322,6 +330,14 @@
 "why": "R9.2 (the rule, Jake 2026-11-17): Hyperliquid's team wallet 0x43e9abea… (238.25M, unvested but staked on 23 validators and earning) and Community Grants' spot (0.11M) are counted in circulating, off the free float — docs/r8_rule_audit.md §7; circulating about 301M -> about 540M, the float unchanged"
 }
 ],
+"audit|A3 Revenue Buyback|Notes": [
+{
+"date": "2026-11-18",
+"from": "DESTINATION RESOLVED: validators voted 27 Dec 2025, 85% of staked weight in favour, to formally recognise all Assistance Fund HYPE — past and future — as permanently burned. Independently corroborated by an SEC-filed exhibit from Hyperliquid Strategies Inc dated 7 May 2026. Lifetime burned (the Assistance Fund's HYPE, HyperCore info API spotClearinghouseState of 0xfefe…fefe): 47,590,997.04 on 2026-09-30 and 48,145,239.17 on 2026-10-20 09:02 UTC, c.4.81% of the 1bn max supply (G8 1: replaces an unsourced \"48.42m as of 6 Sep 2026\" that exceeded every later read). Assistance Fund absorbs 99% of net protocol fees (historical range 97-99%). Own L1 + HyperEVM hence the 1 block. SECOND REVENUE LEG: AQAv2 from 26 Aug 2026 accrues c.90% of cost-adjusted reserve yield on platform USDC, first payment due 3 Oct 2026 — accruing but NOT yet booked.; Historical range 97-99%; current stated figure 99%.",
+"to": "DESTINATION RESOLVED: validators voted 27 Dec 2025 (DATE UNVERIFIED: secondary reports put the vote's close on 24 Dec; no primary post could be read — config.HL_VOTE_DATE), 85% of staked weight in favour, to formally recognise all Assistance Fund HYPE — past and future — as permanently burned. Independently corroborated by an SEC-filed exhibit from Hyperliquid Strategies Inc dated 7 May 2026. Lifetime burned (the Assistance Fund's HYPE, HyperCore info API spotClearinghouseState of 0xfefe…fefe): 47,590,997.04 on 2026-09-30 and 48,145,239.17 on 2026-10-20 09:02 UTC, c.4.81% of the 1bn max supply (G8 1: replaces an unsourced \"48.42m as of 6 Sep 2026\" that exceeded every later read). Assistance Fund absorbs 99% of net protocol fees (historical range 97-99%). Own L1 + HyperEVM hence the 1 block. SECOND REVENUE LEG: AQAv2 from 26 Aug 2026 accrues c.90% of cost-adjusted reserve yield on platform USDC, first payment due 3 Oct 2026 — accruing but NOT yet booked.; Historical range 97-99%; current stated figure 99%.",
+"why": "R9.5b (Jake 2026-11-17): the vote date is labelled UNVERIFIED in the project's notes (no primary post could be read)"
+}
+],
 "audit|A4 Permanent Burn|Circulating supply (used, tokens)": [
 {
 "date": "2026-11-18",
@@ -352,6 +368,14 @@
 "from": 24425467400.0,
 "to": 43702446000.0,
 "why": "R9.2 (the rule, Jake 2026-11-17): Hyperliquid's team wallet 0x43e9abea… (238.25M, unvested but staked on 23 validators and earning) and Community Grants' spot (0.11M) are counted in circulating, off the free float — docs/r8_rule_audit.md §7; circulating about 301M -> about 540M, the float unchanged"
+}
+],
+"audit|A4 Permanent Burn|Notes": [
+{
+"date": "2026-11-18",
+"from": "DESTINATION RESOLVED: validators voted 27 Dec 2025, 85% of staked weight in favour, to formally recognise all Assistance Fund HYPE — past and future — as permanently burned. Independently corroborated by an SEC-filed exhibit from Hyperliquid Strategies Inc dated 7 May 2026. Lifetime burned (the Assistance Fund's HYPE, HyperCore info API spotClearinghouseState of 0xfefe…fefe): 47,590,997.04 on 2026-09-30 and 48,145,239.17 on 2026-10-20 09:02 UTC, c.4.81% of the 1bn max supply (G8 1: replaces an unsourced \"48.42m as of 6 Sep 2026\" that exceeded every later read). Assistance Fund absorbs 99% of net protocol fees (historical range 97-99%). Own L1 + HyperEVM hence the 1 block. SECOND REVENUE LEG: AQAv2 from 26 Aug 2026 accrues c.90% of cost-adjusted reserve yield on platform USDC, first payment due 3 Oct 2026 — accruing but NOT yet booked.",
+"to": "DESTINATION RESOLVED: validators voted 27 Dec 2025 (DATE UNVERIFIED: secondary reports put the vote's close on 24 Dec; no primary post could be read — config.HL_VOTE_DATE), 85% of staked weight in favour, to formally recognise all Assistance Fund HYPE — past and future — as permanently burned. Independently corroborated by an SEC-filed exhibit from Hyperliquid Strategies Inc dated 7 May 2026. Lifetime burned (the Assistance Fund's HYPE, HyperCore info API spotClearinghouseState of 0xfefe…fefe): 47,590,997.04 on 2026-09-30 and 48,145,239.17 on 2026-10-20 09:02 UTC, c.4.81% of the 1bn max supply (G8 1: replaces an unsourced \"48.42m as of 6 Sep 2026\" that exceeded every later read). Assistance Fund absorbs 99% of net protocol fees (historical range 97-99%). Own L1 + HyperEVM hence the 1 block. SECOND REVENUE LEG: AQAv2 from 26 Aug 2026 accrues c.90% of cost-adjusted reserve yield on platform USDC, first payment due 3 Oct 2026 — accruing but NOT yet booked.",
+"why": "R9.5b (Jake 2026-11-17): the vote date is labelled UNVERIFIED in the project's notes (no primary post could be read)"
 }
 ],
 "audit|A4 Permanent Burn|PERMANENT BURN YIELD = burn as % of supply (annualised, tokens)": [
@@ -552,6 +576,14 @@
 "from": 24425467400.0,
 "to": 43702446000.0,
 "why": "R9.2 (the rule, Jake 2026-11-17): Hyperliquid's team wallet 0x43e9abea… (238.25M, unvested but staked on 23 validators and earning) and Community Grants' spot (0.11M) are counted in circulating, off the free float — docs/r8_rule_audit.md §7; circulating about 301M -> about 540M, the float unchanged"
+}
+],
+"audit|Master|Notes": [
+{
+"date": "2026-11-18",
+"from": "DESTINATION RESOLVED: validators voted 27 Dec 2025, 85% of staked weight in favour, to formally recognise all Assistance Fund HYPE — past and future — as permanently burned. Independently corroborated by an SEC-filed exhibit from Hyperliquid Strategies Inc dated 7 May 2026. Lifetime burned (the Assistance Fund's HYPE, HyperCore info API spotClearinghouseState of 0xfefe…fefe): 47,590,997.04 on 2026-09-30 and 48,145,239.17 on 2026-10-20 09:02 UTC, c.4.81% of the 1bn max supply (G8 1: replaces an unsourced \"48.42m as of 6 Sep 2026\" that exceeded every later read). Assistance Fund absorbs 99% of net protocol fees (historical range 97-99%). Own L1 + HyperEVM hence the 1 block. SECOND REVENUE LEG: AQAv2 from 26 Aug 2026 accrues c.90% of cost-adjusted reserve yield on platform USDC, first payment due 3 Oct 2026 — accruing but NOT yet booked.",
+"to": "DESTINATION RESOLVED: validators voted 27 Dec 2025 (DATE UNVERIFIED: secondary reports put the vote's close on 24 Dec; no primary post could be read — config.HL_VOTE_DATE), 85% of staked weight in favour, to formally recognise all Assistance Fund HYPE — past and future — as permanently burned. Independently corroborated by an SEC-filed exhibit from Hyperliquid Strategies Inc dated 7 May 2026. Lifetime burned (the Assistance Fund's HYPE, HyperCore info API spotClearinghouseState of 0xfefe…fefe): 47,590,997.04 on 2026-09-30 and 48,145,239.17 on 2026-10-20 09:02 UTC, c.4.81% of the 1bn max supply (G8 1: replaces an unsourced \"48.42m as of 6 Sep 2026\" that exceeded every later read). Assistance Fund absorbs 99% of net protocol fees (historical range 97-99%). Own L1 + HyperEVM hence the 1 block. SECOND REVENUE LEG: AQAv2 from 26 Aug 2026 accrues c.90% of cost-adjusted reserve yield on platform USDC, first payment due 3 Oct 2026 — accruing but NOT yet booked.",
+"why": "R9.5b (Jake 2026-11-17): the vote date is labelled UNVERIFIED in the project's notes (no primary post could be read)"
 }
 ],
 "audit|Master|Turnover = 30d volume ÷ market cap (x)": [

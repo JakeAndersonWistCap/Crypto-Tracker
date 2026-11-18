@@ -193,9 +193,15 @@ def test_flow_statements_mark_every_residual_beyond_half_a_percent(built):
             assert status[q] and str(status[q]).split(" ")[0] in ("OK", "CHECK", "n/a"), (project, q, status[q])
         # releases (from issuer wallets, from the other issuer wallets, or by the published schedule — F1) and returns
         # are never negative
+        # R9.2: a project on the rule has no release / return line for wallets inside circulating — its statement is
+        # what is minted, what comes from outside and what is burned; those lines are never negative either
+        import config
+        on_rule = project in config.RULE_IN
         legs = [r for r in rows if r["Statement"] == "Token flow"
-                and r["Line"].startswith(("+ released", "+ scheduled", "− returned"))]
+                and r["Line"].startswith(("+ ", "− ") if on_rule else ("+ released", "+ scheduled", "− returned"))]
         assert legs, project
+        if on_rule:
+            assert not any(r["Line"].startswith(("+ released from issuer wallets", "− returned")) for r in legs), project
         for rel in legs:
             for q in ("Q0", "Q-1", "Q-2", "Q-3", "Q-4"):
                 assert rel[q] is None or rel[q] >= 0, (project, rel["Line"], q, rel[q])

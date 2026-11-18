@@ -289,3 +289,141 @@ def test_2_sky_references_are_inside_two_percent_and_named():
         ref, legs = spec["references"][key]
         assert abs(ref / spec["circulating"][1] - 1) < 0.02
         assert ref + sum(legs.values()) == pytest.approx(spec["circulating"][1], rel=0.001), key
+
+
+# ============================================================================= 4: Aerodrome's S13 lines, on chain
+def _aero_epoch_groups(issuer=10_000.0, dl_days=7, with_issuer=True):
+    e = "2026-10-29"
+    days = pd.date_range(e, periods=dl_days)
+    g = {("Aerodrome", "voter_rewards_onchain_fees_usd"): _g("Aerodrome", "voter_rewards_onchain_fees_usd", [(e, 1_500_000.0)]),
+         ("Aerodrome", "voter_rewards_onchain_bribes_usd"): _g("Aerodrome", "voter_rewards_onchain_bribes_usd", [(e, 200_000.0)]),
+         ("Aerodrome", "fees_usd"): _g("Aerodrome", "fees_usd", [(d, 320_000.0) for d in days]),
+         ("Aerodrome", "revenue_usd"): _g("Aerodrome", "revenue_usd", [(d, 250_000.0) for d in days]),
+         ("Aerodrome", "holders_revenue_usd"): _g("Aerodrome", "holders_revenue_usd", [(d, 240_000.0) for d in days]),
+         ("Aerodrome", "filing_managed_lock_tokens"): _g("Aerodrome", "filing_managed_lock_tokens", [(e, 466.7)]),
+         ("Aerodrome", "locked_tokens"): _g("Aerodrome", "locked_tokens", [(e, 1000.0)])}
+    if with_issuer:
+        g[("Aerodrome", "voter_rewards_onchain_bribes_issuer_usd")] = _g(
+            "Aerodrome", "voter_rewards_onchain_bribes_issuer_usd", [(e, issuer)])
+    return g, pd.Timestamp(e)
+
+
+def test_4_the_lines_come_from_the_onchain_epoch_with_issuer_incentives_out_and_stay_ordered():
+    g, e = _aero_epoch_groups()
+    bw._s13_views(g)
+    v = lambda m: g[("Aerodrome", m)].set_index("date")["value"][e]  # noqa: E731
+    hold, rev, fees = v("s13_holder_revenue_usd"), v("s13_revenue_usd"), v("s13_fees_usd")
+    assert hold == pytest.approx(1_500_000 + 200_000 - 10_000)             # third-party incentives only
+    assert rev == pytest.approx(hold + 7 * (250_000 - 240_000))            # + fees locked in dead gauges
+    assert fees == pytest.approx(rev + 7 * (320_000 - 250_000))            # + what unstaked LPs keep, measured
+    assert fees >= rev >= hold
+    assert v("s13_issuer_incentives_usd") == 10_000.0                      # the Foundation-funded amount is reported
+    assert v("s13_holder_revenue_insider_usd") == pytest.approx(hold * 0.4667)   # gross line, insider part beside it
+    # the cross-check covers the same days: DefiLlama summed over the epoch's 7 days
+    assert v("s13_holder_revenue_defillama_usd") == 7 * 240_000.0 and v("s13_fees_defillama_usd") == 7 * 320_000.0
+    assert bw.S13_STATE["Aerodrome"]["days"] == 7
+
+
+def test_4_no_line_forms_where_the_issuer_split_or_the_crosscheck_days_are_missing():
+    g, _e = _aero_epoch_groups(with_issuer=False)       # a legacy epoch: the incentives' funder was never read
+    bw._s13_views(g)
+    assert ("Aerodrome", "s13_fees_usd") not in g and "no rows stored" in bw.S13_STATE["Aerodrome"]["why"]
+    assert "NOT FORMED" in bw.s13_note({"name": "Aerodrome"})
+    g, _e = _aero_epoch_groups(dl_days=6)               # DefiLlama holds 6 of the epoch's 7 days: not a covered epoch
+    bw._s13_views(g)
+    assert ("Aerodrome", "s13_holder_revenue_usd") not in g
+
+
+def test_4_issuer_created_incentives_are_prorated_like_every_programme():
+    from fetch.aero_v3 import WAD, epoch_issuer_incentives
+    start, end = 1_000_000, 1_000_000 + 604_800
+    tge = config.aero_issuer_incentive_creators()[0]
+    rate = 5 * WAD                                                          # 5 raw units a second
+    progs = [("0xAA", 0, rate, start - 100, start + 1000, tge.upper().replace("0X", "0x")),   # overlap 1,000 s
+             ("0xAA", 0, rate, start, end, "0x" + "9" * 40),                                  # a third party
+             ("0xBB", 0, rate, end, end + 50, tge)]                                           # after the epoch
+    assert epoch_issuer_incentives(progs, start, end, set(config.aero_issuer_incentive_creators())) == {"0xaa": 5_000}
+    assert "0x7269de76188e6597444d0859c4e5c336d3c39ddb" in config.aero_issuer_incentive_creators()
+
+
+# ============================================================================= 5: Hyperliquid, the same covered days
+def test_5_holder_revenue_and_revenue_are_read_over_the_days_both_hold_never_capped():
+    days = pd.date_range("2026-08-01", "2026-10-29")                        # 90 days
+    hv = [(d, 3.0) for d in days]                                           # the Fund's buybacks: every day
+    rv = [(d, 2.0) for d in days[:-1]]                                      # revenue: the last day is a read lag
+    g = {("Hyperliquid", "holder_value_revenue_usd"): _g("Hyperliquid", "holder_value_revenue_usd", hv),
+         ("Hyperliquid", "revenue_total_usd"): _g("Hyperliquid", "revenue_total_usd", rv)}
+    bw._s13_views(g)
+    h = g[("Hyperliquid", "holder_value_revenue_usd_s13d")]
+    r = g[("Hyperliquid", "revenue_total_usd_s13d")]
+    assert len(h) == len(r) == 89 and set(h["date"]) == set(r["date"])
+    assert h["value"].sum() == 267.0 > r["value"].sum() == 178.0            # above revenue on the same days: not capped
+    assert bw.s13_metric("Hyperliquid", "holder_revenue") == "holder_value_revenue_usd_s13d"
+    assert bw.s13_metric("Hyperliquid", "fees") == "fees_usd"               # a line not compared keeps its own days
+    assert "2026-10-28" in bw.s13_note({"name": "Hyperliquid"})
+
+
+def test_5_a_quiet_day_inside_an_event_series_drops_nothing_from_the_other_line():
+    days = pd.date_range("2026-08-01", "2026-10-29")
+    g = {("Hyperliquid", "holder_value_revenue_usd"): _g("Hyperliquid", "holder_value_revenue_usd",
+                                                         [(d, 9.0) for d in days[::3]]),      # a row every third day
+         ("Hyperliquid", "revenue_total_usd"): _g("Hyperliquid", "revenue_total_usd", [(d, 2.0) for d in days])}
+    bw._s13_views(g)
+    last = days[::3][-1]
+    r = g[("Hyperliquid", "revenue_total_usd_s13d")]
+    assert pd.to_datetime(r["date"]).max() == last and len(r) == (last - days[0]).days + 1    # only the end is cut
+
+
+def test_5b_the_vote_date_is_kept_and_labelled_unverified_without_a_primary_post():
+    v = config.HL_VOTE_DATE
+    assert v["in_use"] == "2025-12-27" and v["status"] == "UNVERIFIED" and "primary" in v["rule"]
+    assert "DATE UNVERIFIED" in config.PROJECT_BY_NAME["Hyperliquid"]["notes"]
+
+
+# ============================================================================= 3: unlock legs under the rule
+def test_3_every_rule_project_keeps_its_unlock_leg_on_its_vesting_stocks():
+    """Jake's dilution decision (a): scheduled vesting releases count as float dilution even when the wallet is in
+    circulating — so moving a wallet in never empties the unlock leg."""
+    for name in ("Hyperliquid", "Morpho", "Uniswap", "Fluid", "Maple", "Pendle"):
+        assert config.has_unlock_leg(name), name
+        moved = set(config.rule_in_legs(name))
+        assert moved & set(config.UNLOCK_STOCKS[name]) or name == "Morpho", name    # the moved wallets still feed it
+    assert config.has_unlock_leg("Aerodrome") and "Aerodrome" in config.UNLOCK_DECLARED_ZERO   # a genuine zero reads 0
+    assert not config.UNLOCK_STOCKS.get("Sky")                 # Sky has no vesting wallet set: n/a with its reason, as before
+
+
+def test_2_circ_legs_names_a_rule_leg_as_in_circulating_not_subtracted():
+    import circ_legs
+    roles = dict(circ_legs.legs("Fluid"))
+    assert roles["noncirculating_igp137_tokens"].startswith("in circulating by the rule")
+    assert dict(circ_legs.legs("Morpho"))["morpho_relocked_tokens"] == "subtract"       # the relock stays out
+    assert dict(circ_legs.legs("Sky"))["sky_converter_take_tokens"] == "add"
+
+
+def test_2_an_addback_switch_in_force_adds_nothing_under_the_rule_and_leaves_the_float_once(monkeypatch):
+    """Pendle on Jake's store (the switch in force): the Team multisig + fee wallet (7.75M) are inside the wallet set the
+    rule counts in — circulating is the total (it read total + 7.75M), and the float loses the set once."""
+    monkeypatch.setattr(bw, "scoped_projects", lambda: [config.PROJECT_BY_NAME["Pendle"]])
+    spec = config.circulating_onchain("Pendle")
+    swc = spec["subtract_when_complete"]
+    keep = {k: swc.get(k) for k in ("in_force", "state")}
+    days = [d for d in pd.date_range("2026-11-01", "2026-11-16")]
+    mk = lambda m, v, src="chain": _g("Pendle", m, [(d, v) for d in days], src)  # noqa: E731
+    monkeypatch.setattr(bw, "_swc_leg", lambda groups, name, metric, s: bw._daily(groups.get((name, metric))))
+    monkeypatch.setattr("fetch.archive.catch_up_window_days", lambda: 10)
+    g = {("Pendle", "total_supply"): mk("total_supply", 281_527_448.0),
+         ("Pendle", "treasury_holding_tokens"): mk("treasury_holding_tokens", 0.0),
+         ("Pendle", "noncirculating_holding_tokens"): mk("noncirculating_holding_tokens", 43_620_000.0),
+         ("Pendle", "pendle_released_held_tokens"): mk("pendle_released_held_tokens", 7_750_000.0)}
+    try:
+        bw._circulating_views(g)
+        assert swc["in_force"] is True
+        circ = g[("Pendle", "circulating_supply_onchain")]
+        assert set(circ["value"]) == {281_527_448.0}                        # the total: nothing added back
+        assert "inside the set the rule counts in" in circ["source"].iloc[-1]
+        bw._rule_in_views(g)
+        off = g[("Pendle", "rule_in_off_float_tokens")]["value"].iloc[-1]
+        own = g[("Pendle", config.FLOAT_RELEASED_HELD["Pendle"]["metric"])]["value"].iloc[-1]
+        assert off + own == pytest.approx(43_620_000.0)                     # the whole set leaves the float, once
+    finally:
+        swc.update(keep)

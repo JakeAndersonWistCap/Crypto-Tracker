@@ -25,7 +25,10 @@ def legs(project: str) -> list[tuple[str, str]]:
     # line "total_supply 0 of 450" named a series its circulating never reads)
     first = spec.get("metric") if spec.get("status") == "first_party" and not spec.get("total") else None
     out = [(first, "first-party figure")] if first else [(spec.get("total", "total_supply"), "total")]
-    out += [(m, "subtract") for m in spec.get("subtract") or ()]
+    # R9.2: a leg the rule counts IN circulating is not subtracted — it comes off the free float instead
+    rule_in = set(config.rule_in_legs(project))
+    out += [(m, "in circulating by the rule, off the float" if m in rule_in else "subtract")
+            for m in spec.get("subtract") or ()]
     out += [(m, "add") for m in spec.get("add") or ()]
     swc = spec.get("subtract_when_complete") or {}
     if swc:

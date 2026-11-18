@@ -1639,6 +1639,104 @@ def _lag_matched_views(groups: dict, asof) -> None:
             LAG_MATCH[name]["cut"].add(m)
 
 
+S13_STATE: dict = {}     # project -> what the last build's S13 views cover (R9.4 / R9.5)
+
+
+def _s13_views(groups: dict) -> None:
+    """R9.4 / R9.5 — the three revenue lines on THE SAME COVERED DAYS.
+    (1) config.S13_ONCHAIN (Aerodrome): the lines' source of record is the on-chain voter-epoch read. One row per
+        epoch (its start day), only for an epoch whose fees, incentives and issuer-created incentives were all read and
+        whose 7 days DefiLlama holds in full:
+            HOLDER REVENUE = fees to voters + incentives − incentives an issuer wallet created (gross of the insider share)
+            REVENUE        = HOLDER REVENUE + (DefiLlama revenue − holders revenue) on those days (fees in dead gauges)
+            FEES           = REVENUE + (DefiLlama fees − revenue) on those days (what unstaked LPs keep — measured)
+        and DefiLlama's own three figures summed over the same epochs beside them (the cross-check).
+    (2) config.S13_SAME_DAYS (Hyperliquid): each listed line read to the last day every listed line holds — two
+        lines are compared over the same days, never capped."""
+    S13_STATE.clear()
+    for name, spec in config.S13_ONCHAIN.items():
+        on = {k: _daily(groups.get((name, spec[k]))) for k in ("fees", "incentives", "issuer_incentives")}
+        dl = {k: _daily(groups.get((name, spec["defillama"][k]))) for k in ("fees", "revenue", "holder_revenue")}
+        S13_STATE[name] = {"epochs": 0, "days": 0, "why": ""}
+        if any(s.empty for s in on.values()):
+            S13_STATE[name]["why"] = ("no epoch holds all three on-chain reads yet (" + ", ".join(
+                spec[k] for k, s in on.items() if s.empty) + ": no rows stored)")
+            continue
+        if any(s.empty for s in dl.values()):
+            S13_STATE[name]["why"] = "DefiLlama's three series are not stored"
+            continue
+        rows = []
+        for e in on["fees"].index.intersection(on["incentives"].index).intersection(on["issuer_incentives"].index):
+            days = pd.date_range(e, periods=int(spec["epoch_days"]))
+            if not all(len(s.reindex(days).dropna()) == len(days) for s in dl.values()):
+                continue                                   # the cross-check does not cover the epoch: not a covered day
+            d = {k: float(s.reindex(days).sum()) for k, s in dl.items()}
+            hold = float(on["fees"][e] + on["incentives"][e] - on["issuer_incentives"][e])
+            rev = hold + (d["revenue"] - d["holder_revenue"])
+            rows.append((e, {"holder_revenue": hold, "revenue": rev, "fees": rev + (d["fees"] - d["revenue"]),
+                             "issuer": float(on["issuer_incentives"][e]), "dl_fees": d["fees"],
+                             "dl_revenue": d["revenue"], "dl_holder_revenue": d["holder_revenue"]}))
+        if not rows:
+            S13_STATE[name]["why"] = "no on-chain epoch whose 7 days DefiLlama also holds in full"
+            continue
+        cols = groups[(name, spec["fees"])].columns
+        ins_n, ins_d = (_daily(groups.get((name, m))) for m in spec["insider_share"])
+        for key, metric in spec["views"].items():
+            if key == "insider":
+                vals = [(e, r["holder_revenue"] * ins_n[e] / ins_d[e]) for e, r in rows
+                        if e in ins_n.index and e in ins_d.index and ins_d[e] > 0]
+            else:
+                vals = [(e, r[key]) for e, r in rows]
+            if not vals:
+                continue
+            groups[(name, metric)] = _as_stored(pd.DataFrame(
+                {"date": [e for e, _v in vals], "project": name, "metric": metric, "value": [v for _e, v in vals],
+                 "tier": 2, "source": f"derived:s13_epoch[{key}: {spec['epoch_days']} days from each stored on-chain epoch]"}),
+                cols)
+        S13_STATE[name].update(epochs=len(rows), days=len(rows) * int(spec["epoch_days"]),
+                               first=str(rows[0][0].date()), last=str(rows[-1][0].date()))
+    for name, roles in config.S13_SAME_DAYS.items():
+        split = config.REVENUE_SPLIT.get(name) or {}
+        ms = [split[r]["metric"] for r in roles if r in split]
+        gs = [groups.get((name, m)) for m in ms]
+        if len(ms) < 2 or any(g is None or g.empty for g in gs):
+            continue
+        # the lines differ by a READ LAG at the end (revenue's last day arrives a day later than the Fund's buybacks):
+        # each is read to the last day ALL of them hold. Days inside are left as stored — an event series (a buyback
+        # row per read) has no row on a quiet day, and dropping the other line's days there would understate it
+        last = min(pd.to_datetime(g["date"]).dt.normalize().max() for g in gs)
+        for m, g in zip(ms, gs):
+            keep = g[pd.to_datetime(g["date"]).dt.normalize() <= last]
+            if keep.empty:
+                continue
+            groups[(name, f"{m}_s13d")] = _as_stored(keep.assign(
+                metric=f"{m}_s13d", source=keep["source"].astype(str) + f"[to {last.date()}: the last day every S13 "
+                                                                         f"line compared holds]"), g.columns)
+        S13_STATE[name] = {"same_days": tuple(ms), "last": str(last.date())}
+
+
+def s13_metric(name: str, role: str) -> str | None:
+    """The series an S13 line's cell reads: the line's metric, or its same-covered-days view where this build made one."""
+    m = (config.revenue_split(name) or {}).get(role, {}).get("metric")
+    return f"{m}_s13d" if m and m in (S13_STATE.get(name) or {}).get("same_days", ()) else m
+
+
+def s13_note(p: dict) -> str:
+    st, name = S13_STATE.get(p["name"]) or {}, p["name"]
+    if name in config.S13_ONCHAIN:
+        if not st.get("epochs"):
+            return ("S13 SOURCE OF RECORD (R9.4): the on-chain voter-epoch read — NOT FORMED: " + (st.get("why") or "")
+                    + ". DefiLlama's figure is the cross-check, never the fill")
+        return (f"S13 SOURCE OF RECORD (R9.4): the on-chain voter-epoch read, {st['epochs']} epoch(s) = {st['days']} "
+                f"day(s) ({st['first']} to the week of {st['last']}); a 90-day cell is the sum over the epochs stored "
+                f"in it, not 90 days unless every epoch is stored. Incentives created by an issuer wallet are out. "
+                f"DefiLlama's figures on the same days are stored beside it (the cross-check)")
+    if st.get("same_days"):
+        return (f"SAME COVERED DAYS (R9.5): {' and '.join(st['same_days'])} are each read to {st['last']}, the last "
+                f"day both hold (a read lag at the end is not a difference) — compared like with like, never capped")
+    return ""
+
+
 def lag_matched(p: dict, m: str) -> str:
     """R5.3: the follow series a lag-matched cell reads (`<m>_lagm`) where this build matched the project's window."""
     st = LAG_MATCH.get(p["name"]) or {}
@@ -4211,6 +4309,12 @@ def _derived_leg_views(groups: dict) -> None:
                  "source": "derived:leg[" + " ".join(f"{k:+g}x{m}" for m, k in terms) + "]"}), cols)
 
 
+def _rule_addback_inside(name: str, swc: dict | None) -> bool:
+    """R9.2: the project is on the rule and its switch is an add-back IN FORCE — the added-back wallets are already
+    inside the set the rule counts in circulating (so they are not added again, and they leave the float once)."""
+    return bool(swc) and name in config.RULE_IN and swc.get("sign") == 1 and bool(swc.get("in_force"))
+
+
 def _circulating_views(groups: dict) -> None:
     """circulating_supply_onchain := on-chain total − the documented non-circulating set, per day
     (M, Jake 2026-09-30; fetch/circulating.py). Only days where every input was read."""
@@ -4235,7 +4339,14 @@ def _circulating_views(groups: dict) -> None:
         tag = circ_mod.SOURCE + ("" if spec["status"] == "established" else "[PARTIAL set]")
         swc = spec.get("subtract_when_complete")
         if swc:
+            s0 = s
             s, tag = _subtract_when_complete(groups, name, s, tag, swc)
+            if _rule_addback_inside(name, swc):
+                # R9.2: an ADD-BACK switch (Pendle's released wallets, Maple's SSF Safe) puts back a part of the wallet
+                # set that circulating subtracted. Under the rule the whole set is counted in, so nothing is added
+                # back — the switch keeps its state (every other reader of it follows it) and its days
+                s = s0.reindex(s.index).dropna()
+                tag = tag.replace(f"[+ {swc['metric']}]", f"[{swc['metric']}: inside the set the rule counts in]")
             rule_swc = (config.RULE_IN.get(name) or {}).get("swc_leg")
             if rule_swc == swc.get("metric") and swc.get("in_force") and swc.get("sign") != 1:
                 # R9.2: a switched-on subtraction the rule counts IN circulating is added back on the same days (the
@@ -6790,6 +6901,7 @@ def aggregate(long: pd.DataFrame, fetch_status: pd.DataFrame, asof: pd.Timestamp
     _daily_twin_views(groups, asof)   # G11 D3: a "daily" series that IS its monthly twin in every window is dropped
     _LAST_GROUPS.clear()
     _subsidy_common_views(groups, asof)   # G13 6: subsidy cover over the days every leg covers once (b) is complete
+    _s13_views(groups)                    # R9.4 / R9.5: the three revenue lines on the same covered days
     _lag_matched_views(groups, asof)      # R5.3: a declared publish lag — the follow series cut at the lead's last day
     _LAST_GROUPS.update(groups)       # the views, for Credibility rows that read them (credibility.VIEWS_LONG)
     _market_share_mean_views(groups)  # PR1.U4: market share's 30- / 60-day means (config.MARKET_SHARE_MEAN)
@@ -12191,14 +12303,14 @@ def _revenue_line_cols(R: Refs) -> list[tuple]:
             split = config.revenue_split(p["name"])
             if not split:
                 return config.not_yet_split_text(p["name"])
-            return pull(R.D(r, split[role]["metric"], "q0"))
+            return pull(R.D(r, s13_metric(p["name"], role), "q0"))
         return build
 
     def share(r, p):
         split = config.revenue_split(p["name"])
         if not split:
             return config.not_yet_split_text(p["name"])
-        hv, rv = split["holder_revenue"]["metric"], split["revenue"]["metric"]
+        hv, rv = s13_metric(p["name"], "holder_revenue"), s13_metric(p["name"], "revenue")
         rv = lag_matched(p, rv)          # R5.3: the holder revenue stops at a declared publish lag (Pendle)
         f = _coverage_guard(R, r, [("holder revenue", hv, "q0"), ("revenue", rv, "q0")],
                             f"{_flow_rate(R, r, hv)}/{_flow_rate(R, r, rv)}")
@@ -12217,13 +12329,16 @@ def _revenue_line_cols(R: Refs) -> list[tuple]:
         above = _payout_above(p["name"])
         lag = lag_matched_note(p)
         return (f"HOLDER SHARE (PR1.S13) = holder revenue ÷ revenue: {split['holder_share']['route']}."
-                + (f" {above}" if above else "") + (f"\n\n{lag}" if lag else ""))
+                + (f" {above}" if above else "") + (f"\n\n{lag}" if lag else "")
+                + (f"\n\n{s13_note(p)}" if s13_note(p) else ""))
 
-    def mf(role):
-        return lambda n: (config.revenue_split(n) or {}).get(role, {}).get("metric")
-    return [(CP_FEES_LINE_HEAD, line("fees"), FMT_USD, "pull", False, {"metric_fn": mf("fees")}),
-            (CP_REV_LINE_HEAD, line("revenue"), FMT_USD, "pull", False, {"metric_fn": mf("revenue")}),
-            (CP_HREV_LINE_HEAD, line("holder_revenue"), FMT_USD, "pull", False, {"metric_fn": mf("holder_revenue")}),
+    def mf(role):                                      # R9.5: the same-covered-days view where one is built
+        return lambda n: s13_metric(n, role)
+    return [(CP_FEES_LINE_HEAD, line("fees"), FMT_USD, "pull", False, {"metric_fn": mf("fees"), "note_fn": s13_note}),
+            (CP_REV_LINE_HEAD, line("revenue"), FMT_USD, "pull", False,
+             {"metric_fn": mf("revenue"), "note_fn": s13_note}),
+            (CP_HREV_LINE_HEAD, line("holder_revenue"), FMT_USD, "pull", False,
+             {"metric_fn": mf("holder_revenue"), "note_fn": s13_note}),
             (CP_HSHARE_HEAD, share, FMT_PCT, "calc", False, {"note_fn": share_note})]
 
 
@@ -12370,9 +12485,16 @@ def _rule_in_views(groups: dict) -> None:
         idx = legs[0].index
         for s in legs[1:]:
             idx = idx.intersection(s.index)
+        less = None
+        if _rule_addback_inside(name, swc):
+            # the added-back wallets are inside the legs above and already leave the float through the project's own
+            # released-held / held-buyback term — taken out here so they leave it ONCE
+            less = _swc_leg(groups, name, swc["metric"], swc)
+            idx = idx.intersection(less.index)
+            names.append("−" + swc["metric"])
         if idx.empty:
             continue
-        tot = sum(s.reindex(idx) for s in legs)
+        tot = sum(s.reindex(idx) for s in legs) - (less.reindex(idx) if less is not None else 0.0)
         cols = next(g.columns for (n_, _m), g in groups.items() if n_ == name and g is not None and not g.empty)
         groups[(name, "rule_in_off_float_tokens")] = _as_stored(pd.DataFrame(
             {"date": idx, "project": name, "metric": "rule_in_off_float_tokens", "value": tot.values, "tier": 2,
@@ -12382,6 +12504,16 @@ def _rule_in_views(groups: dict) -> None:
 def _rule_in_term(R: Refs, r, p: dict) -> str | None:
     """R9.2: the rule's issuer-held stock inside circulating, now — out of every float (None where none is declared)."""
     return R.D(r, "rule_in_off_float_tokens", "now") if p["name"] in config.RULE_IN else None
+
+
+def _rule_addback_term(R: Refs, r, p: dict) -> str:
+    """R9.2: "+ the added-back wallets" for the insider share where an add-back switch is in force and no released-held
+    term of the project already carries them (Maple's SSF Safe: a held buyback — issuer-held, inside circulating)."""
+    swc = config.circulating_swc(p["name"])
+    if not _rule_addback_inside(p["name"], swc):
+        return ""
+    fr = config.float_released_held(p["name"]) or {}
+    return "" if fr.get("in_force_metric") == swc["metric"] else f"+{R.D(r, swc['metric'], 'now')}"
 
 
 def _released_held(R: Refs, r, p: dict) -> str | None:
@@ -13016,7 +13148,7 @@ def _cp_cols(R: Refs, data_by_key: dict) -> list[tuple]:
                        if p["name"] in config.INSIDER_INSIDE_CIRCULATING
                        # R9.2: the issuer-side stock the rule counts in circulating (+ the released issuer-held supply
                        # already inside it) ÷ circulating — never "0 by construction" once the rule moved wallets in
-                       else calc(f"({_released_held(R, r, p)})/({circ(r, p)})")
+                       else calc(f"({_released_held(R, r, p)}{_rule_addback_term(R, r, p)})/({circ(r, p)})")
                        if (p["name"] in config.RULE_IN and p["name"] not in config.CIRC_RELEASED_STAKED) else "=0" if (config.CIRCULATING_ONCHAIN.get(p["name"]) or {}).get("status") == "established"
                        and config.circulating_primary_metric(p["name"]) in ("circulating_supply_onchain",)
                        # R7.C1: the Foundation + Grants STAKE is insider-held and inside circulating (released)

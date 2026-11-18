@@ -210,6 +210,18 @@ def epoch_rewards(fee_logs: list, programs: list, start: int, end: int) -> dict:
     return out
 
 
+def epoch_issuer_incentives(programs: list, start: int, end: int, issuer: set) -> dict:
+    """R9.4: the part of an epoch's incentives CREATED BY AN ISSUER WALLET (IncentiveStreaming.incentive(id).creator in
+    `issuer`, lower-case addresses) — {token: raw amount}, each program's rate x its overlap with the epoch, the same
+    proration epoch_rewards uses. Foundation-funded incentives are not fees paid by users."""
+    out: dict = {}
+    for tok, _amount, rate, s, e, creator in programs:
+        ov = min(e, end) - max(s, start)
+        if ov > 0 and str(creator).lower() in issuer:
+            out[tok.lower()] = out.get(tok.lower(), 0) + rate * ov // WAD
+    return out
+
+
 def supply_once(new_total: float, reserve: float, velo_held: float, new_noncirc: float, old_total: float,
                 old_noncirc: float, old_held: float, ratio: float) -> dict:
     """EACH AERO ONCE ACROSS THE MIGRATION (round G2, D5; dromos-labs/metadex-public@0058bd9b). New AERO pre-mints the
@@ -924,8 +936,9 @@ class AeroV3:
             progs = self._programs(mgrs) if mgrs else []
             amounts = epoch_rewards(fees, progs, start, end)
             px = self.prices(sorted(set(amounts) | {a["token"]}), end)
-            fee_usd = bribe_usd = 0.0
+            fee_usd = bribe_usd = issuer_usd = 0.0
             unpriced = 0
+            own = epoch_issuer_incentives(progs, start, end, set(config.aero_issuer_incentive_creators()))
             for tok, (f, i) in amounts.items():
                 if tok not in px:
                     unpriced += 1
@@ -933,11 +946,14 @@ class AeroV3:
                 p, dec = px[tok]
                 fee_usd += f / 10 ** dec * p
                 bribe_usd += i / 10 ** dec * p
+                issuer_usd += own.get(tok, 0) / 10 ** dec * p
             when = pd.Timestamp(start, unit="s").normalize()
             src = f"{SOURCE}:epoch[{len(mgrs)} managers]"
             for metric, v in (("voter_rewards_onchain_fees_usd", fee_usd),
                               ("voter_rewards_onchain_bribes_usd", bribe_usd),
                               ("voter_rewards_onchain_usd", fee_usd + bribe_usd),
+                              # R9.4: the incentives an issuer wallet created — out of FEES / REVENUE / HOLDER REVENUE
+                              ("voter_rewards_onchain_bribes_issuer_usd", issuer_usd),
                               ("voter_rewards_unpriced_count", float(unpriced))):
                 out.add(point(name, metric, v, src, TIER, when), src_name, name,
                         f"{metric}={v:,.2f} (epoch {when.date()}, Base blocks {b0:,}-{b1:,})", TIER)

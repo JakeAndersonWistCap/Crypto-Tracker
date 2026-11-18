@@ -180,8 +180,11 @@ def test_1_coingecko_points_at_the_merged_token_with_a_declared_handover():
 
 # ================================================================================ 3: Aerodrome's three lines
 def test_3_aerodrome_revenue_lines_are_declared_and_ordered_on_the_export_figures():
-    rs = config.REVENUE_SPLIT["Aerodrome"]
-    assert [rs[k]["metric"] for k in ("fees", "revenue", "holder_revenue")] == ["fees_usd", "revenue_usd",
-                                                                               "holders_revenue_usd"]
-    assert "Foundation" in rs["fees"]["route"] and "GROSS" in rs["holder_revenue"]["route"]
-    assert "46.67%" in rs["holder_share"]["route"]
+    # R9.4 (Jake 2026-11-17): the on-chain epoch read is the source of record; DefiLlama is the cross-check on the same
+    # epochs — the three lines read the per-epoch views, each the one below + a measured leg
+    rs, on = config.REVENUE_SPLIT["Aerodrome"], config.S13_ONCHAIN["Aerodrome"]
+    assert [rs[k]["metric"] for k in ("fees", "revenue", "holder_revenue")] == [
+        on["views"]["fees"], on["views"]["revenue"], on["views"]["holder_revenue"]]
+    assert all(rs[k]["primary"] for k in ("fees", "revenue", "holder_revenue"))
+    assert on["defillama"] == {"fees": "fees_usd", "revenue": "revenue_usd", "holder_revenue": "holders_revenue_usd"}
+    assert on["insider_stake_share"]["share"] == 0.4667 and on["unstaked_lp_share"]["was_expected"] == 0.29
