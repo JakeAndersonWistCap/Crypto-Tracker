@@ -339,7 +339,6 @@ class AeroV3:
     def rpc(self, method: str, params: list):
         if self._rpc is not None:
             return self._rpc(method, params)
-        errs = []
         # THE KEYED ENDPOINT FIRST (Round G 2.10): BASE_RPC_URL, then the public list — fetch.chain.rpc_endpoints, as
         # every other Base read (only the host is ever logged)
         from .chain import rpc_endpoints  # noqa: PLC0415
