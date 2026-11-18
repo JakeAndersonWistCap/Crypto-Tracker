@@ -196,7 +196,8 @@ def test_flow_statements_mark_every_residual_beyond_half_a_percent(built):
         # R9.2: a project on the rule has no release / return line for wallets inside circulating — its statement is
         # what is minted, what comes from outside and what is burned; those lines are never negative either
         import config
-        on_rule = project in config.RULE_IN
+        import build_workbook as _bw
+        on_rule = _bw._rule_flow(project)          # Sky is on the rule but un-subtracts no wallet: it keeps its lines
         legs = [r for r in rows if r["Statement"] == "Token flow"
                 and r["Line"].startswith(("+ ", "− ") if on_rule else ("+ released", "+ scheduled", "− returned"))]
         assert legs, project

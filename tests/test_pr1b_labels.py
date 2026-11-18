@@ -162,8 +162,11 @@ AUDIT_CELLS = [  # (sheet, header, shown, without) — Jake's numbers where the 
     ("A4 Permanent Burn", "TOTAL DILUTION = emissions + unlocks", "11.26%", "3.29%"),
     ("CP Comparability", "Unlocks Q0 (tokens)", "17,316,997", "5,059,637"),
     ("CP Comparability", "TOTAL DILUTION = outflows a+b+c+d+e (annualised) ÷ tradeable float", "11.26%", "3.29%"),
-    ("CP Comparability", "TOTAL DILUTION = outflows a+b+c+d+e (annualised) ÷ circulating", "11.26%", "3.29%"),
-    ("CP Comparability", "NET HOLDER YIELD", "-8.80%", "-0.82%"),
+    # R9.2 (the rule, Jake 2026-11-17): circulating counts the Timelock (off the float) — the two cells over circulating
+    # / market cap read the same tokens over a larger base (were 11.26% / 3.29% and -8.80% / -0.82%); every cell over
+    # the float is unchanged
+    ("CP Comparability", "TOTAL DILUTION = outflows a+b+c+d+e (annualised) ÷ circulating", "7.93%", "2.32%"),
+    ("CP Comparability", "NET HOLDER YIELD", "-6.19%", "-0.58%"),
 ]
 
 
@@ -186,9 +189,9 @@ READER_CELLS = [  # (sheet, header, text that must be in the note)
     ("Summary", "Archetype key", "Without the one-off this cell reads 1.08x"),
     ("Summary", "Total dilution, % of float", "Without the one-off this cell reads 3.29%"),
     ("Summary", "Total dilution, tokens a year", "Without the one-off this cell reads 3.29%"),
-    ("Summary", "Net holder yield", "Without the one-off this cell reads -0.82%"),
+    ("Summary", "Net holder yield", "Without the one-off this cell reads -0.58%"),      # R9.2: was -0.82%
     ("Comparison", "Total dilution, % of float", "Without the one-off this cell reads 3.29%"),
-    ("Comparison", "Net holder yield", "Without the one-off this cell reads -0.82%"),
+    ("Comparison", "Net holder yield", "Without the one-off this cell reads -0.58%"),   # R9.2: was -0.82%
     ("A4 Permanent Burn", "Burn ÷ issuance (x)", "70.8% of the unlock_release_tokens"),
     ("A4 Permanent Burn", "Issuance or release, 90 days", "Without the one-off this cell reads 5,059,637"),
     ("A4 Permanent Burn", "Issuance growth, selected period", "of which one-off: 70.8% of the latest 90 days"),
@@ -321,7 +324,8 @@ def test_10c_a_yield_that_can_be_negative_changes_in_percentage_points(live):
     ws = live["audit_v"]["Trajectory"]
     row = next(r for r in range(2, ws.max_row + 1) if ws.cell(r, 1).value == "Uniswap"
                and str(ws.cell(r, 5).value).startswith("NET HOLDER YIELD"))
-    assert "QoQ -8.0 pp" in ws.cell(row, trajectory.COL["Trend"]).value
+    # R9.2: the yield is over the larger market cap (the Timelock in circulating) — its change was -8.0 pp
+    assert "QoQ -5.6 pp" in ws.cell(row, trajectory.COL["Trend"]).value
     assert live["audit"]["Trajectory"].cell(row, trajectory.COL["QoQ"]).number_format == bw.FMT_PP
     pct = _cell(live["reader"], "A4 Permanent Burn", "Issuance − burn, % a year")
     qc = pct.parent.cell(pct.row, pct.column + 1)                          # its "Quarter change"

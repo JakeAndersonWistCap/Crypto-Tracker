@@ -39,7 +39,7 @@ def test_0a_maple_is_frozen_with_round_3_and_3bs_moves_declared(built):
     assert all(d["date"] == "2026-11-11" and d["why"].startswith(("PR3.", "PR3B.")) for d in moves.values())
     assert all(base[k] == pf._norm(d["to"]) for k, d in moves.items())     # the baseline holds every declared value
     now = pf.cells(built["audit"], built["reader"], "Maple")
-    assert pf.undeclared(base, now, moves) == []
+    assert pf.undeclared(base, now, config.FROZEN_MOVES["Maple"]) == []       # every round's record, R9.2's included
 
 
 # =========================================================================================== 0b: the probe wiring, pinned

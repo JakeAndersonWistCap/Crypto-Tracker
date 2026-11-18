@@ -81,8 +81,12 @@ def test_cp_on_the_real_aerodrome_dump(tmp_path, monkeypatch, dumps_20261009):
     sp, sp_fee = _get(o, "Supplier payout per $ of fees"), _get(o, "Supplier payout, fees only")
     assert sp == pytest.approx(sp_fee + _rate(wb, X, "Aerodrome|outflow_b_usd") / _rate(wb, X, "Aerodrome|fees_usd"))
     assert 1.0 < sp < 1.4 and 0 < sp_fee < 0.5
-    # a young unlock series BLOCKS total dilution (and so net holder yield) rather than reading as a smaller dilution
-    assert str(_get(o, "TOTAL DILUTION = outflows a+b+c+d+e (annualised) ÷ circ")).startswith("BLOCKED")
+    # R9.3 (Jake 2026-11-17): Aerodrome's unlock leg is a DECLARED zero (no vesting schedule in its docs) on every day
+    # the total is held — no longer a young series that blocks total dilution; a genuine zero reads 0
+    td = _get(o, "TOTAL DILUTION = outflows a+b+c+d+e (annualised) ÷ circ")
+    assert isinstance(td, float) and td > 0, td
+    assert _get(o, "Unlocks Q0 (tokens)") == 0.0
+    # net holder yield still waits on equal coverage (this dump holds the total, and so the zero, on 21 days of Q0)
     assert str(_get(o, "NET HOLDER YIELD")).startswith("BLOCKED")
     # attributes, never penalties: text from phase2_attributes.json
     assert _get(o, "CAPTURE STATUS").startswith("Live")

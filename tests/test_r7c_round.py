@@ -143,7 +143,9 @@ def test_b1_sky_insider_share_is_the_endowments_over_circulating(built):
     import real_dump
     endow = max((r for r in real_dump.load("Sky")["metrics"] if r["metric"] == "sky_endowment_tokens"),
                 key=lambda r: r["date"])["value"]
-    assert isinstance(share, float) and share == pytest.approx(endow / c, rel=1e-6)
+    # R9.2 (the rule): + the converter's accrued fee and the SKY backing the Pause Proxy's MKR (about 40M, 0.17% of
+    # circulating) — issuer-controlled and now inside circulating; the endowments are the rest
+    assert isinstance(share, float) and endow / c < share < endow / c + 0.002
     assert 0.10 < share < 0.15                                   # ~12.7%: 2.97B of ~23.4B
     # a frozen project's cell is untouched: none is in the map
     assert not set(config.INSIDER_INSIDE_CIRCULATING) & set(config.FROZEN_BEFORE_R7D)
