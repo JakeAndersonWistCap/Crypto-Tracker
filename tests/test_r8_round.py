@@ -104,20 +104,25 @@ def test_4_every_frozen_project_is_audited_and_the_sums_tie():
         assert now + moved == pytest.approx(rule, rel=0.005), (name, now + moved, rule)
 
 
-def test_4_no_figure_reads_the_rule_before_its_declared_move_is_applied():
+def test_4_the_audit_is_applied_and_every_leg_it_moves_in_is_declared():
+    """R9.2 (Jake 2026-11-17: apply the rule to all seven): the audit is applied — every leg it moves in is one the
+    build counts in circulating by declaration (config.RULE_IN), and nothing it leaves out is counted in."""
     a = config.RULE_AUDIT_R8
-    assert a["applied"] is False
-    # the legs the audit moves in are still the build's subtract legs (so the audit and the build stay in step)
-    for name in ("Uniswap", "Fluid", "Maple", "Pendle"):
-        spec = config.circulating_onchain(name) or {}
-        legs = set(spec.get("subtract") or ()) | {(spec.get("subtract_when_complete") or {}).get("metric")}
-        named = {m for m, _v, _w in config.RULE_AUDIT_R8["projects"][name]["moves_in"]}
-        assert named & legs, (name, named, legs)
+    assert a["applied"] is True and set(a["projects"]) <= set(config.RULE_IN)
+    for name, p in a["projects"].items():
+        spec = config.RULE_IN[name]
+        declared = set(spec["legs"]) | set(spec["off_float"]) | {spec.get("swc_leg")}
+        named = {m for m, _v, _w in p["moves_in"]}
+        # Morpho's relock is audited "moves in" on the literal rule and STAYS OUT by Jake's decision
+        named -= {"morpho_relocked_tokens"} if name == "Morpho" else set()
+        assert named <= declared, (name, named - declared)
+    assert "morpho_relocked_tokens" not in config.rule_in_legs("Morpho")
 
 
-def test_4a_held_buybacks_are_listed_and_only_fluids_is_out_of_circulating():
-    out = [r for r in config.HELD_BUYBACKS_R8 if r[3].startswith("OUT")]
-    assert [r[0] for r in out] == ["Fluid"]
+def test_4a_held_buybacks_are_listed_and_none_is_out_of_circulating():
+    # R9.2: Fluid's Treasury DSA (the one held buyback that was out) is in circulating, off the float
+    assert not [r for r in config.HELD_BUYBACKS_R8 if r[3].startswith("OUT")]
+    assert "treasury_holding_tokens" in config.RULE_IN["Fluid"]["off_float"]
     near = [r for r in config.HELD_BUYBACKS_R8 if r[0] == "Near"]
     assert len(near) == 3 and 4.3e6 < sum(r[2] for r in near) < 4.4e6
     assert any(r[0] == "Hyperliquid" and r[3].startswith("burned") for r in config.HELD_BUYBACKS_R8)

@@ -43592,7 +43592,7 @@ RULE_AUDIT_R8 = {
 # Bought-back tokens HELD (not burned), every project (R8.4a): the wallet, its balance on 2026-11-17 and how the build
 # treats it. Only Fluid's is still out of circulating (it moves in with Fluid's declared move).
 HELD_BUYBACKS_R8 = (
-    ("Fluid", "Treasury DSA 0x28849D2b…", 16_303_003.18, "OUT of circulating", "pending: in, off float"),
+    ("Fluid", "Treasury DSA 0x28849D2b…", 16_303_003.18, "in circulating, off float", "applied R9.2 (was OUT of circulating)"),
     ("Maple", "SSF Safe 0x58BE0049…", 48_624_987.59, "in circulating, off float", "compliant"),
     ("Sky", "MCD Pause Proxy 0xBE8E3e36…", 35_259_586.38, "in circulating, off float", "compliant"),
     ("Near", "fefundsadmin.sputnik-dao.near", 2_026_707.84, "in circulating, off float", "compliant"),
@@ -44053,3 +44053,9 @@ INSIDER_INSIDE_CIRCULATING["Sky"]["held"] = ("sky_endowment_tokens", "sky_conver
                                              "sky_issuer_mkr_backing_tokens")
 INSIDER_INSIDE_CIRCULATING["Sky"]["what"] += ("; R9.2: + the converter's accrued fee and the SKY backing the Pause "
                                               "Proxy's MKR (issuer-controlled, in circulating by the rule)")
+
+
+# R9.2: the R8 audit is APPLIED — all seven frozen projects run on the rule (one declared move per project, SPEC R9.2-*).
+RULE_AUDIT_R8["applied"] = True
+RULE_AUDIT_R8["applied_on"] = "2026-11-18"
+RULE_AUDIT_R8["applied_as"] = "config.RULE_IN (the legs stay listed; circulating no longer subtracts them, the float does)"
