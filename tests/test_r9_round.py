@@ -183,3 +183,20 @@ def test_2_hyperliquid_and_morpho_flow_legs_are_declared():
     lab, m = config.RULE_IN["Morpho"]["flow_outside"][0]
     assert m == "unlock_release_outside_tokens" and "relock" in lab
     assert config.UNLOCK_RELEASE_SUBSETS["Morpho"][m] == ("morpho_relocked_tokens",)
+
+
+def test_2_fluid_igp137_wallet_is_in_on_the_proposal_text_and_its_signer():
+    spec, w = config.RULE_IN["Fluid"], config.FLUID_IGP137_RULE
+    assert "noncirculating_igp137_tokens" in spec["legs"] and "noncirculating_igp137_tokens" in spec["off_float"]
+    assert any("legally locked" in t for t in w["proposal_text"]) and "externally owned" in w["signers"]
+    assert w["tokens"] == 5_000_000.0 and "mislabelled" in w["was"] and "Jake" in w["decided"]
+    for key in ("coingecko", "coinmarketcap"):
+        ref, legs = spec["references"][key]
+        assert ref + sum(legs.values()) == pytest.approx(spec["circulating"][1], rel=0.005), key
+    # counted in: nothing of the set is subtracted any more, so circulating is the total
+    from fetch import circulating as C
+    d = pd.Timestamp("2026-11-10")
+    h = pd.DataFrame([{"date": d, "project": "Fluid", "metric": m, "value": v} for m, v in (
+        ("total_supply", 100e6), ("treasury_holding_tokens", 16.3e6), ("noncirculating_holding_tokens", 0.7e6),
+        ("noncirculating_igp137_tokens", 5e6))])
+    assert list(C.series(h, "Fluid")) == [100e6]

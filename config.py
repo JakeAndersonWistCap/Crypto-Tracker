@@ -43919,3 +43919,40 @@ METRICS["unlock_release_outside_tokens"] = {
     "only_projects": ("Morpho",), "view_only": True}
 RULE_IN["Morpho"]["flow_outside"] = (("+ released from the relock schedule (still outside circulating)",
                                       "unlock_release_outside_tokens"),)
+
+
+# ---------------------------------------------------------------------------------------------------------------------
+# R9.2 FLUID UNDER THE RULE (Jake 2026-11-17). docs/r8_rule_audit.md §2 (Ethereum, read 2026-11-17 / block 26,441,359):
+#   IN, off float: the Treasury DSA 0x28849D2b… 16,303,003.18 FLUID (governance can move it; it holds the bought-back
+#     FLUID); the Team Multisig 0x4F6F977a… 579,773.48 (an Avocado wallet, owner() 0xc7810aa3…); the five Merkle
+#     distributors 131,518.70 (claimable); and
+#   THE IGP-137 WALLET 0xCaBebC7f76D53582a4be7d9972A2b4F531753fd7 — exactly 5,000,000 FLUID. Jake's decision: IN — the key
+#     can move it. THIS WALLET WAS MISLABELLED BEFORE (carried as a lock that takes it out of circulating). What the
+#     primary sources say:
+#       the proposal (Instadapp/fluid-governance, IGP-137 description): 5,000,000 FLUID (5% of supply) withdrawn from
+#       the Treasury DSA 0x28849D2b… to the Team Multisig 0x4F6F977a…, "subsequently moved into a dedicated wallet
+#       before distribution to the relevant custodial partners"; "These tokens will be legally locked for at least 4
+#       years until 2030."
+#       the chain: the wallet is an Avocado smart wallet whose owner() is 0x8ae21fc31f41791578fecd0509ec0f59781cedfc —
+#       an externally owned account (no code; getOwners() / getThreshold() do not answer): ONE key signs, no multisig
+#       and no on-chain timelock or vesting contract. The lock is a legal undertaking only.
+#     So "nobody can move it" fails, and the rule counts it in circulating, off the float.
+# Circulating 77,985,705 -> 100,000,000 (= total; FLUID has no burn); the float does not move.
+FLUID_IGP137_RULE = {
+    "wallet": "0xCaBebC7f76D53582a4be7d9972A2b4F531753fd7", "tokens": 5_000_000.0, "block": 26_441_359,
+    "proposal": "Instadapp/fluid-governance — IGP-137 description.md",
+    "proposal_text": ("subsequently moved into a dedicated wallet before distribution to the relevant custodial partners",
+                      "These tokens will be legally locked for at least 4 years until 2030."),
+    "route": "Treasury DSA 0x28849D2b… -> Team Multisig 0x4F6F977a… -> the dedicated wallet",
+    "signers": "owner() = 0x8ae21fc31f41791578fecd0509ec0f59781cedfc, an externally owned account — one key, no "
+               "multisig, no on-chain lock",
+    "was": "carried as a lock outside circulating (mislabelled: the lock is legal only)",
+    "decided": "Jake 2026-11-17: in circulating (the key can move it), off the float"}
+declare_rule_in("Fluid", ("treasury_holding_tokens", "noncirculating_holding_tokens", "noncirculating_igp137_tokens"),
+                "docs/r8_rule_audit.md §2: the Treasury DSA 0x28849D2b… (governance), the Team Multisig 0x4F6F977a… "
+                "(Avocado, owner() 0xc7810aa3…), five claimable Merkle distributors; the IGP-137 wallet 0xCaBebC7f… — "
+                "the proposal says \"legally locked for at least 4 years until 2030\", its owner() 0x8ae21fc3… is a "
+                "single externally owned key, so it can be moved (config.FLUID_IGP137_RULE)",
+                circulating=(77_985_705, 100_000_000),
+                references={"coingecko": (83_696_997, {"the Treasury DSA 0x28849D2b…": 16_303_003}),
+                            "coinmarketcap": (83_696_997, {"the Treasury DSA 0x28849D2b…": 16_303_003})})

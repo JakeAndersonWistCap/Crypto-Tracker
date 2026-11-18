@@ -1,4 +1,198 @@
 {
+"Fluid": {
+"audit|A3 Revenue Buyback|Circulating supply": [
+{
+"date": "2026-11-18",
+"from": 77971194.9,
+"to": 100000000.0,
+"why": "R9.2 (the rule, Jake 2026-11-17): Fluid's Treasury DSA 0x28849D2b… (16.30M), Team Multisig 0x4F6F977a… (0.58M), Merkle distributors (0.13M) and the IGP-137 wallet 0xCaBebC7f… (5,000,000: the proposal says 'legally locked for at least 4 years until 2030'; its owner() 0x8ae21fc3… is one externally owned key, so it can be moved — it was mislabelled as a lock) are IN circulating and OFF the free float; the float and the unlock legs do not move. Evidence: docs/r8_rule_audit.md §2, config.FLUID_IGP137_RULE"
+}
+],
+"audit|A3 Revenue Buyback|Market cap ($)": [
+{
+"date": "2026-11-18",
+"from": 175016677.0,
+"to": 224463249.0,
+"why": "R9.2 (the rule, Jake 2026-11-17): Fluid's Treasury DSA 0x28849D2b… (16.30M), Team Multisig 0x4F6F977a… (0.58M), Merkle distributors (0.13M) and the IGP-137 wallet 0xCaBebC7f… (5,000,000: the proposal says 'legally locked for at least 4 years until 2030'; its owner() 0x8ae21fc3… is one externally owned key, so it can be moved — it was mislabelled as a lock) are IN circulating and OFF the free float; the float and the unlock legs do not move. Evidence: docs/r8_rule_audit.md §2, config.FLUID_IGP137_RULE"
+}
+],
+"audit|CP Comparability|Circulating supply (tokens) — our convention, the figure in use": [
+{
+"date": "2026-11-18",
+"from": 77971194.9,
+"to": 100000000.0,
+"why": "R9.2 (the rule, Jake 2026-11-17): Fluid's Treasury DSA 0x28849D2b… (16.30M), Team Multisig 0x4F6F977a… (0.58M), Merkle distributors (0.13M) and the IGP-137 wallet 0xCaBebC7f… (5,000,000: the proposal says 'legally locked for at least 4 years until 2030'; its owner() 0x8ae21fc3… is one externally owned key, so it can be moved — it was mislabelled as a lock) are IN circulating and OFF the free float; the float and the unlock legs do not move. Evidence: docs/r8_rule_audit.md §2, config.FLUID_IGP137_RULE"
+}
+],
+"audit|CP Comparability|Dilution (e) unlocks (annualised) ÷ circulating": [
+{
+"date": "2026-11-18",
+"from": 0.00732549099,
+"to": 0.00571177286,
+"why": "R9.2 (the rule, Jake 2026-11-17): Fluid's Treasury DSA 0x28849D2b… (16.30M), Team Multisig 0x4F6F977a… (0.58M), Merkle distributors (0.13M) and the IGP-137 wallet 0xCaBebC7f… (5,000,000: the proposal says 'legally locked for at least 4 years until 2030'; its owner() 0x8ae21fc3… is one externally owned key, so it can be moved — it was mislabelled as a lock) are IN circulating and OFF the free float; the float and the unlock legs do not move. Evidence: docs/r8_rule_audit.md §2, config.FLUID_IGP137_RULE"
+}
+],
+"audit|CP Comparability|Discretionary supply ÷ circulating": [
+{
+"date": "2026-11-18",
+"from": 0.209090077,
+"to": 0.163030032,
+"why": "R9.2 (the rule, Jake 2026-11-17): Fluid's Treasury DSA 0x28849D2b… (16.30M), Team Multisig 0x4F6F977a… (0.58M), Merkle distributors (0.13M) and the IGP-137 wallet 0xCaBebC7f… (5,000,000: the proposal says 'legally locked for at least 4 years until 2030'; its owner() 0x8ae21fc3… is one externally owned key, so it can be moved — it was mislabelled as a lock) are IN circulating and OFF the free float; the float and the unlock legs do not move. Evidence: docs/r8_rule_audit.md §2, config.FLUID_IGP137_RULE"
+}
+],
+"audit|CP Comparability|Insider share of circulating = insider-held tokens counted inside circulating ÷ circulating": [
+{
+"date": "2026-11-18",
+"from": 0.0,
+"to": 0.220288051,
+"why": "R9.2 (the rule, Jake 2026-11-17): Fluid's Treasury DSA 0x28849D2b… (16.30M), Team Multisig 0x4F6F977a… (0.58M), Merkle distributors (0.13M) and the IGP-137 wallet 0xCaBebC7f… (5,000,000: the proposal says 'legally locked for at least 4 years until 2030'; its owner() 0x8ae21fc3… is one externally owned key, so it can be moved — it was mislabelled as a lock) are IN circulating and OFF the free float; the float and the unlock legs do not move. Evidence: docs/r8_rule_audit.md §2, config.FLUID_IGP137_RULE"
+}
+],
+"audit|CP Comparability|Market cap ($)": [
+{
+"date": "2026-11-18",
+"from": 175016677.0,
+"to": 224463249.0,
+"why": "R9.2 (the rule, Jake 2026-11-17): Fluid's Treasury DSA 0x28849D2b… (16.30M), Team Multisig 0x4F6F977a… (0.58M), Merkle distributors (0.13M) and the IGP-137 wallet 0xCaBebC7f… (5,000,000: the proposal says 'legally locked for at least 4 years until 2030'; its owner() 0x8ae21fc3… is one externally owned key, so it can be moved — it was mislabelled as a lock) are IN circulating and OFF the free float; the float and the unlock legs do not move. Evidence: docs/r8_rule_audit.md §2, config.FLUID_IGP137_RULE"
+}
+],
+"audit|CP Comparability|Tradeable float ÷ circulating": [
+{
+"date": "2026-11-18",
+"from": 1.0,
+"to": 0.779711949,
+"why": "R9.2 (the rule, Jake 2026-11-17): Fluid's Treasury DSA 0x28849D2b… (16.30M), Team Multisig 0x4F6F977a… (0.58M), Merkle distributors (0.13M) and the IGP-137 wallet 0xCaBebC7f… (5,000,000: the proposal says 'legally locked for at least 4 years until 2030'; its owner() 0x8ae21fc3… is one externally owned key, so it can be moved — it was mislabelled as a lock) are IN circulating and OFF the free float; the float and the unlock legs do not move. Evidence: docs/r8_rule_audit.md §2, config.FLUID_IGP137_RULE"
+}
+],
+"audit|Master|Circulating supply (used)": [
+{
+"date": "2026-11-18",
+"from": 77971194.9,
+"to": 100000000.0,
+"why": "R9.2 (the rule, Jake 2026-11-17): Fluid's Treasury DSA 0x28849D2b… (16.30M), Team Multisig 0x4F6F977a… (0.58M), Merkle distributors (0.13M) and the IGP-137 wallet 0xCaBebC7f… (5,000,000: the proposal says 'legally locked for at least 4 years until 2030'; its owner() 0x8ae21fc3… is one externally owned key, so it can be moved — it was mislabelled as a lock) are IN circulating and OFF the free float; the float and the unlock legs do not move. Evidence: docs/r8_rule_audit.md §2, config.FLUID_IGP137_RULE"
+}
+],
+"audit|Master|Market cap ($)": [
+{
+"date": "2026-11-18",
+"from": 175016677.0,
+"to": 224463249.0,
+"why": "R9.2 (the rule, Jake 2026-11-17): Fluid's Treasury DSA 0x28849D2b… (16.30M), Team Multisig 0x4F6F977a… (0.58M), Merkle distributors (0.13M) and the IGP-137 wallet 0xCaBebC7f… (5,000,000: the proposal says 'legally locked for at least 4 years until 2030'; its owner() 0x8ae21fc3… is one externally owned key, so it can be moved — it was mislabelled as a lock) are IN circulating and OFF the free float; the float and the unlock legs do not move. Evidence: docs/r8_rule_audit.md §2, config.FLUID_IGP137_RULE"
+}
+],
+"audit|Master|NET SUPPLY CHANGE Q0 (tokens) = closing − opening circulating supply": [
+{
+"date": "2026-11-18",
+"from": 140838.235,
+"to": 0.0,
+"why": "R9.2 (the rule, Jake 2026-11-17): Fluid's Treasury DSA 0x28849D2b… (16.30M), Team Multisig 0x4F6F977a… (0.58M), Merkle distributors (0.13M) and the IGP-137 wallet 0xCaBebC7f… (5,000,000: the proposal says 'legally locked for at least 4 years until 2030'; its owner() 0x8ae21fc3… is one externally owned key, so it can be moved — it was mislabelled as a lock) are IN circulating and OFF the free float; the float and the unlock legs do not move. Evidence: docs/r8_rule_audit.md §2, config.FLUID_IGP137_RULE"
+}
+],
+"audit|Master|Net supply change, annualised % of circulating": [
+{
+"date": "2026-11-18",
+"from": 0.00732549099,
+"to": 0.0,
+"why": "R9.2 (the rule, Jake 2026-11-17): Fluid's Treasury DSA 0x28849D2b… (16.30M), Team Multisig 0x4F6F977a… (0.58M), Merkle distributors (0.13M) and the IGP-137 wallet 0xCaBebC7f… (5,000,000: the proposal says 'legally locked for at least 4 years until 2030'; its owner() 0x8ae21fc3… is one externally owned key, so it can be moved — it was mislabelled as a lock) are IN circulating and OFF the free float; the float and the unlock legs do not move. Evidence: docs/r8_rule_audit.md §2, config.FLUID_IGP137_RULE"
+}
+],
+"audit|Master|Trend — master_circulating_supply_used (arrow · QoQ · 4Q growth/yr · quarters improved; Trajectory tab)": [
+{
+"date": "2026-11-18",
+"from": "↑ · +2%/yr (4Q) · QoQ +0.2%",
+"to": "→ · +0%/yr (4Q) · QoQ +0.0%",
+"why": "R9.2 (the rule, Jake 2026-11-17): Fluid's Treasury DSA 0x28849D2b… (16.30M), Team Multisig 0x4F6F977a… (0.58M), Merkle distributors (0.13M) and the IGP-137 wallet 0xCaBebC7f… (5,000,000: the proposal says 'legally locked for at least 4 years until 2030'; its owner() 0x8ae21fc3… is one externally owned key, so it can be moved — it was mislabelled as a lock) are IN circulating and OFF the free float; the float and the unlock legs do not move. Evidence: docs/r8_rule_audit.md §2, config.FLUID_IGP137_RULE"
+}
+],
+"audit|Master|Trend — master_market_cap (arrow · QoQ · 4Q growth/yr · quarters improved; Trajectory tab)": [
+{
+"date": "2026-11-18",
+"from": "▼ · -47%/yr (4Q) · 1/4 improved · QoQ +118.0%",
+"to": "▼ · -48%/yr (4Q) · 1/4 improved · QoQ +117.6%",
+"why": "R9.2 (the rule, Jake 2026-11-17): Fluid's Treasury DSA 0x28849D2b… (16.30M), Team Multisig 0x4F6F977a… (0.58M), Merkle distributors (0.13M) and the IGP-137 wallet 0xCaBebC7f… (5,000,000: the proposal says 'legally locked for at least 4 years until 2030'; its owner() 0x8ae21fc3… is one externally owned key, so it can be moved — it was mislabelled as a lock) are IN circulating and OFF the free float; the float and the unlock legs do not move. Evidence: docs/r8_rule_audit.md §2, config.FLUID_IGP137_RULE"
+}
+],
+"audit|Master|Trend — master_net_supply_change_annualised_of_circulating (arrow · QoQ · 4Q growth/yr · quarters improved; Trajectory tab)": [
+{
+"date": "2026-11-18",
+"from": "▲ · -54%/yr (4Q) · 1/3 improved · QoQ -1.9 pp",
+"to": "– · 4Q n/a · 0/3 improved · QoQ +0.0 pp",
+"why": "R9.2 (the rule, Jake 2026-11-17): Fluid's Treasury DSA 0x28849D2b… (16.30M), Team Multisig 0x4F6F977a… (0.58M), Merkle distributors (0.13M) and the IGP-137 wallet 0xCaBebC7f… (5,000,000: the proposal says 'legally locked for at least 4 years until 2030'; its owner() 0x8ae21fc3… is one externally owned key, so it can be moved — it was mislabelled as a lock) are IN circulating and OFF the free float; the float and the unlock legs do not move. Evidence: docs/r8_rule_audit.md §2, config.FLUID_IGP137_RULE"
+}
+],
+"audit|Master|Trend — master_net_supply_change_q0_tokens_closing_opening_circulating_supp (arrow · QoQ · 4Q growth/yr · quarters improved; Trajectory tab)": [
+{
+"date": "2026-11-18",
+"from": "▲ · -53%/yr (4Q) · 1/3 improved · QoQ -72.3%",
+"to": "– · 4Q n/a · 0/3 improved · QoQ n/a",
+"why": "R9.2 (the rule, Jake 2026-11-17): Fluid's Treasury DSA 0x28849D2b… (16.30M), Team Multisig 0x4F6F977a… (0.58M), Merkle distributors (0.13M) and the IGP-137 wallet 0xCaBebC7f… (5,000,000: the proposal says 'legally locked for at least 4 years until 2030'; its owner() 0x8ae21fc3… is one externally owned key, so it can be moved — it was mislabelled as a lock) are IN circulating and OFF the free float; the float and the unlock legs do not move. Evidence: docs/r8_rule_audit.md §2, config.FLUID_IGP137_RULE"
+}
+],
+"audit|Master|Turnover = 30d volume ÷ market cap (x)": [
+{
+"date": "2026-11-18",
+"from": 0.599045332,
+"to": 0.467082803,
+"why": "R9.2 (the rule, Jake 2026-11-17): Fluid's Treasury DSA 0x28849D2b… (16.30M), Team Multisig 0x4F6F977a… (0.58M), Merkle distributors (0.13M) and the IGP-137 wallet 0xCaBebC7f… (5,000,000: the proposal says 'legally locked for at least 4 years until 2030'; its owner() 0x8ae21fc3… is one externally owned key, so it can be moved — it was mislabelled as a lock) are IN circulating and OFF the free float; the float and the unlock legs do not move. Evidence: docs/r8_rule_audit.md §2, config.FLUID_IGP137_RULE"
+}
+],
+"reader|A3 Revenue Buyback|Circulating supply": [
+{
+"date": "2026-11-18",
+"from": 77971194.9,
+"to": 100000000.0,
+"why": "R9.2 (the rule, Jake 2026-11-17): Fluid's Treasury DSA 0x28849D2b… (16.30M), Team Multisig 0x4F6F977a… (0.58M), Merkle distributors (0.13M) and the IGP-137 wallet 0xCaBebC7f… (5,000,000: the proposal says 'legally locked for at least 4 years until 2030'; its owner() 0x8ae21fc3… is one externally owned key, so it can be moved — it was mislabelled as a lock) are IN circulating and OFF the free float; the float and the unlock legs do not move. Evidence: docs/r8_rule_audit.md §2, config.FLUID_IGP137_RULE"
+}
+],
+"reader|A3 Revenue Buyback|Market cap": [
+{
+"date": "2026-11-18",
+"from": 175016677.0,
+"to": 224463249.0,
+"why": "R9.2 (the rule, Jake 2026-11-17): Fluid's Treasury DSA 0x28849D2b… (16.30M), Team Multisig 0x4F6F977a… (0.58M), Merkle distributors (0.13M) and the IGP-137 wallet 0xCaBebC7f… (5,000,000: the proposal says 'legally locked for at least 4 years until 2030'; its owner() 0x8ae21fc3… is one externally owned key, so it can be moved — it was mislabelled as a lock) are IN circulating and OFF the free float; the float and the unlock legs do not move. Evidence: docs/r8_rule_audit.md §2, config.FLUID_IGP137_RULE"
+}
+],
+"reader|Comparison|Revenue ÷ market cap, a year": [
+{
+"date": "2026-11-18",
+"from": 0.036960319,
+"to": 0.0288184024,
+"why": "R9.2 (the rule, Jake 2026-11-17): Fluid's Treasury DSA 0x28849D2b… (16.30M), Team Multisig 0x4F6F977a… (0.58M), Merkle distributors (0.13M) and the IGP-137 wallet 0xCaBebC7f… (5,000,000: the proposal says 'legally locked for at least 4 years until 2030'; its owner() 0x8ae21fc3… is one externally owned key, so it can be moved — it was mislabelled as a lock) are IN circulating and OFF the free float; the float and the unlock legs do not move. Evidence: docs/r8_rule_audit.md §2, config.FLUID_IGP137_RULE"
+}
+],
+"reader|Summary|Confidence (share green)": [
+{
+"date": "2026-11-18",
+"from": 0.625,
+"to": 0.875,
+"why": "R9.2 (the rule, Jake 2026-11-17): Fluid's Treasury DSA 0x28849D2b… (16.30M), Team Multisig 0x4F6F977a… (0.58M), Merkle distributors (0.13M) and the IGP-137 wallet 0xCaBebC7f… (5,000,000: the proposal says 'legally locked for at least 4 years until 2030'; its owner() 0x8ae21fc3… is one externally owned key, so it can be moved — it was mislabelled as a lock) are IN circulating and OFF the free float; the float and the unlock legs do not move. Evidence: docs/r8_rule_audit.md §2, config.FLUID_IGP137_RULE"
+}
+],
+"reader|Summary|Market cap": [
+{
+"date": "2026-11-18",
+"from": 175016677.0,
+"to": 224463249.0,
+"why": "R9.2 (the rule, Jake 2026-11-17): Fluid's Treasury DSA 0x28849D2b… (16.30M), Team Multisig 0x4F6F977a… (0.58M), Merkle distributors (0.13M) and the IGP-137 wallet 0xCaBebC7f… (5,000,000: the proposal says 'legally locked for at least 4 years until 2030'; its owner() 0x8ae21fc3… is one externally owned key, so it can be moved — it was mislabelled as a lock) are IN circulating and OFF the free float; the float and the unlock legs do not move. Evidence: docs/r8_rule_audit.md §2, config.FLUID_IGP137_RULE"
+}
+],
+"reader|Summary|Net supply change, % a year": [
+{
+"date": "2026-11-18",
+"from": 0.00732549099,
+"to": 0.0,
+"why": "R9.2 (the rule, Jake 2026-11-17): Fluid's Treasury DSA 0x28849D2b… (16.30M), Team Multisig 0x4F6F977a… (0.58M), Merkle distributors (0.13M) and the IGP-137 wallet 0xCaBebC7f… (5,000,000: the proposal says 'legally locked for at least 4 years until 2030'; its owner() 0x8ae21fc3… is one externally owned key, so it can be moved — it was mislabelled as a lock) are IN circulating and OFF the free float; the float and the unlock legs do not move. Evidence: docs/r8_rule_audit.md §2, config.FLUID_IGP137_RULE"
+}
+],
+"reader|Summary|Net supply change, 90 days": [
+{
+"date": "2026-11-18",
+"from": 140838.235,
+"to": 0.0,
+"why": "R9.2 (the rule, Jake 2026-11-17): Fluid's Treasury DSA 0x28849D2b… (16.30M), Team Multisig 0x4F6F977a… (0.58M), Merkle distributors (0.13M) and the IGP-137 wallet 0xCaBebC7f… (5,000,000: the proposal says 'legally locked for at least 4 years until 2030'; its owner() 0x8ae21fc3… is one externally owned key, so it can be moved — it was mislabelled as a lock) are IN circulating and OFF the free float; the float and the unlock legs do not move. Evidence: docs/r8_rule_audit.md §2, config.FLUID_IGP137_RULE"
+}
+]
+},
 "Hyperliquid": {
 "audit|A1 Infrastructure|Issuance as % of supply (annualised)": [
 {
