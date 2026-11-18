@@ -128,22 +128,6 @@
 "why": "R9.2 (the rule, Jake 2026-11-17): Hyperliquid's team wallet 0x43e9abea… (238.25M, unvested but staked on 23 validators and earning) and Community Grants' spot (0.11M) are counted in circulating, off the free float — docs/r8_rule_audit.md §7; circulating about 301M -> about 540M, the float unchanged"
 }
 ],
-"audit|A3 Revenue Buyback|TOTAL DILUTION = emissions + unlocks, annualised % of free float": [
-{
-"date": "2026-11-18",
-"from": 0.327234403,
-"to": 0.0964234308,
-"why": "R9.2 (the rule, Jake 2026-11-17): Hyperliquid's team wallet 0x43e9abea… (238.25M, unvested but staked on 23 validators and earning) and Community Grants' spot (0.11M) are counted in circulating, off the free float — docs/r8_rule_audit.md §7; circulating about 301M -> about 540M, the float unchanged"
-}
-],
-"audit|A3 Revenue Buyback|Unlock dilution, annualised % of free float": [
-{
-"date": "2026-11-18",
-"from": 0.225799175,
-"to": 0.0665343588,
-"why": "R9.2 (the rule, Jake 2026-11-17): Hyperliquid's team wallet 0x43e9abea… (238.25M, unvested but staked on 23 validators and earning) and Community Grants' spot (0.11M) are counted in circulating, off the free float — docs/r8_rule_audit.md §7; circulating about 301M -> about 540M, the float unchanged"
-}
-],
 "audit|A4 Permanent Burn|Circulating supply (used, tokens)": [
 {
 "date": "2026-11-18",
@@ -189,22 +173,6 @@
 "date": "2026-11-18",
 "from": 3837217.87,
 "to": 214122.129,
-"why": "R9.2 (the rule, Jake 2026-11-17): Hyperliquid's team wallet 0x43e9abea… (238.25M, unvested but staked on 23 validators and earning) and Community Grants' spot (0.11M) are counted in circulating, off the free float — docs/r8_rule_audit.md §7; circulating about 301M -> about 540M, the float unchanged"
-}
-],
-"audit|A4 Permanent Burn|TOTAL DILUTION = emissions + unlocks, annualised % of free float": [
-{
-"date": "2026-11-18",
-"from": 0.327234403,
-"to": 0.0964234308,
-"why": "R9.2 (the rule, Jake 2026-11-17): Hyperliquid's team wallet 0x43e9abea… (238.25M, unvested but staked on 23 validators and earning) and Community Grants' spot (0.11M) are counted in circulating, off the free float — docs/r8_rule_audit.md §7; circulating about 301M -> about 540M, the float unchanged"
-}
-],
-"audit|A4 Permanent Burn|Unlock dilution, annualised % of free float": [
-{
-"date": "2026-11-18",
-"from": 0.225799175,
-"to": 0.0665343588,
 "why": "R9.2 (the rule, Jake 2026-11-17): Hyperliquid's team wallet 0x43e9abea… (238.25M, unvested but staked on 23 validators and earning) and Community Grants' spot (0.11M) are counted in circulating, off the free float — docs/r8_rule_audit.md §7; circulating about 301M -> about 540M, the float unchanged"
 }
 ],
@@ -568,22 +536,6 @@
 "why": "R9.2 (the rule, Jake 2026-11-17): Hyperliquid's team wallet 0x43e9abea… (238.25M, unvested but staked on 23 validators and earning) and Community Grants' spot (0.11M) are counted in circulating, off the free float — docs/r8_rule_audit.md §7; circulating about 301M -> about 540M, the float unchanged"
 }
 ],
-"reader|A3 Revenue Buyback|Total dilution, % of float a year": [
-{
-"date": "2026-11-18",
-"from": 0.327234403,
-"to": 0.0964234308,
-"why": "R9.2 (the rule, Jake 2026-11-17): Hyperliquid's team wallet 0x43e9abea… (238.25M, unvested but staked on 23 validators and earning) and Community Grants' spot (0.11M) are counted in circulating, off the free float — docs/r8_rule_audit.md §7; circulating about 301M -> about 540M, the float unchanged"
-}
-],
-"reader|A3 Revenue Buyback|Unlocks, % of free float a year": [
-{
-"date": "2026-11-18",
-"from": 0.225799175,
-"to": 0.0665343588,
-"why": "R9.2 (the rule, Jake 2026-11-17): Hyperliquid's team wallet 0x43e9abea… (238.25M, unvested but staked on 23 validators and earning) and Community Grants' spot (0.11M) are counted in circulating, off the free float — docs/r8_rule_audit.md §7; circulating about 301M -> about 540M, the float unchanged"
-}
-],
 "reader|A4 Permanent Burn|Circulating supply": [
 {
 "date": "2026-11-18",
@@ -621,22 +573,6 @@
 "date": "2026-11-18",
 "from": 0.0319992846,
 "to": 0.0178845249,
-"why": "R9.2 (the rule, Jake 2026-11-17): Hyperliquid's team wallet 0x43e9abea… (238.25M, unvested but staked on 23 validators and earning) and Community Grants' spot (0.11M) are counted in circulating, off the free float — docs/r8_rule_audit.md §7; circulating about 301M -> about 540M, the float unchanged"
-}
-],
-"reader|A4 Permanent Burn|Total dilution, % of float a year": [
-{
-"date": "2026-11-18",
-"from": 0.327234403,
-"to": 0.0964234308,
-"why": "R9.2 (the rule, Jake 2026-11-17): Hyperliquid's team wallet 0x43e9abea… (238.25M, unvested but staked on 23 validators and earning) and Community Grants' spot (0.11M) are counted in circulating, off the free float — docs/r8_rule_audit.md §7; circulating about 301M -> about 540M, the float unchanged"
-}
-],
-"reader|A4 Permanent Burn|Unlocks, % of free float a year": [
-{
-"date": "2026-11-18",
-"from": 0.225799175,
-"to": 0.0665343588,
 "why": "R9.2 (the rule, Jake 2026-11-17): Hyperliquid's team wallet 0x43e9abea… (238.25M, unvested but staked on 23 validators and earning) and Community Grants' spot (0.11M) are counted in circulating, off the free float — docs/r8_rule_audit.md §7; circulating about 301M -> about 540M, the float unchanged"
 }
 ],
@@ -698,14 +634,6 @@
 ]
 },
 "Morpho": {
-"audit|A2 Coordination|Unlock dilution, annualised % of free float": [
-{
-"date": "2026-11-18",
-"from": 0.190500664,
-"to": 0.12460173,
-"why": "R9.2 (the rule, Jake 2026-11-17): Morpho's DAO 0xcBa28b38… (283.72M, a Safe 6-of-10 can move it) — and, where the switch has them out, the Grants / Rewards Safes and distributors — are counted in circulating, off the free float; the modelled relock (110.7M) stays out (the relock agreement; no wallet or earning evidence) — docs/r8_rule_audit.md §4"
-}
-],
 "audit|CP Comparability|Circulating supply (tokens) — our convention, the figure in use": [
 {
 "date": "2026-11-18",
@@ -842,14 +770,6 @@
 "why": "R9.2 (the rule, Jake 2026-11-17): Morpho's DAO 0xcBa28b38… (283.72M, a Safe 6-of-10 can move it) — and, where the switch has them out, the Grants / Rewards Safes and distributors — are counted in circulating, off the free float; the modelled relock (110.7M) stays out (the relock agreement; no wallet or earning evidence) — docs/r8_rule_audit.md §4"
 }
 ],
-"reader|A2 Coordination|Unlocks, % of free float a year": [
-{
-"date": "2026-11-18",
-"from": 0.190500664,
-"to": 0.12460173,
-"why": "R9.2 (the rule, Jake 2026-11-17): Morpho's DAO 0xcBa28b38… (283.72M, a Safe 6-of-10 can move it) — and, where the switch has them out, the Grants / Rewards Safes and distributors — are counted in circulating, off the free float; the modelled relock (110.7M) stays out (the relock agreement; no wallet or earning evidence) — docs/r8_rule_audit.md §4"
-}
-],
 "reader|Summary|Market cap": [
 {
 "date": "2026-11-18",
@@ -872,6 +792,368 @@
 "from": "over 90D: Price +16% · Market cap +22% · Fees +14% · TVL +55% · ",
 "to": "over 90D: Price +16% · Market cap +20% · Fees +14% · TVL +55% · ",
 "why": "R9.2 (the rule, Jake 2026-11-17): Morpho's DAO 0xcBa28b38… (283.72M, a Safe 6-of-10 can move it) — and, where the switch has them out, the Grants / Rewards Safes and distributors — are counted in circulating, off the free float; the modelled relock (110.7M) stays out (the relock agreement; no wallet or earning evidence) — docs/r8_rule_audit.md §4"
+}
+]
+},
+"Uniswap": {
+"audit|A4 Permanent Burn|Circulating supply (used, tokens)": [
+{
+"date": "2026-11-18",
+"from": 612409760.0,
+"to": 887142419.0,
+"why": "R9.2 (the rule, Jake 2026-11-17): Uniswap's governance Timelock 0x1a9C8182… (262.25M UNI: vesting ended, a vote can move it) and the airdrop merkle distributor 0x090D4613… (0.22M, claimable) are IN circulating and OFF the free float; the float, the unlock legs and the dilution on float do not move. Evidence: docs/r8_rule_audit.md §1"
+}
+],
+"audit|A4 Permanent Burn|ISSUANCE − BURN, annualised % of circulating (signed; + is net inflation; the cell says 'burn only' where nothing is minted)": [
+{
+"date": "2026-11-18",
+"from": -0.0370451033,
+"to": -0.0255728757,
+"why": "R9.2 (the rule, Jake 2026-11-17): Uniswap's governance Timelock 0x1a9C8182… (262.25M UNI: vesting ended, a vote can move it) and the airdrop merkle distributor 0x090D4613… (0.22M, claimable) are IN circulating and OFF the free float; the float, the unlock legs and the dilution on float do not move. Evidence: docs/r8_rule_audit.md §1"
+}
+],
+"audit|A4 Permanent Burn|Market cap ($)": [
+{
+"date": "2026-11-18",
+"from": 4648938900.0,
+"to": 6734495710.0,
+"why": "R9.2 (the rule, Jake 2026-11-17): Uniswap's governance Timelock 0x1a9C8182… (262.25M UNI: vesting ended, a vote can move it) and the airdrop merkle distributor 0x090D4613… (0.22M, claimable) are IN circulating and OFF the free float; the float, the unlock legs and the dilution on float do not move. Evidence: docs/r8_rule_audit.md §1"
+}
+],
+"audit|A4 Permanent Burn|PERMANENT BURN YIELD = burn as % of supply (annualised, tokens)": [
+{
+"date": "2026-11-18",
+"from": 0.0370451033,
+"to": 0.0255728757,
+"why": "R9.2 (the rule, Jake 2026-11-17): Uniswap's governance Timelock 0x1a9C8182… (262.25M UNI: vesting ended, a vote can move it) and the airdrop merkle distributor 0x090D4613… (0.22M, claimable) are IN circulating and OFF the free float; the float, the unlock legs and the dilution on float do not move. Evidence: docs/r8_rule_audit.md §1"
+}
+],
+"audit|A4 Permanent Burn|Trend — a4_burn_yield (arrow · QoQ · 4Q growth/yr · quarters improved; Trajectory tab)": [
+{
+"date": "2026-11-18",
+"from": "– · NEW since Q-3 (fee switch executed 2025-12-27) · 2/2 improved · QoQ +34.9%",
+"to": "– · NEW since Q-3 (fee switch executed 2025-12-27) · 2/2 improved · QoQ +35.6%",
+"why": "R9.2 (the rule, Jake 2026-11-17): Uniswap's governance Timelock 0x1a9C8182… (262.25M UNI: vesting ended, a vote can move it) and the airdrop merkle distributor 0x090D4613… (0.22M, claimable) are IN circulating and OFF the free float; the float, the unlock legs and the dilution on float do not move. Evidence: docs/r8_rule_audit.md §1"
+}
+],
+"audit|A4 Permanent Burn|Trend — a4_net_change_pct (arrow · QoQ · 4Q growth/yr · quarters improved; Trajectory tab)": [
+{
+"date": "2026-11-18",
+"from": "– · 4Q n/a · 2/2 improved · QoQ -1.0 pp",
+"to": "– · 4Q n/a · 2/2 improved · QoQ -0.7 pp",
+"why": "R9.2 (the rule, Jake 2026-11-17): Uniswap's governance Timelock 0x1a9C8182… (262.25M UNI: vesting ended, a vote can move it) and the airdrop merkle distributor 0x090D4613… (0.22M, claimable) are IN circulating and OFF the free float; the float, the unlock legs and the dilution on float do not move. Evidence: docs/r8_rule_audit.md §1"
+}
+],
+"audit|CP Comparability|Burn rate (every burn, fee-market included — A1's basis, annualised) ÷ circulating": [
+{
+"date": "2026-11-18",
+"from": 0.0370451033,
+"to": 0.0255728757,
+"why": "R9.2 (the rule, Jake 2026-11-17): Uniswap's governance Timelock 0x1a9C8182… (262.25M UNI: vesting ended, a vote can move it) and the airdrop merkle distributor 0x090D4613… (0.22M, claimable) are IN circulating and OFF the free float; the float, the unlock legs and the dilution on float do not move. Evidence: docs/r8_rule_audit.md §1"
+}
+],
+"audit|CP Comparability|Circulating supply (tokens) — our convention, the figure in use": [
+{
+"date": "2026-11-18",
+"from": 612409760.0,
+"to": 887142419.0,
+"why": "R9.2 (the rule, Jake 2026-11-17): Uniswap's governance Timelock 0x1a9C8182… (262.25M UNI: vesting ended, a vote can move it) and the airdrop merkle distributor 0x090D4613… (0.22M, claimable) are IN circulating and OFF the free float; the float, the unlock legs and the dilution on float do not move. Evidence: docs/r8_rule_audit.md §1"
+}
+],
+"audit|CP Comparability|Dilution (d) ecosystem / grant spend (annualised) ÷ circulating": [
+{
+"date": "2026-11-18",
+"from": 0.0331114543,
+"to": 0.0228574098,
+"why": "R9.2 (the rule, Jake 2026-11-17): Uniswap's governance Timelock 0x1a9C8182… (262.25M UNI: vesting ended, a vote can move it) and the airdrop merkle distributor 0x090D4613… (0.22M, claimable) are IN circulating and OFF the free float; the float, the unlock legs and the dilution on float do not move. Evidence: docs/r8_rule_audit.md §1"
+}
+],
+"audit|CP Comparability|Dilution (e) unlocks (annualised) ÷ circulating": [
+{
+"date": "2026-11-18",
+"from": 0.000380815214,
+"to": 0.000262883331,
+"why": "R9.2 (the rule, Jake 2026-11-17): Uniswap's governance Timelock 0x1a9C8182… (262.25M UNI: vesting ended, a vote can move it) and the airdrop merkle distributor 0x090D4613… (0.22M, claimable) are IN circulating and OFF the free float; the float, the unlock legs and the dilution on float do not move. Evidence: docs/r8_rule_audit.md §1"
+}
+],
+"audit|CP Comparability|Discretionary supply ÷ circulating": [
+{
+"date": "2026-11-18",
+"from": 0.428223084,
+"to": 0.295609804,
+"why": "R9.2 (the rule, Jake 2026-11-17): Uniswap's governance Timelock 0x1a9C8182… (262.25M UNI: vesting ended, a vote can move it) and the airdrop merkle distributor 0x090D4613… (0.22M, claimable) are IN circulating and OFF the free float; the float, the unlock legs and the dilution on float do not move. Evidence: docs/r8_rule_audit.md §1"
+}
+],
+"audit|CP Comparability|ETF / ETP holdings ÷ circulating": [
+{
+"date": "2026-11-18",
+"from": 0.00322818533,
+"to": 0.00222847218,
+"why": "R9.2 (the rule, Jake 2026-11-17): Uniswap's governance Timelock 0x1a9C8182… (262.25M UNI: vesting ended, a vote can move it) and the airdrop merkle distributor 0x090D4613… (0.22M, claimable) are IN circulating and OFF the free float; the float, the unlock legs and the dilution on float do not move. Evidence: docs/r8_rule_audit.md §1"
+}
+],
+"audit|CP Comparability|HOLDER VALUE YIELD = revenue-funded $ retired + $ distributed + liquid bribes to voters (annualised) ÷ market cap — treasury- or emissions-funded buybacks are NOT credited (LITMUS A); fee-market burns are on A1 net issuance": [
+{
+"date": "2026-11-18",
+"from": 0.028101947,
+"to": 0.0193992602,
+"why": "R9.2 (the rule, Jake 2026-11-17): Uniswap's governance Timelock 0x1a9C8182… (262.25M UNI: vesting ended, a vote can move it) and the airdrop merkle distributor 0x090D4613… (0.22M, claimable) are IN circulating and OFF the free float; the float, the unlock legs and the dilution on float do not move. Evidence: docs/r8_rule_audit.md §1"
+}
+],
+"audit|CP Comparability|Insider share of circulating = insider-held tokens counted inside circulating ÷ circulating": [
+{
+"date": "2026-11-18",
+"from": 0.0,
+"to": 0.309682699,
+"why": "R9.2 (the rule, Jake 2026-11-17): Uniswap's governance Timelock 0x1a9C8182… (262.25M UNI: vesting ended, a vote can move it) and the airdrop merkle distributor 0x090D4613… (0.22M, claimable) are IN circulating and OFF the free float; the float, the unlock legs and the dilution on float do not move. Evidence: docs/r8_rule_audit.md §1"
+}
+],
+"audit|CP Comparability|Market cap ($)": [
+{
+"date": "2026-11-18",
+"from": 4648938900.0,
+"to": 6734495710.0,
+"why": "R9.2 (the rule, Jake 2026-11-17): Uniswap's governance Timelock 0x1a9C8182… (262.25M UNI: vesting ended, a vote can move it) and the airdrop merkle distributor 0x090D4613… (0.22M, claimable) are IN circulating and OFF the free float; the float, the unlock legs and the dilution on float do not move. Evidence: docs/r8_rule_audit.md §1"
+}
+],
+"audit|CP Comparability|NET HOLDER YIELD = holder value yield − dilution (outflows a+b+c+d+e at each day's price, annualised) ÷ market cap": [
+{
+"date": "2026-11-18",
+"from": -0.0113581629,
+"to": -0.00784073635,
+"why": "R9.2 (the rule, Jake 2026-11-17): Uniswap's governance Timelock 0x1a9C8182… (262.25M UNI: vesting ended, a vote can move it) and the airdrop merkle distributor 0x090D4613… (0.22M, claimable) are IN circulating and OFF the free float; the float, the unlock legs and the dilution on float do not move. Evidence: docs/r8_rule_audit.md §1"
+}
+],
+"audit|CP Comparability|TOTAL DILUTION = outflows a+b+c+d+e (annualised) ÷ circulating": [
+{
+"date": "2026-11-18",
+"from": 0.0334922695,
+"to": 0.0231202931,
+"why": "R9.2 (the rule, Jake 2026-11-17): Uniswap's governance Timelock 0x1a9C8182… (262.25M UNI: vesting ended, a vote can move it) and the airdrop merkle distributor 0x090D4613… (0.22M, claimable) are IN circulating and OFF the free float; the float, the unlock legs and the dilution on float do not move. Evidence: docs/r8_rule_audit.md §1"
+}
+],
+"audit|CP Comparability|Tradeable float ÷ circulating": [
+{
+"date": "2026-11-18",
+"from": 1.0,
+"to": 0.690317301,
+"why": "R9.2 (the rule, Jake 2026-11-17): Uniswap's governance Timelock 0x1a9C8182… (262.25M UNI: vesting ended, a vote can move it) and the airdrop merkle distributor 0x090D4613… (0.22M, claimable) are IN circulating and OFF the free float; the float, the unlock legs and the dilution on float do not move. Evidence: docs/r8_rule_audit.md §1"
+}
+],
+"audit|CP Comparability|Trend — cp_hvy (arrow · QoQ · 4Q growth/yr · quarters improved; Trajectory tab)": [
+{
+"date": "2026-11-18",
+"from": "– · NEW since Q-3 (fee switch executed 2025-12-27) · 2/2 improved · QoQ +19.6%",
+"to": "– · NEW since Q-3 (fee switch executed 2025-12-27) · 2/2 improved · QoQ +20.2%",
+"why": "R9.2 (the rule, Jake 2026-11-17): Uniswap's governance Timelock 0x1a9C8182… (262.25M UNI: vesting ended, a vote can move it) and the airdrop merkle distributor 0x090D4613… (0.22M, claimable) are IN circulating and OFF the free float; the float, the unlock legs and the dilution on float do not move. Evidence: docs/r8_rule_audit.md §1"
+}
+],
+"audit|CP Comparability|Trend — cp_nhy (arrow · QoQ · 4Q growth/yr · quarters improved; Trajectory tab)": [
+{
+"date": "2026-11-18",
+"from": "– · 4Q n/a · 1/2 improved · QoQ -0.2 pp",
+"to": "– · 4Q n/a · 1/2 improved · QoQ -0.1 pp",
+"why": "R9.2 (the rule, Jake 2026-11-17): Uniswap's governance Timelock 0x1a9C8182… (262.25M UNI: vesting ended, a vote can move it) and the airdrop merkle distributor 0x090D4613… (0.22M, claimable) are IN circulating and OFF the free float; the float, the unlock legs and the dilution on float do not move. Evidence: docs/r8_rule_audit.md §1"
+}
+],
+"audit|Master|Circulating supply (used)": [
+{
+"date": "2026-11-18",
+"from": 612409760.0,
+"to": 887142419.0,
+"why": "R9.2 (the rule, Jake 2026-11-17): Uniswap's governance Timelock 0x1a9C8182… (262.25M UNI: vesting ended, a vote can move it) and the airdrop merkle distributor 0x090D4613… (0.22M, claimable) are IN circulating and OFF the free float; the float, the unlock legs and the dilution on float do not move. Evidence: docs/r8_rule_audit.md §1"
+}
+],
+"audit|Master|Issuance − burn, annualised % of circulating — a component, NOT the net supply change": [
+{
+"date": "2026-11-18",
+"from": -0.0370451033,
+"to": -0.0255728757,
+"why": "R9.2 (the rule, Jake 2026-11-17): Uniswap's governance Timelock 0x1a9C8182… (262.25M UNI: vesting ended, a vote can move it) and the airdrop merkle distributor 0x090D4613… (0.22M, claimable) are IN circulating and OFF the free float; the float, the unlock legs and the dilution on float do not move. Evidence: docs/r8_rule_audit.md §1"
+}
+],
+"audit|Master|Market cap ($)": [
+{
+"date": "2026-11-18",
+"from": 4648938900.0,
+"to": 6734495710.0,
+"why": "R9.2 (the rule, Jake 2026-11-17): Uniswap's governance Timelock 0x1a9C8182… (262.25M UNI: vesting ended, a vote can move it) and the airdrop merkle distributor 0x090D4613… (0.22M, claimable) are IN circulating and OFF the free float; the float, the unlock legs and the dilution on float do not move. Evidence: docs/r8_rule_audit.md §1"
+}
+],
+"audit|Master|NET SUPPLY CHANGE Q0 (tokens) = closing − opening circulating supply": [
+{
+"date": "2026-11-18",
+"from": -649634.016,
+"to": -5594001.25,
+"why": "R9.2 (the rule, Jake 2026-11-17): Uniswap's governance Timelock 0x1a9C8182… (262.25M UNI: vesting ended, a vote can move it) and the airdrop merkle distributor 0x090D4613… (0.22M, claimable) are IN circulating and OFF the free float; the float, the unlock legs and the dilution on float do not move. Evidence: docs/r8_rule_audit.md §1"
+}
+],
+"audit|Master|Net supply change, annualised % of circulating": [
+{
+"date": "2026-11-18",
+"from": -0.00430206541,
+"to": -0.0255728757,
+"why": "R9.2 (the rule, Jake 2026-11-17): Uniswap's governance Timelock 0x1a9C8182… (262.25M UNI: vesting ended, a vote can move it) and the airdrop merkle distributor 0x090D4613… (0.22M, claimable) are IN circulating and OFF the free float; the float, the unlock legs and the dilution on float do not move. Evidence: docs/r8_rule_audit.md §1"
+}
+],
+"audit|Master|Trend — master_circulating_supply_used (arrow · QoQ · 4Q growth/yr · quarters improved; Trajectory tab)": [
+{
+"date": "2026-11-18",
+"from": "↓ · -3%/yr (4Q) · QoQ -0.1%",
+"to": "↓ · -2%/yr (4Q) · QoQ -0.6%",
+"why": "R9.2 (the rule, Jake 2026-11-17): Uniswap's governance Timelock 0x1a9C8182… (262.25M UNI: vesting ended, a vote can move it) and the airdrop merkle distributor 0x090D4613… (0.22M, claimable) are IN circulating and OFF the free float; the float, the unlock legs and the dilution on float do not move. Evidence: docs/r8_rule_audit.md §1"
+}
+],
+"audit|Master|Trend — master_market_cap (arrow · QoQ · 4Q growth/yr · quarters improved; Trajectory tab)": [
+{
+"date": "2026-11-18",
+"from": "▲ · +52%/yr (4Q) · 2/4 improved · QoQ +107.0%",
+"to": "▲ · +53%/yr (4Q) · 2/4 improved · QoQ +105.9%",
+"why": "R9.2 (the rule, Jake 2026-11-17): Uniswap's governance Timelock 0x1a9C8182… (262.25M UNI: vesting ended, a vote can move it) and the airdrop merkle distributor 0x090D4613… (0.22M, claimable) are IN circulating and OFF the free float; the float, the unlock legs and the dilution on float do not move. Evidence: docs/r8_rule_audit.md §1"
+}
+],
+"audit|Master|Trend — master_net_supply_change_annualised_of_circulating (arrow · QoQ · 4Q growth/yr · quarters improved; Trajectory tab)": [
+{
+"date": "2026-11-18",
+"from": "– · 4Q n/a · 2/3 improved · QoQ lumpy (81.8% of the window on 2 days)",
+"to": "– · 4Q n/a · 2/3 improved · QoQ -0.7 pp",
+"why": "R9.2 (the rule, Jake 2026-11-17): Uniswap's governance Timelock 0x1a9C8182… (262.25M UNI: vesting ended, a vote can move it) and the airdrop merkle distributor 0x090D4613… (0.22M, claimable) are IN circulating and OFF the free float; the float, the unlock legs and the dilution on float do not move. Evidence: docs/r8_rule_audit.md §1"
+}
+],
+"audit|Master|Trend — master_net_supply_change_q0_tokens_closing_opening_circulating_supp (arrow · QoQ · 4Q growth/yr · quarters improved; Trajectory tab)": [
+{
+"date": "2026-11-18",
+"from": "– · 4Q n/a · 2/3 improved · QoQ lumpy (81.8% of the window on 2 days)",
+"to": "– · 4Q n/a · 2/3 improved · QoQ -34.8%",
+"why": "R9.2 (the rule, Jake 2026-11-17): Uniswap's governance Timelock 0x1a9C8182… (262.25M UNI: vesting ended, a vote can move it) and the airdrop merkle distributor 0x090D4613… (0.22M, claimable) are IN circulating and OFF the free float; the float, the unlock legs and the dilution on float do not move. Evidence: docs/r8_rule_audit.md §1"
+}
+],
+"audit|Master|Turnover = 30d volume ÷ market cap (x)": [
+{
+"date": "2026-11-18",
+"from": 5.32081297,
+"to": 3.67304925,
+"why": "R9.2 (the rule, Jake 2026-11-17): Uniswap's governance Timelock 0x1a9C8182… (262.25M UNI: vesting ended, a vote can move it) and the airdrop merkle distributor 0x090D4613… (0.22M, claimable) are IN circulating and OFF the free float; the float, the unlock legs and the dilution on float do not move. Evidence: docs/r8_rule_audit.md §1"
+}
+],
+"reader|A4 Permanent Burn|Circulating supply": [
+{
+"date": "2026-11-18",
+"from": 612409760.0,
+"to": 887142419.0,
+"why": "R9.2 (the rule, Jake 2026-11-17): Uniswap's governance Timelock 0x1a9C8182… (262.25M UNI: vesting ended, a vote can move it) and the airdrop merkle distributor 0x090D4613… (0.22M, claimable) are IN circulating and OFF the free float; the float, the unlock legs and the dilution on float do not move. Evidence: docs/r8_rule_audit.md §1"
+}
+],
+"reader|A4 Permanent Burn|Issuance − burn, % a year": [
+{
+"date": "2026-11-18",
+"from": -0.0370451033,
+"to": -0.0255728757,
+"why": "R9.2 (the rule, Jake 2026-11-17): Uniswap's governance Timelock 0x1a9C8182… (262.25M UNI: vesting ended, a vote can move it) and the airdrop merkle distributor 0x090D4613… (0.22M, claimable) are IN circulating and OFF the free float; the float, the unlock legs and the dilution on float do not move. Evidence: docs/r8_rule_audit.md §1"
+}
+],
+"reader|A4 Permanent Burn|Market cap": [
+{
+"date": "2026-11-18",
+"from": 4648938900.0,
+"to": 6734495710.0,
+"why": "R9.2 (the rule, Jake 2026-11-17): Uniswap's governance Timelock 0x1a9C8182… (262.25M UNI: vesting ended, a vote can move it) and the airdrop merkle distributor 0x090D4613… (0.22M, claimable) are IN circulating and OFF the free float; the float, the unlock legs and the dilution on float do not move. Evidence: docs/r8_rule_audit.md §1"
+}
+],
+"reader|A4 Permanent Burn|Permanent burn yield": [
+{
+"date": "2026-11-18",
+"from": 0.0370451033,
+"to": 0.0255728757,
+"why": "R9.2 (the rule, Jake 2026-11-17): Uniswap's governance Timelock 0x1a9C8182… (262.25M UNI: vesting ended, a vote can move it) and the airdrop merkle distributor 0x090D4613… (0.22M, claimable) are IN circulating and OFF the free float; the float, the unlock legs and the dilution on float do not move. Evidence: docs/r8_rule_audit.md §1"
+}
+],
+"reader|A4 Permanent Burn|Quarter change [43]": [
+{
+"date": "2026-11-18",
+"from": -0.959171832,
+"to": -0.672010442,
+"why": "R9.2 (the rule, Jake 2026-11-17): Uniswap's governance Timelock 0x1a9C8182… (262.25M UNI: vesting ended, a vote can move it) and the airdrop merkle distributor 0x090D4613… (0.22M, claimable) are IN circulating and OFF the free float; the float, the unlock legs and the dilution on float do not move. Evidence: docs/r8_rule_audit.md §1"
+}
+],
+"reader|Comparison|Holder value yield": [
+{
+"date": "2026-11-18",
+"from": 0.028101947,
+"to": 0.0193992602,
+"why": "R9.2 (the rule, Jake 2026-11-17): Uniswap's governance Timelock 0x1a9C8182… (262.25M UNI: vesting ended, a vote can move it) and the airdrop merkle distributor 0x090D4613… (0.22M, claimable) are IN circulating and OFF the free float; the float, the unlock legs and the dilution on float do not move. Evidence: docs/r8_rule_audit.md §1"
+}
+],
+"reader|Comparison|Net holder yield": [
+{
+"date": "2026-11-18",
+"from": -0.0113581629,
+"to": -0.00784073635,
+"why": "R9.2 (the rule, Jake 2026-11-17): Uniswap's governance Timelock 0x1a9C8182… (262.25M UNI: vesting ended, a vote can move it) and the airdrop merkle distributor 0x090D4613… (0.22M, claimable) are IN circulating and OFF the free float; the float, the unlock legs and the dilution on float do not move. Evidence: docs/r8_rule_audit.md §1"
+}
+],
+"reader|Comparison|Revenue ÷ market cap, a year": [
+{
+"date": "2026-11-18",
+"from": 0.0262843425,
+"to": 0.0181445364,
+"why": "R9.2 (the rule, Jake 2026-11-17): Uniswap's governance Timelock 0x1a9C8182… (262.25M UNI: vesting ended, a vote can move it) and the airdrop merkle distributor 0x090D4613… (0.22M, claimable) are IN circulating and OFF the free float; the float, the unlock legs and the dilution on float do not move. Evidence: docs/r8_rule_audit.md §1"
+}
+],
+"reader|Summary|Confidence (share green)": [
+{
+"date": "2026-11-18",
+"from": 0.454545455,
+"to": 0.636363636,
+"why": "R9.2 (the rule, Jake 2026-11-17): Uniswap's governance Timelock 0x1a9C8182… (262.25M UNI: vesting ended, a vote can move it) and the airdrop merkle distributor 0x090D4613… (0.22M, claimable) are IN circulating and OFF the free float; the float, the unlock legs and the dilution on float do not move. Evidence: docs/r8_rule_audit.md §1"
+}
+],
+"reader|Summary|Holder value yield": [
+{
+"date": "2026-11-18",
+"from": 0.028101947,
+"to": 0.0193992602,
+"why": "R9.2 (the rule, Jake 2026-11-17): Uniswap's governance Timelock 0x1a9C8182… (262.25M UNI: vesting ended, a vote can move it) and the airdrop merkle distributor 0x090D4613… (0.22M, claimable) are IN circulating and OFF the free float; the float, the unlock legs and the dilution on float do not move. Evidence: docs/r8_rule_audit.md §1"
+}
+],
+"reader|Summary|Market cap": [
+{
+"date": "2026-11-18",
+"from": 4648938900.0,
+"to": 6734495710.0,
+"why": "R9.2 (the rule, Jake 2026-11-17): Uniswap's governance Timelock 0x1a9C8182… (262.25M UNI: vesting ended, a vote can move it) and the airdrop merkle distributor 0x090D4613… (0.22M, claimable) are IN circulating and OFF the free float; the float, the unlock legs and the dilution on float do not move. Evidence: docs/r8_rule_audit.md §1"
+}
+],
+"reader|Summary|Net holder yield": [
+{
+"date": "2026-11-18",
+"from": -0.0113581629,
+"to": -0.00784073635,
+"why": "R9.2 (the rule, Jake 2026-11-17): Uniswap's governance Timelock 0x1a9C8182… (262.25M UNI: vesting ended, a vote can move it) and the airdrop merkle distributor 0x090D4613… (0.22M, claimable) are IN circulating and OFF the free float; the float, the unlock legs and the dilution on float do not move. Evidence: docs/r8_rule_audit.md §1"
+}
+],
+"reader|Summary|Net supply change, % a year": [
+{
+"date": "2026-11-18",
+"from": -0.00430206541,
+"to": -0.0255728757,
+"why": "R9.2 (the rule, Jake 2026-11-17): Uniswap's governance Timelock 0x1a9C8182… (262.25M UNI: vesting ended, a vote can move it) and the airdrop merkle distributor 0x090D4613… (0.22M, claimable) are IN circulating and OFF the free float; the float, the unlock legs and the dilution on float do not move. Evidence: docs/r8_rule_audit.md §1"
+}
+],
+"reader|Summary|Net supply change, 90 days": [
+{
+"date": "2026-11-18",
+"from": -649634.016,
+"to": -5594001.25,
+"why": "R9.2 (the rule, Jake 2026-11-17): Uniswap's governance Timelock 0x1a9C8182… (262.25M UNI: vesting ended, a vote can move it) and the airdrop merkle distributor 0x090D4613… (0.22M, claimable) are IN circulating and OFF the free float; the float, the unlock legs and the dilution on float do not move. Evidence: docs/r8_rule_audit.md §1"
+}
+],
+"reader|Summary|What changed": [
+{
+"date": "2026-11-18",
+"from": "over 90D: Price +107% · Market cap +107% · Revenue +128% · Fees +162% · TVL +23% · ",
+"to": "over 90D: Price +107% · Market cap +106% · Revenue +128% · Fees +162% · TVL +23% · ",
+"why": "R9.2 (the rule, Jake 2026-11-17): Uniswap's governance Timelock 0x1a9C8182… (262.25M UNI: vesting ended, a vote can move it) and the airdrop merkle distributor 0x090D4613… (0.22M, claimable) are IN circulating and OFF the free float; the float, the unlock legs and the dilution on float do not move. Evidence: docs/r8_rule_audit.md §1"
 }
 ]
 }

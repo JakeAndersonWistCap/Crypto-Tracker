@@ -129,3 +129,57 @@ def test_2_every_declared_r9_move_keeps_the_earlier_declarations():
             last = (d.get("then") or [d])[-1]
             assert last["to"] == steps[-1]["to"] and last["why"].startswith("R9."), (proj, key)
             assert all(s["why"] and s["date"] and "from" in s for s in steps)
+
+
+# ============================================================================= 2: Morpho, Uniswap, the flow statement
+def test_2_morpho_keeps_the_relock_out_and_adds_the_switch_legs_back():
+    spec = config.RULE_IN["Morpho"]
+    assert spec["legs"] == ("noncirculating_holding_tokens",) and spec["swc_leg"] == "morpho_undistributed_tokens"
+    assert "morpho_relocked_tokens" in config.CIRCULATING_ONCHAIN["Morpho"]["subtract"]          # the relock stays out
+    assert "morpho_relocked_tokens" not in config.rule_in_legs("Morpho")
+    assert "no wallet or contract published" in spec["relock_findings"]
+
+
+def test_2_uniswap_treasury_is_in_and_the_references_add_up_by_wallet():
+    spec = config.RULE_IN["Uniswap"]
+    assert spec["legs"] == ("treasury_holding_tokens", "noncirculating_holding_tokens") == spec["off_float"]
+    assert "burn_address_balance" not in spec["legs"]                                # burned stays out of both
+    for key in ("coingecko", "coinmarketcap"):
+        ref, legs = spec["references"][key]
+        assert ref + sum(legs.values()) == pytest.approx(spec["circulating"][1], rel=0.005), key
+
+
+def _flow_rows(name, groups, asof):
+    keep = bw._SCOPE
+    bw._SCOPE = [config.PROJECT_BY_NAME[name]]
+    bw._ONE_OFF_IN_SERIES.clear()
+    try:
+        return {r["Line"]: r for r in bw.flow_statements(groups, asof) if r["Statement"] == "Token flow"}
+    finally:
+        bw._SCOPE = keep
+
+
+def test_2_a_release_from_a_rule_wallet_is_not_a_circulating_change():
+    """Uniswap under the rule: the Timelock is circulating, so what it releases moves the float, not circulating — the
+    statement balances on minted − burned alone, and a burn out of the Timelock IS a circulating burn."""
+    asof = pd.Timestamp("2026-11-09")
+    days = pd.date_range("2026-05-01", "2026-11-09")
+    burn = [1000.0] * len(days)
+    circ = [900e6 - 1000.0 * (i + 1) for i in range(len(days))]
+    g = {("Uniswap", "circulating_supply_used"): _g("Uniswap", "circulating_supply_used", list(zip(days, circ)),
+                                                    "derived:circulating_onchain"),
+         ("Uniswap", "gross_burn_tokens"): _g("Uniswap", "gross_burn_tokens", list(zip(days, burn))),
+         ("Uniswap", "gross_issuance_tokens"): _g("Uniswap", "gross_issuance_tokens", [(d, 0.0) for d in days]),
+         ("Uniswap", "unlock_release_tokens"): _g("Uniswap", "unlock_release_tokens", [(d, 50_000.0) for d in days])}
+    tf = _flow_rows("Uniswap", g, asof)
+    assert not any(line.startswith("+ released") for line in tf)
+    assert not any("one-off burn from issuer-side" in line for line in tf)
+    assert tf["− burned"]["Q0"] == pytest.approx(90_000.0)
+    assert abs(tf["Residual ÷ opening"]["Q0"]) < 1e-9 and tf["Status"]["Q0"].startswith("OK"), tf["Status"]["Q0"]
+
+
+def test_2_hyperliquid_and_morpho_flow_legs_are_declared():
+    assert config.RULE_IN["Hyperliquid"]["flow_in"][0][1] == "emissions_tokens"
+    lab, m = config.RULE_IN["Morpho"]["flow_outside"][0]
+    assert m == "unlock_release_outside_tokens" and "relock" in lab
+    assert config.UNLOCK_RELEASE_SUBSETS["Morpho"][m] == ("morpho_relocked_tokens",)

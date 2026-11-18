@@ -43886,3 +43886,36 @@ declare_rule_in("Morpho", ("noncirculating_holding_tokens",),
                 swc_leg="morpho_undistributed_tokens", circulating=(549_062_109, 889_299_999.80),
                 relock_findings="no wallet or contract published; no staking exists for MORPHO; none of the disclosed "
                                 "wallets is staked or in a yield position (read 2026-11-17)")
+
+
+# ---------------------------------------------------------------------------------------------------------------------
+# R9.2 UNISWAP UNDER THE RULE (Jake 2026-11-17). docs/r8_rule_audit.md §1 (Ethereum block 26,434,142, 2026-11-17):
+#   IN, off float: the governance Timelock 0x1a9C8182… 262,247,996.31 UNI — vesting ended (the four treasury vesting
+#     contracts hold 0); admin() = Governor Bravo 0x408ED635… with a 2-day delay, so a vote can move it; idle
+#     (delegates() = 0). The airdrop merkle distributor 0x090D4613… 216,772.09 — released, claimable.
+#   BURNED (stays out of circulating and total): 0x…dEaD 114,205,581.21.
+# Circulating 623.3M -> 885.8M; the float does not move. The Timelock's releases stay unlocks (R9.3).
+declare_rule_in("Uniswap", ("treasury_holding_tokens", "noncirculating_holding_tokens"),
+                "docs/r8_rule_audit.md §1: the Timelock 0x1a9C8182… — admin() = Governor Bravo (2-day delay), vesting "
+                "ended, idle; the merkle distributor 0x090D4613… is claimable",
+                circulating=(623_329_650, 885_794_419),
+                references={"coinmarketcap": (623_546_422, {"the Timelock 0x1a9C8182…": 262_247_996}),
+                            "coingecko": (607_549_896, {"the Timelock": 262_247_996, "Uniswap Foundation 0x5069A64B…": 13_314_112,
+                                                        "merkle distributor": 216_772, "not named": 2_465_643})})
+
+
+# R9.2 THE TOKEN-FLOW STATEMENT UNDER THE RULE: circulating changes by what is minted, what is released from wallets
+# still outside it, and what is burned; a release from a wallet the rule counts in circulating is float dilution, not a
+# circulating change (build_workbook.flow_statements). Per project:
+#   Hyperliquid — every staking reward enters circulating (the issuer-side stake is circulating too): emissions_tokens;
+#   Morpho — the relock's scheduled releases still enter circulating from outside (unlock_release_outside_tokens).
+RULE_IN["Hyperliquid"]["flow_in"] = (("+ staking rewards (every reward: the issuer-side stake is circulating too)",
+                                      "emissions_tokens"),)
+UNLOCK_RELEASE_SUBSETS.setdefault("Morpho", {})["unlock_release_outside_tokens"] = ("morpho_relocked_tokens",)
+METRICS["unlock_release_outside_tokens"] = {
+    "label": "Released from the wallets / schedules still OUTSIDE circulating under the rule (Morpho: the modelled "
+             "relock's scheduled releases) — the release leg of the token-flow statement (R9.2)",
+    "kind": "flow", "unit": "tokens", "archetypes": [1, 2, 3, 4], "tiers": [2], "sanity_min": 0, "sanity_max": 1e12,
+    "only_projects": ("Morpho",), "view_only": True}
+RULE_IN["Morpho"]["flow_outside"] = (("+ released from the relock schedule (still outside circulating)",
+                                      "unlock_release_outside_tokens"),)

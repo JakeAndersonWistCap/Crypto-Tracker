@@ -9633,6 +9633,9 @@ NET_ABS_UNLOCK_HEAD = "Net absorption incl. unlocks Q0 (tokens) = RETIRED buybac
 def _ff_expr(R, r: int, p: dict) -> str:
     """Free float = circulating − the lock inside it (as A2's FREE FLOAT column)."""
     c, lk = _circ(R, r, p), _ff_lock(R, r, p)
+    rule = _rule_in_term(R, r, p)      # R9.2: the issuer-side stock the rule counts in circulating is not free float
+    if rule:
+        return f"IF(AND(ISNUMBER({c}),ISNUMBER({lk}),ISNUMBER({rule})),{c}-{lk}-{rule},{NA})"
     return f"IF(AND(ISNUMBER({c}),ISNUMBER({lk})),{c}-{lk},{NA})"
 
 
@@ -14718,6 +14721,12 @@ FLOW_CLAIMS_LEG = "claims netted out of unlock_release_tokens (config.release_le
 FLOW_CLAIMS_LABEL = "+ claimed out of the distributors inside the non-circulating set (b) — netted out of (e)"
 
 
+def _rule_flow(name: str) -> bool:
+    """R9.2: the project's token-flow statement runs on the rule — its issuer-side wallets are IN circulating, so a
+    release from them is no circulating change and a burn out of them (Uniswap's 100M from the Timelock) is one."""
+    return name in config.RULE_IN and bool(config.RULE_IN[name].get("flow_rule", True))
+
+
 def flow_statements(groups: dict, asof) -> list[dict]:
     """The rows of the Flows tab (see FLOWS_HEAD); also returned for the tests and coverage_audit."""
     period = GLOBALS["period_days"]
@@ -14772,6 +14781,15 @@ def flow_statements(groups: dict, asof) -> list[dict]:
             # R5.1: a project's own words for the line (Pendle: the gauge funding), else the distributors' claims
             fl = config.flow_less_line(name) or {}
             legs.insert(at, (fl.get("label", FLOW_CLAIMS_LABEL), fl.get("series", FLOW_CLAIMS_LEG), 1))
+        if _rule_flow(name):
+            # R9.2 (the rule): a release from a wallet the rule counts IN circulating does not change circulating — it
+            # dilutes the FLOAT (the unlock legs keep counting it, R9.3). What moves circulating is what is minted,
+            # what is released from wallets still OUTSIDE it (declared: `flow_outside`), and what is burned.
+            rs = config.RULE_IN[name]
+            legs = [("+ minted", mint_m, 1),
+                    *[(lab, m, 1) for lab, m in rs.get("flow_in") or ()],
+                    *[(lab, m, 1) for lab, m in rs.get("flow_outside") or ()],
+                    ("− burned", burn_m, -1)]
         note_tok = {"Sky": "MKR -> SKY conversions (converter 0xA1Ea1bA1…) enter circulating with NO series — NOT WIRED "
                            "(149.6M SKY in the 90 days to 2026-10-12, research of 2026-10-13); they are not dilution "
                            "(SPEC.md section 12, item 7) and show here as residual",
@@ -14797,7 +14815,7 @@ def flow_statements(groups: dict, asof) -> list[dict]:
                     leg_vals[lab].append(0.0)
                     continue
                 v, n = _flow_sum(d(m), start, end)
-                if lab == "− burned" and v is not None:
+                if lab == "− burned" and v is not None and not _rule_flow(name):
                     # P5-1C.B1: a one-off KEPT in the burn series that left an ISSUER-SIDE wallet (Uniswap's 100M from
                     # the Timelock) never circulated — out of this leg (it is the memo line below), so the circulating
                     # identity still balances; every rate keeps it
@@ -14868,12 +14886,16 @@ def flow_statements(groups: dict, asof) -> list[dict]:
                  "opening + minted + released − returned − burned", ""),
                 ("Closing circulating", tok["close"], "tokens", "circulating_supply_used (end of the quarter)", ""),
                 ("Residual (closing − expected)", tok["residual"], "tokens", "", note_tok),
-                ("memo: minted straight to issuer-side wallets (insider emission, not circulating until released)",
+                (("memo: minted straight to issuer-side wallets (insider emission — INSIDE the lines above: under the rule "
+                  "those wallets are circulating)" if _rule_flow(name) else
+                  "memo: minted straight to issuer-side wallets (insider emission, not circulating until released)"),
                  [(_flow_sum(d("issuer_mint_tokens"), *_flow_window(asof, k))[0]
                    if (name, "issuer_mint_tokens") in groups else None) for k in range(5)], "tokens",
                  "issuer_mint_tokens" if (name, "issuer_mint_tokens") in groups else "— (none declared: config.ISSUER_MINTS)",
                  # G9 D2: a DECLARED mint route with nothing stored yet is a route not filled, not "none declared"
-                 (("G9 L3: INSIDE '+ minted' — the wallet is circulating by the project's own method; its part of "
+                 (("R9.2: INSIDE the lines above — the rule counts the wallet in circulating (off the float); its part "
+                   "is shown here, not added again" if _rule_flow(name) else
+                   "G9 L3: INSIDE '+ minted' — the wallet is circulating by the project's own method; its part of "
                    "the mint is shown here, not added again" if (config.ISSUER_MINTS.get(name) or {}).get("inside_minted")
                    else "not in the expected closing: it lands in a non-circulating wallet; its release is (e)")
                   if (name, "issuer_mint_tokens") in groups or name not in config.ISSUER_MINTS else
@@ -14894,7 +14916,7 @@ def flow_statements(groups: dict, asof) -> list[dict]:
                     + ("; NOT MATCHED to a stored fall: "
                        + ", ".join(f"{m} {v:,.0f}" for (n_, m), v in _ONE_OFF_UNMATCHED.items() if n_ == name)
                        if any(n_ == name for n_, _m in _ONE_OFF_UNMATCHED) else ""))]
-                  if (name, "one_off_burn_tokens") in groups else []),
+                  if (name, "one_off_burn_tokens") in groups and not _rule_flow(name) else []),
                 ("Residual ÷ opening", tok["pct"], "pct", "", f"CHECK beyond ±{FLOW_RESIDUAL_LIMIT:.1%}"),
                 ("Status", tok["status"], "text", "", basis)]
         for line, vals, unit, series, note in rows:
