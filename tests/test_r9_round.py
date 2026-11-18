@@ -225,3 +225,18 @@ def test_2_maple_mints_to_the_dao_multisig_enter_circulating_when_minted():
     for key in ("coingecko", "coinmarketcap"):
         ref, legs = spec["references"][key]
         assert ref + sum(legs.values()) == pytest.approx(spec["circulating"][1], rel=0.005), key
+
+
+def test_2_pendle_multisigs_are_in_and_come_off_the_float_with_the_released_wallets():
+    spec = config.RULE_IN["Pendle"]
+    assert spec["legs"] == ("treasury_holding_tokens", "noncirculating_holding_tokens")
+    for key in ("coingecko", "coinmarketcap"):
+        ref, legs = spec["references"][key]
+        assert ref + sum(legs.values()) == pytest.approx(spec["circulating"][1], rel=0.005), key
+
+    class R:
+        def D(self, r, m, w):
+            return f"D[{m}]"
+    held = bw._released_held(R(), 5, {"name": "Pendle"})
+    # both come off the float: the wallets released per Pendle's docs (R5.1) and the stock the rule moved in
+    assert "D[rule_in_off_float_tokens]" in held and config.FLOAT_RELEASED_HELD["Pendle"]["metric"] in held

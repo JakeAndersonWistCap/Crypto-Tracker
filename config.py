@@ -43981,3 +43981,26 @@ declare_rule_in("Maple", ("treasury_holding_tokens_chain", "noncirculating_holdi
 # minted (the multisig is circulating) — the mint line of the statement, no longer a memo outside it.
 RULE_IN["Maple"]["flow_in"] = (("+ minted to the DAO multisig (circulating under the rule; MIP-009/010 mints)",
                                 "issuer_mint_tokens"),)
+
+
+# ---------------------------------------------------------------------------------------------------------------------
+# R9.2 PENDLE UNDER THE RULE (Jake 2026-11-17). docs/r8_rule_audit.md §5 (Ethereum, read 2026-11-17):
+#   IN, off float: the Ecosystem Fund 0x399Be606… 16,120,440.00 PENDLE (a Safe 2-of-4 can move it; no sPENDLE or
+#     vePENDLE position, idle); the Governance multisig 0x8119EC16… 19,751,622.07 (a Safe 3-of-5; idle).
+#   ALREADY IN, off float (unchanged): the Team multisig 0x918cF6b1… 7,733,190.01 and the fee wallet 0x82704…
+#     13,603.37 (released per Pendle's docs, R5.1).
+# Circulating -> the total supply (PENDLE has no burn); the float does not move. The two multisigs' releases stay the
+# unlock legs (R9.3).
+declare_rule_in("Pendle", ("treasury_holding_tokens", "noncirculating_holding_tokens"),
+                "docs/r8_rule_audit.md §5: the Ecosystem Fund 0x399Be606… (Safe 2-of-4) and the Governance multisig "
+                "0x8119EC16… (Safe 3-of-5) can be moved and hold no sPENDLE / vePENDLE position",
+                circulating=(245_655_386, 281_527_448),
+                references={"coingecko": (174_163_825, {"vePENDLE (locked: in circulating, off the float)": 63_159_346,
+                                                         "the Ecosystem Fund 0x399Be606…": 16_120_440,
+                                                         "the Governance multisig 0x8119EC16…": 19_751_622,
+                                                         "the Team multisig 0x918cF6b1… + fee wallet": 7_746_793,
+                                                         "not named": 585_422}),
+                            "coinmarketcap": (174_163_825, {"vePENDLE": 63_159_346, "the Ecosystem Fund": 16_120_440,
+                                                             "the Governance multisig": 19_751_622,
+                                                             "the Team multisig + fee wallet": 7_746_793,
+                                                             "not named": 585_422})})
