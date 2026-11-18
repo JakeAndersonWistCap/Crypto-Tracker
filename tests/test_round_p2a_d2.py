@@ -61,7 +61,9 @@ def test_the_migration_is_not_an_unlock():
     """Jake's 16:47 Summary: total dilution 1.326 (132% a year), 1.258bn tokens a year. The legacy legs saw the filing
     wallets' AERO and managed locks LEAVE for the new token (~478.3M from 10-20) and counted every fall as a release.
     From config.UNLOCK_LEGACY_CUT's last_day a legacy row is not read; the 10-15 release before it still counts."""
-    assert config.unlock_stock_metrics("Aerodrome") == LEGS
+    # (R9.3, Jake 2026-11-17: Aerodrome's docs publish no vesting schedule, so its unlock leg is a declared zero —
+    # the view's own behaviour on the legacy legs is what is tested here)
+    assert config.unlock_stock_metrics("Aerodrome") == () and set(LEGS) == set(config.rule_in_legs("Aerodrome"))
     groups = _migration_groups()
     bw.UNLOCK_LEGACY_DROPPED.clear()
     bw._unlock_release_view(groups, "Aerodrome", "unlock_release_tokens", LEGS)
@@ -218,18 +220,21 @@ def test_offline_check_prints_each_chain_and_the_park_condition():
     assert rc == 0 and "COMPLETE" in text
     for ch in ("ethereum", "optimism", "arc", "ink", "robinhood", "arbitrum"):
         assert f"chain_tokens.{ch}" in text and "none — GAP - " in text
-    assert "PARKED — migration:" in text
+    # R8.1 (Jake 2026-11-17): unparked on the reconciliation — the check prints the park state either way
+    assert ("PARKED — migration:" in text) == bool(config.aerodrome_park_reason()) and "PARKED" in text
 
 
 # ============================================================================ item 7: the park condition
 def test_park_reason_names_every_open_condition(monkeypatch):
     st = config.aerodrome_migration_state()
     day = pd.Timestamp("2026-10-27")
+    # an open blocker parks it and is named in full (P2c-3's "primary source" blocker stood here until R8.1 closed it:
+    # Jake 2026-11-17, unparked on the reconciliation to CoinMarketCap's and CoinGecko's formulas)
+    monkeypatch.setitem(config.AERODROME_MIGRATION, "unpark_blockers", (("primary_source", "no primary source "
+                                                                         "publishes it; the gap is traced"),))
     why = config.aerodrome_park_reason(st, day)
-    # P2c-3: the one open condition is the primary source; the filing-wallet gap is traced (P2b-1)
     assert why.startswith("PARKED — migration: ") and "no primary source publishes" in why and "traced" in why
     assert "no v3 rows held yet" not in why
-    assert "Aerodrome" in config.DETAIL_PARKED                     # stays parked
     monkeypatch.setitem(config.AERODROME_MIGRATION_WATCH, "built", "2026-10-28")
     monkeypatch.setitem(config.AERODROME_MIGRATION, "unpark_blockers", ())
     assert config.aerodrome_park_reason(st, day) == ""

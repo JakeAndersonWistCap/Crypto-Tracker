@@ -37,7 +37,11 @@ def test_d2_aerodrome_unparked_when_the_config_gives_none(monkeypatch):
 
 def test_d2_the_real_condition_parks_aerodrome_today():
     # D2: MIGRATION WATCH built is unset and the filing wallets' new-token holdings have no reader.
+    # the reader parks Aerodrome exactly while config gives a reason on the day (R8.1, Jake 2026-11-17: the last
+    # blocker is closed, so a day on or after the switch file's verified date reads unparked; an earlier day is parked)
     _reset("2026-10-27")
+    assert bool(reader.parked_reason("Aerodrome")) == bool(config.aerodrome_park_reason(day="2026-10-27"))
+    _reset("2026-10-13")
     assert reader.parked_reason("Aerodrome").startswith("PARKED — migration")
 
 

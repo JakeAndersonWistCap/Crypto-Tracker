@@ -241,12 +241,20 @@ def test_circulating_subtracts_the_v3_filing_row_and_the_cut_drops_the_stored_le
     assert list(f["source"]) == ["ve_managed:0xeBf418Fe.weights", "aero_v3:filing_locks"]
     bw._circulating_views(g)
     c = g[("Aerodrome", "circulating_supply_onchain")].set_index("date")["value"]
-    assert c.loc[pd.Timestamp("2026-10-28")] == pytest.approx(2_126_320_619.4199 - 86_892_883.4453 - 500_541_902.6989)
+    # R8.1 / R9.2 (the rule, Jake 2026-11-17): the issuer-side legs are counted IN circulating — the total itself —
+    # and come off the float instead (the filing read: the v3 row the cut kept)
+    assert c.loc[pd.Timestamp("2026-10-28")] == pytest.approx(2_126_320_619.4199)
+    g[("Aerodrome", "aero_issuer_held_tokens")] = _g("aero_issuer_held_tokens", [("2026-10-28", 37.0e6, "derived")])
+    bw._rule_in_views(g)
+    off = g[("Aerodrome", "rule_in_off_float_tokens")].set_index("date")["value"]
+    assert off.loc[pd.Timestamp("2026-10-28")] == pytest.approx(37.0e6 + 500_541_902.6989)
 
 
 def test_aerodrome_stays_parked():
     """P2b-1 builds the reader only: no primary source publishes Aerodrome's circulating on this basis, so the park,
     the MIGRATION WATCH and the named blocker stay as they are (Jake decides)."""
     assert config.AERODROME_MIGRATION_WATCH["built"] is None
-    assert [k for k, _w in config.AERODROME_MIGRATION["unpark_blockers"]] == ["primary_source"]      # P2c-3
-    assert config.aerodrome_park_reason(config.aerodrome_migration_state(), "2026-10-28").startswith("PARKED")
+    # R8.1 (Jake 2026-11-17): the "primary source" blocker is closed by the reconciliation (config.AERO_RULE_READ);
+    # no blocker is left, and the decision is on record
+    assert config.AERODROME_MIGRATION["unpark_blockers"] == () and "Jake 2026-11-17" in config.AERODROME_UNPARKED["decided"]
+    assert len(config.AERO_RULE_READ["references"]) == 2

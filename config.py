@@ -43727,3 +43727,85 @@ INSIDER_INSIDE_CIRCULATING["Aerodrome"] = {
 AERODROME_MIGRATION["unpark_blockers"] = ()
 AERODROME_UNPARKED = {"on": "2026-11-17", "decided": "Jake 2026-11-17 (R8.1)", "by": "the reconciliation to "
                       "CoinMarketCap's and CoinGecko's formulas, every gap named (config.AERO_RULE_READ)"}
+
+
+# R9.3 UNLOCKS = SCHEDULED VESTING RELEASES PER THE DOCS (Jake 2026-11-17, option (a)): a scheduled release counts as
+# an unlock and as dilution of the float even when the holder keeps the tokens staked. The unlock legs therefore stay
+# the vesting / release stocks they were when the rule moves a wallet INTO circulating: each frozen project's legs are
+# pinned here before its subtract list changes (R9.2), so no unlock, total dilution or net holder yield moves or loses
+# its value by that move.
+# AERODROME HAS NO SCHEDULE: the genesis allocations (team 95M, Public Goods 105M, Flight School 50M) were issued as
+# max-locked veAERO with no time-based vesting, and nothing is out of circulating (R8.1) — a genuine zero, declared with
+# its source, read as 0 (never blank). The issuer wallets' own spending is not a vesting release; it shows as a fall of
+# aero_issuer_held_tokens (off-float stock).
+UNLOCK_DECLARED_ZERO = {
+    "Aerodrome": {"days_of": "total_supply",
+                  "source": "aerodrome-finance/docs tokenomics.mdx (the ecosystem and team allocations are 'max-locked' "
+                            "veAERO; no vesting schedule) ; docs/r8_aero_evidence.md (no wallet is out of circulating)",
+                  "read_on": "2026-11-17", "decided": "Jake 2026-11-17 (R9.1 / R9.3)"},
+}
+# The frozen projects' unlock legs, pinned as they stand before R9.2 changes any subtract list (Sky and Hyperliquid are
+# explicit already):
+for _p in ("Uniswap", "Fluid", "Maple", "Morpho", "Pendle"):
+    UNLOCK_STOCKS[_p] = tuple(_unlock_stock_metrics_pr4(_p))
+
+
+
+# =====================================================================================================================
+# R9.2 THE RULE APPLIED IN THE BUILD (Jake 2026-11-17: "apply the rule to all seven frozen projects, one project per
+# commit, with the per-wallet evidence in docs/r8_rule_audit.md"). RULE_IN[project]:
+#   legs       the issuer-side series the build used to take OUT of circulating that the rule counts IN (they stay
+#              listed in CIRCULATING_ONCHAIN[...]["subtract"] as the project's issuer-side set — the unlock legs, the
+#              insider shares and the references still read them — but fetch.circulating.series no longer subtracts them);
+#   off_float  the series that come off the free float for them (default: the legs themselves), summed per day into
+#              rule_in_off_float_tokens and subtracted by every float (CP tradeable float, A2 free float, A3 effective
+#              float, the Credibility free-float row): circulating rises by the legs, the free float does not move;
+#   evidence   who can move each wallet and whether it earns (docs/r8_rule_audit.md), read date, decision.
+RULE_IN: dict = {}
+METRICS["rule_in_off_float_tokens"] = {
+    "label": "Issuer / foundation / treasury stock THE RULE counts in circulating (Jake 2026-11-17) — off the free float: "
+             "the sum of the project's declared legs (config.RULE_IN)",
+    "kind": "stock", "unit": "tokens", "archetypes": [1, 2, 3, 4], "tiers": [2], "sanity_min": 0, "sanity_max": 1e12,
+    "only_projects": (), "view_only": True}
+
+
+def rule_in_legs(project_name: str) -> tuple:
+    """R9.2: the issuer-side legs the rule counts IN circulating for this project (() where none is declared)."""
+    return tuple((RULE_IN.get(project_name) or {}).get("legs") or ())
+
+
+def declare_rule_in(project: str, legs: tuple, evidence: str, off_float: tuple | None = None, **more) -> None:
+    RULE_IN[project] = {"legs": tuple(legs), "off_float": tuple(off_float if off_float is not None else legs),
+                        "evidence": evidence, "read_on": "2026-11-17", "decided": "Jake 2026-11-17 (the rule; R9.2)",
+                        **more}
+    METRICS["rule_in_off_float_tokens"]["only_projects"] = tuple(RULE_IN)
+
+
+# AERODROME ON THE SAME MECHANISM (R8.1's result, unchanged: circulating = total_supply; the float loses the lock and
+# the issuer liquid): its issuer-side set is listed again and counted in by the rule. The filing wallets' stakes are
+# inside the lock total, which the float already nets them out of (locked_excluded_metrics) — so they come off the
+# float here, once; the issuer liquid is the holding less the unclaimed Velodrome allocation (which stands for the
+# unswapped VELO claim, R8.1).
+CIRCULATING_ONCHAIN["Aerodrome"]["subtract"] = ("noncirculating_holding_tokens", "filing_managed_lock_tokens")
+CIRCULATING_ONCHAIN["Aerodrome"]["locked_excluded_metrics"] = ("filing_managed_lock_tokens",)
+FLOAT_RELEASED_HELD.pop("Aerodrome", None)
+METRICS.pop("aero_released_held_tokens", None)
+declare_rule_in("Aerodrome", ("noncirculating_holding_tokens", "filing_managed_lock_tokens"),
+                "docs/r8_aero_evidence.md: the issuer wallets' 503.09M of sAERO stakes earn (1,445,923 USDC paid into "
+                "their Relays since launch) and their 37.81M liquid AERO can be moved — no wallet is unreleased, immovable "
+                "and idle", off_float=("aero_issuer_held_tokens", "filing_managed_lock_tokens"))
+UNLOCK_STOCKS["Aerodrome"] = ()        # R9.3: no vesting schedule in the docs — the declared zero (UNLOCK_DECLARED_ZERO)
+
+
+def has_unlock_leg(project_name: str) -> bool:
+    """R9.3: the project's unlock series forms — from its vesting / release stocks, or as a DECLARED zero (no schedule in
+    its docs: UNLOCK_DECLARED_ZERO). A genuine zero reads 0, never blank."""
+    return bool(unlock_stock_metrics(project_name)) or project_name in UNLOCK_DECLARED_ZERO
+# R9.3: Aerodrome's unlock series changed its measuring point by decision — the falls of the filing wallets' stock
+# (the old non-circulating set) -> the declared zero (no vesting schedule; nothing out of circulating). A declared handover.
+PROJECT_BY_NAME["Aerodrome"].setdefault("series_handover", {})["unlock_release_tokens"] = {
+    "ordered_points": ("derived:unlock_release", "derived:declared_zero[no vesting or release schedule]"),
+    "why": "R9.3 (Jake 2026-11-17): unlocks are scheduled vesting releases per the docs; Aerodrome's docs publish none and "
+           "no wallet is out of its circulating (R8.1) — the unlock leg is a declared zero",
+    "composition_change": "the falls of the filing wallets' liquid AERO and stakes -> 0 (those wallets are circulating)",
+    "declared": "2026-11-17"}

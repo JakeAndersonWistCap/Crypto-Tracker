@@ -125,10 +125,19 @@ def test_4a_held_buybacks_are_listed_and_only_fluids_is_out_of_circulating():
 
 # =========================================================================== 1: Aerodrome under the rule
 def test_1_aerodrome_circulating_subtracts_nothing_issuer_side():
+    import pandas as pd
+    from fetch import circulating as C
     spec = config.circulating_onchain("Aerodrome")
-    assert spec["subtract"] == () and spec["total"] == "total_supply" and "Jake 2026-11-17" in spec["decided_by"]
-    assert config.locked_excluded_metrics("Aerodrome") in ((), [], None) or not config.locked_excluded_metrics("Aerodrome")
-    assert config.float_released_held("Aerodrome")["from"] == "aero_issuer_held_tokens"
+    # R9.2: the issuer-side set is listed, and every leg of it is counted IN by the rule — nothing is subtracted
+    assert set(spec["subtract"]) == set(config.rule_in_legs("Aerodrome")) and "Jake 2026-11-17" in spec["decided_by"]
+    d = pd.Timestamp("2026-11-10")
+    h = pd.DataFrame([{"date": d, "project": "Aerodrome", "metric": "total_supply", "value": 2_141.5e6},
+                      {"date": d, "project": "Aerodrome", "metric": "noncirculating_holding_tokens", "value": 58.3e6},
+                      {"date": d, "project": "Aerodrome", "metric": "filing_managed_lock_tokens", "value": 503.1e6}])
+    assert list(C.series(h, "Aerodrome")) == [2_141.5e6]
+    assert list(C.series(h[h.metric == "total_supply"], "Aerodrome")) == [2_141.5e6]     # the legs are not needed for it
+    assert config.RULE_IN["Aerodrome"]["off_float"] == ("aero_issuer_held_tokens", "filing_managed_lock_tokens")
+    assert config.unlock_stock_metrics("Aerodrome") == () and "Aerodrome" in config.UNLOCK_DECLARED_ZERO
 
 
 def test_1_the_read_ties_circulating_float_and_both_references():

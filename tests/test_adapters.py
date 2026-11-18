@@ -20794,7 +20794,10 @@ def test_aerodrome_filing_wallets_liquid_and_managed_locks_are_out_of_circulatin
     h = pd.DataFrame([{"date": d, "project": "Aerodrome", "metric": "total_supply", "value": 1_992.8e6},
                       {"date": d, "project": "Aerodrome", "metric": "noncirculating_holding_tokens", "value": 36.2e6},
                       {"date": d, "project": "Aerodrome", "metric": "filing_managed_lock_tokens", "value": 444.3e6}])
-    assert list(C.series(h, "Aerodrome")) == [1_992.8e6 - 36.2e6 - 444.3e6]
+    # THE RULE (Jake 2026-11-17, R8.1 / R9.2): the filing wallets' liquid AERO and stakes are the issuer-side set still,
+    # and both are counted IN circulating (they earn / can be moved) — off the float, not out of circulating
+    assert config.rule_in_legs("Aerodrome") == spec["subtract"]
+    assert list(C.series(h, "Aerodrome")) == [1_992.8e6]
     assert len(config.PROJECT_BY_NAME["Aerodrome"]["ve_managed_holdings"]["owners"]) == 6
 
 
@@ -25859,8 +25862,14 @@ def test_free_float_never_subtracts_the_lock_twice_from_coingeckos_free_float_ba
             "Aerodrome|ve_locked_supply_tokens": {"now": 1.05e9},
             "Aerodrome|filing_managed_lock_tokens": {"now": 0.44e9},
             "Aerodrome|locked_tokens": {"now": 0.93e9}}
+    # R9.2 (the rule): circulating now holds the issuer-side stock, which comes off the float — no figure for it, no
+    # free float; with it (the stakes 0.44e9 + liquid 0.04e9), each token leaves the float exactly once
+    v, _d, how = cred.FORMULAS["free_float_now"]("Aerodrome", rows, None, pd.Timestamp("2026-10-07"))
+    assert v is None and "rule_in_off_float_tokens" in how
+    rows["Aerodrome|circulating_supply_onchain"] = {"now": 1.51e9 + 0.48e9}
+    rows["Aerodrome|rule_in_off_float_tokens"] = {"now": 0.48e9}
     v, _d, _h = cred.FORMULAS["free_float_now"]("Aerodrome", rows, None, pd.Timestamp("2026-10-07"))
-    assert abs(v - (1.51e9 - (1.05e9 - 0.44e9))) < 1
+    assert abs(v - (1.99e9 - (1.05e9 - 0.44e9) - 0.48e9)) < 1
 
     class R:
         def D(self, r, m, w):

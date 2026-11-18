@@ -305,8 +305,10 @@ def test_pendle_unlocks_and_a_composition_change_is_never_an_unlock(tmp_path, mo
     assert _cell(wb, value, "A3", "Pendle", "UNLOCK DILUTION Q0") == pytest.approx(1_675_300.33, abs=0.5)
     wb2, value2 = _build(tmp_path / "a", monkeypatch, "Aerodrome")
     # Aerodrome's set gained the filing wallets on 2026-10-07 (4.9M -> 36.2M): no release, and the % is BLOCKED
+    # R9.3 (Jake 2026-11-17): Aerodrome's docs publish no vesting schedule and nothing is out of its circulating — a
+    # declared zero that reads 0 (never blank, never BLOCKED), on the count and on the rate
     assert _cell(wb2, value2, "A3", "Aerodrome", "UNLOCK DILUTION Q0") == 0
-    assert str(_cell(wb2, value2, "A3", "Aerodrome", "Unlock dilution, annualised")).startswith("BLOCKED")
+    assert _cell(wb2, value2, "A3", "Aerodrome", "Unlock dilution, annualised") == 0
 
 
 # ----------------------------------------------------------------------------------------------- B Aerodrome buyback
@@ -811,7 +813,10 @@ def test_aerodrome_traced_purchases_fill_q0_on_the_real_dump(tmp_path, monkeypat
     wb, value = _build(tmp_path, monkeypatch, "Aerodrome", asof="2026-10-12")
     assert _cell(wb, value, "A3", "Aerodrome", "Actual buyback Q0 ($)") == pytest.approx(829_828)
     assert _cell(wb, value, "A3", "Aerodrome", "Net absorption Q0 (tokens)") == pytest.approx(-57_873_088.20, abs=1)
-    assert _cell(wb, value, "A3", "Aerodrome", "CIRCULATING RETIREMENT RATE") == pytest.approx(0.005155, abs=1e-6)
+    # the same retired tokens over the rule's circulating (R8.1: the issuer-side stock is counted in — about 1,997M on
+    # this dump against 1,517M before, so the rate is 0.005155 x 1,517 / 1,997)
+    rate = _cell(wb, value, "A3", "Aerodrome", "CIRCULATING RETIREMENT RATE")
+    assert rate == pytest.approx(0.005155 * 1_516.8 / 1_997.6, rel=0.01)
     ws = wb["Data"]
     import build_workbook as bw
     row = next(r for r in range(2, ws.max_row + 1) if ws.cell(r, 1).value == "Aerodrome|retired_buyback_tokens")

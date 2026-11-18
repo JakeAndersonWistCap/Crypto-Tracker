@@ -412,7 +412,9 @@ def test_aerodrome_circulating_restated_on_the_onchain_basis_has_no_jump_on_the_
     (tmp_path / "a").mkdir()
     _build(tmp_path / "a", monkeypatch, "Aerodrome", asof="2026-10-12")
     used = bw._LAST_GROUPS[("Aerodrome", "circulating_supply_used")]
-    assert used["value"].min() > 1.4e9 and pd.to_datetime(used["date"]).min() >= pd.Timestamp("2026-10-07")
+    # (R8.1, the rule: circulating is the on-chain total itself, held from the total's own first day — still never
+    # CoinGecko's ~1.0bn on any day)
+    assert used["value"].min() > 1.4e9 and not used["source"].astype(str).str.contains("coingecko").any()
     # restated
     payload = aerodrome_restated(load("Aerodrome"))
     (tmp_path / "b").mkdir()

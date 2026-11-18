@@ -57,7 +57,10 @@ def series(h: pd.DataFrame, name: str) -> pd.Series:
     if total.empty:
         return total
     out = total.copy()
+    rule_in = set(config.rule_in_legs(name))               # R9.2: issuer-side legs the rule counts IN circulating
     for m in spec.get("subtract") or ():
+        if m in rule_in:
+            continue
         bal = _daily(h, name, m)
         out = (out - bal).dropna()
     # ADDED BACK (Sky, Jake 2026-10-12 decision 2a): a subtracted reserve's part that backs a legacy token held by

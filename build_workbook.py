@@ -4199,7 +4199,9 @@ def _circulating_views(groups: dict) -> None:
         # THE ADDED-BACK LEGS TOO (Jake's review of the ef6dc86 run, item 9): fetch/circulating.series adds spec["add"]
         # from the frame it is given; without them in it, Sky's MKR-backed SKY (decision 2a) was an empty series, every
         # day dropped, and circulating_used fell back to CoinGecko (23,433.6M against the decided ~23,291.6M)
-        need = [spec["total"], *spec.get("subtract", ()), *spec.get("add", ())]
+        # R9.2: a leg the rule counts IN circulating (config.RULE_IN) is not subtracted, so it is not needed here
+        need = [spec["total"], *(m for m in spec.get("subtract", ()) if m not in config.rule_in_legs(name)),
+                *spec.get("add", ())]
         parts = [groups.get((name, m)) for m in need]
         if any(g is None or g.empty for g in parts):
             continue
@@ -6076,6 +6078,24 @@ def _unlock_views(groups: dict) -> None:
                              *((m, tuple(ls)) for m, ls in (config.UNLOCK_RELEASE_SUBSETS.get(name) or {}).items())):
             if legs:
                 _unlock_release_view(groups, name, metric, legs)
+            elif metric == "unlock_release_tokens":
+                _unlock_declared_zero_view(groups, name)
+
+
+def _unlock_declared_zero_view(groups: dict, name: str) -> None:
+    """R9.3 (config.UNLOCK_DECLARED_ZERO; Jake 2026-11-17: "a genuine zero reads 0, not blank"): a project whose docs
+    publish NO vesting or release schedule and whose circulating leaves no wallet out has no unlock to read — a
+    declared 0 on every day its circulating total is held (never where the total itself is unread)."""
+    z = (getattr(config, "UNLOCK_DECLARED_ZERO", {}) or {}).get(name)
+    if not z:
+        return
+    tot = dict.get(groups, (name, z["days_of"]))
+    if tot is None or tot.empty:
+        return
+    days = pd.to_datetime(tot["date"]).dt.normalize().drop_duplicates().sort_values()
+    groups[(name, "unlock_release_tokens")] = _as_stored(pd.DataFrame(
+        {"date": days.values, "project": name, "metric": "unlock_release_tokens", "value": 0.0, "tier": 2,
+         "source": "derived:declared_zero[no vesting or release schedule]"}), tot.columns)
 
 
 UNLOCK_LESS_MISSING: dict = {}   # (project, metric) -> the required RELEASE_LESS leg with no rows (PR4.1), last build
@@ -6696,6 +6716,7 @@ def aggregate(long: pd.DataFrame, fetch_status: pd.DataFrame, asof: pd.Timestamp
     _wm_total_supply_views(groups)    # Round G7 0a: World Mobile's total = option C, option B its own row
     _modelled_lock_views(groups)  # PR4C.1: Morpho's relocked MORPHO, modelled, before circulating subtracts it
     _difference_views(groups)     # R7B.B1: e.g. Sky's endowments' liquid SKY, before the floats read it
+    _rule_in_views(groups)        # R9.2: the issuer-side stock the rule counts in circulating, off the floats
     _circulating_views(groups)
     _cg_plus_staked_views(groups)
     _near_lockup_views(groups)    # BEFORE market cap: NEAR's circulating under Jake's lockup rule
@@ -9610,7 +9631,7 @@ def _unlock_cols(R: Refs, absorption: bool = False) -> list[tuple]:
     project has no non-circulating wallet set (config.unlock_stock_metrics). Unlocks stay OUT of emissions_tokens
     (Jake 2026-09-24)."""
     def has(p):
-        return bool(config.unlock_stock_metrics(p["name"]))
+        return bool(config.has_unlock_leg(p["name"]))
 
     def unl(r):
         return R.D(r, "unlock_release_tokens", "q0")
@@ -9665,7 +9686,7 @@ def _retire_vs_dilution_col(R: Refs) -> tuple:
             return "=0"
         name = p["name"]
         ems = live_emission_metrics(name)                   # PR1.S9: a leg 0 by declaration is not in the sum
-        unl = ["unlock_release_tokens"] if config.unlock_stock_metrics(name) else []
+        unl = ["unlock_release_tokens"] if config.has_unlock_leg(name) else []
         if not ems + unl:
             return f"n/a — nothing is emitted or unlocked: {emissions_absent(name, 'emissions_tokens') or ''}"[:240]
         den = "+".join(_flow_rate(R, r, m, p=p) for m in ems + unl)
@@ -9698,7 +9719,7 @@ def _current_rate_cols(R: Refs) -> list[tuple]:
         cr = config.CURRENT_EMISSION_RATE[p["name"]]
         name = p["name"]
         others = [m for m in config.absorption_emission_metrics(name) if m != cr["replaces"]]
-        unl = ["unlock_release_tokens"] if config.unlock_stock_metrics(name) else []
+        unl = ["unlock_release_tokens"] if config.has_unlock_leg(name) else []
         den = "+".join([f"({rate(r, p)}/{G('days_per_year')})"] + [_flow_rate(R, r, m, p=p) for m in others + unl])
         legs = [("buyback", "retired_buyback_tokens", "q0")] + [("unlocks", m, "q0") for m in unl]
         return _coverage_guard(R, r, legs, f"{_flow_rate(R, r, 'retired_buyback_tokens', p=p)}/({den})")
@@ -9738,7 +9759,7 @@ def a3_key_legs(name: str) -> dict:
     ems = [] if a3_emissions_declared_zero(name) else \
         [m for m in config.absorption_emission_metrics(name) if not cr or m != cr["replaces"]]
     return {"burn": "buyback_burned_tokens", "emissions": ems, "rate": cr["metric"] if cr else None,
-            "unlocks": ["unlock_release_tokens"] if config.unlock_stock_metrics(name) else []}
+            "unlocks": ["unlock_release_tokens"] if config.has_unlock_leg(name) else []}
 
 
 def a3_key_note(p: dict) -> str:
@@ -12293,11 +12314,40 @@ def _cp_float(R: Refs, r, p: dict) -> str:
     return f"IF(AND(ISNUMBER({c}),ISNUMBER({lk})),{c}-{lk},{NA})"
 
 
+def _rule_in_views(groups: dict) -> None:
+    """R9.2 (config.RULE_IN): the issuer-side stock THE RULE counts in circulating — off the free float. One series
+    per project, rule_in_off_float_tokens = the sum of its declared legs on the days every leg is held (a day missing a
+    leg is no value: the float is then n/a, never the float without it)."""
+    for name, spec in config.RULE_IN.items():
+        legs = [_daily(groups.get((name, m))) for m in spec.get("off_float", spec["legs"])]
+        if not legs or any(s.empty for s in legs):
+            continue
+        idx = legs[0].index
+        for s in legs[1:]:
+            idx = idx.intersection(s.index)
+        if idx.empty:
+            continue
+        tot = sum(s.reindex(idx) for s in legs)
+        cols = next(g.columns for (n_, _m), g in groups.items() if n_ == name and g is not None and not g.empty)
+        groups[(name, "rule_in_off_float_tokens")] = _as_stored(pd.DataFrame(
+            {"date": idx, "project": name, "metric": "rule_in_off_float_tokens", "value": tot.values, "tier": 2,
+             "source": "derived:rule_in[" + "+".join(spec.get("off_float", spec["legs"])) + "]"}), cols)
+
+
+def _rule_in_term(R: Refs, r, p: dict) -> str | None:
+    """R9.2: the rule's issuer-held stock inside circulating, now — out of every float (None where none is declared)."""
+    return R.D(r, "rule_in_off_float_tokens", "now") if p["name"] in config.RULE_IN else None
+
+
 def _released_held(R: Refs, r, p: dict) -> str | None:
     """PR4.1: the released supply issuer-side wallets hold inside circulating, now (config.FLOAT_RELEASED_HELD) — out of
     the tradeable float and A2's free float; None where none is declared. Not measured -> the float is n/a."""
     fr = config.float_released_held(p["name"])
-    return R.D(r, fr["metric"], "now") if fr else None
+    rule = _rule_in_term(R, r, p)                          # R9.2: + the stock the rule moved into circulating
+    own = R.D(r, fr["metric"], "now") if fr else None
+    if own and rule:
+        return f"({own}+{rule})"
+    return own or rule
 
 
 def _released_held_note(p: dict) -> str:
@@ -12341,10 +12391,14 @@ def _effective_float_held(R: Refs, r, p: dict) -> str:
     effective float too, as it does off the tradeable float — so the effective float does not rise by it. Only the
     projects declared there (Sky: the Pause Proxy, the Flapper's receiver); a held stock not read today is no value."""
     m = config.EFFECTIVE_FLOAT_HELD.get(p["name"])
-    if not m:
-        return ""
-    v = R.D(r, m, "now")
-    return f"-IF(ISNUMBER({v}),{v},NA())"
+    rule = _rule_in_term(R, r, p)                          # R9.2: the rule's issuer-held stock leaves it too
+    out = ""
+    if m:
+        v = R.D(r, m, "now")
+        out += f"-IF(ISNUMBER({v}),{v},NA())"
+    if rule:
+        out += f"-IF(ISNUMBER({rule}),{rule},NA())"
+    return out
 
 
 HELD_BUYBACK_HEAD = ("Held buyback inside circulating (tokens) — out of the tradeable float while held (P4-Q5b)")
@@ -12827,7 +12881,7 @@ def _cp_cols(R: Refs, data_by_key: dict) -> list[tuple]:
                        or pull(R.D(r, "emissions_tokens", "q0"))), FMT_NUM, "pull", False,
          {"metric": "emissions_tokens", "note_fn": lambda p: config.EMISSIONS_ARE_INCENTIVE_SPEND.get(p["name"], "")}),
         ("Unlocks Q0 (tokens) — releases from the non-circulating wallets",
-         lambda r, p: (pull(R.D(r, "unlock_release_tokens", "q0")) if config.unlock_stock_metrics(p["name"])
+         lambda r, p: (pull(R.D(r, "unlock_release_tokens", "q0")) if config.has_unlock_leg(p["name"])
                        else "n/a — no non-circulating wallet set on this project (config.unlock_stock_metrics)"),
          FMT_NUM, "pull", False, {"metric": "unlock_release_tokens"}),
         # ---- SUPPLY LAYERS (item 1) ----
@@ -14657,7 +14711,7 @@ def flow_statements(groups: dict, asof) -> list[dict]:
                    else pd.Series(dtype=str))
         pre = _premint(p)
         mint_m = None if pre else (config.issuance_basis(name) if config.issuance_basis(name) in have else None)
-        rel_m = "pool_release_tokens" if pre else ("unlock_release_tokens" if config.unlock_stock_metrics(name) else None)
+        rel_m = "pool_release_tokens" if pre else ("unlock_release_tokens" if config.has_unlock_leg(name) else None)
         # F1 (fix round 2): where circulating IS a published schedule, the schedule's own step is the release leg (it
         # counts every unlock — pool releases included, so they are not added again)
         sched = (name, "scheduled_release_tokens") in groups and config.circulating_primary_metric(name) == \
@@ -14671,7 +14725,7 @@ def flow_statements(groups: dict, asof) -> list[dict]:
         # other issuer wallets — disjoint by construction (config.mining_wallets / discretionary_wallets) — both legs
         # move circulating, so both are on the statement (GEODNET)
         disc_m = ("unlock_release_tokens" if pre and rel_m == "pool_release_tokens" and config.mining_wallets(name)
-                  and config.unlock_stock_metrics(name) else None)
+                  and config.has_unlock_leg(name) else None)
         if disc_m:
             ret_m = "issuer_return_tokens" if (name, "issuer_return_tokens") in groups else None
         legs = [("+ minted", mint_m, 1), (rel_lab, rel_m, 1),

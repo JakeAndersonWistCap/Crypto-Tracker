@@ -54,7 +54,9 @@ def test_cp_on_the_real_aerodrome_dump(tmp_path, monkeypatch, dumps_20261009):
     o = _row(wb, X, CP, "Aerodrome")
     circ, lock, flt = (_get(o, "Circulating supply (tokens)"), _get(o, "Staked / locked inside"),
                        _get(o, "TRADEABLE FLOAT"))
-    assert flt == pytest.approx(circ - lock) and 0 < flt < circ
+    # R9.2 (the rule): the issuer-side stock is inside circulating and comes off the float beside the lock
+    held = _data(wb, X, "Aerodrome|rule_in_off_float_tokens", "now")
+    assert flt == pytest.approx(circ - lock - held) and 0 < flt < circ and held > 0
     assert _get(o, "Tradeable float ÷ circulating") == pytest.approx(flt / circ)
     # every retirement and dilution rate on both bases: same numerator, two denominators
     # alignment round C1: the veAERO rebase is its own line in (c) (PROPOSED), the gauge emissions (b); no (a)

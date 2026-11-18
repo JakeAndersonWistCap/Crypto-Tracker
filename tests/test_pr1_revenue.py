@@ -58,7 +58,8 @@ def test_s13_labels_say_the_line_and_never_substitute():
     s, note = config.revenue_tier_label("Uniswap", "Revenue Q0 ($)")
     assert s == " · revenue" and "REVENUE LINE: REVENUE" in note and "populated" in note
     s, note = config.revenue_tier_label("Aerodrome", "Protocol revenue, annualised")
-    assert s == " · holder revenue" and "HOLDER REVENUE" in note and "not yet split" in note
+    # R8.3 (Jake 2026-11-17): Aerodrome's three lines are populated; the label still says which line the cell is
+    assert s == " · holder revenue" and "HOLDER REVENUE" in note and "populated" in note
     assert config.revenue_tier_label("Uniswap", "Market cap ($)") is None
     # a new line's column: numbers only where the project's round populated it
     s, note = config.revenue_tier_label("Uniswap", bw.CP_FEES_LINE_HEAD)

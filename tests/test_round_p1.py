@@ -669,7 +669,9 @@ def test_p2c_3_4_aerodrome_park_statement_audit_only_and_parked_headlines(built)
     ws = audit["A3 Revenue Buyback"]
     hdr = {c.value: c.column for c in next(ws.iter_rows(min_row=4, max_row=4))}
     note = next(row[hdr["Notes"] - 1].value for row in ws.iter_rows(min_row=5) if row[0].value == "Aerodrome")
-    assert note.startswith("PARKED — migration:") and "497.7M" in note and "~1,150M" in note
+    # (the build's as-of predates the switch file's verified date, so it is parked; R8.1 closed the "primary source"
+    # blocker, so its figures are no longer in the statement — the open condition is)
+    assert note.startswith("PARKED — migration:") and reader.parked_reason("Aerodrome")[:40] in note
     # the reader says it in one plain sentence, without the audit figures
     a3 = r["A3 Revenue Buyback"]
     rows = _rows_of(a3)
@@ -698,7 +700,11 @@ def test_p2c_4_a_parked_headline_without_a_number_reads_parked(monkeypatch):
     ctx.record(src, "A3 Revenue Buyback", ref, "Aerodrome")
     assert ws[ref].value == "parked"
     assert ws[ref].comment.text.startswith(config.AERODROME_PARK_PLAIN) and "no emissions row" in ws[ref].comment.text
+    # the accepted loss holds exactly while the project is parked (R8.1: unparked 2026-11-17, so it has lapsed)
+    monkeypatch.setattr(config, "project_parked", lambda project, day=None: True)
     assert config.regression_allowance("Aerodrome", "A3 | " + src.header, on="2026-10-28")
+    monkeypatch.setattr(config, "project_parked", lambda project, day=None: False)
+    assert config.regression_allowance("Aerodrome", "A3 | " + src.header, on="2026-10-28") is None
 
 
 # ================================================================================================== P5-1.7

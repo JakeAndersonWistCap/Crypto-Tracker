@@ -1407,6 +1407,12 @@ def _free_float_now(p, rows, long, asof, add_back=(), minus_released=False, **_)
             return None, None, f"no {fr['metric']} figure"
         lock += v
         parts.append(f"{fr['metric']} {v:,.0f} (released, held: out of the float)")
+    if p in config.RULE_IN:                   # R9.2: the issuer-side stock the rule counts in circulating, off the float
+        v, _d = now("rule_in_off_float_tokens")
+        if v is None:
+            return None, None, "no rule_in_off_float_tokens figure"
+        lock += v
+        parts.append(f"rule_in_off_float_tokens {v:,.0f} (issuer-held, in circulating by the rule: out of the float)")
     extra, extra_parts = 0.0, []
     for lm in add_back:                       # lock legs the REFERENCE still counts (Pendle: CoinGecko's sPENDLE)
         v, _d = now(lm)

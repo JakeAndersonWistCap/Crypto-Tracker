@@ -35,7 +35,10 @@ def test_basis_lines_are_answered(key, bases):
     ("Aerodrome", "A3 | Net absorption incl. unlocks Q0 (tokens) = RETIRED buyback − emissions − unlocks"),  # 7
     ("Aerodrome", "A3 | RETIREMENT ÷ DILUTION (x) = RETIRED buyback ÷ (emissions + unlocks), per covered day"),  # 8
 ])
-def test_lost_headlines_are_accepted_losses_with_a_reason(project, head):
+def test_lost_headlines_are_accepted_losses_with_a_reason(project, head, monkeypatch):
+    # Aerodrome's hold while it is parked (R8.1 unparked it on 2026-11-17: the allowance is judged under the park)
+    if project == "Aerodrome":
+        monkeypatch.setattr(config, "project_parked", lambda p, day=None: True)
     a = config.regression_allowance(project, head, on=ON)
     assert a and a["reason"].strip(), (project, head)
 

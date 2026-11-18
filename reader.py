@@ -747,7 +747,7 @@ def blank_reason(p: dict, src: Src | None, col: Col) -> tuple[str, str]:
             return "by design", (f"{name} returns no revenue-funded value to holders — no buyback, revenue-funded burn "
                                  "or distribution is credited — so there is no payout to divide by revenue.")
     if ("TOTAL DILUTION" in h or col.header.startswith("Total dilution")) and "outflows" not in h \
-            and not config.unlock_stock_metrics(name):
+            and not config.has_unlock_leg(name):
         # PR1.S9 (Jake 2026-11-05: Sky's A3 / A4 cells said "no outflow has a series" beside 183M of emissions): the
         # A-tab's total dilution is emissions + unlocks, and it is left empty where no unlock leg is measured
         return "n/a", (f"Not formed on this tab: its total dilution is emissions + unlocks, and no non-circulating "
