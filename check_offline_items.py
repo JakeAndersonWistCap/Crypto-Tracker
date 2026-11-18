@@ -162,8 +162,8 @@ AERO_TOKEN = "0x940181a94A35A4569E4529A3CDfB74e38FD98631"
 VEAERO = "0xeBf418Fe2512e7E6bd9b87a8F0f294aCDC67e6B4"
 # Base, for the veAERO reads. Same shape as ETH_RPCS and the same preference rule: a keyed
 # endpoint in BASE_RPC_URL goes first, the public ones stay behind it.
-_PUBLIC_BASE_RPCS = ["https://base-rpc.publicnode.com", "https://mainnet.base.org",
-                     "https://base.llamarpc.com"]
+# R10.A2: base.llamarpc.com dropped (HTTP 525 on every try)
+_PUBLIC_BASE_RPCS = ["https://base-rpc.publicnode.com", "https://mainnet.base.org"]
 
 # --- addresses for the three checks added 2026-09-17 -------------------------------------
 SYRUP = "0x643C4E15d7d62Ad0aBeC4a9BD4b001aA3Ef52d66"           # Maple SYRUP token

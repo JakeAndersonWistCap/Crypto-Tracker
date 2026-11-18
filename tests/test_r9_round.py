@@ -325,10 +325,20 @@ def test_4_the_lines_come_from_the_onchain_epoch_with_issuer_incentives_out_and_
 
 
 def test_4_no_line_forms_where_the_issuer_split_or_the_crosscheck_days_are_missing():
-    g, _e = _aero_epoch_groups(with_issuer=False)       # a legacy epoch: the incentives' funder was never read
+    g, _e = _aero_epoch_groups(with_issuer=False)       # a V3 epoch whose issuer split was not read: no line
     bw._s13_views(g)
     assert ("Aerodrome", "s13_fees_usd") not in g and "no rows stored" in bw.S13_STATE["Aerodrome"]["why"]
     assert "NOT FORMED" in bw.s13_note({"name": "Aerodrome"})
+    # R10.A1e (Jake 2026-11-18, option b): an epoch of the LEGACY voter is counted with all its incentives — the
+    # lines form, no issuer figure is invented for it, and the note names the bound
+    for k in ("voter_rewards_onchain_fees_usd", "voter_rewards_onchain_bribes_usd"):
+        g[("Aerodrome", k)] = g[("Aerodrome", k)].assign(source="aero_voter:tokenRewardsPerEpoch")
+    bw._s13_views(g)
+    hold = g[("Aerodrome", "s13_holder_revenue_usd")]["value"].iloc[0]
+    assert hold == pytest.approx(1_500_000 + 200_000) and ("Aerodrome", "s13_issuer_incentives_usd") not in g
+    assert bw.S13_STATE["Aerodrome"]["legacy"] == 1 and "about 1% of fees" in bw.s13_note({"name": "Aerodrome"})
+    f, r = (g[("Aerodrome", m)]["value"].iloc[0] for m in ("s13_fees_usd", "s13_revenue_usd"))
+    assert f >= r >= hold
     g, _e = _aero_epoch_groups(dl_days=6)               # DefiLlama holds 6 of the epoch's 7 days: not a covered epoch
     bw._s13_views(g)
     assert ("Aerodrome", "s13_holder_revenue_usd") not in g

@@ -607,6 +607,10 @@ def _after_leg_gap(g: pd.DataFrame, s: pd.Series) -> pd.Series:
           .drop_duplicates("date", keep="last").set_index("date"))
     mp = gd["source"].astype(str).map(_measuring_point)
     gap = gd.index.to_series().diff().dt.days
+    # R10.A1d: a row that carries the days since the leg before it (a `[span=Nd]` row: Aerodrome's first v3 emission
+    # row holds everything minted since the cutover) leaves no gap — the gap is what its span does not cover
+    from fetch.validate import _span_days                # noqa: PLC0415
+    gap = gap - (gd["source"].astype(str).map(_span_days) - 1)
     cut = gd.index[(mp != mp.shift(1)) & (gap > 1)]
     return s[s.index >= cut.max()] if len(cut) else s
 
@@ -1657,24 +1661,41 @@ def _s13_views(groups: dict) -> None:
     for name, spec in config.S13_ONCHAIN.items():
         on = {k: _daily(groups.get((name, spec[k]))) for k in ("fees", "incentives", "issuer_incentives")}
         dl = {k: _daily(groups.get((name, spec["defillama"][k]))) for k in ("fees", "revenue", "holder_revenue")}
-        S13_STATE[name] = {"epochs": 0, "days": 0, "why": ""}
-        if any(s.empty for s in on.values()):
+        S13_STATE[name] = {"epochs": 0, "days": 0, "why": "", "legacy": 0}
+        # R10.A1e (Jake 2026-11-18, option b): an epoch of the LEGACY voter (its rows' source names it) carries no
+        # funder read — it is counted with ALL its incentives, the overstatement bounded and named (spec["legacy"]).
+        # Only such an epoch: a v3 epoch without its issuer read still forms no line.
+        gf = groups.get((name, spec["fees"]))
+        leg_src = tuple((spec.get("legacy") or {}).get("sources") or ())
+        legacy = set()
+        if gf is not None and not gf.empty and leg_src:
+            legacy = set(pd.to_datetime(gf.loc[gf["source"].astype(str).str.startswith(leg_src), "date"]).dt.normalize())
+        need = ("fees", "incentives") if legacy else ("fees", "incentives", "issuer_incentives")
+        if any(on[k].empty for k in need):
             S13_STATE[name]["why"] = ("no epoch holds all three on-chain reads yet (" + ", ".join(
-                spec[k] for k, s in on.items() if s.empty) + ": no rows stored)")
+                spec[k] for k in need if on[k].empty) + ": no rows stored)")
             continue
         if any(s.empty for s in dl.values()):
             S13_STATE[name]["why"] = "DefiLlama's three series are not stored"
             continue
         rows = []
-        for e in on["fees"].index.intersection(on["incentives"].index).intersection(on["issuer_incentives"].index):
+        n_legacy = 0
+        for e in on["fees"].index.intersection(on["incentives"].index):
+            if e in on["issuer_incentives"].index:
+                issuer_e = float(on["issuer_incentives"][e])
+            elif e in legacy:
+                issuer_e = None                            # funder not read: every incentive counted (named)
+            else:
+                continue
             days = pd.date_range(e, periods=int(spec["epoch_days"]))
             if not all(len(s.reindex(days).dropna()) == len(days) for s in dl.values()):
                 continue                                   # the cross-check does not cover the epoch: not a covered day
             d = {k: float(s.reindex(days).sum()) for k, s in dl.items()}
-            hold = float(on["fees"][e] + on["incentives"][e] - on["issuer_incentives"][e])
+            hold = float(on["fees"][e] + on["incentives"][e] - (issuer_e or 0.0))
             rev = hold + (d["revenue"] - d["holder_revenue"])
+            n_legacy += issuer_e is None
             rows.append((e, {"holder_revenue": hold, "revenue": rev, "fees": rev + (d["fees"] - d["revenue"]),
-                             "issuer": float(on["issuer_incentives"][e]), "dl_fees": d["fees"],
+                             "issuer": issuer_e, "dl_fees": d["fees"],
                              "dl_revenue": d["revenue"], "dl_holder_revenue": d["holder_revenue"]}))
         if not rows:
             S13_STATE[name]["why"] = "no on-chain epoch whose 7 days DefiLlama also holds in full"
@@ -1686,14 +1707,14 @@ def _s13_views(groups: dict) -> None:
                 vals = [(e, r["holder_revenue"] * ins_n[e] / ins_d[e]) for e, r in rows
                         if e in ins_n.index and e in ins_d.index and ins_d[e] > 0]
             else:
-                vals = [(e, r[key]) for e, r in rows]
+                vals = [(e, r[key]) for e, r in rows if r[key] is not None]     # a legacy epoch has no issuer figure
             if not vals:
                 continue
             groups[(name, metric)] = _as_stored(pd.DataFrame(
                 {"date": [e for e, _v in vals], "project": name, "metric": metric, "value": [v for _e, v in vals],
                  "tier": 2, "source": f"derived:s13_epoch[{key}: {spec['epoch_days']} days from each stored on-chain epoch]"}),
                 cols)
-        S13_STATE[name].update(epochs=len(rows), days=len(rows) * int(spec["epoch_days"]),
+        S13_STATE[name].update(legacy=int(n_legacy), epochs=len(rows), days=len(rows) * int(spec["epoch_days"]),
                                first=str(rows[0][0].date()), last=str(rows[-1][0].date()))
     for name, roles in config.S13_SAME_DAYS.items():
         split = config.REVENUE_SPLIT.get(name) or {}
@@ -1729,8 +1750,11 @@ def s13_note(p: dict) -> str:
                     + ". DefiLlama's figure is the cross-check, never the fill")
         return (f"S13 SOURCE OF RECORD (R9.4): the on-chain voter-epoch read, {st['epochs']} epoch(s) = {st['days']} "
                 f"day(s) ({st['first']} to the week of {st['last']}); a 90-day cell is the sum over the epochs stored "
-                f"in it, not 90 days unless every epoch is stored. Incentives created by an issuer wallet are out. "
-                f"DefiLlama's figures on the same days are stored beside it (the cross-check)")
+                f"in it, not 90 days unless every epoch is stored. Incentives created by an issuer wallet are out"
+                + (f" on the v3 epochs; {st['legacy']} epoch(s) of the LEGACY voter are counted with ALL their "
+                   f"incentives (their funder was never read) — "
+                   f"{(config.S13_ONCHAIN[name].get('legacy') or {}).get('bound', '')}" if st.get("legacy") else "")
+                + ". DefiLlama's figures on the same days are stored beside it (the cross-check)")
     if st.get("same_days"):
         return (f"SAME COVERED DAYS (R9.5): {' and '.join(st['same_days'])} are each read to {st['last']}, the last "
                 f"day both hold (a read lag at the end is not a difference) — compared like with like, never capped")
@@ -3402,11 +3426,22 @@ def _epoch_paid_views(groups: dict, asof: pd.Timestamp) -> None:
             g = groups.get((name, m))
             if g is None or g.empty:
                 continue
-            d = pd.to_datetime(g["date"]) + pd.Timedelta(days=int(spec["days"]))
+            # R10.A1d: ONLY the rows of the reader the declaration is about (Aerodrome's legacy Minter / distributor,
+            # read weekly) — after the migration the v3 rows are daily deltas dated the day they were read; re-dating
+            # them too put every day a week late and dropped the latest week
+            src = g["source"].astype(str)
+            pre = tuple(spec.get("sources") or ())
+            mine = src.str.startswith(pre) if pre else pd.Series(True, index=g.index)
+            d = pd.to_datetime(g["date"]) + pd.to_timedelta(mine.map(lambda x: int(spec["days"]) if x else 0), unit="D")
             keep = d.dt.normalize() <= pd.Timestamp(asof).normalize()
-            # the source is left as stored: it names WHAT was read (its measuring point), and the re-dating is declared
-            # in config.EPOCH_PAID_AT and on METRICS.md
-            groups[(name, m)] = g.assign(date=d.values)[keep.values]
+            # the source names WHAT was read (its measuring point); the re-dating is declared in config.EPOCH_PAID_AT.
+            # A metric in `span_metrics` says the days its weekly row holds ([span=7d]: the epoch ending at the paying
+            # flip), so beside daily rows it covers its week and not one day
+            span = m in (spec.get("span_metrics") or ()) and mine & ~src.str.contains(r"\[span=", regex=True)
+            out = g.assign(date=d.values)
+            if span is not False and span.any():
+                out.loc[span, "source"] = src[span] + f"[span={int(spec['days'])}d]"
+            groups[(name, m)] = out[keep.values]
 
 
 def _history_prepend_views(groups: dict) -> None:
@@ -4073,6 +4108,58 @@ def _history_leg_views(groups: dict) -> None:
 
 
 MODEL_INVERSE_SQRT = "model:inverse_sqrt(locked_tokens)"
+
+
+def _handover_step_views(groups: dict) -> None:
+    """R10.A1d (config.HANDOVER_STEP): a supply that STEPS on the day its reader hands over because tokens were issued
+    in the event itself (Aerodrome: the new AERO minted for VELO holders at the merger) — the step is that issuance:
+    the first reading of the new point less the last reading of the old one, dated the new reading. Only where the
+    two readings are at most `max_gap_days` apart (else what moved in between is not known: no row)."""
+    from fetch.base import _measuring_point              # noqa: PLC0415
+    for (name, metric), spec in config.HANDOVER_STEP.items():
+        g = groups.get((name, spec["stock"]))
+        if g is None or g.empty or name not in {p["name"] for p in scoped_projects()}:
+            continue
+        gd = g.assign(date=pd.to_datetime(g["date"]).dt.normalize()).sort_values("date")
+        mp = gd["source"].astype(str).map(_measuring_point)
+        new = gd[mp == spec["to"]]
+        if new.empty:
+            continue
+        d1 = new["date"].iloc[0]
+        old = gd[(mp == spec["from"]) & (gd["date"] < d1)]
+        if old.empty or (d1 - old["date"].iloc[-1]).days > int(spec["max_gap_days"]):
+            continue
+        v = float(new["value"].iloc[0]) - float(old["value"].iloc[-1])
+        if v <= 0:
+            continue
+        groups[(name, metric)] = _as_stored(pd.DataFrame([{
+            "date": d1, "project": name, "metric": metric, "value": v, "tier": 2,
+            "source": f"derived:handover_step[{spec['stock']}: {spec['from']} -> {spec['to']}]"}]), g.columns)
+
+
+def _flow_from_zero_views(groups: dict) -> None:
+    """R10.A1d (config.FLOW_FROM_ZERO_AT): a cumulative counter that was 0 at a known moment (read on chain) — its FIRST
+    stored reading is the flow since then: one row dated that reading, tagged with the days it holds since `from`. Only
+    where the flow holds no row of that reader on or before that day; nothing stored is touched."""
+    for (name, flow), spec in config.FLOW_FROM_ZERO_AT.items():
+        if name not in {p["name"] for p in scoped_projects()}:
+            continue
+        st = _daily(groups.get((name, spec["stock"])))
+        if st.empty:
+            continue
+        d1, v1 = st.index[0], float(st.iloc[0])
+        n = int((d1 - pd.Timestamp(spec["from"])).days)
+        g = groups.get((name, flow))
+        have = (g is not None and not g.empty
+                and bool(((pd.to_datetime(g["date"]).dt.normalize() <= d1)
+                          & g["source"].astype(str).str.startswith(spec["source"])).any()))
+        if have or n < 1 or v1 < 0:
+            continue
+        cols = g.columns if g is not None and not g.empty else _view_cols(groups, name)
+        row = _as_stored(pd.DataFrame([{"date": d1, "project": name, "metric": flow, "value": v1, "tier": 2,
+                                        "source": spec["source"] + (f"[span={n}d]" if n > 1 else "")
+                                        + f"[from 0 at {spec['zero_at']}]"}]), cols)
+        groups[(name, flow)] = row if g is None or g.empty else pd.concat([g, row], ignore_index=True).sort_values("date")
 
 
 def _flow_from_stored_stock_views(groups: dict) -> None:
@@ -6229,6 +6316,23 @@ def _unlock_views(groups: dict) -> None:
                 _unlock_declared_zero_view(groups, name)
 
 
+def _burned_declared_zero_views(groups: dict) -> None:
+    """R10.A1d (config.BURNED_DECLARED_ZERO): a project with NO burn mechanism of any kind (confirmed from its contracts)
+    burns none of what is bought — the BURNED buyback is a declared 0 on every day its total supply is held, not the
+    purchases x a 0 share on the few days a purchase read exists (Aerodrome's key read BLOCKED on 22 of 90 days of a
+    series that can only be 0). Held and distributed parts are untouched."""
+    for name, z in config.BURNED_DECLARED_ZERO.items():
+        if name not in {p["name"] for p in scoped_projects()}:
+            continue
+        tot = groups.get((name, z["days_of"]))
+        if tot is None or tot.empty:
+            continue
+        days = pd.to_datetime(tot["date"]).dt.normalize().drop_duplicates().sort_values()
+        groups[(name, "buyback_burned_tokens")] = _as_stored(pd.DataFrame(
+            {"date": days.values, "project": name, "metric": "buyback_burned_tokens", "value": 0.0, "tier": 2,
+             "source": "derived:declared_zero[no burn mechanism exists]"}), tot.columns)
+
+
 def _unlock_declared_zero_view(groups: dict, name: str) -> None:
     """R9.3 (config.UNLOCK_DECLARED_ZERO; Jake 2026-11-17: "a genuine zero reads 0, not blank"): a project whose docs
     publish NO vesting or release schedule and whose circulating leaves no wallet out has no unlock to read — a
@@ -6830,6 +6934,7 @@ def aggregate(long: pd.DataFrame, fetch_status: pd.DataFrame, asof: pd.Timestamp
     _buyback_tokens_from_usd_views(groups)
     _measured_buyback_views(groups)   # G11 B9: Pendle's buyback = its own per-epoch distribution; derived = cross-check
     _buyback_split_views(groups)  # AFTER every view that builds actual_buyback_* (retirement = burned + held)
+    _burned_declared_zero_views(groups)   # R10.A1d: no burn exists (confirmed) -> the burned buyback is a declared 0
     _emissions_from_metric_views(groups)
     # EACH QUARTER END, NOT ONLY ASOF (Round G7 item 2c): the shifted quarters read these stocks at asof − k x period
     _quarterly_views(lambda g, a: _trailing_yield_views(g), groups, asof)
@@ -6847,6 +6952,8 @@ def aggregate(long: pd.DataFrame, fetch_status: pd.DataFrame, asof: pd.Timestamp
     # THE HISTORY LEGS FIRST (2026-09-30): Ethereum's first-party issuance view keeps its
     # declared ETH.Store leg (history_prefix) only if the leg is already in the group.
     _history_leg_views(groups)
+    _flow_from_zero_views(groups)           # R10.A1d: Aerodrome's emissions from the v3 launch to the first read
+    _handover_step_views(groups)            # R10.A1d: the AERO issued to VELO holders at the merger
     _flow_from_stored_stock_views(groups)   # P5-1.3: measured from the stored stock before the flow's first row
     _emissions_model_views(groups)
     _hl_model_views(groups)           # fix round 3 B1: Hyperliquid's MODELLED rewards / stake / reserve history
@@ -14792,6 +14899,18 @@ def _flow_days(g, s: pd.Series, start, end, k: int) -> tuple[int, int]:
     srcs = g["source"].astype(str) if g is not None and not g.empty and "source" in g else pd.Series(dtype=str)
     differenced = not srcs.empty and bool(srcs.map(lambda x: x.startswith("derived:d_") or ":delta" in x).all())
     if not differenced:
+        # R10.A1d: a row that says the days it holds ([span=Nd]: a weekly mint, the first reading of a counter) covers
+        # them — Aerodrome's emissions read "covers 13/90 days" for thirteen whole weeks
+        from fetch.validate import _span_days            # noqa: PLC0415
+        if g is not None and not g.empty and "source" in g and srcs.str.contains(r"\[span=", regex=True).any():
+            gd = g.assign(date=pd.to_datetime(g["date"]).dt.normalize())
+            cov = {d - pd.Timedelta(days=i) for d, sx in zip(gd["date"], gd["source"].astype(str))
+                   for i in range(_span_days(sx))}
+            return sum(1 for d in cov if pd.Timestamp(start) < d <= pd.Timestamp(end)), lag
+        # a PERIOD-DATED series (one row a week: the lockers' rebase, the team's emission share) holds its week on one
+        # date — its rows cover seven days each, at most the window
+        if _observed_cadence(g) == "weekly":
+            return min(int(w.index.nunique()) * 7, int((pd.Timestamp(end) - pd.Timestamp(start)).days)), lag
         return int(w.index.nunique()), lag
     first = pd.Timestamp(s.index.min()).normalize() - pd.Timedelta(days=1)
     lo = max(pd.Timestamp(start).normalize(), first)
@@ -14944,9 +15063,10 @@ def flow_statements(groups: dict, asof) -> list[dict]:
             # what is released from wallets still OUTSIDE it (declared: `flow_outside`), and what is burned.
             rs = config.RULE_IN[name]
             legs = [("+ minted", mint_m, 1),
-                    *[(lab, m, 1) for lab, m in rs.get("flow_in") or ()],
-                    *[(lab, m, 1) for lab, m in rs.get("flow_outside") or ()],
+                    *[(x[0], x[1], 1) for x in rs.get("flow_in") or ()],
+                    *[(x[0], x[1], 1) for x in rs.get("flow_outside") or ()],
                     ("− burned", burn_m, -1)]
+            # (R10.A1d: a leg declared a one-off EVENT — config RULE_IN[...]["_flow_events"] — reads 0 on a day with no row)
         note_tok = {"Sky": "MKR -> SKY conversions (converter 0xA1Ea1bA1…) enter circulating with NO series — NOT WIRED "
                            "(149.6M SKY in the 90 days to 2026-10-12, research of 2026-10-13); they are not dilution "
                            "(SPEC.md section 12, item 7) and show here as residual",
@@ -14981,8 +15101,9 @@ def flow_statements(groups: dict, asof) -> list[dict]:
                              if start < day <= end and w in issuer_side)
                 # R9.2: a declared EVENT series on the statement (Maple's mints to the DAO multisig, config.ISSUER_MINTS
                 # kind "events"): a day with no row is a day with no event — a measured 0, not a coverage gap
-                events = (_rule_flow(name) and m == "issuer_mint_tokens"
-                          and (config.ISSUER_MINTS.get(name) or {}).get("kind") == "events")
+                events = _rule_flow(name) and (
+                    (m == "issuer_mint_tokens" and (config.ISSUER_MINTS.get(name) or {}).get("kind") == "events")
+                    or m in (config.RULE_IN[name].get("_flow_events") or ()))
                 if events and v is None:
                     v = 0.0
                 leg_vals[lab].append(v if v is not None else None)

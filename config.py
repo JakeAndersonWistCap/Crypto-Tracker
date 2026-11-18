@@ -1428,7 +1428,8 @@ DEFAULT_RPC = {
     "base": [
         "https://base-rpc.publicnode.com",
         "https://mainnet.base.org",
-        "https://base.llamarpc.com",
+        # R10.A2 (Jake 2026-11-18): base.llamarpc.com is OUT of the pool — HTTP 525 on every try, each waited out
+        # through its retries (it made the Aerodrome backfill take 21 minutes)
     ],
     "arbitrum": [
         "https://arbitrum-one-rpc.publicnode.com",
@@ -44189,3 +44190,70 @@ FLOW_LEG_LINES["m_rule"] = ("memo: minted straight to issuer-side wallets (insid
 # unmeasured purchase stays named on the returned line (D6-4).
 RULE_IN["Sky"]["flow_rule"] = False
 PROJECT_BY_NAME["Aerodrome"]["voter_epochs"]["issuer_bribes_metric"] = "voter_rewards_onchain_bribes_issuer_usd"
+
+
+# =====================================================================================================================
+# R10 PART A — AERODROME (Jake 2026-11-18).
+# R10.A1e LEGACY EPOCHS IN THE S13 LINES (decision: option b). An epoch read by the legacy voter (before 2026-10-22)
+# carries no funder read: it is counted with ALL its incentives. The overstatement is bounded by the Foundation-funded
+# share measured where it CAN be read (v3, Base, since launch: the TGE wallet created $132,757 of incentives — about 1%
+# of the fees of the same weeks) — a named note on the cells, never a deduction that was not measured.
+S13_ONCHAIN["Aerodrome"]["legacy"] = {
+    "sources": ("aero_voter",), "until": "2026-10-22", "decided": "Jake 2026-11-18 (R10, option b)",
+    "bound": "the overstatement is bounded by the Foundation-funded share measured on the v3 epochs: about 1% of fees "
+             "($132,757 by the TGE wallet 0x7269de76… since the v3 launch, read 2026-11-17)"}
+# R10.A1a THE 10-22 HANDOVER OF THE SUPPLY LEGS, CUT: on Jake's store the legacy reader still wrote total_supply on
+# 2026-10-23, 10-25 and 10-26 and the wallet sum to 10-26, after the new read's first row (10-22) — two readings
+# interleaved, so six cells read "measuring point changed". The handover is declared since G2-D5; it is now a CUT: a
+# legacy row dated on or after the new read's first row is dropped at read time (the legs meet once), and the backfill
+# reads those days again from the new contracts (fetch/aero_v3.held_on_the_new_read). History before 10-22 stays the
+# legacy token's on-chain total: the same quantity (each AERO once), restated as far as the stored data allows.
+for _r10m in ("total_supply", "noncirculating_holding_tokens"):
+    PROJECT_BY_NAME["Aerodrome"]["series_handover"][_r10m]["cut"] = True
+# R10.A2 THE FILING WALLETS' LOCKED AERO ON 2026-10-22: DECLARED n/a. The backfill could not read it at that day's first
+# block (the RelayFactoryRegistry read failed on Jake's store; the legacy reader holds no row for the day either). The
+# cause is not established from here, so the read is not changed and no value is written: the day stays without the
+# leg (unknown, never 0), is named by the backfill, and is not asked for again.
+AERODROME_MIGRATION["filing_unreadable_days"] = {
+    "2026-10-22": "the RelayFactoryRegistry read failed at the day's first block (the cutover day) on Jake's store, "
+                  "2026-11-18; cause not established"}
+# R10.A1d AERODROME'S EMISSIONS ACROSS THE MIGRATION — one continuous series.
+#   (1) EPOCH_PAID_AT re-dates the LEGACY readers' weekly rows only (it was re-dating the v3 daily rows too: every day a
+#       week late, the latest week dropped). The legacy Minter's weekly row says the 7 days it holds.
+#   (2) The new Minter's counter emissionsMinted() was 0 at its deployment (read on chain 2026-11-19: 0 at Base block
+#       52,880,070, 2026-10-21 02:24 UTC; 56,616.91 at block 52,930,070, 2026-10-22 06:11; 1,855,646.57 at block
+#       53,130,070, 2026-10-26 21:18) — so its first stored reading (2,328,134 on 2026-10-27 on Jake's store) IS what
+#       was emitted from the cutover to that day: one row, dated that reading, holding the days since 2026-10-22.
+EPOCH_PAID_AT["Aerodrome"]["sources"] = ("chain:base:minter", "chain:base:rewards_distributor")
+EPOCH_PAID_AT["Aerodrome"]["span_metrics"] = ("gross_issuance_tokens",)
+FLOW_FROM_ZERO_AT = {
+    ("Aerodrome", "gross_issuance_tokens"): {
+        "stock": "aero_v3_emissions_minted_cumulative", "source": "aero_v3:minter.emissionsMinted:delta",
+        "zero_at": "2026-10-21", "from": AERODROME_MIGRATION["cutover_utc"][:10],
+        "evidence": "Minter.emissionsMinted() = 0 at Base block 52,880,070 (the deploy block, 2026-10-21 02:24 UTC), "
+                    "read 2026-11-19"}}
+#   (3) THE TOKEN-FLOW STATEMENT, every mint: circulating is the total, so it moves by the gauge emissions ("+ minted"),
+#       the lockers' rebase, the team / contributor emission share, and — once — the new AERO issued to VELO holders at
+#       the merger (the new token was minted at 2,127,000,000: about 2,010M for AERO holders 1:1 and about 117M for VELO
+#       holders; on Jake's store the total steps 2,002.38M -> 2,119.38M from 10-21 to 10-22). That step is measured from
+#       the two readings either side of the handover; it is a one-off issuance, on the statement only — it is in no
+#       dilution rate until Jake decides which outflow line it belongs to.
+HANDOVER_STEP = {
+    ("Aerodrome", "aero_merger_issuance_tokens"): {"stock": "total_supply", "from": "chain:base:token",
+                                                   "to": "aero_v3:supply_once", "max_gap_days": 1}}
+METRICS["aero_merger_issuance_tokens"] = {
+    "label": "New AERO issued to VELO holders at the Velodrome merger (one-off, 2026-10-22) = the step of the total "
+             "supply across the handover — on the token-flow statement only (R10.A1d)",
+    "kind": "flow", "unit": "tokens", "archetypes": [3], "tiers": [2], "sanity_min": 0, "sanity_max": 1e9,
+    "only_projects": ("Aerodrome",), "view_only": True}
+RULE_IN["Aerodrome"]["flow_in"] = (
+    ("+ minted as the lockers' rebase (c)", "emissions_tokens"),
+    ("+ minted to the team / contributors (their emission share)", "issuer_mint_tokens"),
+    ("+ issued to VELO holders at the Velodrome merger (one-off, 2026-10-22)", "aero_merger_issuance_tokens", "event"))
+RULE_IN["Aerodrome"]["_flow_events"] = ("aero_merger_issuance_tokens",)
+#   (4) THE BURNED BUYBACK IS A DECLARED 0: Aerodrome has no burn mechanism of any kind (burn_mechanism: no_burn,
+#       confirmed from its contracts 2026-09-14) — whatever the Foundation buys is held or locked, never burned.
+BURNED_DECLARED_ZERO = {"Aerodrome": {"days_of": "total_supply",
+                                      "why": "burn_mechanism no_burn (confirmed: aerodrome-finance/contracts "
+                                             "SPECIFICATION.md describes no burn of any kind, 2026-09-14)"}}
+assert PROJECT_BY_NAME["Aerodrome"]["burn_mechanism"]["model"] == "no_burn"

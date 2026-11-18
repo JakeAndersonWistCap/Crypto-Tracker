@@ -152,8 +152,10 @@ ROUTES: dict[tuple[str, str], tuple] = {
                                                           "2026-08-24"),
     ("Aerodrome", "momentum_fund_purchases_2026-07-15_2026-10-13"): ("sum_period", "foundation_aero_purchased_tokens",
                                                                      "2026-07-15", "2026-10-13"),
+    # R10.A1c: the reference is the chart's last COMPLETE quarter (Q4 2025, 1.08) — its Q1 2026 bar is a part-quarter
+    # (an Artemis chart dated February 2026, reproduced in Aero's article of 2026-03-30)
     ("Aerodrome", "revenue_per_emissions_usd"): ("cover", "fees_usd", "gross_issuance_tokens", "price_usd",
-                                                 "2026-01-01", "2026-03-31"),
+                                                 "2025-10-01", "2025-12-31"),
     ("Pendle", "total_supply"): ("last", "total_supply_gross"),
     # ROUND G 2.8: each wallet's own row (config component_metric — the balanceOf that feeds the sum)
     ("Pendle", "governance_multisig_balance"): ("last", "noncirc_governance_multisig_tokens"),

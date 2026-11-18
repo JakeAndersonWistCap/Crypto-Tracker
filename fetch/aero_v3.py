@@ -139,6 +139,7 @@ EPOCH_SOURCE = "aero_v3_epoch"   # the tier name of the weekly epoch read (fetch
 EPOCH_BUDGET_S = 200             # the epoch tier stops ITSELF here (its tier budget is 240 s) with its scan saved
 EPOCHS_BACK = 8                  # complete epochs looked at each run, newest first; stored ones cost nothing
 LOG_CHUNK, LOG_CHUNK_MIN, LOG_CHUNK_MAX = 5_000, 500, 50_000
+LOG_ADDR_MAX = 10                # addresses in one eth_getLogs filter (the public endpoints' limit)
 MAX_PENDING_SCAN = 1000          # deposit-queue ids walked per Relay; a longer live queue is a named failure, never 0
 # THE LEGACY CONTRACTS the migration must name (config Aerodrome contracts token / ve): AERO v2 and veAERO on Base
 LEGACY_TOKEN = "0x940181a94a35a4569e4529a3cdfb74e38fd98631"
@@ -313,7 +314,7 @@ class AeroV3:
 
     def __init__(self, prior_values: dict | None = None, prior_dates: dict | None = None, rpc=None, prices=None,
                  state: dict | None = None, now: int | None = None, part: str | None = None, stored_long=None,
-                 cache=None, clock=time.monotonic, **_ignored):
+                 cache=None, clock=time.monotonic, epoch_budget_s: float | None = None, **_ignored):
         self.http = Http(min_interval=0.2)
         self.prior = prior_values or {}
         self.prior_dates = prior_dates or {}
@@ -330,6 +331,9 @@ class AeroV3:
         self._head = None
         self._chunk = LOG_CHUNK
         self._chunk_cap = LOG_CHUNK_MAX
+        # R10.A2: the seconds the epoch read may take (the daily tier: EPOCH_BUDGET_S; the one-off backfill: its own)
+        self.epoch_budget_s = EPOCH_BUDGET_S if epoch_budget_s is None else float(epoch_budget_s)
+        self._refused: dict = {}             # (method, host) -> requests it refused that another endpoint served
 
     # ---------------------------------------------------------------- transport
     def rpc(self, method: str, params: list):
@@ -339,14 +343,28 @@ class AeroV3:
         # THE KEYED ENDPOINT FIRST (Round G 2.10): BASE_RPC_URL, then the public list — fetch.chain.rpc_endpoints, as
         # every other Base read (only the host is ever logged)
         from .chain import rpc_endpoints  # noqa: PLC0415
-        for url in rpc_endpoints("base"):
+        return self._first_answer(method, rpc_endpoints("base"), lambda url: self.http.post(
+            url, json_body={"jsonrpc": "2.0", "id": 1, "method": method, "params": params}))
+
+    def _first_answer(self, method: str, urls: list, post):
+        """The first endpoint's result. R10.A2: an endpoint that TWICE refused a request of this method which another
+        endpoint then served (a free tier's 10-block eth_getLogs range, a host answering HTTP 429 / 525 after its
+        retries) is not asked again for that method in this run — on Jake's store every log request first waited out
+        those refusals. A request NO endpoint serves counts against none (the span is narrowed by the caller)."""
+        errs, failed = [], []
+        hosts = [(u, u.split("/")[2]) for u in urls]
+        live = [(u, h) for u, h in hosts if self._refused.get((method, h), 0) < 2] or hosts
+        for url, host in live:
             try:
-                r = self.http.post(url, json_body={"jsonrpc": "2.0", "id": 1, "method": method, "params": params})
+                r = post(url)
                 if "result" in r:
+                    for h in failed:
+                        self._refused[(method, h)] = self._refused.get((method, h), 0) + 1
                     return r["result"]
-                errs.append(f"{url.split('/')[2]}: {r.get('error')}")
+                errs.append(f"{host}: {r.get('error')}")
             except Exception as e:  # noqa: BLE001
-                errs.append(f"{url.split('/')[2]}: {str(e)[:100]}")
+                errs.append(f"{host}: {str(e)[:100]}")
+            failed.append(host)
         raise RuntimeError("; ".join(errs))
 
     @staticmethod
@@ -473,7 +491,7 @@ class AeroV3:
             return
         if epoch_ready:
             if self.part == "epoch":
-                self.deadline = self._clock() + EPOCH_BUDGET_S
+                self.deadline = self._clock() + self.epoch_budget_s
             try:
                 self._epoch(name, a, st, out)
             except Exception as e:  # noqa: BLE001
@@ -843,6 +861,13 @@ class AeroV3:
         last one scanned, and saved as it goes so a run cut by the budget continues instead of starting over. The block
         span of a request adapts: it widens while the endpoint answers and narrows when a request is refused."""
         from .logcache import stream_id  # noqa: PLC0415
+        if not isinstance(address, str) and len(address) > LOG_ADDR_MAX:
+            # R10.A2: public endpoints refuse a log filter of more than 10 addresses (HTTP 403 on Jake's store, every
+            # run) — the managers are asked for in groups, each group its own cached stream
+            out = []
+            for i in range(0, len(address), LOG_ADDR_MAX):
+                out += self._logs(list(address[i:i + LOG_ADDR_MAX]), topics, lo, hi)
+            return sorted(out, key=lambda lg: (lg["blockNumber"], lg.get("logIndex", 0)))
         sid = stream_id(*(stream or ("base", address if isinstance(address, str) else ",".join(address), topics, lo)))
         cached = self.cache.load(sid)
         events, done = list(cached["events"]), cached["scanned_to"]
@@ -851,7 +876,7 @@ class AeroV3:
         while b <= hi:
             if self._spent():
                 self.cache.save(sid, events, b - 1, b - 1)
-                raise EpochBudgetSpent(f"the epoch tier's {EPOCH_BUDGET_S}s were spent with the log scan at block "
+                raise EpochBudgetSpent(f"the epoch tier's {self.epoch_budget_s:.0f}s were spent with the log scan at block "
                                        f"{b - 1:,} of {hi:,}; the scan is saved and the next run continues from there")
             e = min(hi, b + self._chunk - 1)
             try:
@@ -929,7 +954,7 @@ class AeroV3:
             factory, [created], deploy, newest_end, stream=("base", factory, [created], deploy))})
         for k, (start, end) in enumerate(due):
             if self._spent():
-                raise EpochBudgetSpent(f"the epoch tier's {EPOCH_BUDGET_S}s were spent before the epoch of "
+                raise EpochBudgetSpent(f"the epoch tier's {self.epoch_budget_s:.0f}s were spent before the epoch of "
                                        f"{pd.Timestamp(start, unit='s').date()}; the next run reads it")
             b0, b1 = self._block_at(start), self._block_at(end) - 1
             fees = self._logs(mgrs, [topic0("NotifyFeesAmount")], b0, b1) if mgrs else []
@@ -974,6 +999,15 @@ class AeroV3:
                         f"apr={apr:.4%} (epoch {when.date()})", TIER)
 
 
+def held_on_the_new_read(stored: list, cutover) -> set:
+    """R10.A1a: the days a supply leg counts as HELD for the backfill — [(date, source)] -> {'YYYY-MM-DD'}. A row the
+    LEGACY reader wrote on or after the migration cutover (its source is not this module's) is not the leg's value on
+    the merged basis: that day is read again from the new contracts and the legacy row is replaced (the declared cut of
+    the handover, made in the store). Every other stored day is held and never written again."""
+    cut = str(pd.Timestamp(cutover).date())
+    return {str(d)[:10] for d, src in stored if str(d)[:10] < cut or str(src).startswith(SOURCE)}
+
+
 def supply_history(project: dict, have: dict, deadline: float | None = None, reader=None, write=None,
                    state: dict | None = None, clock=time.monotonic) -> tuple[list, str]:
     """R8 item 2: AERODROME'S SUPPLY SERIES ON PAST DAYS (the series stopped on 2026-10-29 — every epoch-scan timeout
@@ -1011,7 +1045,10 @@ def supply_history(project: dict, have: dict, deadline: float | None = None, rea
             except Exception as e:  # noqa: BLE001
                 why = f"stopped at {key}: the supply is not readable there ({str(e)[:200]})"
                 break
-            if "filing_managed_lock_tokens" in need:
+            if "filing_managed_lock_tokens" in need and key in (
+                    config.AERODROME_MIGRATION.get("filing_unreadable_days") or {}):
+                unread.append(f"{key} (DECLARED n/a: {config.AERODROME_MIGRATION['filing_unreadable_days'][key][:90]})")
+            elif "filing_managed_lock_tokens" in need:
                 try:
                     total, _msg = rdr._filing_read(name, blk, st)
                     got.append(point(name, "filing_managed_lock_tokens", total,

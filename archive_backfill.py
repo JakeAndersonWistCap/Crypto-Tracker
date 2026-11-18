@@ -187,15 +187,36 @@ def _work(a) -> int:
         if p["name"] != config.AERODROME_MIGRATION["project"]:
             continue
         from fetch import aero_v3
-        have = {m: {d[:10] for (d,) in st.conn.execute(
-            "SELECT date FROM metrics WHERE project=? AND metric=?", (p["name"], m))} for m in aero_v3.SUPPLY_LEGS}
+        # R10.A1a: a day the LEGACY reader wrote after the cutover (total_supply on 2026-10-23, 10-25, 10-26 on Jake's
+        # store) is not held on the merged basis — it is read again and that legacy row replaced; nothing else is
+        # ever overwritten (supply_history returns only the legs `have` lacks)
+        cutover = config.AERODROME_MIGRATION["cutover_utc"]
+        have = {m: aero_v3.held_on_the_new_read(st.conn.execute(
+            "SELECT date, source FROM metrics WHERE project=? AND metric=?", (p["name"], m)).fetchall(), cutover)
+            for m in aero_v3.SUPPLY_LEGS}
         wrote = [0]
 
         def _land(day_rows, _wrote=wrote):
-            _wrote[0] += ar._write_new(st, pd.DataFrame(day_rows))
+            f = pd.DataFrame(day_rows)
+            _wrote[0] += st.upsert(f[ar.LONG_COLUMNS]) if not f.empty else 0
         rows, why = aero_v3.supply_history(p, have, deadline=time.monotonic() + a.budget_min * 60, write=_land)
         print(f"  Aerodrome supply {p['name']}: {wrote[0]} row(s) written over "
               f"{len({str(r['date'])[:10] for r in rows})} day(s) (legs: {', '.join(aero_v3.SUPPLY_LEGS)}) — {why}")
+        # R10.A2 THE VOTER EPOCHS, FINISHED HERE: the daily tier stops its log scan at 200 s (it stood at block
+        # 53,523,726 of 56,256,121 on 2026-11-18); this pass continues the SAME saved scan with the run's budget and
+        # writes every complete epoch it reads. An epoch the store holds is never read or written again.
+        from fetch.base import FetchOutput
+        stored = pd.read_sql_query("SELECT date, project, metric, value, source, tier FROM metrics WHERE project=? AND "
+                                   "metric='voter_rewards_onchain_usd'", st.conn, params=(p["name"],))
+        eo = FetchOutput()
+        aero_v3.AeroV3(part="epoch", stored_long=stored, epoch_budget_s=a.budget_min * 60).run([p], None, eo)
+        ef = eo.frame()
+        n = ar._write_new(st, ef) if len(ef) else 0
+        print(f"  Aerodrome voter epochs {p['name']}: {n} row(s) written over "
+              f"{ef['date'].nunique() if len(ef) else 0} epoch(s)")
+        for e in eo.log:
+            if getattr(e, "status", "") == "failed":
+                print(f"    {e.message[:400]}")
     if a.near:
         near = config.PROJECT_BY_NAME.get("Near")
         if near and near in projects:
