@@ -534,6 +534,65 @@ A Plume seed started on code older than 2026-10-01 saved its state only at the e
 or stop it and start again on the new code. Don't run both at once: they write the same state file.
 
 
+## 11ey. Round 10 — Aerodrome's migration fixed, Near wired on the rule (2026-11-19)
+
+AERODROME. The 10-22 handover of its supply legs is now a cut (the old reader's rows after the cutover are dropped, and
+the backfill reads those days again from the new contracts). Its emissions run as one series across the migration, its
+token-flow statement balances, and its three revenue lines include the legacy epochs. Two things are left and both need
+your machine: the voter epochs since 10-22 (the backfill below continues the saved scan with a long budget) and the
+Foundation's purchase history (the `--seed aero_buyback` step). NEAR. Revenue is the chain's own burn x price with the
+v87 switch on 2026-11-05; the three revenue lines are populated; treasury.near and the buyback wallets are in
+circulating and off the float. Two new daily reads (treasury.near, the Foundation accounts) store their first rows on
+your next run - Near's float forms then. No BigQuery query runs unless you approve it: the run only logs dry-run
+estimates.
+
+```
+cd C:\Users\jake\Crypto-Tracker
+.venv\Scripts\Activate.ps1
+gcloud auth application-default login
+#   expect: a browser sign-in, then "Credentials saved to file"
+gcloud auth application-default set-quota-project near-data-510309
+#   expect: "Credentials saved to file" and a line naming the quota project near-data-510309
+git switch claude/crypto-metrics-supply-demand-ovkg8g
+git pull
+git log --oneline -1
+#   expect: the line ends "R10: Aerodrome across the migration, Near on the rule; RUNBOOK 11ey"
+python -c "import config; print(sorted(config.RULE_IN), config.NEAR_V87['switch_day'], config.NEAR_HSP_029['status'][:7], config.PROJECT_BY_NAME['Near']['near_bigquery']['supply_flows']['history']['approved'], config.PROJECT_BY_NAME['Aerodrome']['series_handover']['total_supply']['cut'])"
+#   expect: ['Aerodrome', 'Fluid', 'Hyperliquid', 'Maple', 'Morpho', 'Near', 'Pendle', 'Sky', 'Uniswap'] 2026-11-05 PENDING False True
+python circ_legs.py Aerodrome
+#   expect: total_supply listed; read-only (the backfill below re-reads 2026-10-23, 10-25 and 10-26)
+python circ_legs.py Near
+#   expect: "circulating_supply_lockup_rule [first-party figure]: built at read time (no stored rows)"
+python token_metrics.py
+#   expect: the run ends without error; near lines for near_treasury_tokens and near_foundation_accounts_tokens; a near_bigquery line with a dry-run estimate and "not approved" for the burn history; no base.llamarpc.com in any message
+python archive_backfill.py --run --project Aerodrome --budget-min 30
+#   expect: "Aerodrome supply ..." naming rows for 2026-10-23, 10-25, 10-26 and "2026-10-22 (DECLARED n/a"; then "Aerodrome voter epochs Aerodrome: N row(s) written over M epoch(s)" - rerun this line until M stops growing (4 complete epochs exist on 11-19)
+python token_metrics.py --seed aero_buyback
+#   expect: a line ending "row(s) stored" - the Foundation's purchases day by day (needs BASE_RPC_URL)
+python token_metrics.py --no-fetch
+#   expect: no error
+python done_check.py --verbose | Select-String "^(Uniswap|Fluid|Maple|Morpho|Pendle|Sky|Hyperliquid|Aerodrome|Near)" -Context 0,8
+#   expect: the seven frozen projects READY (all seven checked on your exports); Aerodrome READY if the epochs and the purchase history landed, else only "S13 ... STALE" and/or "Net absorption"; Near NOT READY with a shorter list than before (its float and dilution cells form once the two new reads are stored) - paste Aerodrome's and Near's lists back
+New-Item -ItemType Directory -Force ..\tm-exports | Out-Null
+python store_export.py --project Aerodrome --out-dir ..\tm-exports
+#   expect: a line starting "wrote ../tm-exports/aerodrome-"
+python store_export.py --project Near --out-dir ..\tm-exports
+#   expect: a line starting "wrote ../tm-exports/near-"
+git switch data/store-exports
+git pull
+Copy-Item ..\tm-exports\aerodrome-*.json.gz exports\
+Copy-Item ..\tm-exports\near-*.json.gz exports\
+git add -f exports
+git commit -m "data: Aerodrome and Near store exports (R10)"
+git push
+git switch claude/crypto-metrics-supply-demand-ovkg8g
+git log --oneline -1
+#   expect: the same line as above
+python project_freeze.py --compare all
+#   expect: seven lines, each "0 undeclared move(s)": Fluid 353, Hyperliquid 616, Maple 360, Morpho 285, Pendle 373, Sky 482, Uniswap 309 cells
+```
+
+
 ## 11ex. Round 9 — the rule on the seven frozen projects, Aerodrome's revenue lines on chain (2026-11-18)
 
 All seven frozen projects now run on the circulating rule: issuer, foundation and treasury wallets that can be moved or

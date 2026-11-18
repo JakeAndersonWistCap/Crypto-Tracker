@@ -44593,3 +44593,14 @@ _R10N["node_api"]["extra_reads"].append(
      "spec_url": "https://github.com/near/docs/blob/master/api/rpc/protocol.mdx", "spec_date": "2026-11-18"})
 NOT_SHOWN[("Near", "near_max_inflation_rate")] = (
     "R10.B5a: the chain's issuance ceiling, read each run to date HSP-029's step — an evidence reading, not a headline")
+
+
+# R10.A1d: Aerodrome's BURNED buyback changed its measuring point by decision — the purchases x a 0% burn share on the
+# days a purchase read exists -> the declared zero on every day the total is held (no burn mechanism exists).
+PROJECT_BY_NAME["Aerodrome"].setdefault("series_handover", {})["buyback_burned_tokens"] = {
+    "ordered_points": ("derived:actual_buyback_tokens x burn share (from start: burn 0% / hold 100% / distribute 0%)",
+                       "derived:declared_zero[no burn mechanism exists]"),
+    "why": "R10.A1d (Jake 2026-11-18): Aerodrome has no burn mechanism (confirmed), so the burned buyback is a declared "
+           "zero, not the purchases x 0 on the few days a purchase read exists",
+    "composition_change": "the same 0, on every day the total supply is held instead of the purchase-read days",
+    "declared": "2026-11-18"}
