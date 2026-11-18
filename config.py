@@ -44105,7 +44105,7 @@ METRICS["voter_rewards_onchain_bribes_issuer_usd"] = {
              "wallets) — Foundation-funded: out of FEES, REVENUE and HOLDER REVENUE (R9.4)",
     "kind": "flow", "unit": "usd", "archetypes": [3], "tiers": [2], "sanity_min": 0, "sanity_max": 1e9,
     "only_projects": ("Aerodrome",)}
-for _k, _lab in (
+for _r9k, _r9lab in (
         ("s13_fees_usd", "FEES (S13), per on-chain epoch = revenue + what unstaked LPs keep (DefiLlama fees − revenue on "
                          "the epoch's days); third-party incentives only"),
         ("s13_revenue_usd", "REVENUE (S13), per on-chain epoch = holder revenue + fees locked in dead legacy gauges "
@@ -44119,7 +44119,7 @@ for _k, _lab in (
         ("s13_revenue_defillama_usd", "DefiLlama revenue over the same on-chain epochs (cross-check of REVENUE)"),
         ("s13_holder_revenue_defillama_usd", "DefiLlama holders revenue over the same on-chain epochs (cross-check of "
                                              "HOLDER REVENUE)")):
-    METRICS[_k] = {"label": _lab + " (R9.4)", "kind": "flow", "unit": "usd", "archetypes": [3], "tiers": [2],
+    METRICS[_r9k] = {"label": _r9lab + " (R9.4)", "kind": "flow", "unit": "usd", "archetypes": [3], "tiers": [2],
                    "sanity_min": 0, "sanity_max": 1e10, "only_projects": ("Aerodrome",), "view_only": True}
 REVENUE_SPLIT["Aerodrome"] = {
     "round": "R9.4 (Jake 2026-11-17)",
@@ -44150,11 +44150,11 @@ REVENUE_SPLIT["Aerodrome"] = {
 # against 224.46M). Days inside are left as stored (a buyback row per read: a quiet day has no row). Never capped: where
 # holder revenue is above revenue on the same days, it reads so.
 S13_SAME_DAYS = {"Hyperliquid": ("revenue", "holder_revenue")}
-for _m in ("revenue_total_usd", "holder_value_revenue_usd"):
-    METRICS[f"{_m}_s13d"] = {
-        "label": f"{_m} over the days every S13 line compared with it holds (R9.5: same covered days, never capped)",
+for _r9m in ("revenue_total_usd", "holder_value_revenue_usd"):
+    METRICS[f"{_r9m}_s13d"] = {
+        "label": f"{_r9m} over the days every S13 line compared with it holds (R9.5: same covered days, never capped)",
         "kind": "flow", "unit": "usd", "archetypes": [1, 2, 3, 4], "tiers": [2], "sanity_min": 0,
-        "sanity_max": METRICS[_m].get("sanity_max", 1e12), "view_only": True, "only_projects": ("Hyperliquid",)}
+        "sanity_max": METRICS[_r9m].get("sanity_max", 1e12), "view_only": True, "only_projects": ("Hyperliquid",)}
 
 
 # R9.5b THE DATE OF THE VALIDATORS' VOTE ON THE ASSISTANCE FUND (Jake 2026-11-17: correct 12-27 to 12-24 only on a primary
