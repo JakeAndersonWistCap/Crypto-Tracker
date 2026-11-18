@@ -696,5 +696,183 @@
 "why": "R9.2 (the rule, Jake 2026-11-17): Hyperliquid's team wallet 0x43e9abea… (238.25M, unvested but staked on 23 validators and earning) and Community Grants' spot (0.11M) are counted in circulating, off the free float — docs/r8_rule_audit.md §7; circulating about 301M -> about 540M, the float unchanged"
 }
 ]
+},
+"Morpho": {
+"audit|A2 Coordination|Unlock dilution, annualised % of free float": [
+{
+"date": "2026-11-18",
+"from": 0.190500664,
+"to": 0.12460173,
+"why": "R9.2 (the rule, Jake 2026-11-17): Morpho's DAO 0xcBa28b38… (283.72M, a Safe 6-of-10 can move it) — and, where the switch has them out, the Grants / Rewards Safes and distributors — are counted in circulating, off the free float; the modelled relock (110.7M) stays out (the relock agreement; no wallet or earning evidence) — docs/r8_rule_audit.md §4"
+}
+],
+"audit|CP Comparability|Circulating supply (tokens) — our convention, the figure in use": [
+{
+"date": "2026-11-18",
+"from": 574801147.0,
+"to": 878800000.0,
+"why": "R9.2 (the rule, Jake 2026-11-17): Morpho's DAO 0xcBa28b38… (283.72M, a Safe 6-of-10 can move it) — and, where the switch has them out, the Grants / Rewards Safes and distributors — are counted in circulating, off the free float; the modelled relock (110.7M) stays out (the relock agreement; no wallet or earning evidence) — docs/r8_rule_audit.md §4"
+}
+],
+"audit|CP Comparability|Dilution (e) unlocks (annualised) ÷ circulating": [
+{
+"date": "2026-11-18",
+"from": 0.190500664,
+"to": 0.12460173,
+"why": "R9.2 (the rule, Jake 2026-11-17): Morpho's DAO 0xcBa28b38… (283.72M, a Safe 6-of-10 can move it) — and, where the switch has them out, the Grants / Rewards Safes and distributors — are counted in circulating, off the free float; the modelled relock (110.7M) stays out (the relock agreement; no wallet or earning evidence) — docs/r8_rule_audit.md §4"
+}
+],
+"audit|CP Comparability|Discretionary supply ÷ circulating": [
+{
+"date": "2026-11-18",
+"from": 0.787659568,
+"to": 0.515188465,
+"why": "R9.2 (the rule, Jake 2026-11-17): Morpho's DAO 0xcBa28b38… (283.72M, a Safe 6-of-10 can move it) — and, where the switch has them out, the Grants / Rewards Safes and distributors — are counted in circulating, off the free float; the modelled relock (110.7M) stays out (the relock agreement; no wallet or earning evidence) — docs/r8_rule_audit.md §4"
+}
+],
+"audit|CP Comparability|ETF / ETP holdings ÷ circulating": [
+{
+"date": "2026-11-18",
+"from": 0.000931017109,
+"to": 0.000608955055,
+"why": "R9.2 (the rule, Jake 2026-11-17): Morpho's DAO 0xcBa28b38… (283.72M, a Safe 6-of-10 can move it) — and, where the switch has them out, the Grants / Rewards Safes and distributors — are counted in circulating, off the free float; the modelled relock (110.7M) stays out (the relock agreement; no wallet or earning evidence) — docs/r8_rule_audit.md §4"
+}
+],
+"audit|CP Comparability|Insider share of circulating = insider-held tokens counted inside circulating ÷ circulating": [
+{
+"date": "2026-11-18",
+"from": 0.0,
+"to": 0.515188465,
+"why": "R9.2 (the rule, Jake 2026-11-17): Morpho's DAO 0xcBa28b38… (283.72M, a Safe 6-of-10 can move it) — and, where the switch has them out, the Grants / Rewards Safes and distributors — are counted in circulating, off the free float; the modelled relock (110.7M) stays out (the relock agreement; no wallet or earning evidence) — docs/r8_rule_audit.md §4"
+}
+],
+"audit|CP Comparability|Market cap ($)": [
+{
+"date": "2026-11-18",
+"from": 1372468760.0,
+"to": 2098335320.0,
+"why": "R9.2 (the rule, Jake 2026-11-17): Morpho's DAO 0xcBa28b38… (283.72M, a Safe 6-of-10 can move it) — and, where the switch has them out, the Grants / Rewards Safes and distributors — are counted in circulating, off the free float; the modelled relock (110.7M) stays out (the relock agreement; no wallet or earning evidence) — docs/r8_rule_audit.md §4"
+}
+],
+"audit|CP Comparability|Tradeable float ÷ circulating": [
+{
+"date": "2026-11-18",
+"from": 0.741216992,
+"to": 0.484811535,
+"why": "R9.2 (the rule, Jake 2026-11-17): Morpho's DAO 0xcBa28b38… (283.72M, a Safe 6-of-10 can move it) — and, where the switch has them out, the Grants / Rewards Safes and distributors — are counted in circulating, off the free float; the modelled relock (110.7M) stays out (the relock agreement; no wallet or earning evidence) — docs/r8_rule_audit.md §4"
+}
+],
+"audit|Master|Circulating supply (used)": [
+{
+"date": "2026-11-18",
+"from": 574801147.0,
+"to": 878800000.0,
+"why": "R9.2 (the rule, Jake 2026-11-17): Morpho's DAO 0xcBa28b38… (283.72M, a Safe 6-of-10 can move it) — and, where the switch has them out, the Grants / Rewards Safes and distributors — are counted in circulating, off the free float; the modelled relock (110.7M) stays out (the relock agreement; no wallet or earning evidence) — docs/r8_rule_audit.md §4"
+}
+],
+"audit|Master|Market cap ($)": [
+{
+"date": "2026-11-18",
+"from": 1372468760.0,
+"to": 2098335320.0,
+"why": "R9.2 (the rule, Jake 2026-11-17): Morpho's DAO 0xcBa28b38… (283.72M, a Safe 6-of-10 can move it) — and, where the switch has them out, the Grants / Rewards Safes and distributors — are counted in circulating, off the free float; the modelled relock (110.7M) stays out (the relock agreement; no wallet or earning evidence) — docs/r8_rule_audit.md §4"
+}
+],
+"audit|Master|Net supply change, annualised % of circulating": [
+{
+"date": "2026-11-18",
+"from": 0.190500664,
+"to": 0.12460173,
+"why": "R9.2 (the rule, Jake 2026-11-17): Morpho's DAO 0xcBa28b38… (283.72M, a Safe 6-of-10 can move it) — and, where the switch has them out, the Grants / Rewards Safes and distributors — are counted in circulating, off the free float; the modelled relock (110.7M) stays out (the relock agreement; no wallet or earning evidence) — docs/r8_rule_audit.md §4"
+}
+],
+"audit|Master|Trend — master_circulating_supply_used (arrow · QoQ · 4Q growth/yr · quarters improved; Trajectory tab)": [
+{
+"date": "2026-11-18",
+"from": "MODELLED Q0, Q-1, Q-2, Q-3, Q-4 · ↑ · +125%/yr (4Q) · QoQ +4.9%",
+"to": "MODELLED Q0, Q-1, Q-2, Q-3, Q-4 · ↑ · +14%/yr (4Q) · QoQ +3.2%",
+"why": "R9.2 (the rule, Jake 2026-11-17): Morpho's DAO 0xcBa28b38… (283.72M, a Safe 6-of-10 can move it) — and, where the switch has them out, the Grants / Rewards Safes and distributors — are counted in circulating, off the free float; the modelled relock (110.7M) stays out (the relock agreement; no wallet or earning evidence) — docs/r8_rule_audit.md §4"
+}
+],
+"audit|Master|Trend — master_market_cap (arrow · QoQ · 4Q growth/yr · quarters improved; Trajectory tab)": [
+{
+"date": "2026-11-18",
+"from": "▲ · +324%/yr (4Q) · 3/4 improved · QoQ +21.6%",
+"to": "▲ · +115%/yr (4Q) · 3/4 improved · QoQ +19.5%",
+"why": "R9.2 (the rule, Jake 2026-11-17): Morpho's DAO 0xcBa28b38… (283.72M, a Safe 6-of-10 can move it) — and, where the switch has them out, the Grants / Rewards Safes and distributors — are counted in circulating, off the free float; the modelled relock (110.7M) stays out (the relock agreement; no wallet or earning evidence) — docs/r8_rule_audit.md §4"
+}
+],
+"audit|Master|Trend — master_net_supply_change_annualised_of_circulating (arrow · QoQ · 4Q growth/yr · quarters improved; Trajectory tab)": [
+{
+"date": "2026-11-18",
+"from": "MODELLED Q0, Q-1, Q-2, Q-3, Q-4 · ▼ · +19%/yr (4Q) · 1/3 improved · QoQ lumpy (81.5% of the window on 1 day)",
+"to": "MODELLED Q0, Q-1, Q-2, Q-3, Q-4 · ▼ · +55%/yr (4Q) · 2/3 improved · QoQ -0.4 pp",
+"why": "R9.2 (the rule, Jake 2026-11-17): Morpho's DAO 0xcBa28b38… (283.72M, a Safe 6-of-10 can move it) — and, where the switch has them out, the Grants / Rewards Safes and distributors — are counted in circulating, off the free float; the modelled relock (110.7M) stays out (the relock agreement; no wallet or earning evidence) — docs/r8_rule_audit.md §4"
+}
+],
+"audit|Master|Trend — master_net_supply_change_q0_tokens_closing_opening_circulating_supp (arrow · QoQ · 4Q growth/yr · quarters improved; Trajectory tab)": [
+{
+"date": "2026-11-18",
+"from": "▼ · +167%/yr (4Q) · 1/3 improved · QoQ lumpy (81.5% of the window on 1 day)",
+"to": "▼ · +77%/yr (4Q) · 0/3 improved · QoQ +0.0%",
+"why": "R9.2 (the rule, Jake 2026-11-17): Morpho's DAO 0xcBa28b38… (283.72M, a Safe 6-of-10 can move it) — and, where the switch has them out, the Grants / Rewards Safes and distributors — are counted in circulating, off the free float; the modelled relock (110.7M) stays out (the relock agreement; no wallet or earning evidence) — docs/r8_rule_audit.md §4"
+}
+],
+"audit|Master|Turnover = 30d volume ÷ market cap (x)": [
+{
+"date": "2026-11-18",
+"from": 0.655720322,
+"to": 0.428890297,
+"why": "R9.2 (the rule, Jake 2026-11-17): Morpho's DAO 0xcBa28b38… (283.72M, a Safe 6-of-10 can move it) — and, where the switch has them out, the Grants / Rewards Safes and distributors — are counted in circulating, off the free float; the modelled relock (110.7M) stays out (the relock agreement; no wallet or earning evidence) — docs/r8_rule_audit.md §4"
+}
+],
+"reader|A2 Coordination|Circulating supply": [
+{
+"date": "2026-11-18",
+"from": 574801147.0,
+"to": 878800000.0,
+"why": "R9.2 (the rule, Jake 2026-11-17): Morpho's DAO 0xcBa28b38… (283.72M, a Safe 6-of-10 can move it) — and, where the switch has them out, the Grants / Rewards Safes and distributors — are counted in circulating, off the free float; the modelled relock (110.7M) stays out (the relock agreement; no wallet or earning evidence) — docs/r8_rule_audit.md §4"
+}
+],
+"reader|A2 Coordination|Market cap": [
+{
+"date": "2026-11-18",
+"from": 1372468760.0,
+"to": 2098335320.0,
+"why": "R9.2 (the rule, Jake 2026-11-17): Morpho's DAO 0xcBa28b38… (283.72M, a Safe 6-of-10 can move it) — and, where the switch has them out, the Grants / Rewards Safes and distributors — are counted in circulating, off the free float; the modelled relock (110.7M) stays out (the relock agreement; no wallet or earning evidence) — docs/r8_rule_audit.md §4"
+}
+],
+"reader|A2 Coordination|Unlocks, % of free float a year": [
+{
+"date": "2026-11-18",
+"from": 0.190500664,
+"to": 0.12460173,
+"why": "R9.2 (the rule, Jake 2026-11-17): Morpho's DAO 0xcBa28b38… (283.72M, a Safe 6-of-10 can move it) — and, where the switch has them out, the Grants / Rewards Safes and distributors — are counted in circulating, off the free float; the modelled relock (110.7M) stays out (the relock agreement; no wallet or earning evidence) — docs/r8_rule_audit.md §4"
+}
+],
+"reader|Summary|Market cap": [
+{
+"date": "2026-11-18",
+"from": 1372468760.0,
+"to": 2098335320.0,
+"why": "R9.2 (the rule, Jake 2026-11-17): Morpho's DAO 0xcBa28b38… (283.72M, a Safe 6-of-10 can move it) — and, where the switch has them out, the Grants / Rewards Safes and distributors — are counted in circulating, off the free float; the modelled relock (110.7M) stays out (the relock agreement; no wallet or earning evidence) — docs/r8_rule_audit.md §4"
+}
+],
+"reader|Summary|Net supply change, % a year": [
+{
+"date": "2026-11-18",
+"from": 0.190500664,
+"to": 0.12460173,
+"why": "R9.2 (the rule, Jake 2026-11-17): Morpho's DAO 0xcBa28b38… (283.72M, a Safe 6-of-10 can move it) — and, where the switch has them out, the Grants / Rewards Safes and distributors — are counted in circulating, off the free float; the modelled relock (110.7M) stays out (the relock agreement; no wallet or earning evidence) — docs/r8_rule_audit.md §4"
+}
+],
+"reader|Summary|What changed": [
+{
+"date": "2026-11-18",
+"from": "over 90D: Price +16% · Market cap +22% · Fees +14% · TVL +55% · ",
+"to": "over 90D: Price +16% · Market cap +20% · Fees +14% · TVL +55% · ",
+"why": "R9.2 (the rule, Jake 2026-11-17): Morpho's DAO 0xcBa28b38… (283.72M, a Safe 6-of-10 can move it) — and, where the switch has them out, the Grants / Rewards Safes and distributors — are counted in circulating, off the free float; the modelled relock (110.7M) stays out (the relock agreement; no wallet or earning evidence) — docs/r8_rule_audit.md §4"
+}
+]
 }
 }

@@ -43867,3 +43867,22 @@ def _load_r9_moves() -> int:
 
 
 R9_MOVES_DECLARED = _load_r9_moves()
+
+
+# ---------------------------------------------------------------------------------------------------------------------
+# R9.2 MORPHO UNDER THE RULE (Jake 2026-11-17). docs/r8_rule_audit.md §4 (Ethereum block 26,434,142, Base; 2026-11-17):
+#   IN, off float: the DAO 0xcBa28b38… 283,719,215.78 MORPHO (new + legacy + Base) — a Safe 6-of-10 can move it;
+#     where the switch has them out, the undistributed legs too (Contributor Grants Safes 0x53051Ef9… / 0x1590e7F4…
+#     52,811,613.39, the Rewards Safe 0xF057afeE… 2,566,170.49, Merkl / URD distributors 1,140,891.01: Safes and
+#     claimable balances).
+#   STAYS OUT (Jake's decision): the founders' / cohort 3 relock, 110.7M MODELLED — the relock agreement is the primary
+#     source for "unvested and immovable"; no wallet or contract is published and no earning evidence was found
+#     (MORPHO has no staking; the audit read every disclosed Morpho wallet: none is staked or in a yield position).
+# The vesting releases stay the unlock legs (UNLOCK_STOCKS, R9.3).
+declare_rule_in("Morpho", ("noncirculating_holding_tokens",),
+                "docs/r8_rule_audit.md §4: the DAO 0xcBa28b38… is a Safe 6-of-10 (movable, idle); the Grants and Rewards "
+                "Safes are 5-of-8 / 4-of-8 / 3-of-7; the relock (110.7M, modelled) stays out: the relock agreement is "
+                "the source for unvested and immovable, and no wallet or earning evidence was found",
+                swc_leg="morpho_undistributed_tokens", circulating=(549_062_109, 889_299_999.80),
+                relock_findings="no wallet or contract published; no staking exists for MORPHO; none of the disclosed "
+                                "wallets is staked or in a yield position (read 2026-11-17)")

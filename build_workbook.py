@@ -4212,6 +4212,12 @@ def _circulating_views(groups: dict) -> None:
         swc = spec.get("subtract_when_complete")
         if swc:
             s, tag = _subtract_when_complete(groups, name, s, tag, swc)
+            rule_swc = (config.RULE_IN.get(name) or {}).get("swc_leg")
+            if rule_swc == swc.get("metric") and swc.get("in_force") and swc.get("sign") != 1:
+                # R9.2: a switched-on subtraction the rule counts IN circulating is added back on the same days (the
+                # switch still decides the state every other reader of it follows); it leaves the float instead
+                s = (s + _swc_leg(groups, name, swc["metric"], swc).reindex(s.index)).dropna()
+                tag += f"[+ {swc['metric']}: in circulating by the rule]"
         view = pd.DataFrame({"date": s.index, "project": name, "metric": "circulating_supply_onchain",
                              "value": s.values, "source": tag, "tier": 2})
         groups[(name, "circulating_supply_onchain")] = _as_stored(view, parts[0].columns)
@@ -6722,8 +6728,9 @@ def aggregate(long: pd.DataFrame, fetch_status: pd.DataFrame, asof: pd.Timestamp
     _wm_total_supply_views(groups)    # Round G7 0a: World Mobile's total = option C, option B its own row
     _modelled_lock_views(groups)  # PR4C.1: Morpho's relocked MORPHO, modelled, before circulating subtracts it
     _difference_views(groups)     # R7B.B1: e.g. Sky's endowments' liquid SKY, before the floats read it
-    _rule_in_views(groups)        # R9.2: the issuer-side stock the rule counts in circulating, off the floats
     _circulating_views(groups)
+    _rule_in_views(groups)        # R9.2: the issuer-side stock the rule counts in circulating, off the floats (after
+                                  # the circulating view: a switched leg's state is known then)
     _cg_plus_staked_views(groups)
     _near_lockup_views(groups)    # BEFORE market cap: NEAR's circulating under Jake's lockup rule
     _market_cap_views(groups)     # AFTER the on-chain circulating it may use; BEFORE NRR reads it
@@ -12325,7 +12332,11 @@ def _rule_in_views(groups: dict) -> None:
     per project, rule_in_off_float_tokens = the sum of its declared legs on the days every leg is held (a day missing a
     leg is no value: the float is then n/a, never the float without it)."""
     for name, spec in config.RULE_IN.items():
-        legs = [_daily(groups.get((name, m))) for m in spec.get("off_float", spec["legs"])]
+        names = list(spec.get("off_float", spec["legs"]))
+        swc = config.circulating_swc(name)
+        if spec.get("swc_leg") and swc.get("in_force") and swc.get("sign") != 1:
+            names.append(spec["swc_leg"])              # the switched leg leaves the float while it is added back
+        legs = [_daily(groups.get((name, m))) for m in names]
         if not legs or any(s.empty for s in legs):
             continue
         idx = legs[0].index
@@ -12337,7 +12348,7 @@ def _rule_in_views(groups: dict) -> None:
         cols = next(g.columns for (n_, _m), g in groups.items() if n_ == name and g is not None and not g.empty)
         groups[(name, "rule_in_off_float_tokens")] = _as_stored(pd.DataFrame(
             {"date": idx, "project": name, "metric": "rule_in_off_float_tokens", "value": tot.values, "tier": 2,
-             "source": "derived:rule_in[" + "+".join(spec.get("off_float", spec["legs"])) + "]"}), cols)
+             "source": "derived:rule_in[" + "+".join(names) + "]"}), cols)
 
 
 def _rule_in_term(R: Refs, r, p: dict) -> str | None:
@@ -12974,7 +12985,11 @@ def _cp_cols(R: Refs, data_by_key: dict) -> list[tuple]:
          lambda r, p: (calc("(" + "+".join(R.D(r, m, "now") for m in _as_tuple(
                            config.INSIDER_INSIDE_CIRCULATING[p["name"]]["held"])) + f")/({circ(r, p)})")
                        # R7C.B1: released insider holdings an on-chain circulating counts (Sky's endowments)
-                       if p["name"] in config.INSIDER_INSIDE_CIRCULATING else "=0" if (config.CIRCULATING_ONCHAIN.get(p["name"]) or {}).get("status") == "established"
+                       if p["name"] in config.INSIDER_INSIDE_CIRCULATING
+                       # R9.2: the issuer-side stock the rule counts in circulating (+ the released issuer-held supply
+                       # already inside it) ÷ circulating — never "0 by construction" once the rule moved wallets in
+                       else calc(f"({_released_held(R, r, p)})/({circ(r, p)})")
+                       if (p["name"] in config.RULE_IN and p["name"] not in config.CIRC_RELEASED_STAKED) else "=0" if (config.CIRCULATING_ONCHAIN.get(p["name"]) or {}).get("status") == "established"
                        and config.circulating_primary_metric(p["name"]) in ("circulating_supply_onchain",)
                        # R7.C1: the Foundation + Grants STAKE is insider-held and inside circulating (released)
                        # R9.2: under the rule the team wallet and the two wallets' spot are inside circulating too
