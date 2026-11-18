@@ -81,7 +81,9 @@ def test_1_a_fresh_read_keeps_the_headline_on_the_rule_and_raises_no_block(monke
     assert ("Near", "circulating_supply_used") not in bw._VIEW_BLOCKS
     bw._market_cap_views(g)
     used = g[("Near", "circulating_supply_used")].set_index("date")
-    assert used.loc["2026-10-26", "value"] == pytest.approx(1_306_900_000 - 2_058_522 - 171_059)
+    # R10.B3a (the rule, Jake 2026-11-18): lockup.near + contributors.near can be moved — IN circulating, off the float
+    # (was: 1_306_900_000 - 2_058_522 - 171_059, the two accounts subtracted)
+    assert used.loc["2026-10-26", "value"] == pytest.approx(1_306_900_000 - 2_058_522)
 
 
 # ================================================================================================== 5 NEAR total

@@ -148,10 +148,15 @@ def test_p2e3_a_zero_with_no_published_reason_says_so_and_an_unknown_says_no_zer
 
 def test_p2e3_a_summed_revenue_names_every_leg():
     p = config.PROJECT_BY_NAME["Near"]
-    f = {**_fields("Near", "revenue_usd", "defillama", 90, 90),
+    # R10.B1b (Jake 2026-11-18): Near's gas leg is the chain's own burn x price (near_gas_revenue_usd), no longer
+    # DefiLlama's revenue_usd (was: _fields("Near", "revenue_usd", "defillama", ...) and "Near|revenue_usd" in the note)
+    gas = "derived:near_chain_burn_tokens*price_usd[chain header burn]"
+    f = {**_fields("Near", "near_gas_revenue_usd", gas, 90, 90),
          **_fields("Near", "intents_revenue_usd", "defillama:near-intents", 90, 90)}
     note = reader.revenue_series_note(_Ctx(f), p, "revenue_total_usd", 1.0)
-    assert "Near|revenue_usd" in note and "Near|intents_revenue_usd" in note and "DefiLlama near-intents" in note
+    assert config.REVENUE_TOTAL["Near"] == ("near_gas_revenue_usd", "intents_revenue_usd")
+    assert f"Near|near_gas_revenue_usd 'Protocol revenue' from {gas}" in note
+    assert "Near|intents_revenue_usd" in note and "DefiLlama near-intents" in note and "Near|revenue_usd" not in note
 
 
 # ============================================================================================== P2e-4 accepted losses

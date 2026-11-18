@@ -268,9 +268,13 @@ def test_buying_pressure_is_every_market_buyback_annualised_over_tradeable_float
 # R9.2 (the rule, Jake 2026-11-17): the four frozen projects' market cap is on the larger circulating (issuer / treasury
 # wallets in, off the float), so their yield is the same $ over a larger market cap — declared moves; was Maple
 # 0.009202065513863445, Sky 0.02447713721663361, Hyperliquid 0.030258293116699385, Pendle 0.01114886645183712.
-# Chainlink and Near are untouched.
+# Chainlink is untouched.
+# R10.B2b / B3a (Jake 2026-11-18): Near's credited holder value now carries the gas burn (the chain's own burn x price)
+# beside the Intents buyback, over a market cap on a circulating with lockup.near + contributors.near in — was
+# 0.0022805223703844632 (the buyback alone). The same step on Jake's 11-17 export: 0.50712% -> 0.53733% = (1 + burn $ /
+# buyback $) x (old ÷ new market cap) = 1.05971 x 0.99987.
 BEFORE_HVY = {"Maple": 0.008541006768956963, "Sky": 0.024434984263792533, "Hyperliquid": 0.01691147794146245,
-              "Pendle": 0.009420640711118868, "Chainlink": 0.005996886350660165, "Near": 0.0022805223703844632}
+              "Pendle": 0.009420640711118868, "Chainlink": 0.005996886350660165, "Near": 0.002418363439991883}
 
 
 @pytest.fixture(scope="module")
@@ -392,7 +396,13 @@ def test_fixture_float_buying_pressure_and_holder_value_unchanged(built):
     for n, held in (("Near", "buyback_fund_balance"),):
         circ, lock = XA.value(CP, crow[n], cc), XA.value(CP, crow[n], lc)
         h = _data(built, f"{n}|{held}", "Now")
-        assert XA.value(CP, crow[n], fc) == pytest.approx(circ - lock - h, rel=1e-12), n
+        assert all(isinstance(x, float) and x > 0 for x in (circ, lock, h)), n
+        # R10.B3a (Jake 2026-11-18): Near's float also loses lockup.near + contributors.near + treasury.near
+        # (config.RULE_IN["Near"]: rule_in_off_float_tokens). treasury.near's balance is a new read
+        # (near_treasury_tokens — the dumps predate it), so on the dumps the float is n/a naming the missing stock,
+        # never the float without it (was: == circ - lock - h, 708,547,659.5 on the dump)
+        assert "rule_in_off_float_tokens" in str(XA.value(CP, crow[n], fc)), n
+        assert "near_treasury_tokens" in config.RULE_IN[n]["off_float"]
         assert "out of the tradeable float while held" in cp.cell(crow[n], fc).comment.text.lower()
     # PR3.3 (Jake 2026-11-11): Maple's float needs the Fund's Safe on the day (maple_ssf_safe_tokens, new — the dumps
     # predate it): n/a naming it, never the old figure that took the Safe out twice

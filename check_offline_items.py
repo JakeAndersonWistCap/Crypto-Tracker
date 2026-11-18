@@ -3971,7 +3971,9 @@ NEAR_REVENUE_WALLETS = ("fefundsadmin.sputnik-dao.near", "buybacks.multisignatur
                         "1csfundsadmin.sputnik-dao.near")
 
 
-NEAR_PAGE_REVENUE_TOTAL = 3_786_229.6       # revenue.near.org "Wallet Breakdown (All-time)", Jake 2026-10-07
+# R10.B5b: re-read 2026-11-18 from the page as served — fefundsadmin 2,028,316.66 + buybacks.multisignature
+# 1,825,446.71 + 1csfundsadmin 555,348.27 (was 3_786_229.6, Jake 2026-10-07; manual_references.csv carries the same)
+NEAR_PAGE_REVENUE_TOTAL = 4_409_111.65      # revenue.near.org "Wallet Breakdown (All-time)", read 2026-11-18
 
 
 def near_buyback_wallets():
@@ -4848,19 +4850,63 @@ def _near_view(account: str, method: str, args: dict | None = None, block_id: in
 NEAR_LOCKUP_LIST_URL = "https://api.nearblocks.io/v3/accounts/lockup.near/subaccounts"
 
 
-def near_lockup_accounts(say=print, pace: float = 1.0, refresh: bool = False) -> tuple[list, str]:
+def _lockup_list_page(params: dict, headers: dict) -> tuple[int | None, dict | None, str | None]:
+    """One page of NearBlocks' lockup list: (HTTP status or None, JSON or None, Retry-After or the error's name)."""
+    try:
+        r = requests.get(NEAR_LOCKUP_LIST_URL, params=params, headers=headers, timeout=60)
+    except requests.RequestException as e:
+        return None, None, type(e).__name__
+    if r.status_code != 200:
+        return r.status_code, None, r.headers.get("Retry-After")
+    return 200, r.json(), None
+
+
+def lockup_list_wait(retries: int, retry_after) -> float:
+    """Seconds to wait after a throttled page (R10.B3c): the server's Retry-After where it gives a number (at most 120),
+    else 2^retries, at most 60."""
+    try:
+        return max(1.0, min(120.0, float(retry_after)))
+    except (TypeError, ValueError):
+        return float(min(60, 2 ** int(retries)))
+
+
+def near_lockup_accounts(say=print, pace: float = 1.0, refresh: bool = False, fetch=None, sleep=None,
+                         root=None) -> tuple[list, str]:
     """([live *.lockup.near], how) — the lockup factory's sub-accounts from NearBlocks' free API (Jake's run on ab3c7fe
     2026-10-11: "Do not use BigQuery for this" — the receipt_actions list dry-ran at 700.3 GB). Every *.lockup.near is a
     sub-account of lockup.near; /v3/accounts/lockup.near/subaccounts pages them 100 at a time (cursor `next`), each with
     its `deleted` record — a deleted lockup is dropped. NEARBLOCKS_API_KEY is sent as a Bearer header when set (never
     printed). The finished list is cached locally (LogCache root near-lockups.txt, one account a line — never printed,
-    never committed) and reused for a day; a paging run that stops resumes from its cursor next time."""
+    never committed) and reused for a day; a paging run that stops resumes from its cursor next time.
+    R10.B3c — CACHED AND SLOWER (Jake 2026-11-18: a throttled NearBlocks left no list and so no weekly read): a 429
+    waits the server's Retry-After and DOUBLES the pace between pages (to config.NEAR_LOCKUP_LIST_MAX_PACE_S at most);
+    when the paging still cannot finish, the last COMPLETE list is used while it is at most
+    config.NEAR_LOCKUP_LIST_MAX_AGE_DAYS old — `how` says so with its age — and the cursor is kept for the next run.
+    `fetch(params, headers) -> (status, json, retry_after)`, `sleep` and `root` are injectable (the tests' fake reader)."""
     import os                                              # noqa: PLC0415
     import time as _t                                      # noqa: PLC0415
     import progress                                       # noqa: PLC0415
     from fetch.logcache import LogCache                    # noqa: PLC0415
-    root = LogCache().root
+    import config as _cfg                                  # noqa: PLC0415
+    from pathlib import Path as _Path                      # noqa: PLC0415
+    root = _Path(root) if root is not None else LogCache().root
     root.mkdir(parents=True, exist_ok=True)
+    fetch = fetch or _lockup_list_page
+    sleep = sleep or _t.sleep
+    max_pace = float(_cfg.NEAR_LOCKUP_LIST_MAX_PACE_S)
+
+    def cached_fallback(why: str) -> tuple[list, str]:
+        """The last complete list, if it is young enough — else no list (the caller stores nothing)."""
+        if done.exists():
+            age_d = (_t.time() - done.stat().st_mtime) / 86400.0
+            if age_d <= float(_cfg.NEAR_LOCKUP_LIST_MAX_AGE_DAYS):
+                accts = [ln.strip() for ln in done.read_text(encoding="utf-8").splitlines() if ln.strip()]
+                if accts:
+                    return accts, (f"{why} — THE CACHED LIST IS USED: {len(accts):,} lockup(s), cached "
+                                   f"{_t.strftime('%Y-%m-%d %H:%M', _t.gmtime(done.stat().st_mtime))} UTC, "
+                                   f"{age_d:.1f} day(s) old (at most {_cfg.NEAR_LOCKUP_LIST_MAX_AGE_DAYS}); a lockup "
+                                   f"created since is not in it")
+        return [], why
     done, part = root / "near-lockups.txt", root / "near-lockups.partial.json"
     heights = root / "near-lockups-heights.json"     # P2a D4: {account: [created height, deleted height or 0]}
     if done.exists() and _t.time() - done.stat().st_mtime < 86400 and not refresh:
@@ -4873,23 +4919,22 @@ def near_lockup_accounts(say=print, pace: float = 1.0, refresh: bool = False) ->
     t0, retries = _t.time(), 0
     while True:
         params = {"limit": 100, **({"next": st["next"]} if st["next"] else {})}
-        try:
-            r = requests.get(NEAR_LOCKUP_LIST_URL, params=params, headers=hdr, timeout=60)
-        except requests.RequestException as e:
-            r, why = None, type(e).__name__
-        if r is None or r.status_code == 429 or r.status_code >= 500:
+        status, j, extra = fetch(params, hdr)
+        if status is None or status == 429 or status >= 500:
             retries += 1
             if retries > 6:
                 part.write_text(json.dumps(st))
-                return [], (f"STOPPED after {st['pages']} page(s) ({r.status_code if r is not None else why}); "
-                            f"the next run resumes at the cursor")
-            _t.sleep(min(60, 2 ** retries))
+                return cached_fallback(f"STOPPED after {st['pages']} page(s) ({status if status is not None else extra}"
+                                       f"); the next run resumes at the cursor")
+            if status == 429:
+                pace = min(max_pace, max(pace, 1.0) * 2)   # R10.B3c: slower for the rest of the run
+            sleep(lockup_list_wait(retries, extra if status == 429 else None))
             continue
-        if r.status_code != 200:
+        if status != 200:
             part.write_text(json.dumps(st))
-            return [], f"NearBlocks answered HTTP {r.status_code} on page {st['pages'] + 1} (host api.nearblocks.io)"
+            return cached_fallback(f"NearBlocks answered HTTP {status} on page {st['pages'] + 1} (host "
+                                   f"api.nearblocks.io)")
         retries = 0
-        j = r.json()
         for a in j.get("data") or []:
             ct = int(((a.get("created") or {}).get("block") or {}).get("block_timestamp") or 0) // 10 ** 9
             if ct:
@@ -4913,7 +4958,7 @@ def near_lockup_accounts(say=print, pace: float = 1.0, refresh: bool = False) ->
                 f"({_t.time() - t0:,.0f}s)")
         if not st["next"] or not j.get("data"):
             break
-        _t.sleep(pace)
+        sleep(pace)
     accts = sorted(set(st["live"]))
     done.write_text("\n".join(accts) + "\n", encoding="utf-8")
     heights.write_text(json.dumps(st.get("heights") or {}), encoding="utf-8")
@@ -5029,7 +5074,9 @@ def near_lockup_from_state(state: dict, account_amount: int, ts: int, buggy: boo
         return {"zero": True}
     locked = near_locked_recomputed(state, ts, True) if buggy else near_locked_getter(state, ts)
     out = {"balance": str(bal), "locked": str(locked), "unvested": str(near_unvested(state, ts)),
-           "owners": str(max(bal - locked, 0))}
+           "owners": str(max(bal - locked, 0)),
+           # R10.B3b: the lockup's known deposit at its staking pool — what it has staked (it earns)
+           "staked": str(int(state["deposit"]))}
     if buggy:
         out["buggy"] = True
     return out
@@ -5337,6 +5384,7 @@ def near_lockups(limit: int | None = None, resume: bool = True, workers: int = 4
         _lockup_throughput_save({"calls_per_s": (NEAR_PACER.stats["calls"] - calls0) / took, "measured": _now_utc()[:10],
                                  "how": f"{n_done:,} lockups by the {route} route in {took / 3600:.1f} h"})
     tot = {"balance": 0, "locked": 0, "unvested": 0, "owners": 0}
+    locked_staked, no_staked = 0, 0     # R10.B3b: Σ min(locked, staked) — formed only when EVERY lockup carries `staked`
     buggy = {"n": 0, "balance": 0, "locked": 0, "recomputed": 0}
     n_read = n_zero = n_fault = 0
     faults = []
@@ -5357,6 +5405,10 @@ def near_lockups(limit: int | None = None, resume: bool = True, workers: int = 4
         tot["locked"] += int(r["locked"])
         tot["unvested"] += min(int(r["unvested"]), int(r["locked"]))
         tot["owners"] += int(r["owners"])
+        if r.get("staked") is None:
+            no_staked += 1
+        else:
+            locked_staked += min(int(r["locked"]), int(r["staked"]))
         if r.get("buggy"):
             buggy["n"] += 1
             buggy["balance"] += int(r["balance"])
@@ -5384,6 +5436,9 @@ def near_lockups(limit: int | None = None, resume: bool = True, workers: int = 4
     print(f"    of which STILL UNVESTED                    {n(tot['unvested'])}")
     print(f"    of which VESTED, still lockup-locked       {n(tot['locked'] - tot['unvested'])}")
     print(f"  RELEASED, not withdrawn (owners' balance)    {n(tot['owners'])}")
+    print("  LOCKED and STAKED by its lockup (earning)    "
+          + (n(locked_staked) if not no_staked else f"NOT FORMED — {no_staked:,} lockup(s) read without their staked "
+             f"deposit (an earlier pin's cache, or a contract without the getter)"))
     rpc_txt = (f"RPC locked {n(buggy['locked'])} (known to be off)" if not buggy.get("rpc_unread") else
                f"RPC locked {n(buggy['locked'])} over the {buggy['n'] - buggy['rpc_unread']:,} read by the getters "
                f"(known to be off; {buggy['rpc_unread']:,} read by the state route, where the RPC figure is not read)")
@@ -5396,6 +5451,7 @@ def near_lockups(limit: int | None = None, resume: bool = True, workers: int = 4
             "buggy_rpc_locked": None if buggy.get("rpc_unread") else buggy["locked"] / yocto,
             "buggy_recomputed": buggy["recomputed"] / yocto,
             "balance": tot["balance"] / yocto, "locked": tot["locked"] / yocto, "unvested": tot["unvested"] / yocto,
+            "locked_staked": None if no_staked else locked_staked / yocto,
             "owners": tot["owners"] / yocto, "buggy": buggy["n"], "route": cache.get("route"),
             "faults": [(a, (int(r["account_amount"]) / yocto if r.get("account_amount") is not None else None))
                        for a, r in faults]}
@@ -5717,6 +5773,13 @@ def _read_lockup(acc: str, height: int, block_ts: int) -> tuple[dict | None, str
     if code is None:
         return None, why
     out = {"balance": str(bal), "locked": str(locked), "unvested": str(unv), "owners": str(owners)}
+    # R10.B3b: what the lockup has staked (getters.rs get_known_deposited_balance). A read that fails is an unread
+    # lockup; a contract without the getter leaves the key out (the staked total is then not formed — never a 0)
+    dep, why_d = _near_view(acc, "get_known_deposited_balance", block_id=height)
+    if dep is not None:
+        out["staked"] = str(int(dep))
+    elif why_d and "MethodNotFound" not in why_d:
+        return (_fault(acc, height, why_d), "") if _NEAR_CONTRACT_FAULT in why_d else (None, why_d)
     if code in NEAR_LOCKUP_BUGGY_CODE:
         # THE LAKEHOUSE'S FIGURE, NOT THE RPC'S (Jake 2026-10-12, decision 8): recomputed from the lockup's own
         # schedule; a state that cannot be read is an unread lockup (never the known-wrong RPC figure)

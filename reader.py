@@ -1598,6 +1598,8 @@ def _payout_note(p: dict, net: Src | None, gross: Src | None) -> str:
     """Above 1.0x: what funds the excess (P2a A3) — said from the gross payout on fees."""
     import config                                          # noqa: PLC0415
     bc = (config.HOLDER_VALUE.get(p["name"]) or {}).get("burn_credited")
+    if bc and bc.get("with_buyback"):
+        bc = None        # R10.B2b (Near): the burn is credited beside a buyback — the ratio is a payout, read as one
     if bc and net is not None and net.num is not None:
         # P3-1c (R2): the credited value IS the revenue (the fee burn) — 1.0 by definition; the ratio is the burn as
         # measured (on chain) over the revenue figure (an aggregator's), and its distance from 1.0 is their difference

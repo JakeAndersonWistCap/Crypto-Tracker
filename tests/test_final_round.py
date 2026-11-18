@@ -448,9 +448,11 @@ def test_near_circulating_under_the_lockup_rule(monkeypatch):
               ("Near", "near_lockup_locked_tokens"): lk}
     bw._near_lockup_views(groups)
     s = groups[("Near", "circulating_supply_lockup_rule")].set_index("date")
-    # decision 3 on 6f8c86c: no lockup.near / contributors.near read -> never a rule figure missing that leg; G18-1: from
-    # the first lockup read on, never NEAR's own figure either — the day is not formed (before it, NEAR's own stands)
-    assert pd.Timestamp("2026-10-11") not in s.index
+    # R10.B3a (the rule, Jake 2026-11-18): lockup.near + contributors.near can be moved, so they are IN circulating and
+    # no leg of this figure — the rule forms from the lockup read alone (was, decision 3 on 6f8c86c: without their read
+    # the day from the first lockup read on was NOT formed: `pd.Timestamp("2026-10-11") not in s.index`). G18-1 stands:
+    # from the first lockup read on, never NEAR's own figure (before it, NEAR's own stands)
+    assert s.loc["2026-10-11", "value"] == pytest.approx(1_306_900_000 - 21_568_722)
     assert s.loc["2026-10-10", "value"] == 1_250_000_000 and "no lockup read" in s.loc["2026-10-10", "source"]
     # lockup.near + contributors.near at the same block (manual_overrides.csv, 2026-10-11: 171,059.131)
     fa = pd.DataFrame({"date": [rd], "project": "Near", "metric": "near_foundation_accounts_tokens",
@@ -459,11 +461,14 @@ def test_near_circulating_under_the_lockup_rule(monkeypatch):
     bw._near_lockup_views(groups)
     s = groups[("Near", "circulating_supply_lockup_rule")].set_index("date")
     assert s.loc["2026-10-10", "value"] == 1_250_000_000 and "no lockup read" in s.loc["2026-10-10", "source"]
-    assert s.loc["2026-10-11", "value"] == pytest.approx(1_306_900_000 - 21_568_722 - 171_059.131)
+    # R10.B3a: the two accounts are no longer subtracted — they leave the FLOAT (config.RULE_IN["Near"]); was
+    # 1_306_900_000 - 21_568_722 - 171_059.131 with "lockup.near − contributors.near" in the source
+    assert s.loc["2026-10-11", "value"] == pytest.approx(1_306_900_000 - 21_568_722)
     assert "lockups read 2026-10-11" in s.loc["2026-10-11", "source"]
-    assert "lockup.near − contributors.near" in s.loc["2026-10-11", "source"]
+    assert "lockup.near + contributors.near in circulating" in s.loc["2026-10-11", "source"]
+    assert "near_foundation_accounts_tokens" in config.RULE_IN["Near"]["off_float"]
     # D3-1 (Jake 2026-10-26): a read up to 30 days old forms the rule, AMBER after 10 days; not formed after 30
-    assert s.loc["2026-10-22", "value"] == pytest.approx(1_306_900_000 - 21_568_722 - 171_059.131)
+    assert s.loc["2026-10-22", "value"] == pytest.approx(1_306_900_000 - 21_568_722)
     assert "14 days old on 2026-10-25" in bw.LOCKUP_AGE_AMBER[("Near", "circulating_supply_used")]
     d2 = pd.date_range("2026-10-01", "2026-11-12")
     groups[("Near", "total_supply")] = pd.DataFrame({"date": d2, "project": "Near", "metric": "total_supply",

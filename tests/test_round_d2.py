@@ -502,8 +502,9 @@ def _lockup_world(monkeypatch, tmp_path, fail: set, height=500):
         seen.append((acc, block_id))
         if acc in fail:
             return None, "rpc.mainnet.fastnear.com: HTTP 429"
+        # R10.B3b: the getters route also asks what the lockup has staked (was: four getters)
         return {"get_balance": str(10 * y), "get_locked_amount": str(4 * y), "get_owners_balance": str(6 * y),
-                "get_vesting_information": "None"}[m], ""
+                "get_vesting_information": "None", "get_known_deposited_balance": str(1 * y)}[m], ""
     monkeypatch.setattr(coi, "_near_post", post)
     monkeypatch.setattr(coi, "_near_view", view)
     monkeypatch.setattr(coi, "_near_code_hash", lambda acc, b, urls=None: ("plain", ""))

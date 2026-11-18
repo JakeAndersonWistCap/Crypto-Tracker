@@ -384,6 +384,7 @@ class NearBigQuery:
                     self._circulating(client, spec, st, out, name)
                 if ok.get("supply_flows") and spec.get("supply_flows"):
                     self._supply_flows(client, spec, st, out, name)
+                    self._supply_flows_history(client, spec, st, out, name)
                 self._dry_estimates(client, spec, st, out, name)
                 if ok.get("activity_ex") and spec.get("activity_ex"):
                     self._activity_ex(client, spec, st, out, name)
@@ -491,6 +492,59 @@ class NearBigQuery:
         out.add(tidy(iss, name, fs["issuance_metric"], src, TIER), SOURCE, name,
                 f"{fs['issuance_metric']} = the epoch-first blocks' rise in total_supply (+ their filled burn): "
                 f"{starts} epoch start(s), {sum(v for _, v in iss):,.0f} NEAR minted over {len(iss)} day(s)", TIER)
+
+    def _supply_flows_history(self, client, spec, st, out, name) -> None:
+        """R10.B4 (Jake 2026-11-18): THE HEADER BURN AND MINT BEFORE THE FIRST STORED DAY — the same supply-flows SQL
+        over [history.from, first stored day − 1], ONCE, as a backfill (the top-up reserve and the monthly budget apply;
+        a held query is tried again on a later run). The dry run is logged on every run until it is done; the query
+        itself runs only when config Near.near_bigquery.supply_flows.history.approved is true (Jake decides on the
+        estimate). It moves the seam of near_chain_burn_tokens back (build_workbook._chain_burn_revenue_views)."""
+        fs = spec["supply_flows"]
+        h = fs.get("history") or {}
+        if not h.get("from") or st.get("supply_flows_history_from") == h["from"]:
+            return
+        held = self._stored(name, fs["burn_metric"])
+        if held is None or held.empty:
+            return                                          # the regular backfill comes first
+        d0, d1 = pd.Timestamp(h["from"]), held.index.min() - pd.Timedelta(days=1)
+        if d0 > d1:
+            st["supply_flows_history_from"] = h["from"]
+            return
+        what = f"supply flows HISTORY {d0.date()}..{d1.date()}"
+        sql, params = _sql("bigquery_supply_flows.sql"), {"d0": d0.date(), "d1": d1.date()}
+        if not h.get("approved"):
+            try:
+                est = self._dry(client, sql, params, spec)
+            except Exception as e:  # noqa: BLE001 — a dry run that fails is said, never fatal
+                if is_reauth(e):
+                    raise ReauthNeeded(str(e)) from e
+                out.skipped(SOURCE, name, f"{what}: dry run failed ({type(e).__name__}) — NOT RUN", TIER)
+                return
+            out.skipped(SOURCE, name, f"{what}: DRY RUN {est / 1e9:,.2f} GB — NOT APPROVED, not run (config Near."
+                                      f"near_bigquery.supply_flows.history.approved; Jake's decision on this "
+                                      f"estimate)", TIER)
+            return
+        rows = self._run(client, what, sql, params, spec, st, out, name, backfill=True)
+        if rows is None:
+            return
+        burn, iss = [], []
+        for r in rows:
+            try:
+                day = pd.Timestamp(r["day"])
+                burn.append((day, float(r["burn_near"])))
+                iss.append((day, float(r["issuance_near"])))
+            except (TypeError, ValueError, KeyError):
+                continue
+        if not burn:
+            out.fail(SOURCE, name, f"{what}: no rows", TIER)
+            return
+        src = f"{SOURCE}:blocks.total_supply"
+        out.add(tidy(burn, name, fs["burn_metric"], src, TIER), SOURCE, name,
+                f"{fs['burn_metric']} HISTORY: {len(burn)} day(s) {burn[0][0].date()}..{burn[-1][0].date()}, "
+                f"{sum(v for _, v in burn):,.0f} NEAR — the header burn before its first stored day (R10.B4)", TIER)
+        out.add(tidy(iss, name, fs["issuance_metric"], src, TIER), SOURCE, name,
+                f"{fs['issuance_metric']} HISTORY: {len(iss)} day(s), {sum(v for _, v in iss):,.0f} NEAR minted", TIER)
+        st["supply_flows_history_from"] = h["from"]
 
     def _dry_estimates(self, client, spec, st, out, name) -> None:
         """Once a day: what a year's backfill and one day's top-up would scan (free)."""

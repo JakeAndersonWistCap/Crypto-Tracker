@@ -152,8 +152,10 @@ def test_1d_a_lockup_whose_getter_fails_is_named_with_its_balance(monkeypatch, t
     def view(acc, m, args=None, block_id=None, pace=0.12, urls=None):
         if acc.startswith("broken"):
             return None, "rpc.mainnet.fastnear.com: wasm execution failed with error: HostError(GuestPanic)"
+        # R10.B3b: the getters route also asks what the lockup has staked (get_known_deposited_balance) — the fake
+        # contract answers it (was: four getters)
         return {"get_balance": str(10 * Y), "get_locked_amount": str(4 * Y), "get_owners_balance": str(6 * Y),
-                "get_vesting_information": "None"}[m], ""
+                "get_vesting_information": "None", "get_known_deposited_balance": str(1 * Y)}[m], ""
     monkeypatch.setattr(coi, "_near_view", view)
     monkeypatch.setattr(coi, "_near_code_hash", lambda a, h, urls=None: ("x", ""))
     got = coi.near_lockups(route="getters")

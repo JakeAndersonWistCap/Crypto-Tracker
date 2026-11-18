@@ -13651,15 +13651,21 @@ def test_near_buyback_fund_balance_is_the_three_wallets_summed_as_a_stock():
     from fetch.near import NearNode
 
     p = dict(config.PROJECT_BY_NAME["Near"])
-    reads = [r for r in p["node_api"]["extra_reads"] if r.get("kind") not in ("near_block_supply", "near_protocol_version")]
+    reads = [r for r in p["node_api"]["extra_reads"]
+             if r.get("kind") not in ("near_block_supply", "near_protocol_version", "near_protocol_config")]
     # + lockup.near / contributors.near (Jake 2026-10-12, decision 3 on 6f8c86c), amount + locked
-    assert [r["metric"] for r in reads] == ["buyback_fund_balance", "near_foundation_accounts_tokens"]
+    # R10.B3a (Jake 2026-11-18): + treasury.near, off the float (was: the two reads before it); R10.B5a adds the chain's
+    # issuance ceiling, a read of its own kind (near_protocol_config)
+    assert [r["metric"] for r in reads] == ["buyback_fund_balance", "near_foundation_accounts_tokens",
+                                            "near_treasury_tokens"]
     assert reads[1]["fields"] == ("amount", "locked") and reads[1]["accounts"] == ["lockup.near", "contributors.near"]
+    assert reads[2]["fields"] == ("amount", "locked") and reads[2]["accounts"] == ["treasury.near"]
     reads = reads[:1]
     read = reads[0]
     # this test is the buyback wallets' read: the run below carries that read alone
-    p["node_api"] = dict(p["node_api"], extra_reads=[r for r in p["node_api"]["extra_reads"]
-                                                     if r.get("metric") != "near_foundation_accounts_tokens"])
+    p["node_api"] = dict(p["node_api"], extra_reads=[
+        r for r in p["node_api"]["extra_reads"]
+        if r.get("metric") not in ("near_foundation_accounts_tokens", "near_treasury_tokens", "near_max_inflation_rate")])
     assert read["kind"] == "near_view_account" and read["field"] == "amount"
     assert set(read["accounts"]) == set(p["intents_revenue_wallets"]["wallets"])
     assert "AGGREGATOR-SOURCED" in read["address_source"] and "wrap.near" in read["partial"]
@@ -14514,7 +14520,9 @@ def _near_buyback_flow_only() -> dict:
     p = dict(config.PROJECT_BY_NAME["Near"])
     p["near_account_flows"] = [f for f in p["near_account_flows_retired"] if f["metric"] == "actual_buyback_tokens"]
     # nor the Foundation-accounts history (fix round 2, R10/N2) and NearBlocks' intents volume (N3): their own tests
-    p["nearblocks"] = {k: v for k, v in p["nearblocks"].items() if k not in ("balance_history", "foundation_history")}
+    # R10.B3a: nor treasury.near's history (its own test: tests/test_r10_near.py)
+    p["nearblocks"] = {k: v for k, v in p["nearblocks"].items()
+                       if k not in ("balance_history", "foundation_history", "treasury_history")}
     p["nearblocks"]["metrics"] = {k: v for k, v in p["nearblocks"]["metrics"].items()
                                   if k != "near_intents_volume_usd_nearblocks"}
     return p
@@ -14528,6 +14536,7 @@ def _near_with_retired_flow(monkeypatch) -> dict:
                         [f for f in near["near_account_flows_retired"] if f["metric"] == "actual_buyback_tokens"])
     monkeypatch.delitem(near["nearblocks"], "balance_history")
     monkeypatch.delitem(near["nearblocks"], "foundation_history", raising=False)
+    monkeypatch.delitem(near["nearblocks"], "treasury_history", raising=False)        # R10.B3a: its own test
     monkeypatch.setitem(near["nearblocks"], "metrics", {k: v for k, v in near["nearblocks"]["metrics"].items()
                                                         if k != "near_intents_volume_usd_nearblocks"})
     return near
@@ -25223,7 +25232,7 @@ def test_ether_fi_yield_numerator_is_the_top_ups_with_the_bought_share_beside_it
     assert "of which BOUGHT" in label
 
 
-def test_near_burn_follows_the_protocol_rule_every_day_not_defillamas_revenue_label():
+def test_near_burn_follows_the_protocol_rule_every_day_not_defillamas_revenue_label(monkeypatch):
     """Jake, 2026-10-06: DefiLlama's NEAR revenue = fees before 2026-06-19 and ~0.70 x fees after — the opposite of the
     protocol on both sides. The burn is fees x the burned share IN FORCE THAT DAY / price, every day: 0.70 before
     v87 (nearcore burnt_gas_reward 3/10), 1.00 from v87 (87.yaml, HSP-027). v87 is NOT active (mainnet protocol 86
@@ -25235,7 +25244,9 @@ def test_near_burn_follows_the_protocol_rule_every_day_not_defillamas_revenue_la
     from fetch.base import FetchOutput, _measuring_point
     near = config.PROJECT_BY_NAME["Near"]
     pb = config.chain_burn_from_revenue("Near")["protocol_burn"]
-    assert (pb["share_before"], pb["share_after"], pb["switch_on"], pb["not_active_as_of"]) == (0.70, 1.00, None, "2026-10-06")
+    # R10.B1a (Jake 2026-11-18): v87 went live 2026-11-04 11:46 UTC; the switch day is set by hand to 2026-11-05, the
+    # first whole day (was: switch_on None, dated by the first protocol-version reading >= 87)
+    assert (pb["share_before"], pb["share_after"], pb["switch_on"], pb["not_active_as_of"]) == (0.70, 1.00, "2026-11-05", "2026-10-06")
     assert "218,820,858" in pb["not_active_source"] and pb["switch_version"] == 87
     assert {"kind": "near_protocol_version", "metric": "near_protocol_version"}.items() <= \
         next(r for r in near["node_api"]["extra_reads"] if r["kind"] == "near_protocol_version").items()
@@ -25265,13 +25276,17 @@ def test_near_burn_follows_the_protocol_rule_every_day_not_defillamas_revenue_la
     assert set(f.source) == {hd.RULE_SOURCE}
     assert f.loc[pd.Timestamp("2026-09-01"), "value"] == pytest.approx(1_000 * 0.70 / 2.0)
     line = out.log[-1].message
-    assert "share 0.7 before v87, 1.0 from v87 (NOT active — confirmed to 2026-10-06)" in line, line
+    # R10.B1a: the line names the hand-set switch day (was: "1.0 from v87 (NOT active — confirmed to 2026-10-06)")
+    assert "share 0.7 before v87, 1.0 from 2026-11-05" in line, line
     assert "PARTIAL lower bound (date pending): none" in line
     assert "BURN 31,500.00 NEAR over 90 day(s) (burn yield 0.0101%/yr) — BEFORE this rule 31,500.00" in line
     assert "DefiLlama revenue / price over the same days 31,500.00 (CROSS-CHECK ONLY" in line
     held = pd.concat([long, out.frame()[["date", "project", "metric", "value", "source"]]], ignore_index=True)
     assert hd._chain_burn(FetchOutput(), hd._history(held, None), near) == 0, "a second run changes nothing"
 
+    # THE READING-DATED MECHANISM, still what applies where no switch day is set by hand (R10.B1a set Near's): exercised
+    # with the hand-set day taken away
+    monkeypatch.setitem(pb, "switch_on", None)
     # READINGS: 86 to 2026-10-10, 87 first read 2026-10-12 — 1.00 from 10-12, logged; no reading on 10-11 = 0.70
     long2 = build("2026-10-14", versions=[("2026-10-09", 86), ("2026-10-10", 86), ("2026-10-12", 87), ("2026-10-13", 87)])
     out2 = FetchOutput()
@@ -26493,7 +26508,8 @@ def test_jakes_readings_of_2026_10_07_are_stored_against_real_rows_and_name_no_p
     import manual_refs as mr
     got = [r for r in mr.load() if r["read_on"] == "2026-10-07"]     # G6's World Mobile counters are another batch
     # 21 since Aethir's in_circ is checked against the docs table itself (Jake copied it, 2026-10-07)
-    assert len(got) == 21 and all(r["read_on"] == "2026-10-07" and r["read_by"] == "Jake" and r["url"] for r in got)
+    # R10.B5b: 20 — Near's in_buyback_wallets was re-read on 2026-11-18 and is no longer a 2026-10-07 reading (was 21)
+    assert len(got) == 20 and all(r["read_on"] == "2026-10-07" and r["read_by"] == "Jake" and r["url"] for r in got)
     assert all("entered by Claude Code" in r["note"] for r in got)
     for r in got:
         rows = set(config.CREDIBILITY.get(r["project"]) or {}) | set(cred.generic_inputs(r["project"])) | {"in_circ"}
@@ -26501,7 +26517,10 @@ def test_jakes_readings_of_2026_10_07_are_stored_against_real_rows_and_name_no_p
     by = mr.by_row(got)
     assert float(by[("Sky", "in_apy_usds_farm")][0]["value"]) == 0.0461
     assert [x["period"] for x in by[("GEODNET", "in_burn_report_months")]] == ["2026-07", "2026-08", "2026-09"]
-    assert float(by[("Near", "in_buyback_wallets")][0]["value"]) == 3_786_229.6
+    # R10.B5b: the wallet breakdown re-read from revenue.near.org on 2026-11-18 (was 3_786_229.6, Jake 2026-10-07)
+    assert ("Near", "in_buyback_wallets") not in by
+    nbw = mr.by_row(mr.load())[("Near", "in_buyback_wallets")]
+    assert len(nbw) == 1 and nbw[0]["read_on"] == "2026-11-18" and float(nbw[0]["value"]) == 4_409_111.65
     near = by[("Near", "a1_validator_yield")][0]
     assert "NET" in near["note"] and ".near" not in (near["url"] + near["note"])        # no account stored
     # Plume and Morpho circulating are wired as daily references instead of a reading that would go stale
@@ -26975,7 +26994,9 @@ def test_near_buyback_probe_reads_the_three_balances_paced(monkeypatch, capsys):
     out = capsys.readouterr().out
     assert "HTTP 429 — waiting 60s" in out and "paced" in out
     assert "2026-08: 2,000,000" in out and "2026-09: 2,600,000; change +600,000" in out
-    assert "now 2,600,000.0 NEAR vs the page's 3,786,229.6" in out
+    # R10.B5b: the page's figure is the 2026-11-18 re-read (was "vs the page's 3,786,229.6", Jake 2026-10-07)
+    assert coi.NEAR_PAGE_REVENUE_TOTAL == pytest.approx(2_028_316.66 + 1_825_446.71 + 555_348.27, abs=0.02)
+    assert f"now 2,600,000.0 NEAR vs the page's {coi.NEAR_PAGE_REVENUE_TOTAL:,.1f}" in out
     assert len(seen) == 7 and not any("receipts" in u for u in seen)
 
 
@@ -27067,7 +27088,9 @@ def test_near_balance_history_never_asks_nearblocks_for_more_than_365_rows(monke
     nearblocks.NearBlocks(http=H(), last_dates={("Near", m): "2026-10-06" for m in near["nearblocks"]["metrics"]}
                           ).run([near], 35, out)
     # the three revenue wallets + the Foundation accounts' history (fix round 2, R10/N2): every one capped at 365
-    assert limits == [365] * (3 + len(near["nearblocks"]["foundation_history"]["accounts"]))
+    # R10.B3a: + treasury.near's history, capped the same way (was: 3 + the Foundation accounts)
+    assert limits == [365] * (3 + len(near["nearblocks"]["foundation_history"]["accounts"])
+                              + len(near["nearblocks"]["treasury_history"]["accounts"]))
     eod = out.frame().query("metric == 'buyback_fund_balance_eod'")
     assert list(eod["value"]) == [3.0, 3.0], "all three wallets read; 10-05 and 10-06 stored"
 
@@ -27779,7 +27802,9 @@ def test_signoff_round_rows_cite_their_evidence():
     assert c["Sky"]["in_revenue"]["ref"]["args"]["metric"] == "revenue_usd_reported"
     assert "makerdao.ts" in c["Sky"]["in_revenue_defillama_net"]["ref"]["why"]
     nr = c["Near"]["in_revenue"]["ref"]
-    assert nr["scale"] == 0.7 and nr["formula"] == "common_days_sum"
+    # R10.B1c (Jake 2026-11-18): ours is the chain's own burn x price and DefiLlama's revenue the cross-check on the
+    # same days — the fixed 0.7 scale is gone (was: nr["scale"] == 0.7 on NearBlocks' fees)
+    assert "scale" not in nr and nr["formula"] == "common_days_sum" and nr["args"]["a"] == "revenue_usd"
     # Jake's run 2026-10-08: N/A on the issuance route — the same call completeness makes
     assert c["Near"]["in_emissions"]["ref"]["verdict"] == "N/A"
     scan = config.PROJECT_BY_NAME["Pendle"]["log_scans"][0]

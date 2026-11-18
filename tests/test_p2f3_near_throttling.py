@@ -171,7 +171,9 @@ class FakeNode:
         m = params["method_name"]
         val = {"get_balance": str(bal * Y), "get_locked_amount": str(locked * Y), "get_owners_balance": str(owners * Y),
                "get_vesting_information": ({"VestingSchedule": {"x": 1}} if unv is not None else "None"),
-               "get_unvested_amount": str((unv or 0) * Y)}[m]
+               "get_unvested_amount": str((unv or 0) * Y),
+               # R10.B3b: the getters route also asks what the lockup has staked (was: no such getter in the fake)
+               "get_known_deposited_balance": "0"}[m]
         raw = list(__import__("json").dumps(val).encode())
         assert base64.b64decode(params["args_base64"]) is not None
         return {"result": {"result": raw}}
@@ -276,7 +278,9 @@ def test_an_interrupt_leaves_no_queue_of_reads_and_keeps_what_was_read(monkeypat
 
     def plan(n, acct, kind):
         seen.append(acct)
-        if len(seen) > 6:
+        # R10.B3b: the getters route asks one more getter a lockup (its staked deposit), so the first lockup is whole
+        # after the block read + 6 calls (was 5: `len(seen) > 6`)
+        if len(seen) > 7:
             raise KeyboardInterrupt
         return None
     try:

@@ -107,6 +107,8 @@ class NearNode:
                     self._block_supply(p, api, read, out, when)
                 elif read.get("kind") == "near_protocol_version":
                     self._protocol_version(p, api, read, out, when)
+                elif read.get("kind") == "near_protocol_config":
+                    self._protocol_config(p, api, read, out, when)
                 else:
                     self._view_accounts(p, api, read, supply, out, when)
             payload, detail = self._call(api)
@@ -227,6 +229,29 @@ class NearNode:
         height = json_path_get(payload, "result.sync_info.latest_block_height")
         out.add(point(name, metric, float(v), f"{SOURCE}:status.protocol_version", TIER, when), SOURCE, name,
                 f"{metric}={int(v)} at block {height} — the burn is 100% of gas from v87, 70% before", TIER)
+
+    def _protocol_config(self, p: dict, api: dict, read: dict, out, when) -> None:
+        """One protocol parameter that is a [numerator, denominator] pair, once per run (R10.B5a): mainnet's
+        max_inflation_rate from EXPERIMENTAL_protocol_config — 1/40 = 2.5% a year. It DATES a change of the issuance
+        ceiling (HSP-029 is pending); no figure reads it. Anything but two numbers with a positive denominator stores
+        nothing."""
+        name, metric = p["name"], read["metric"]
+        body = {"jsonrpc": "2.0", "id": "token-metrics", "method": "EXPERIMENTAL_protocol_config",
+                "params": {"finality": "final"}}
+        payload, detail = self._call(api, body)
+        raw = json_path_get(payload, read["path"]) if payload is not None else None
+        try:
+            num, den = (float(x) for x in raw)
+            value = num / den if den > 0 else None
+        except (TypeError, ValueError):
+            value = None
+        if value is None:
+            out.fail(SOURCE, name, f"{metric}: EXPERIMENTAL_protocol_config gave no [numerator, denominator] at "
+                                   f"{read['path']} — {detail}; nothing stored", TIER)
+            return
+        ver = json_path_get(payload, "result.protocol_version")
+        out.add(point(name, metric, value, f"{SOURCE}:protocol_config.{read['path'].split('.')[-1]}", TIER, when),
+                SOURCE, name, f"{metric}={value:.6f} ({int(num)}/{int(den)}) at protocol {ver}", TIER)
 
     def _view_accounts(self, p: dict, api: dict, read: dict, supply, out, when) -> None:
         """Sum native NEAR held by a list of accounts, via `query` / request_type view_account.

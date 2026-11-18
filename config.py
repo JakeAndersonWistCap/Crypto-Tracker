@@ -44257,3 +44257,316 @@ BURNED_DECLARED_ZERO = {"Aerodrome": {"days_of": "total_supply",
                                       "why": "burn_mechanism no_burn (confirmed: aerodrome-finance/contracts "
                                              "SPECIFICATION.md describes no burn of any kind, 2026-09-14)"}}
 assert PROJECT_BY_NAME["Aerodrome"]["burn_mechanism"]["model"] == "no_burn"
+
+
+# ===== R10 PART B — NEAR =====
+# Round 10, Part B (Jake 2026-11-18). SPEC.md "Round 10 — Near". Near is not frozen; everything of the round is in this
+# one block. Jake's decisions: revenue = the chain's own burn x price, DefiLlama the cross-check; the switch day is
+# 2026-11-05; the Intents buyback counts in HOLDER REVENUE; its three wallets and treasury.near are IN circulating and
+# OFF the float; HSP-029 is pending and read by no figure; net holder yield stays on the circulating market cap.
+# =====================================================================================================================
+_R10N = PROJECT_BY_NAME["Near"]
+
+# ----- R10.B1a THE v87 SWITCH: 100% OF GAS IS BURNED. Read on chain 2026-11-16 (docs/r10_near_pack.md) and again
+# 2026-11-18 (RPC EXPERIMENTAL_protocol_config at block 225,131,234: protocol 88, burnt_gas_reward [0, 1]).
+NEAR_V87 = {
+    "protocol_version": 87, "live_block": 223_012_337, "live_utc": "2026-11-04 11:46:29",
+    "switch_day": "2026-11-05",          # Jake 2026-11-18: the first WHOLE UTC day at the new share (as for the halving)
+    "burnt_gas_reward": ((3, 10), (0, 1)),
+    "then": {"protocol_version": 88, "live_block": 223_314_737, "live_utc": "2026-11-06 12:17:42"},
+    "source": "rpc.mainnet.fastnear.com / archival-rpc.mainnet.fastnear.com EXPERIMENTAL_protocol_config at both "
+              "heights (read 2026-11-16); nearcore CHANGELOG 2.14.0 'Remove gas rewards'; HSP-027 "
+              "(gov.near.org/t/42213, ratified 2026-07-03)",
+    # MEASURED ON JAKE'S EXPORT (2026-11-17): the block headers' burn over NearBlocks' fee total (tokens) per day —
+    # about 0.80 before v87 (the 30% went to the called contract on FUNCTION-CALL gas only, not on every fee), 0.92
+    # on the mixed day, 1.000 from the first whole day
+    "header_burn_over_fees": {"2026-10-28..2026-11-03": (0.789, 0.822), "2026-11-04": 0.922,
+                              "2026-11-05..2026-11-16": 1.000},
+}
+_R10N_PB = _R10N["chain_burn_from_revenue"]["protocol_burn"]
+_R10N_PB.update({
+    "switch_on": NEAR_V87["switch_day"],                      # was None: dated by the first reading >= 87 (2026-11-04)
+    "switch_on_source": "set by hand (Jake 2026-11-18): v87 went live at block 223,012,337, 2026-11-04 11:46:29 UTC — "
+                        "the first whole UTC day at 100% is 2026-11-05 (config.NEAR_V87)",
+    "watch": [
+        {"what": "HSP-027 100% fee burn (protocol 87)", "status": "LIVE since 2026-11-04 11:46:29 UTC",
+         "evidence": "block 223,012,337: burnt_gas_reward 3/10 -> 0/1 (config.NEAR_V87)",
+         "next": "none — switch_on is set"},
+        {"what": "HSP-029 issuance ceiling 2.5% -> 1.6% a year over 24 months",
+         "status": "PENDING — passed, not in force on chain (config.NEAR_HSP_029)",
+         "evidence": "https://gov.near.org/t/42644 (status Final, first post updated 2026-11-16); chain "
+                     "max_inflation_rate still [1, 40]",
+         "next": "near_max_inflation_rate (read every run) moving off 1/40 dates the step; the measured epoch mint is "
+                 "the issuance either way"}]})
+_R10N["chain_burn_from_revenue"]["components"] = (
+    "gas fees burned at the protocol level: 100% from 2026-11-05 (protocol v87), 70% of the rule's base before — the "
+    "30% contract reward on function-call gas ended with v87")
+_R10N["burn_split"] = {
+    "share_of_fees_burned": 1.0,                               # was 0.70 (docs.near.org/protocol/gas, a dead URL now)
+    "in_force_from": NEAR_V87["switch_day"],
+    "before": {"share_of_fees_burned": 0.70, "to": "2026-11-04",
+               "note": "nearcore burnt_gas_reward 3/10: 30% of a function call's gas went to the called contract"},
+    "source_url": "https://raw.githubusercontent.com/near/nearcore/master/CHANGELOG.md",
+    "source_date": "2026-11-16", "status": "active",
+    "note": "GAS BURN ONLY, and nothing to do with Intents: every transaction fee is burned at the protocol level "
+            "since protocol v87 (live 2026-11-04 11:46:29 UTC; 100% from 2026-11-05, the first whole day). No share "
+            "goes to contract developers any more. Do not apply this share to Intents revenue — that stream is bought "
+            "back and held, not burned."}
+for _k, _old, _new in (
+        ("max_supply", "70% of every gas fee is burned", "every gas fee is burned (100% since protocol v87, 2026-11-04; "
+                                                         "70% before)"),
+        ("burn_address_balance", "70% of every gas fee is destroyed", "every gas fee is destroyed (100% since protocol "
+                                                                      "v87, 2026-11-04; 70% before)"),
+        ("burn_address_balance", "gross_burn_tokens is DefiLlama's chain Revenue for NEAR ('Burned NEAR' = fees x 0.7, "
+                                 "see burn_split)",
+         "the block headers' own burn (gross_burn_tokens_bigquery) is the record; gross_burn_tokens is the protocol rule "
+         "x DefiLlama fees, its cross-check")):
+    _R10N["not_applicable"][_k] = " ".join(_R10N["not_applicable"][_k].split()).replace(_old, _new)
+METRICS["near_protocol_version"]["label"] = (
+    "NEAR mainnet protocol version (RPC status) — v87 (live 2026-11-04) burns 100% of gas, earlier 70%")
+
+# ----- R10.B1b GAS REVENUE = THE CHAIN'S OWN BURN x THAT DAY'S PRICE (Jake 2026-11-18). One token series, two legs,
+# a declared handover: the block-header burn on every day it is stored (the WHOLE series restated, not only the days
+# from the switch); before its first stored day the protocol-rule burn (fees x 0.70 / price: gas only, a lower bound).
+# build_workbook._chain_burn_revenue_views forms both; DefiLlama's revenue_usd is the cross-check and is never read here.
+CHAIN_BURN_REVENUE = {
+    "Near": {"tokens": "near_chain_burn_tokens", "usd": "near_gas_revenue_usd",
+             "primary": "gross_burn_tokens_bigquery", "earlier": "gross_burn_tokens",
+             "decided": "Jake 2026-11-18 (R10.B1b)",
+             "why": "the block headers record every NEAR destroyed (gas, and the non-gas protocol burns a fee-based "
+                    "figure cannot see); DefiLlama's revenue booked 0.70 x fees through 2026-11-13"}}
+METRICS["near_chain_burn_tokens"] = {
+    "label": "NEAR burned per day, the chain's own record — the block headers' burn (within-epoch falls of total_supply, "
+             "BigQuery) on every day it is stored; before its first day the protocol rule x DefiLlama fees (gas only, a "
+             "lower bound) — R10.B1b, a declared handover",
+    "kind": "flow", "unit": "tokens", "archetypes": [1, 3], "tiers": [1], "sanity_min": 0, "sanity_max": 1e7,
+    "only_projects": ("Near",), "view_only": True}
+METRICS["near_gas_revenue_usd"] = {
+    "label": "NEAR gas revenue per day ($) = the chain's own burn (near_chain_burn_tokens) x that day's price — R10.B1b "
+             "(DefiLlama's revenue_usd is the cross-check)",
+    "kind": "flow", "unit": "usd", "archetypes": [1, 3], "tiers": [1], "sanity_min": 0, "sanity_max": 1e9,
+    "only_projects": ("Near",), "view_only": True}
+_R10N.setdefault("series_handover", {})["near_chain_burn_tokens"] = {
+    "ordered_points": ("derived:near_protocol_rule_x_defillama_fees/price", "near_bigquery:blocks.total_supply"),
+    "why": "Jake 2026-11-18: Near's revenue is the chain's own burn. The block-header burn (BigQuery blocks.total_supply) "
+           "from its first stored day (2025-10-07 on Jake's store); the protocol rule x DefiLlama fees (0.70 before "
+           "v87) only for the days before it",
+    "composition_change": "WIDENS at the seam: the rule leg is the GAS burn at the rule's 0.70; the header leg is every "
+                          "NEAR destroyed — gas at its true share plus non-gas protocol burns (the headers read about "
+                          "0.80 of fees before v87, 1.000 from 2026-11-05). The seam moves back as far as the header "
+                          "history is extended (near_bigquery supply_flows.history, R10.B4)",
+    "declared": "2026-11-18"}
+REVENUE_TOTAL["Near"] = ("near_gas_revenue_usd", "intents_revenue_usd")       # was ("revenue_usd", "intents_revenue_usd")
+METRICS["revenue_total_usd"]["label"] = (
+    "Revenue, every stream ($/day) = the sum of the project's revenue lines (REVENUE_TOTAL; NEAR: gas revenue from the "
+    "chain's own burn + Intents fee switch)")
+_R10N["revenue_base"]["why"] = (
+    "NEAR earns two revenues: the protocol's gas burn (near_gas_revenue_usd — the chain's own burn x price, R10.B1b) and "
+    "the NEAR Intents fee switch (intents_revenue_usd, from 2026-02-23 the captured share that funds the buyback). The "
+    "buyback and payout ratios divide by both (alignment round 2026-10-13, C10).")
+REVENUE_TIER["Near"] = (
+    "revenue", "revenue_total_usd = Near's gas revenue (the chain's own burn x that day's price; DefiLlama's revenue is "
+               "the cross-check — R10.B1b) + the NEAR Intents fee switch's captured share (REVENUE_TOTAL): fees minus "
+               "their delivery cost")
+# THE NAMED DIFFERENCE (R10.B1c) — said, never patched: DefiLlama's adapter kept the 0.70 through 2026-11-13.
+NEAR_DEFILLAMA_REVENUE_SHORT = {
+    "days": ("2026-11-04", "2026-11-13"), "defillama_share": 0.70, "chain_share": {"2026-11-04": 0.922, "from 11-05": 1.0},
+    "defillama_equals_fees_from": "2026-11-14",
+    "export_30d_to_2026_11_16": {"chain_burn_usd": 92_044, "defillama_revenue_usd": 74_907,
+                                 "ours_over_defillama_pct": 22.9},
+    "text": "DefiLlama's NEAR revenue is 0.70 x its fees through 2026-11-13 and equals its fees from 2026-11-14; the "
+            "chain burned 100% of gas from 2026-11-04 11:46 UTC, so DefiLlama is about 30% short for 2026-11-04..11-13 "
+            "(and books 0.70 where the headers burned about 0.80 before v87). A difference of the cross-check, not of "
+            "ours; it leaves a 30-day window after 2026-12-13"}
+CREDIBILITY["Near"]["in_revenue"] = _c_in_py(
+    "Gas revenue, last 30 days: the chain's own burn (block headers) x same-day price", "common_days_sum",
+    {"a": "revenue_usd", "b": "gross_burn_tokens_bigquery", "days": 30, "side": "b", "b_times_price": True},
+    {"formula": "common_days_sum", "tol": 15.0,       # the tolerance of the row it replaces; no fixed 0.7 scale any more
+     "args": {"a": "revenue_usd", "b": "gross_burn_tokens_bigquery", "days": 30, "side": "ours", "b_times_price": True},
+     "source": "CROSS-CHECK: DefiLlama 'near' dailyRevenue over the same days (Allium transaction fees x its adapter's "
+               "burned share)",
+     "note": NEAR_DEFILLAMA_REVENUE_SHORT["text"]}, fmt=_C_USD)
+
+# ----- R10.B2 / B2b THE THREE REVENUE LINES (S13) AND THE CREDITED HOLDER VALUE.
+HOLDER_VALUE["Near"] = {
+    "burn_credited": {
+        "metric": "near_chain_burn_tokens", "usd_metric": "near_gas_revenue_usd", "share_of_revenue": 1.0,
+        "with_buyback": True,
+        "why": "NEAR's gas burn — destroyed at the protocol level, it reaches every holder through supply — credited "
+               "beside the NEAR Intents buyback (held, not burned): Jake 2026-11-18, R10.B2"}}
+REVENUE_SPLIT["Near"] = {
+    "round": "R10.B2 (Jake 2026-11-18)",
+    "fees": {"metric": "fees_total_usd", "primary": False,
+             "route": "gas fees (DefiLlama 'near' dailyFees; NearBlocks' fee total x price is the cross-check, "
+                      "Credibility in_fees) + NEAR Intents gross fees (DefiLlama 'near-intents' dailyFees — the same "
+                      "daily figures revenue.near.org serves). SECONDARY: both are an aggregator's series"},
+    "revenue": {"metric": "revenue_total_usd", "primary": False,
+                "route": "GAS REVENUE = THE CHAIN'S OWN BURN x that day's price (near_gas_revenue_usd: the block "
+                         "headers' burn, BigQuery, on every day it is stored — primary; the protocol rule x fees only "
+                         "before its first stored day, a declared handover) + the NEAR Intents fee switch's captured "
+                         "share (DefiLlama 'near-intents' dailyRevenue: NEAR swept into the three wallets). SECONDARY "
+                         "as a whole while the Intents leg is an aggregator's. DefiLlama's gas revenue is the "
+                         "cross-check: " + NEAR_DEFILLAMA_REVENUE_SHORT["text"]},
+    "holder_revenue": {"metric": "holder_value_revenue_usd", "primary": True,
+                       "route": "the gas burn x that day's price (destroyed: it reaches every holder) + the NEAR "
+                                "Intents buyback — HELD, NOT BURNED: measured on chain as the daily change of the three "
+                                "wallets' combined close (fefundsadmin.sputnik-dao.near, buybacks.multisignature.near, "
+                                "1csfundsadmin.sputnik-dao.near) x the day's price; the NEAR sits in multisig / DAO "
+                                "wallets and could return to the market (revenue.near.org's 'permanently remove' is "
+                                "not what the chain shows)"},
+    "holder_share": {"route": "holder revenue ÷ revenue per covered day: the gas burn is in both lines to the token; "
+                              "the Intents legs are the wallets' intake (ours, on chain) over DefiLlama's captured "
+                              "revenue, so the share sits near 1 and its distance from 1 is the two measurements of "
+                              "the same sweep"},
+    "other_recipients": "NEAR Intents solvers and front-end / distribution partners (Intents fees − the captured "
+                        "revenue); contract developers (30% of function-call gas) to 2026-11-04 only — nothing since "
+                        "protocol v87. Validators are paid by issuance, not by fees: security emissions, outflow (a)",
+    "emissions": "security emissions: 90% of each epoch's mint to validators and delegators (near_validator_rewards_"
+                 "tokens, outflow (a)); the ceiling is 2.5% of total supply a year since 2025-10-29 11:29 UTC; the "
+                 "other 10% is minted to treasury.near (line m)",
+    "crosscheck": "DefiLlama's revenue_usd beside the gas leg (Credibility in_revenue); DefiLlama's near-intents "
+                  "revenue beside the wallets' intake (in_buyback); revenue.near.org's wallet breakdown beside the "
+                  "wallets' balance (in_buyback_wallets)",
+}
+# the three lines read to the last day all of them hold (R9.5's mechanism: a read lag at the end is not a difference)
+S13_SAME_DAYS["Near"] = ("fees", "revenue", "holder_revenue")
+for _m in ("revenue_total_usd_s13d", "holder_value_revenue_usd_s13d"):
+    METRICS[_m]["only_projects"] = tuple(dict.fromkeys((*METRICS[_m]["only_projects"], "Near")))
+METRICS["fees_total_usd_s13d"] = {
+    "label": "fees_total_usd over the days every S13 line compared with it holds (R9.5: same covered days, never capped)",
+    "kind": "flow", "unit": "usd", "archetypes": [1, 2, 3, 4], "tiers": [2], "sanity_min": 0,
+    "sanity_max": METRICS["fees_total_usd"].get("sanity_max", 1e11), "view_only": True, "only_projects": ("Near",)}
+
+# ----- R10.B3 CIRCULATING UNDER THE RULE (config.CIRCULATING_RULE). Read 2026-11-18 at block 225,131,234
+# (rpc.mainnet.fastnear.com view_account + view_access_key_list):
+#   lockup.near        171,054.43 NEAR, one FULL-ACCESS key on the account -> a key can move it: IN, off the float
+#   contributors.near        4.70 NEAR, a multisig contract                -> IN, off the float
+#   treasury.near    1,687,281.04 NEAR, a multisig contract (30.17M left it Apr-May 2026: SPEC D2-4f) -> IN (as
+#                    before), now OFF the float
+#   the three buyback wallets 4,362,444.24 NEAR -> IN, off the float (HELD_BUYBACK_FLOAT, unchanged)
+#   the lockup contracts' LOCKED: unreleased and immovable; the part a lockup has STAKED earns -> IN (already off the
+#                    float inside the validators' stake); the idle part stays OUT (near_lockup_locked_staked_tokens)
+NEAR_RULE_READ = {
+    "read_on": "2026-11-18", "block": 225_131_234, "total_supply": 1_312_061_825.13,
+    # THE STAKED PART OF LOCKED — A SAMPLE, NOT THE TOTAL (read 2026-11-18 16:54 UTC at block 225,137,095 with
+    # check_offline_items.near_lockups, state route): the 62 live lockups among the 800 most recently active lockup
+    # accounts (NearBlocks' list, 8 pages)
+    "lockup_sample": {"block": 225_137_095, "lockups": 62, "locked": 1_597_469.59, "locked_staked": 1_039_209.35,
+                      "unvested": 1_548_302.01, "share_of_locked_2026_11_14": 0.837},
+    "accounts": {
+        "lockup.near": {"tokens": 171_054.43, "can_move": "one full-access key on the account", "earns": False},
+        "contributors.near": {"tokens": 4.70, "can_move": "a multisig contract (function-call keys)", "earns": False},
+        "treasury.near": {"tokens": 1_687_281.04, "can_move": "a multisig contract; 30.17M NEAR left it Apr-May 2026",
+                          "earns": False, "on_2026_11_16": 1_671_459.70},
+        "fefundsadmin.sputnik-dao.near": {"tokens": 2_029_348.36, "can_move": "a Sputnik DAO", "earns": False},
+        "buybacks.multisignature.near": {"tokens": 2_332_825.00, "can_move": "a multisig contract", "earns": False},
+        "1csfundsadmin.sputnik-dao.near": {"tokens": 270.88, "can_move": "a Sputnik DAO", "earns": False}},
+    "foundation": "NOT ESTABLISHED: the NEAR Foundation publishes no account list. foundation.near 869.32, "
+                  "nf-payments.near 14,246.83, nf-finance.near 417.26 and `near` (registrar) 69,276.44 are inside "
+                  "circulating (0.006% of supply together); nothing is excluded for the Foundation",
+    "references": {"coingecko": 1_312_035_374, "coinmarketcap": 1_312_035_355, "nearblocks_v3": 1_312_061_825,
+                   "stale_unused": {"coinmarketcap_self_reported": 1_209_202_633, "nearblocks_v1": 1_249_836_992}},
+    "gap": "ours − CoinGecko / CoinMarketCap = − the lockups' idle LOCKED (at most 1,908,569 on the 2026-11-14 read, "
+           "0.15%): they count every NEAR as circulating. No gap over 2%",
+}
+METRICS["near_treasury_tokens"] = {
+    "label": "NEAR held by treasury.near, the protocol treasury (amount + locked) — in circulating, OFF the free float "
+             "(the rule, R10.B3a)",
+    "kind": "stock", "unit": "tokens", "archetypes": [1, 3, 4], "tiers": [2, 3], "sanity_min": 0, "sanity_max": 2e9,
+    "only_projects": ("Near",)}
+METRICS["near_lockup_locked_staked_tokens"] = {
+    "label": "NEAR LOCKED in lockup contracts AND staked by the lockup (per lockup min(locked, its staking-pool "
+             "deposit)) — earning, so in circulating by the rule (R10.B3b); same weekly read as LOCKED",
+    "kind": "stock", "unit": "tokens", "archetypes": [1, 3, 4], "tiers": [2, 3], "sanity_min": 0, "sanity_max": 2e9,
+    "only_projects": ("Near",)}
+UNLOCK_MAX_GAP_DAYS["near_lockup_locked_staked_tokens"] = 10
+_R10N["node_api"]["extra_reads"].append(
+    {"kind": "near_view_account", "metric": "near_treasury_tokens", "accounts": ["treasury.near"],
+     "fields": ("amount", "locked"),
+     "spec_url": "https://raw.githubusercontent.com/near/docs/master/api/rpc/contracts.mdx", "spec_date": "2026-11-18",
+     "address_source": "near/nearcore@88fa4f33 utils/mainnet-res/res/mainnet_genesis.json:245 (protocol_treasury_"
+                       "account); read on chain 2026-11-18 (config.NEAR_RULE_READ)"})
+# the history before the live read: NearBlocks' daily close, as for the foundation accounts (fetch/nearblocks.py)
+NEAR_TREASURY_LIVE_FROM = "2026-11-19"
+_R10N["nearblocks"]["treasury_history"] = {
+    "path": "/v3/accounts/{account}/stats/balance", "limit": 365, "accounts": ["treasury.near"],
+    "fields": ("amount", "amount_staked"), "metric": "near_treasury_tokens", "yocto_exponent": 24,
+    "flow": "its daily change (not differenced)", "store_before": NEAR_TREASURY_LIVE_FROM,
+    "parity": "NearBlocks' close for 2026-11-16 1,671,459.6998 NEAR = the RPC view_account read of 2026-11-16 "
+              "1,671,459.70 (docs/r10_near_pack.md)"}
+SAME_BASIS[("Near", "near_treasury_tokens")] = {
+    "canonical": "near_rpc:view_account", "members": ("nearblocks:stats/balance",),
+    "why": "treasury.near, amount + locked/staked: NearBlocks' v3 stats/balance daily close and the RPC view_account "
+           "read are one quantity (2026-11-16: 1,671,459.70 on both; the same pair as the foundation accounts, N2)"}
+declare_rule_in(
+    "Near", ("near_foundation_accounts_tokens",),
+    "read 2026-11-18 at block 225,131,234 (config.NEAR_RULE_READ): lockup.near carries a full-access key and "
+    "contributors.near and treasury.near are multisig contracts — each can be moved, none is staked; no wallet is "
+    "unreleased, immovable and idle",
+    off_float=("near_foundation_accounts_tokens", "near_treasury_tokens"))
+RULE_IN["Near"].update({
+    "read_on": "2026-11-18", "decided": "Jake 2026-11-18 (R10.B3)",
+    # the token-flow statement on the rule (R9.2-FL): a release from lockup.near / contributors.near is no circulating
+    # change any more (they are inside) — the statement is minted − burned. What still enters from OUTSIDE is the lockup
+    # contracts' releases (near_lockup_release_tokens: the fall of LOCKED between weekly reads, read only since
+    # 2026-10-11): NOT a line yet — with 19 of 90 days read it would turn four quarters that balance within ±0.5% into
+    # coverage CHECKs; it stays in the residual, as before, until the reads cover a quarter
+    "flow_outside_when_covered": "near_lockup_release_tokens",
+    # CoinGecko and CoinMarketCap publish the total: they do not leave these wallets out
+    "reference_leaves_out": False,
+    "locked_staked": "near_lockup_locked_staked_tokens"})
+METRICS["circulating_supply_lockup_rule"]["label"] = (
+    "Circulating supply — NEAR total supply − the lockup contracts' LOCKED NEAR that is idle (unreleased, immovable, "
+    "not staked): the rule (Jake 2026-11-17; R10.B3). lockup.near, contributors.near and staked lockups are in")
+CIRCULATING_ONCHAIN["Near"]["why"] = (
+    "THE RULE (R10.B3): total supply (block header) − the lockup contracts' LOCKED NEAR that is idle; lockup.near, "
+    "contributors.near, treasury.near and the three buyback wallets are in circulating and off the float. NEAR's own "
+    "circulating_supply table (BigQuery) is the first-party cross-check")
+CIRCULATING_POLICY["Near"].update({
+    "now": "the rule (Jake 2026-11-17), R10.B3",
+    "definition": "total − the lockup contracts' idle LOCKED; NEAR's explorer method (total − every lockup's locked − "
+                  "lockup.near − contributors.near) is the cross-check"})
+
+# ----- R10.B3c THE WEEKLY LOCKUP READ: the list is cached and the paging slows down on HTTP 429
+# (check_offline_items.near_lockup_accounts). A complete list at most this old is used when NearBlocks cannot finish.
+NEAR_LOCKUP_LIST_MAX_AGE_DAYS = 45
+NEAR_LOCKUP_LIST_MAX_PACE_S = 8.0
+
+# ----- R10.B4 BIGQUERY (nothing was run by Claude Code this round; the dry runs are Jake's). The header burn before
+# its first stored day: the existing supply-flows SQL over [from, first stored day − 1], once
+# (fetch/near_bigquery._supply_flows_history). Every run logs its DRY RUN; it runs only once `approved` is true.
+_R10N["near_bigquery"]["supply_flows"]["history"] = {"from": "2025-07-15", "approved": False}
+NEAR_BIGQUERY_R10 = {
+    "cap_gb_this_round": 100, "left_this_month_gb": 134, "budget_gb": 900,
+    "proposed_this_round": ("supply_flows history 2025-07-15..2025-10-06 (the header burn before its first stored "
+                            "day; dry run pending — the year cost about 1 GB)",),
+    "waits_for_december": ("p2p_transfer_volume_usd backfill before 2025-12-29 (1.91 TB a year, month chunks)",
+                           "wallet_inflows stage 2 (the three wallets' all-time inflows)"),
+    "never": ("the lockup account list from receipt_actions (700.3 GB dry run, 2026-10-11)",
+              "the one-stage all-time wallet inflow query (2,001.57 GB)")}
+
+# ----- R10.B5a HSP-029 — PENDING. Recorded; read by NO figure until it is in force on chain (Jake 2026-11-18).
+NEAR_HSP_029 = {
+    "id": "HSP-029", "status": "PENDING — passed House of Stake, not in force on chain",
+    "what": "a 24-month issuance ramp: cap(t) = 2.5% − 0.9% x min(t, 24) / 24 a year, applied per epoch; the 90 / 10 "
+            "validator / treasury split unchanged",
+    "target_annual_rate_max": 0.016, "from_annual_rate_max": 0.025, "ramp_months": 24,
+    "activation": "one full quarter after ratification; needs a nearcore release and validator adoption — no date",
+    "in_force": False,
+    "chain_read": {"max_inflation_rate": (1, 40), "protocol_version": 88, "block": 225_131_234, "read_on": "2026-11-18"},
+    "source": "https://gov.near.org/t/hsp-029-establish-a-24-month-issuance-ramp-to-a-1-6-target-rate-of-near-token-"
+              "emissions/42644 (status Final; first post updated 2026-11-16)",
+    "not_verified": "the vote tally (~99.96% in favour, press) and the Security Council veto window's outcome — "
+                    "houseofstake.org is a script-rendered app",
+    "used_by": (),
+    "when_in_force": "near_max_inflation_rate (RPC, every run) reads below 1/40: date the step in issuance_rate_declared"}
+METRICS["near_max_inflation_rate"] = {
+    "label": "NEAR max_inflation_rate on chain (RPC EXPERIMENTAL_protocol_config; 1/40 = 2.5% a year) — dates a change "
+             "of the issuance ceiling (HSP-029 is pending); read by no figure",
+    "kind": "stock", "unit": "ratio", "archetypes": [1, 3, 4], "tiers": [2], "sanity_min": 0, "sanity_max": 0.2,
+    "only_projects": ("Near",), "view_only": True}
+_R10N["node_api"]["extra_reads"].append(
+    {"kind": "near_protocol_config", "metric": "near_max_inflation_rate", "path": "result.max_inflation_rate",
+     "spec_url": "https://github.com/near/docs/blob/master/api/rpc/protocol.mdx", "spec_date": "2026-11-18"})
+NOT_SHOWN[("Near", "near_max_inflation_rate")] = (
+    "R10.B5a: the chain's issuance ceiling, read each run to date HSP-029's step — an evidence reading, not a headline")

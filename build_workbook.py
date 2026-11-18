@@ -5196,6 +5196,11 @@ def _near_lockup_views(groups: dict) -> None:
         # NEAR_LOCKUP_MAX_AGE_DAYS old; without one the day keeps NEAR's own figure (never a rule figure on a basis
         # missing a leg)
         fa = s(groups.get((name, "near_foundation_accounts_tokens")))
+        # R10.B3a (the rule, Jake 2026-11-17/18): lockup.near + contributors.near can be moved (config.NEAR_RULE_READ) —
+        # IN circulating, off the float (config.RULE_IN); R10.B3b: the part of LOCKED a lockup has staked earns — IN
+        # (already off the float inside the validators' stake); only the idle LOCKED stays out
+        rule_in = "near_foundation_accounts_tokens" in config.rule_in_legs(name)
+        stk = s(groups.get((name, (config.RULE_IN.get(name) or {}).get("locked_staked") or ""))) if rule_in else None
         days = (base.index if base is not None else pd.DatetimeIndex([]))
         if total is not None:
             days = days.union(total.index)
@@ -5210,12 +5215,30 @@ def _near_lockup_views(groups: dict) -> None:
         idx, vals, srcs, read_on = [], [], [], []
         for d in days:
             read = acc = None
-            if lk is not None and fa is not None and total is not None and d in total.index:
+            if lk is not None and (fa is not None or rule_in) and total is not None and d in total.index:
                 w = lk[(lk.index <= d) & (lk.index >= d - pd.Timedelta(days=NEAR_LOCKUP_MAX_AGE_DAYS))]
                 read = (w.index[-1], float(w.iloc[-1])) if not w.empty else None
-                w = fa[(fa.index <= d) & (fa.index >= d - pd.Timedelta(days=NEAR_LOCKUP_MAX_AGE_DAYS))]
-                acc = float(w.iloc[-1]) if not w.empty else None
-            if read is not None and acc is not None:
+                if rule_in:
+                    acc = 0.0                              # the two accounts are not subtracted (they leave the float)
+                else:
+                    w = fa[(fa.index <= d) & (fa.index >= d - pd.Timedelta(days=NEAR_LOCKUP_MAX_AGE_DAYS))]
+                    acc = float(w.iloc[-1]) if not w.empty else None
+            if read is not None and acc is not None and rule_in:
+                # the staked part belongs to the SAME read (one block); a read without it leaves all of LOCKED out
+                staked = float(stk[read[0]]) if stk is not None and read[0] in stk.index else None
+                idx.append(d)
+                if staked is None:
+                    vals.append(float(total[d]) - read[1])
+                    srcs.append(f"derived:circulating_lockup_rule[total_supply − LOCKED (its staked part is not read "
+                                f"yet: all of LOCKED left out, at most LOCKED too low); lockup.near + contributors.near "
+                                f"in circulating (the rule, R10.B3), lockups read {read[0].date()}]")
+                else:
+                    vals.append(float(total[d]) - max(0.0, read[1] - max(0.0, staked)))
+                    srcs.append(f"derived:circulating_lockup_rule[total_supply − idle LOCKED (LOCKED − the part "
+                                f"staked by its lockup, which earns); lockup.near + contributors.near in circulating "
+                                f"(the rule, R10.B3), lockups read {read[0].date()}]")
+                read_on.append(read)
+            elif read is not None and acc is not None:
                 idx.append(d)
                 vals.append(float(total[d]) - read[1] - acc)
                 srcs.append(f"derived:circulating_lockup_rule[total_supply − LOCKED − lockup.near − contributors.near, "
@@ -5225,8 +5248,14 @@ def _near_lockup_views(groups: dict) -> None:
                 unformed.append(d)
             elif base is not None and d in base.index:
                 idx.append(d)
-                vals.append(float(base[d]))
-                srcs.append("derived:circulating_lockup_rule[first_party; no lockup read in force]")
+                add = None
+                if rule_in and fa is not None:             # R10.B3a: NEAR's own figure leaves the two accounts out
+                    w = fa[(fa.index <= d) & (fa.index >= d - pd.Timedelta(days=NEAR_LOCKUP_MAX_AGE_DAYS))]
+                    add = float(w.iloc[-1]) if not w.empty else None
+                vals.append(float(base[d]) + (add or 0.0))
+                srcs.append("derived:circulating_lockup_rule[first_party; no lockup read in force]" if add is None else
+                            "derived:circulating_lockup_rule[first_party + lockup.near + contributors.near (in "
+                            "circulating by the rule, R10.B3); no lockup read in force]")
         # D3-1: A READ 11-30 DAYS OLD STILL FORMS THE RULE, AMBER — the reason names the read, its age and the most the
         # figure can be off by: circulating can move between reads by at most LOCKED itself (no rate is established)
         if idx and read_on:
@@ -5424,6 +5453,56 @@ def _wm_total_supply_views(groups: dict) -> None:
             if not early.empty:
                 view = pd.concat([early[view.columns.intersection(early.columns)], view], ignore_index=True)
         groups[(name, "total_supply")] = _as_stored(view.sort_values("date"), cols)
+
+
+CHAIN_BURN_REVENUE_STATE: dict = {}    # project -> what the last build's chain-burn revenue views cover (R10.B1b)
+
+
+def _chain_burn_revenue_views(groups: dict) -> None:
+    """R10.B1b (Jake 2026-11-18; config.CHAIN_BURN_REVENUE — Near): GAS REVENUE = THE CHAIN'S OWN BURN x THAT DAY'S PRICE.
+    The token series is the `primary` burn (the block headers' burn) on EVERY day it is stored — the whole series
+    restated — and the `earlier` series (the protocol rule x DefiLlama fees) only on the days BEFORE the primary's first
+    stored day: a declared handover (series_handover on the token view), the two legs never on one day. A day after the
+    seam without a primary row is no value (never the rule in its place). The $ view is each day's tokens x that
+    day's price; a day without a price is left out. DefiLlama's revenue is never read here (the cross-check)."""
+    CHAIN_BURN_REVENUE_STATE.clear()
+    scoped = {p["name"] for p in scoped_projects()}
+    for name, spec in config.CHAIN_BURN_REVENUE.items():
+        if name not in scoped:
+            continue
+        gp, ge = groups.get((name, spec["primary"])), groups.get((name, spec["earlier"]))
+        day = lambda g: (g.assign(date=pd.to_datetime(g["date"]).dt.normalize()).sort_values("date")  # noqa: E731
+                         .drop_duplicates("date", keep="last"))
+        parts, seam = [], None
+        if gp is not None and not gp.empty:
+            gp = day(gp)
+            seam = gp["date"].min()
+            parts.append(gp)
+        if ge is not None and not ge.empty:
+            ge = day(ge)
+            parts.insert(0, ge if seam is None else ge[ge["date"] < seam])
+        parts = [x for x in parts if not x.empty]
+        if not parts:
+            _VIEW_BLOCKS[(name, spec["usd"])] = (f"BLOCKED — no rows stored for {spec['primary']} (the chain's own "
+                                                f"burn) or {spec['earlier']}")
+            continue
+        tok = pd.concat(parts, ignore_index=True)
+        cols = parts[-1].columns
+        groups[(name, spec["tokens"])] = _as_stored(tok.assign(metric=spec["tokens"], tier=1), cols)
+        px = _daily(groups.get((name, "price_usd")))
+        px = px[px > 0]
+        priced = tok[tok["date"].isin(px.index)]
+        CHAIN_BURN_REVENUE_STATE[name] = {
+            "seam": str(seam.date()) if seam is not None else None, "days": int(len(tok)),
+            "primary_days": int(len(gp)) if seam is not None else 0, "unpriced_days": int(len(tok) - len(priced))}
+        if priced.empty:
+            continue
+        leg = ["chain header burn" if (seam is not None and d >= seam) else "protocol rule x fees (before the header "
+               "burn's first stored day)" for d in priced["date"]]
+        groups[(name, spec["usd"])] = _as_stored(pd.DataFrame(
+            {"date": priced["date"].values, "project": name, "metric": spec["usd"],
+             "value": priced["value"].astype(float).values * px.reindex(priced["date"]).values, "tier": 1,
+             "source": [f"derived:{spec['tokens']}*price_usd[{x}]" for x in leg]}), cols)
 
 
 def _revenue_total_views(groups: dict) -> None:
@@ -5889,6 +5968,10 @@ def _holder_value_views(groups: dict) -> None:
         if bc:
             tok, px = _daily(groups.get((name, bc["metric"]))), _daily(groups.get((name, "price_usd")))
             burn_usd = (tok * px.reindex(tok.index)).dropna() * float(bc.get("share_of_revenue", 1.0))
+            if bc.get("with_buyback") and not act.empty:
+                # R10.B2b (Near): the burn is credited BESIDE a buyback — a burn day after the buyback's last stored day
+                # would be a day with half its holder value (a read lag at the end is not a quiet day): not credited yet
+                burn_usd = burn_usd[burn_usd.index <= act.index.max()]
         if act.empty and not any(not e.empty for e in extra) and burn_usd.empty:
             continue
         # the whole buyback $ = retired (burned + held) + distributed: the funding decides whether it is credited
@@ -6985,6 +7068,7 @@ def aggregate(long: pd.DataFrame, fetch_status: pd.DataFrame, asof: pd.Timestamp
     _issuer_mint_views(groups)    # fix round 2 S5/S3: mints straight to issuer-side wallets, BEFORE the unlock view
     _issuance_from_supply_views(groups)   # G11 B2: Maple's gross issuance = the rises of its stored total supply
     _unlock_views(groups)         # releases from the non-circulating wallets (Jake 2026-10-11, A2)
+    _chain_burn_revenue_views(groups)   # R10.B1b: NEAR's gas revenue = the chain's own burn x price (before the total)
     _revenue_total_views(groups)  # alignment C10: NEAR's revenue = gas + Intents fee switch
     _stake_prorata_views(groups)  # alignment C1: Hyperliquid's (a) = rewards to circulating stake only
     _option_c_issuance_views(groups)   # P5-1.5: issuer replay + staking reward, where option C passed
@@ -12519,6 +12603,9 @@ def _holder_value_note(p: dict) -> str:
         return (f"Holder value = 0 — a measured zero (SPEC rule 3), not a missing figure: {config.holder_value_absent(name)}"
                 ". Net holder yield = 0 − dilution.")
     bc = (config.HOLDER_VALUE.get(name) or {}).get("burn_credited")
+    if bc and bc.get("with_buyback"):
+        return (f"Holder value = the fee burn ({bc['metric']} a day x that day's price) + the credited buyback "
+                f"(R10.B2b, Jake 2026-11-18): {bc['why']}.")
     if bc:
         return (f"Holder value = the fee burn ({bc['metric']} a day x that day's price; "
                 f"{bc.get('share_of_revenue', 1.0):.0%} of protocol revenue — definition R2, Jake 2026-11-02): "
@@ -12916,6 +13003,10 @@ def _cp_cols(R: Refs, data_by_key: dict) -> list[tuple]:
         h = config.HOLDER_VALUE.get(p["name"]) or {}
         if config.holder_value_absent(p["name"]):
             return "none — 0 credited: " + config.holder_value_absent(p["name"])
+        if (h.get("burn_credited") or {}).get("with_buyback"):
+            # R10.B2b: the fee burn AND the buyback are credited (Near)
+            return (f"revenue — the fee burn ({h['burn_credited']['metric']} x that day's price) and the buyback "
+                    f"(the programme's documented base) are both credited: {h['burn_credited']['why']}")
         if h.get("burn_credited"):
             return (f"revenue — the fee burn credited ({h['burn_credited']['metric']} x that day's price, "
                     f"{h['burn_credited'].get('share_of_revenue', 1.0):.0%} of revenue): {h['burn_credited']['why']}")
@@ -13065,6 +13156,16 @@ def _cp_cols(R: Refs, data_by_key: dict) -> list[tuple]:
             return monitor(r, p, lambda n, d: (
                 f'IF(AND(ISNUMBER({d}),{d}>0,ISNUMBER({cr})),IF({cr}>0,({n}/{d})*MAX(0,{cr}-IF(ISNUMBER({rt}),{rt},0))/'
                 f'{cr},"n/a — no credited holder value in Q0"),{NA})'))
+        bcb = hvs.get("burn_credited") or {}
+        if not spec and bcb.get("with_buyback") and bcb.get("usd_metric"):
+            # R10.B2b (Near): the credited fee burn is RETIRED (destroyed), like the held buyback — distributed =
+            # credited − retired buyback − the burn; to the cent, as the three are summed separately
+            route = ((config.INSIDER_SHARE_ROUTES.get(p["name"]) or {}).get("cell")
+                     or "NOT WIRED — no issuer / insider wallet is identified among the stakers").replace('"', '""')
+            cr, rt = R.D(r, "holder_value_revenue_usd", "q0"), R.D(r, "retired_buyback_usd", "q0")
+            bu = R.D(r, bcb["usd_metric"], "q0")
+            return (f'=IF(NOT(ISNUMBER({cr})),{NA},IF({cr}<=0,"n/a — no credited holder value in Q0",'
+                    f'IF(ROUND({cr}-IF(ISNUMBER({rt}),{rt},0)-IF(ISNUMBER({bu}),{bu},0),2)<=0,0,"{route}")))')
         if not spec:
             # NOTHING DISTRIBUTED -> NOTHING TO LEAK (Round G 2.11): (i) = insider share x distributed / credited, so a
             # quarter whose credited holder value was all retired (burned / held) reads 0 whatever the insider share;

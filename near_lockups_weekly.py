@@ -40,6 +40,7 @@ import sys
 import pandas as pd
 
 METRICS = ("near_lockup_unvested_tokens", "near_lockup_locked_tokens")
+STAKED_METRIC = "near_lockup_locked_staked_tokens"   # R10.B3b: Σ min(locked, staked) per lockup — the same read
 EVERY_DAYS = 7
 LOCK_MAX_H = 6
 
@@ -88,8 +89,14 @@ def rows_for(got: dict, day: pd.Timestamp) -> pd.DataFrame:
     """The two stored rows for one read (got: check_offline_items.near_lockups' totals)."""
     src = f"near_rpc:lockups@{got['height']}"
     from fetch.base import tidy
-    return pd.concat([tidy([(day, float(got["unvested"]))], "Near", METRICS[0], src, 2),
-                      tidy([(day, float(got["locked"]))], "Near", METRICS[1], src, 2)], ignore_index=True)
+    rows = [tidy([(day, float(got["unvested"]))], "Near", METRICS[0], src, 2),
+            tidy([(day, float(got["locked"]))], "Near", METRICS[1], src, 2)]
+    # R10.B3b: the staked part of LOCKED, only when every lockup of the read carried it (never a partial sum, never 0
+    # for unknown) and never above LOCKED
+    stk = got.get("locked_staked")
+    if stk is not None and 0 <= float(stk) <= float(got["locked"]):
+        rows.append(tidy([(day, float(stk))], "Near", STAKED_METRIC, src, 2))
+    return pd.concat(rows, ignore_index=True)
 
 
 def read_day(got: dict, fallback: pd.Timestamp) -> pd.Timestamp:
@@ -212,7 +219,10 @@ def _read_and_store(store_mod, today) -> int:
     st = store_mod.Store(store_mod.DB_PATH)
     n = st.upsert(rows_for(got, day))
     print(f"NEAR lockups stored for {day.date()} at block {got['height']:,}: unvested {got['unvested']:,.0f}, "
-          f"locked {got['locked']:,.0f} NEAR ({got['read']:,} live lockups read; {n} row(s))"
+          f"locked {got['locked']:,.0f} NEAR"
+          + (f", of which staked by its lockup {got['locked_staked']:,.0f}" if got.get("locked_staked") is not None
+             else ", the staked part NOT formed (a lockup read without its staked deposit)")
+          + f" ({got['read']:,} live lockups read; {n} row(s))"
           + (f"; {faults} lockup(s) whose own getter fails ({CONTRACT_FAULT}) left out" if faults else ""))
     return 0
 

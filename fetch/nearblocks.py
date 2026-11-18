@@ -303,6 +303,8 @@ class NearBlocks:
                     self._balance_history(p["name"], spec, spec["balance_history"], out)
                 if spec.get("foundation_history"):
                     self._balance_history(p["name"], spec, spec["foundation_history"], out)
+                if spec.get("treasury_history"):       # R10.B3a: treasury.near's daily close before the live RPC read
+                    self._balance_history(p["name"], spec, spec["treasury_history"], out)
                 if spec.get("validators_info"):
                     self._validators_info(p["name"], spec, spec["validators_info"], out)
                 if spec.get("supply_stats"):
