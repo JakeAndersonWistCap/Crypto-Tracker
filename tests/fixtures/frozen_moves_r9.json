@@ -1,0 +1,700 @@
+{
+"Hyperliquid": {
+"audit|A1 Infrastructure|Issuance as % of supply (annualised)": [
+{
+"date": "2026-11-18",
+"from": 0.699588675,
+"to": 0.0390380275,
+"why": "R9.2 (the rule, Jake 2026-11-17): Hyperliquid's team wallet 0x43e9abea… (238.25M, unvested but staked on 23 validators and earning) and Community Grants' spot (0.11M) are counted in circulating, off the free float — docs/r8_rule_audit.md §7; circulating about 301M -> about 540M, the float unchanged"
+}
+],
+"audit|A1 Infrastructure|Issuer releases Q0 (tokens) — pre-minted supply released into circulation, NOT issuance": [
+{
+"date": "2026-11-18",
+"from": 3837217.87,
+"to": 214122.129,
+"why": "R9.2 (the rule, Jake 2026-11-17): Hyperliquid's team wallet 0x43e9abea… (238.25M, unvested but staked on 23 validators and earning) and Community Grants' spot (0.11M) are counted in circulating, off the free float — docs/r8_rule_audit.md §7; circulating about 301M -> about 540M, the float unchanged"
+}
+],
+"audit|A1 Infrastructure|NET ISSUANCE AFTER BURN, annualised % of circulating (+ is net inflation; fee-market burns included)": [
+{
+"date": "2026-11-18",
+"from": -0.0332647852,
+"to": -0.0185918181,
+"why": "R9.2 (the rule, Jake 2026-11-17): Hyperliquid's team wallet 0x43e9abea… (238.25M, unvested but staked on 23 validators and earning) and Community Grants' spot (0.11M) are counted in circulating, off the free float — docs/r8_rule_audit.md §7; circulating about 301M -> about 540M, the float unchanged"
+}
+],
+"audit|A1 Infrastructure|NRR HEADROOM (trading throughput) = M2/GDP ÷ NRR — valuation headroom, not a target": [
+{
+"date": "2026-11-18",
+"from": 81.471394,
+"to": 45.5346796,
+"why": "R9.2 (the rule, Jake 2026-11-17): Hyperliquid's team wallet 0x43e9abea… (238.25M, unvested but staked on 23 validators and earning) and Community Grants' spot (0.11M) are counted in circulating, off the free float — docs/r8_rule_audit.md §7; circulating about 301M -> about 540M, the float unchanged"
+}
+],
+"audit|A1 Infrastructure|NRR ON TRADING THROUGHPUT — market cap ÷ trailing-365d DEX + perps volume (DefiLlama)": [
+{
+"date": "2026-11-18",
+"from": 0.00871471526,
+"to": 0.0155925112,
+"why": "R9.2 (the rule, Jake 2026-11-17): Hyperliquid's team wallet 0x43e9abea… (238.25M, unvested but staked on 23 validators and earning) and Community Grants' spot (0.11M) are counted in circulating, off the free float — docs/r8_rule_audit.md §7; circulating about 301M -> about 540M, the float unchanged"
+}
+],
+"audit|A1 Infrastructure|Resulting float = circulating − staked inside circulating": [
+{
+"date": "2026-11-18",
+"from": 99462451.6,
+"to": 337547997.0,
+"why": "R9.2 (the rule, Jake 2026-11-17): Hyperliquid's team wallet 0x43e9abea… (238.25M, unvested but staked on 23 validators and earning) and Community Grants' spot (0.11M) are counted in circulating, off the free float — docs/r8_rule_audit.md §7; circulating about 301M -> about 540M, the float unchanged"
+}
+],
+"audit|A1 Infrastructure|Staking rate = staked inside circulating ÷ circulating": [
+{
+"date": "2026-11-18",
+"from": 0.67029752,
+"to": 0.374631896,
+"why": "R9.2 (the rule, Jake 2026-11-17): Hyperliquid's team wallet 0x43e9abea… (238.25M, unvested but staked on 23 validators and earning) and Community Grants' spot (0.11M) are counted in circulating, off the free float — docs/r8_rule_audit.md §7; circulating about 301M -> about 540M, the float unchanged"
+}
+],
+"audit|A3 Revenue Buyback|Actual buyback as % of supply (annualised) — RETIRED (burned + held) only": [
+{
+"date": "2026-11-18",
+"from": 0.0319992846,
+"to": 0.0178845249,
+"why": "R9.2 (the rule, Jake 2026-11-17): Hyperliquid's team wallet 0x43e9abea… (238.25M, unvested but staked on 23 validators and earning) and Community Grants' spot (0.11M) are counted in circulating, off the free float — docs/r8_rule_audit.md §7; circulating about 301M -> about 540M, the float unchanged"
+}
+],
+"audit|A3 Revenue Buyback|BUYBACK AS % OF SUPPLY (annualised, implied)": [
+{
+"date": "2026-11-18",
+"from": 0.0324203649,
+"to": 0.0181198683,
+"why": "R9.2 (the rule, Jake 2026-11-17): Hyperliquid's team wallet 0x43e9abea… (238.25M, unvested but staked on 23 validators and earning) and Community Grants' spot (0.11M) are counted in circulating, off the free float — docs/r8_rule_audit.md §7; circulating about 301M -> about 540M, the float unchanged"
+}
+],
+"audit|A3 Revenue Buyback|Buyback % supply at Q1 (−3m window, split as at Q1)": [
+{
+"date": "2026-11-18",
+"from": 0.034374231,
+"to": 0.0192118917,
+"why": "R9.2 (the rule, Jake 2026-11-17): Hyperliquid's team wallet 0x43e9abea… (238.25M, unvested but staked on 23 validators and earning) and Community Grants' spot (0.11M) are counted in circulating, off the free float — docs/r8_rule_audit.md §7; circulating about 301M -> about 540M, the float unchanged"
+}
+],
+"audit|A3 Revenue Buyback|Buyback % supply at Q2 (−6m, split as at Q2)": [
+{
+"date": "2026-11-18",
+"from": 0.0644003808,
+"to": 0.0359936238,
+"why": "R9.2 (the rule, Jake 2026-11-17): Hyperliquid's team wallet 0x43e9abea… (238.25M, unvested but staked on 23 validators and earning) and Community Grants' spot (0.11M) are counted in circulating, off the free float — docs/r8_rule_audit.md §7; circulating about 301M -> about 540M, the float unchanged"
+}
+],
+"audit|A3 Revenue Buyback|CIRCULATING RETIREMENT RATE (tokens) = RETIRED buyback tokens (burned + held, annualised) ÷ circulating — primary": [
+{
+"date": "2026-11-18",
+"from": 0.0319992846,
+"to": 0.0178845249,
+"why": "R9.2 (the rule, Jake 2026-11-17): Hyperliquid's team wallet 0x43e9abea… (238.25M, unvested but staked on 23 validators and earning) and Community Grants' spot (0.11M) are counted in circulating, off the free float — docs/r8_rule_audit.md §7; circulating about 301M -> about 540M, the float unchanged"
+}
+],
+"audit|A3 Revenue Buyback|Circulating retirement rate ($) = RETIRED buyback $ (burned + held, annualised) ÷ market cap — alongside": [
+{
+"date": "2026-11-18",
+"from": 0.0302582931,
+"to": 0.0169114779,
+"why": "R9.2 (the rule, Jake 2026-11-17): Hyperliquid's team wallet 0x43e9abea… (238.25M, unvested but staked on 23 validators and earning) and Community Grants' spot (0.11M) are counted in circulating, off the free float — docs/r8_rule_audit.md §7; circulating about 301M -> about 540M, the float unchanged"
+}
+],
+"audit|A3 Revenue Buyback|Circulating supply": [
+{
+"date": "2026-11-18",
+"from": 301673350.0,
+"to": 539758896.0,
+"why": "R9.2 (the rule, Jake 2026-11-17): Hyperliquid's team wallet 0x43e9abea… (238.25M, unvested but staked on 23 validators and earning) and Community Grants' spot (0.11M) are counted in circulating, off the free float — docs/r8_rule_audit.md §7; circulating about 301M -> about 540M, the float unchanged"
+}
+],
+"audit|A3 Revenue Buyback|Lock rate = locked inside circulating ÷ circulating (stake held by wallets outside circulating excluded)": [
+{
+"date": "2026-11-18",
+"from": 0.67029752,
+"to": 0.374631896,
+"why": "R9.2 (the rule, Jake 2026-11-17): Hyperliquid's team wallet 0x43e9abea… (238.25M, unvested but staked on 23 validators and earning) and Community Grants' spot (0.11M) are counted in circulating, off the free float — docs/r8_rule_audit.md §7; circulating about 301M -> about 540M, the float unchanged"
+}
+],
+"audit|A3 Revenue Buyback|Market cap ($)": [
+{
+"date": "2026-11-18",
+"from": 24425467400.0,
+"to": 43702446000.0,
+"why": "R9.2 (the rule, Jake 2026-11-17): Hyperliquid's team wallet 0x43e9abea… (238.25M, unvested but staked on 23 validators and earning) and Community Grants' spot (0.11M) are counted in circulating, off the free float — docs/r8_rule_audit.md §7; circulating about 301M -> about 540M, the float unchanged"
+}
+],
+"audit|A3 Revenue Buyback|TOTAL DILUTION = emissions + unlocks, annualised % of free float": [
+{
+"date": "2026-11-18",
+"from": 0.327234403,
+"to": 0.0964234308,
+"why": "R9.2 (the rule, Jake 2026-11-17): Hyperliquid's team wallet 0x43e9abea… (238.25M, unvested but staked on 23 validators and earning) and Community Grants' spot (0.11M) are counted in circulating, off the free float — docs/r8_rule_audit.md §7; circulating about 301M -> about 540M, the float unchanged"
+}
+],
+"audit|A3 Revenue Buyback|Unlock dilution, annualised % of free float": [
+{
+"date": "2026-11-18",
+"from": 0.225799175,
+"to": 0.0665343588,
+"why": "R9.2 (the rule, Jake 2026-11-17): Hyperliquid's team wallet 0x43e9abea… (238.25M, unvested but staked on 23 validators and earning) and Community Grants' spot (0.11M) are counted in circulating, off the free float — docs/r8_rule_audit.md §7; circulating about 301M -> about 540M, the float unchanged"
+}
+],
+"audit|A4 Permanent Burn|Circulating supply (used, tokens)": [
+{
+"date": "2026-11-18",
+"from": 301673350.0,
+"to": 539758896.0,
+"why": "R9.2 (the rule, Jake 2026-11-17): Hyperliquid's team wallet 0x43e9abea… (238.25M, unvested but staked on 23 validators and earning) and Community Grants' spot (0.11M) are counted in circulating, off the free float — docs/r8_rule_audit.md §7; circulating about 301M -> about 540M, the float unchanged"
+}
+],
+"audit|A4 Permanent Burn|ISSUANCE − BURN, annualised % of circulating (signed; + is net inflation; the cell says 'burn only' where nothing is minted)": [
+{
+"date": "2026-11-18",
+"from": -0.0328588084,
+"to": -0.0183649161,
+"why": "R9.2 (the rule, Jake 2026-11-17): Hyperliquid's team wallet 0x43e9abea… (238.25M, unvested but staked on 23 validators and earning) and Community Grants' spot (0.11M) are counted in circulating, off the free float — docs/r8_rule_audit.md §7; circulating about 301M -> about 540M, the float unchanged"
+}
+],
+"audit|A4 Permanent Burn|Issuance as % of supply (annualised)": [
+{
+"date": "2026-11-18",
+"from": 0.699588675,
+"to": 0.0390380275,
+"why": "R9.2 (the rule, Jake 2026-11-17): Hyperliquid's team wallet 0x43e9abea… (238.25M, unvested but staked on 23 validators and earning) and Community Grants' spot (0.11M) are counted in circulating, off the free float — docs/r8_rule_audit.md §7; circulating about 301M -> about 540M, the float unchanged"
+}
+],
+"audit|A4 Permanent Burn|Market cap ($)": [
+{
+"date": "2026-11-18",
+"from": 24425467400.0,
+"to": 43702446000.0,
+"why": "R9.2 (the rule, Jake 2026-11-17): Hyperliquid's team wallet 0x43e9abea… (238.25M, unvested but staked on 23 validators and earning) and Community Grants' spot (0.11M) are counted in circulating, off the free float — docs/r8_rule_audit.md §7; circulating about 301M -> about 540M, the float unchanged"
+}
+],
+"audit|A4 Permanent Burn|PERMANENT BURN YIELD = burn as % of supply (annualised, tokens)": [
+{
+"date": "2026-11-18",
+"from": 0.0319992846,
+"to": 0.0178845249,
+"why": "R9.2 (the rule, Jake 2026-11-17): Hyperliquid's team wallet 0x43e9abea… (238.25M, unvested but staked on 23 validators and earning) and Community Grants' spot (0.11M) are counted in circulating, off the free float — docs/r8_rule_audit.md §7; circulating about 301M -> about 540M, the float unchanged"
+}
+],
+"audit|A4 Permanent Burn|Pool release Q0 (tokens) — measured, premint distribution (where issuance is n/a)": [
+{
+"date": "2026-11-18",
+"from": 3837217.87,
+"to": 214122.129,
+"why": "R9.2 (the rule, Jake 2026-11-17): Hyperliquid's team wallet 0x43e9abea… (238.25M, unvested but staked on 23 validators and earning) and Community Grants' spot (0.11M) are counted in circulating, off the free float — docs/r8_rule_audit.md §7; circulating about 301M -> about 540M, the float unchanged"
+}
+],
+"audit|A4 Permanent Burn|TOTAL DILUTION = emissions + unlocks, annualised % of free float": [
+{
+"date": "2026-11-18",
+"from": 0.327234403,
+"to": 0.0964234308,
+"why": "R9.2 (the rule, Jake 2026-11-17): Hyperliquid's team wallet 0x43e9abea… (238.25M, unvested but staked on 23 validators and earning) and Community Grants' spot (0.11M) are counted in circulating, off the free float — docs/r8_rule_audit.md §7; circulating about 301M -> about 540M, the float unchanged"
+}
+],
+"audit|A4 Permanent Burn|Unlock dilution, annualised % of free float": [
+{
+"date": "2026-11-18",
+"from": 0.225799175,
+"to": 0.0665343588,
+"why": "R9.2 (the rule, Jake 2026-11-17): Hyperliquid's team wallet 0x43e9abea… (238.25M, unvested but staked on 23 validators and earning) and Community Grants' spot (0.11M) are counted in circulating, off the free float — docs/r8_rule_audit.md §7; circulating about 301M -> about 540M, the float unchanged"
+}
+],
+"audit|CP Comparability|Burn rate (every burn, fee-market included — A1's basis, annualised) ÷ circulating": [
+{
+"date": "2026-11-18",
+"from": 0.0332647852,
+"to": 0.0185918181,
+"why": "R9.2 (the rule, Jake 2026-11-17): Hyperliquid's team wallet 0x43e9abea… (238.25M, unvested but staked on 23 validators and earning) and Community Grants' spot (0.11M) are counted in circulating, off the free float — docs/r8_rule_audit.md §7; circulating about 301M -> about 540M, the float unchanged"
+}
+],
+"audit|CP Comparability|Circulating supply (tokens) — our convention, the figure in use": [
+{
+"date": "2026-11-18",
+"from": 301673350.0,
+"to": 539758896.0,
+"why": "R9.2 (the rule, Jake 2026-11-17): Hyperliquid's team wallet 0x43e9abea… (238.25M, unvested but staked on 23 validators and earning) and Community Grants' spot (0.11M) are counted in circulating, off the free float — docs/r8_rule_audit.md §7; circulating about 301M -> about 540M, the float unchanged"
+}
+],
+"audit|CP Comparability|Dilution (a) security emissions (annualised) ÷ circulating": [
+{
+"date": "2026-11-18",
+"from": 0.0150532997,
+"to": 0.00841334785,
+"why": "R9.2 (the rule, Jake 2026-11-17): Hyperliquid's team wallet 0x43e9abea… (238.25M, unvested but staked on 23 validators and earning) and Community Grants' spot (0.11M) are counted in circulating, off the free float — docs/r8_rule_audit.md §7; circulating about 301M -> about 540M, the float unchanged"
+}
+],
+"audit|CP Comparability|Dilution (e) unlocks (annualised) ÷ circulating": [
+{
+"date": "2026-11-18",
+"from": 0.074446548,
+"to": 0.0416084658,
+"why": "R9.2 (the rule, Jake 2026-11-17): Hyperliquid's team wallet 0x43e9abea… (238.25M, unvested but staked on 23 validators and earning) and Community Grants' spot (0.11M) are counted in circulating, off the free float — docs/r8_rule_audit.md §7; circulating about 301M -> about 540M, the float unchanged"
+}
+],
+"audit|CP Comparability|Discretionary supply ÷ circulating": [
+{
+"date": "2026-11-18",
+"from": 0.000515461519,
+"to": 0.000288093451,
+"why": "R9.2 (the rule, Jake 2026-11-17): Hyperliquid's team wallet 0x43e9abea… (238.25M, unvested but staked on 23 validators and earning) and Community Grants' spot (0.11M) are counted in circulating, off the free float — docs/r8_rule_audit.md §7; circulating about 301M -> about 540M, the float unchanged"
+}
+],
+"audit|CP Comparability|ETF / ETP holdings ÷ circulating": [
+{
+"date": "2026-11-18",
+"from": 0.0183221178,
+"to": 0.010240303,
+"why": "R9.2 (the rule, Jake 2026-11-17): Hyperliquid's team wallet 0x43e9abea… (238.25M, unvested but staked on 23 validators and earning) and Community Grants' spot (0.11M) are counted in circulating, off the free float — docs/r8_rule_audit.md §7; circulating about 301M -> about 540M, the float unchanged"
+}
+],
+"audit|CP Comparability|Flow demand — buyback $ (every funding source, annualised) ÷ market cap": [
+{
+"date": "2026-11-18",
+"from": 0.0302582931,
+"to": 0.0169114779,
+"why": "R9.2 (the rule, Jake 2026-11-17): Hyperliquid's team wallet 0x43e9abea… (238.25M, unvested but staked on 23 validators and earning) and Community Grants' spot (0.11M) are counted in circulating, off the free float — docs/r8_rule_audit.md §7; circulating about 301M -> about 540M, the float unchanged"
+}
+],
+"audit|CP Comparability|HOLDER VALUE YIELD = revenue-funded $ retired + $ distributed + liquid bribes to voters (annualised) ÷ market cap — treasury- or emissions-funded buybacks are NOT credited (LITMUS A); fee-market burns are on A1 net issuance": [
+{
+"date": "2026-11-18",
+"from": 0.0302582931,
+"to": 0.0169114779,
+"why": "R9.2 (the rule, Jake 2026-11-17): Hyperliquid's team wallet 0x43e9abea… (238.25M, unvested but staked on 23 validators and earning) and Community Grants' spot (0.11M) are counted in circulating, off the free float — docs/r8_rule_audit.md §7; circulating about 301M -> about 540M, the float unchanged"
+}
+],
+"audit|CP Comparability|Holding demand — lock rate = locked ÷ circulating": [
+{
+"date": "2026-11-18",
+"from": 0.67029752,
+"to": 0.374631896,
+"why": "R9.2 (the rule, Jake 2026-11-17): Hyperliquid's team wallet 0x43e9abea… (238.25M, unvested but staked on 23 validators and earning) and Community Grants' spot (0.11M) are counted in circulating, off the free float — docs/r8_rule_audit.md §7; circulating about 301M -> about 540M, the float unchanged"
+}
+],
+"audit|CP Comparability|Insider share of circulating = insider-held tokens counted inside circulating ÷ circulating": [
+{
+"date": "2026-11-18",
+"from": 0.210087332,
+"to": 0.558514731,
+"why": "R9.2 (the rule, Jake 2026-11-17): Hyperliquid's team wallet 0x43e9abea… (238.25M, unvested but staked on 23 validators and earning) and Community Grants' spot (0.11M) are counted in circulating, off the free float — docs/r8_rule_audit.md §7; circulating about 301M -> about 540M, the float unchanged"
+}
+],
+"audit|CP Comparability|Market cap ($)": [
+{
+"date": "2026-11-18",
+"from": 24425467400.0,
+"to": 43702446000.0,
+"why": "R9.2 (the rule, Jake 2026-11-17): Hyperliquid's team wallet 0x43e9abea… (238.25M, unvested but staked on 23 validators and earning) and Community Grants' spot (0.11M) are counted in circulating, off the free float — docs/r8_rule_audit.md §7; circulating about 301M -> about 540M, the float unchanged"
+}
+],
+"audit|CP Comparability|NET HOLDER YIELD = holder value yield − dilution (outflows a+b+c+d+e at each day's price, annualised) ÷ market cap": [
+{
+"date": "2026-11-18",
+"from": -0.0612221974,
+"to": -0.0342173247,
+"why": "R9.2 (the rule, Jake 2026-11-17): Hyperliquid's team wallet 0x43e9abea… (238.25M, unvested but staked on 23 validators and earning) and Community Grants' spot (0.11M) are counted in circulating, off the free float — docs/r8_rule_audit.md §7; circulating about 301M -> about 540M, the float unchanged"
+}
+],
+"audit|CP Comparability|Retirement rate (RETIRED buyback tokens, burned + held, annualised) ÷ circulating": [
+{
+"date": "2026-11-18",
+"from": 0.0319992846,
+"to": 0.0178845249,
+"why": "R9.2 (the rule, Jake 2026-11-17): Hyperliquid's team wallet 0x43e9abea… (238.25M, unvested but staked on 23 validators and earning) and Community Grants' spot (0.11M) are counted in circulating, off the free float — docs/r8_rule_audit.md §7; circulating about 301M -> about 540M, the float unchanged"
+}
+],
+"audit|CP Comparability|TOTAL DILUTION = outflows a+b+c+d+e (annualised) ÷ circulating": [
+{
+"date": "2026-11-18",
+"from": 0.0894998477,
+"to": 0.0500218136,
+"why": "R9.2 (the rule, Jake 2026-11-17): Hyperliquid's team wallet 0x43e9abea… (238.25M, unvested but staked on 23 validators and earning) and Community Grants' spot (0.11M) are counted in circulating, off the free float — docs/r8_rule_audit.md §7; circulating about 301M -> about 540M, the float unchanged"
+}
+],
+"audit|CP Comparability|Tradeable float ÷ circulating": [
+{
+"date": "2026-11-18",
+"from": 0.32970248,
+"to": 0.184272001,
+"why": "R9.2 (the rule, Jake 2026-11-17): Hyperliquid's team wallet 0x43e9abea… (238.25M, unvested but staked on 23 validators and earning) and Community Grants' spot (0.11M) are counted in circulating, off the free float — docs/r8_rule_audit.md §7; circulating about 301M -> about 540M, the float unchanged"
+}
+],
+"audit|CP Comparability|Treasury-company (DAT) holdings ÷ circulating": [
+{
+"date": "2026-11-18",
+"from": 0.135222087,
+"to": 0.0755761513,
+"why": "R9.2 (the rule, Jake 2026-11-17): Hyperliquid's team wallet 0x43e9abea… (238.25M, unvested but staked on 23 validators and earning) and Community Grants' spot (0.11M) are counted in circulating, off the free float — docs/r8_rule_audit.md §7; circulating about 301M -> about 540M, the float unchanged"
+}
+],
+"audit|CP Comparability|UNIFORMITY = whole-token yield ÷ staker yield (1 = every holder alike) (PROPOSED)": [
+{
+"date": "2026-11-18",
+"from": 0.67029752,
+"to": 0.374631896,
+"why": "R9.2 (the rule, Jake 2026-11-17): Hyperliquid's team wallet 0x43e9abea… (238.25M, unvested but staked on 23 validators and earning) and Community Grants' spot (0.11M) are counted in circulating, off the free float — docs/r8_rule_audit.md §7; circulating about 301M -> about 540M, the float unchanged"
+}
+],
+"audit|CP Comparability|Whole-token yield — validator = staker yield × staked share (locked ÷ circulating, now)": [
+{
+"date": "2026-11-18",
+"from": 0.0153646903,
+"to": 0.00858738527,
+"why": "R9.2 (the rule, Jake 2026-11-17): Hyperliquid's team wallet 0x43e9abea… (238.25M, unvested but staked on 23 validators and earning) and Community Grants' spot (0.11M) are counted in circulating, off the free float — docs/r8_rule_audit.md §7; circulating about 301M -> about 540M, the float unchanged"
+}
+],
+"audit|Master|Buyback % of supply (annualised, implied, split as at this window)": [
+{
+"date": "2026-11-18",
+"from": 0.0324203649,
+"to": 0.0181198683,
+"why": "R9.2 (the rule, Jake 2026-11-17): Hyperliquid's team wallet 0x43e9abea… (238.25M, unvested but staked on 23 validators and earning) and Community Grants' spot (0.11M) are counted in circulating, off the free float — docs/r8_rule_audit.md §7; circulating about 301M -> about 540M, the float unchanged"
+}
+],
+"audit|Master|Circulating supply (used)": [
+{
+"date": "2026-11-18",
+"from": 301673350.0,
+"to": 539758896.0,
+"why": "R9.2 (the rule, Jake 2026-11-17): Hyperliquid's team wallet 0x43e9abea… (238.25M, unvested but staked on 23 validators and earning) and Community Grants' spot (0.11M) are counted in circulating, off the free float — docs/r8_rule_audit.md §7; circulating about 301M -> about 540M, the float unchanged"
+}
+],
+"audit|Master|Issuance − burn, annualised % of circulating — a component, NOT the net supply change": [
+{
+"date": "2026-11-18",
+"from": -0.0332647852,
+"to": -0.0185918181,
+"why": "R9.2 (the rule, Jake 2026-11-17): Hyperliquid's team wallet 0x43e9abea… (238.25M, unvested but staked on 23 validators and earning) and Community Grants' spot (0.11M) are counted in circulating, off the free float — docs/r8_rule_audit.md §7; circulating about 301M -> about 540M, the float unchanged"
+}
+],
+"audit|Master|Issuer releases Q0 (tokens) — pre-minted supply released into circulation, NOT issuance": [
+{
+"date": "2026-11-18",
+"from": 3837217.87,
+"to": 214122.129,
+"why": "R9.2 (the rule, Jake 2026-11-17): Hyperliquid's team wallet 0x43e9abea… (238.25M, unvested but staked on 23 validators and earning) and Community Grants' spot (0.11M) are counted in circulating, off the free float — docs/r8_rule_audit.md §7; circulating about 301M -> about 540M, the float unchanged"
+}
+],
+"audit|Master|Market cap ($)": [
+{
+"date": "2026-11-18",
+"from": 24425467400.0,
+"to": 43702446000.0,
+"why": "R9.2 (the rule, Jake 2026-11-17): Hyperliquid's team wallet 0x43e9abea… (238.25M, unvested but staked on 23 validators and earning) and Community Grants' spot (0.11M) are counted in circulating, off the free float — docs/r8_rule_audit.md §7; circulating about 301M -> about 540M, the float unchanged"
+}
+],
+"audit|Master|Turnover = 30d volume ÷ market cap (x)": [
+{
+"date": "2026-11-18",
+"from": 1.12714102,
+"to": 0.629963507,
+"why": "R9.2 (the rule, Jake 2026-11-17): Hyperliquid's team wallet 0x43e9abea… (238.25M, unvested but staked on 23 validators and earning) and Community Grants' spot (0.11M) are counted in circulating, off the free float — docs/r8_rule_audit.md §7; circulating about 301M -> about 540M, the float unchanged"
+}
+],
+"reader|A1 Infrastructure|Circulating supply": [
+{
+"date": "2026-11-18",
+"from": 301673350.0,
+"to": 539758896.0,
+"why": "R9.2 (the rule, Jake 2026-11-17): Hyperliquid's team wallet 0x43e9abea… (238.25M, unvested but staked on 23 validators and earning) and Community Grants' spot (0.11M) are counted in circulating, off the free float — docs/r8_rule_audit.md §7; circulating about 301M -> about 540M, the float unchanged"
+}
+],
+"reader|A1 Infrastructure|Float after staking": [
+{
+"date": "2026-11-18",
+"from": 99462451.6,
+"to": 337547997.0,
+"why": "R9.2 (the rule, Jake 2026-11-17): Hyperliquid's team wallet 0x43e9abea… (238.25M, unvested but staked on 23 validators and earning) and Community Grants' spot (0.11M) are counted in circulating, off the free float — docs/r8_rule_audit.md §7; circulating about 301M -> about 540M, the float unchanged"
+}
+],
+"reader|A1 Infrastructure|Issuance, % of supply a year": [
+{
+"date": "2026-11-18",
+"from": 0.699588675,
+"to": 0.0390380275,
+"why": "R9.2 (the rule, Jake 2026-11-17): Hyperliquid's team wallet 0x43e9abea… (238.25M, unvested but staked on 23 validators and earning) and Community Grants' spot (0.11M) are counted in circulating, off the free float — docs/r8_rule_audit.md §7; circulating about 301M -> about 540M, the float unchanged"
+}
+],
+"reader|A1 Infrastructure|Issuer releases, 90 days (tokens)": [
+{
+"date": "2026-11-18",
+"from": 3837217.87,
+"to": 214122.129,
+"why": "R9.2 (the rule, Jake 2026-11-17): Hyperliquid's team wallet 0x43e9abea… (238.25M, unvested but staked on 23 validators and earning) and Community Grants' spot (0.11M) are counted in circulating, off the free float — docs/r8_rule_audit.md §7; circulating about 301M -> about 540M, the float unchanged"
+}
+],
+"reader|A1 Infrastructure|Market cap": [
+{
+"date": "2026-11-18",
+"from": 24425467400.0,
+"to": 43702446000.0,
+"why": "R9.2 (the rule, Jake 2026-11-17): Hyperliquid's team wallet 0x43e9abea… (238.25M, unvested but staked on 23 validators and earning) and Community Grants' spot (0.11M) are counted in circulating, off the free float — docs/r8_rule_audit.md §7; circulating about 301M -> about 540M, the float unchanged"
+}
+],
+"reader|A1 Infrastructure|NRR headroom (throughput)": [
+{
+"date": "2026-11-18",
+"from": 81.471394,
+"to": 45.5346796,
+"why": "R9.2 (the rule, Jake 2026-11-17): Hyperliquid's team wallet 0x43e9abea… (238.25M, unvested but staked on 23 validators and earning) and Community Grants' spot (0.11M) are counted in circulating, off the free float — docs/r8_rule_audit.md §7; circulating about 301M -> about 540M, the float unchanged"
+}
+],
+"reader|A1 Infrastructure|NRR on trading throughput": [
+{
+"date": "2026-11-18",
+"from": 0.00871471526,
+"to": 0.0155925112,
+"why": "R9.2 (the rule, Jake 2026-11-17): Hyperliquid's team wallet 0x43e9abea… (238.25M, unvested but staked on 23 validators and earning) and Community Grants' spot (0.11M) are counted in circulating, off the free float — docs/r8_rule_audit.md §7; circulating about 301M -> about 540M, the float unchanged"
+}
+],
+"reader|A1 Infrastructure|Net issuance after burn, % a year": [
+{
+"date": "2026-11-18",
+"from": -0.0332647852,
+"to": -0.0185918181,
+"why": "R9.2 (the rule, Jake 2026-11-17): Hyperliquid's team wallet 0x43e9abea… (238.25M, unvested but staked on 23 validators and earning) and Community Grants' spot (0.11M) are counted in circulating, off the free float — docs/r8_rule_audit.md §7; circulating about 301M -> about 540M, the float unchanged"
+}
+],
+"reader|A1 Infrastructure|Staking rate": [
+{
+"date": "2026-11-18",
+"from": 0.67029752,
+"to": 0.374631896,
+"why": "R9.2 (the rule, Jake 2026-11-17): Hyperliquid's team wallet 0x43e9abea… (238.25M, unvested but staked on 23 validators and earning) and Community Grants' spot (0.11M) are counted in circulating, off the free float — docs/r8_rule_audit.md §7; circulating about 301M -> about 540M, the float unchanged"
+}
+],
+"reader|A1 Infrastructure|Total yield, non-stakers": [
+{
+"date": "2026-11-18",
+"from": -0.0562350625,
+"to": -0.0314299956,
+"why": "R9.2 (the rule, Jake 2026-11-17): Hyperliquid's team wallet 0x43e9abea… (238.25M, unvested but staked on 23 validators and earning) and Community Grants' spot (0.11M) are counted in circulating, off the free float — docs/r8_rule_audit.md §7; circulating about 301M -> about 540M, the float unchanged"
+}
+],
+"reader|A1 Infrastructure|Total yield, stakers": [
+{
+"date": "2026-11-18",
+"from": -0.0333128678,
+"to": -0.00850780088,
+"why": "R9.2 (the rule, Jake 2026-11-17): Hyperliquid's team wallet 0x43e9abea… (238.25M, unvested but staked on 23 validators and earning) and Community Grants' spot (0.11M) are counted in circulating, off the free float — docs/r8_rule_audit.md §7; circulating about 301M -> about 540M, the float unchanged"
+}
+],
+"reader|A3 Revenue Buyback|Circulating supply": [
+{
+"date": "2026-11-18",
+"from": 301673350.0,
+"to": 539758896.0,
+"why": "R9.2 (the rule, Jake 2026-11-17): Hyperliquid's team wallet 0x43e9abea… (238.25M, unvested but staked on 23 validators and earning) and Community Grants' spot (0.11M) are counted in circulating, off the free float — docs/r8_rule_audit.md §7; circulating about 301M -> about 540M, the float unchanged"
+}
+],
+"reader|A3 Revenue Buyback|Holder value yield": [
+{
+"date": "2026-11-18",
+"from": 0.0302582931,
+"to": 0.0169114779,
+"why": "R9.2 (the rule, Jake 2026-11-17): Hyperliquid's team wallet 0x43e9abea… (238.25M, unvested but staked on 23 validators and earning) and Community Grants' spot (0.11M) are counted in circulating, off the free float — docs/r8_rule_audit.md §7; circulating about 301M -> about 540M, the float unchanged"
+}
+],
+"reader|A3 Revenue Buyback|Implied buyback %, 3 months ago": [
+{
+"date": "2026-11-18",
+"from": 0.034374231,
+"to": 0.0192118917,
+"why": "R9.2 (the rule, Jake 2026-11-17): Hyperliquid's team wallet 0x43e9abea… (238.25M, unvested but staked on 23 validators and earning) and Community Grants' spot (0.11M) are counted in circulating, off the free float — docs/r8_rule_audit.md §7; circulating about 301M -> about 540M, the float unchanged"
+}
+],
+"reader|A3 Revenue Buyback|Implied buyback %, 6 months ago": [
+{
+"date": "2026-11-18",
+"from": 0.0644003808,
+"to": 0.0359936238,
+"why": "R9.2 (the rule, Jake 2026-11-17): Hyperliquid's team wallet 0x43e9abea… (238.25M, unvested but staked on 23 validators and earning) and Community Grants' spot (0.11M) are counted in circulating, off the free float — docs/r8_rule_audit.md §7; circulating about 301M -> about 540M, the float unchanged"
+}
+],
+"reader|A3 Revenue Buyback|Implied buyback, % of supply a year": [
+{
+"date": "2026-11-18",
+"from": 0.0324203649,
+"to": 0.0181198683,
+"why": "R9.2 (the rule, Jake 2026-11-17): Hyperliquid's team wallet 0x43e9abea… (238.25M, unvested but staked on 23 validators and earning) and Community Grants' spot (0.11M) are counted in circulating, off the free float — docs/r8_rule_audit.md §7; circulating about 301M -> about 540M, the float unchanged"
+}
+],
+"reader|A3 Revenue Buyback|Lock rate, % of circulating": [
+{
+"date": "2026-11-18",
+"from": 0.67029752,
+"to": 0.374631896,
+"why": "R9.2 (the rule, Jake 2026-11-17): Hyperliquid's team wallet 0x43e9abea… (238.25M, unvested but staked on 23 validators and earning) and Community Grants' spot (0.11M) are counted in circulating, off the free float — docs/r8_rule_audit.md §7; circulating about 301M -> about 540M, the float unchanged"
+}
+],
+"reader|A3 Revenue Buyback|Market cap": [
+{
+"date": "2026-11-18",
+"from": 24425467400.0,
+"to": 43702446000.0,
+"why": "R9.2 (the rule, Jake 2026-11-17): Hyperliquid's team wallet 0x43e9abea… (238.25M, unvested but staked on 23 validators and earning) and Community Grants' spot (0.11M) are counted in circulating, off the free float — docs/r8_rule_audit.md §7; circulating about 301M -> about 540M, the float unchanged"
+}
+],
+"reader|A3 Revenue Buyback|Retired, % of supply a year": [
+{
+"date": "2026-11-18",
+"from": 0.0319992846,
+"to": 0.0178845249,
+"why": "R9.2 (the rule, Jake 2026-11-17): Hyperliquid's team wallet 0x43e9abea… (238.25M, unvested but staked on 23 validators and earning) and Community Grants' spot (0.11M) are counted in circulating, off the free float — docs/r8_rule_audit.md §7; circulating about 301M -> about 540M, the float unchanged"
+}
+],
+"reader|A3 Revenue Buyback|Retirement rate ($), % of mkt cap": [
+{
+"date": "2026-11-18",
+"from": 0.0302582931,
+"to": 0.0169114779,
+"why": "R9.2 (the rule, Jake 2026-11-17): Hyperliquid's team wallet 0x43e9abea… (238.25M, unvested but staked on 23 validators and earning) and Community Grants' spot (0.11M) are counted in circulating, off the free float — docs/r8_rule_audit.md §7; circulating about 301M -> about 540M, the float unchanged"
+}
+],
+"reader|A3 Revenue Buyback|Retirement rate, % of circulating": [
+{
+"date": "2026-11-18",
+"from": 0.0319992846,
+"to": 0.0178845249,
+"why": "R9.2 (the rule, Jake 2026-11-17): Hyperliquid's team wallet 0x43e9abea… (238.25M, unvested but staked on 23 validators and earning) and Community Grants' spot (0.11M) are counted in circulating, off the free float — docs/r8_rule_audit.md §7; circulating about 301M -> about 540M, the float unchanged"
+}
+],
+"reader|A3 Revenue Buyback|Total dilution, % of float a year": [
+{
+"date": "2026-11-18",
+"from": 0.327234403,
+"to": 0.0964234308,
+"why": "R9.2 (the rule, Jake 2026-11-17): Hyperliquid's team wallet 0x43e9abea… (238.25M, unvested but staked on 23 validators and earning) and Community Grants' spot (0.11M) are counted in circulating, off the free float — docs/r8_rule_audit.md §7; circulating about 301M -> about 540M, the float unchanged"
+}
+],
+"reader|A3 Revenue Buyback|Unlocks, % of free float a year": [
+{
+"date": "2026-11-18",
+"from": 0.225799175,
+"to": 0.0665343588,
+"why": "R9.2 (the rule, Jake 2026-11-17): Hyperliquid's team wallet 0x43e9abea… (238.25M, unvested but staked on 23 validators and earning) and Community Grants' spot (0.11M) are counted in circulating, off the free float — docs/r8_rule_audit.md §7; circulating about 301M -> about 540M, the float unchanged"
+}
+],
+"reader|A4 Permanent Burn|Circulating supply": [
+{
+"date": "2026-11-18",
+"from": 301673350.0,
+"to": 539758896.0,
+"why": "R9.2 (the rule, Jake 2026-11-17): Hyperliquid's team wallet 0x43e9abea… (238.25M, unvested but staked on 23 validators and earning) and Community Grants' spot (0.11M) are counted in circulating, off the free float — docs/r8_rule_audit.md §7; circulating about 301M -> about 540M, the float unchanged"
+}
+],
+"reader|A4 Permanent Burn|Issuance − burn, % a year": [
+{
+"date": "2026-11-18",
+"from": -0.0328588084,
+"to": -0.0183649161,
+"why": "R9.2 (the rule, Jake 2026-11-17): Hyperliquid's team wallet 0x43e9abea… (238.25M, unvested but staked on 23 validators and earning) and Community Grants' spot (0.11M) are counted in circulating, off the free float — docs/r8_rule_audit.md §7; circulating about 301M -> about 540M, the float unchanged"
+}
+],
+"reader|A4 Permanent Burn|Issuance, % of supply a year": [
+{
+"date": "2026-11-18",
+"from": 0.699588675,
+"to": 0.0390380275,
+"why": "R9.2 (the rule, Jake 2026-11-17): Hyperliquid's team wallet 0x43e9abea… (238.25M, unvested but staked on 23 validators and earning) and Community Grants' spot (0.11M) are counted in circulating, off the free float — docs/r8_rule_audit.md §7; circulating about 301M -> about 540M, the float unchanged"
+}
+],
+"reader|A4 Permanent Burn|Market cap": [
+{
+"date": "2026-11-18",
+"from": 24425467400.0,
+"to": 43702446000.0,
+"why": "R9.2 (the rule, Jake 2026-11-17): Hyperliquid's team wallet 0x43e9abea… (238.25M, unvested but staked on 23 validators and earning) and Community Grants' spot (0.11M) are counted in circulating, off the free float — docs/r8_rule_audit.md §7; circulating about 301M -> about 540M, the float unchanged"
+}
+],
+"reader|A4 Permanent Burn|Permanent burn yield": [
+{
+"date": "2026-11-18",
+"from": 0.0319992846,
+"to": 0.0178845249,
+"why": "R9.2 (the rule, Jake 2026-11-17): Hyperliquid's team wallet 0x43e9abea… (238.25M, unvested but staked on 23 validators and earning) and Community Grants' spot (0.11M) are counted in circulating, off the free float — docs/r8_rule_audit.md §7; circulating about 301M -> about 540M, the float unchanged"
+}
+],
+"reader|A4 Permanent Burn|Total dilution, % of float a year": [
+{
+"date": "2026-11-18",
+"from": 0.327234403,
+"to": 0.0964234308,
+"why": "R9.2 (the rule, Jake 2026-11-17): Hyperliquid's team wallet 0x43e9abea… (238.25M, unvested but staked on 23 validators and earning) and Community Grants' spot (0.11M) are counted in circulating, off the free float — docs/r8_rule_audit.md §7; circulating about 301M -> about 540M, the float unchanged"
+}
+],
+"reader|A4 Permanent Burn|Unlocks, % of free float a year": [
+{
+"date": "2026-11-18",
+"from": 0.225799175,
+"to": 0.0665343588,
+"why": "R9.2 (the rule, Jake 2026-11-17): Hyperliquid's team wallet 0x43e9abea… (238.25M, unvested but staked on 23 validators and earning) and Community Grants' spot (0.11M) are counted in circulating, off the free float — docs/r8_rule_audit.md §7; circulating about 301M -> about 540M, the float unchanged"
+}
+],
+"reader|Comparison|Holder value yield": [
+{
+"date": "2026-11-18",
+"from": 0.0302582931,
+"to": 0.0169114779,
+"why": "R9.2 (the rule, Jake 2026-11-17): Hyperliquid's team wallet 0x43e9abea… (238.25M, unvested but staked on 23 validators and earning) and Community Grants' spot (0.11M) are counted in circulating, off the free float — docs/r8_rule_audit.md §7; circulating about 301M -> about 540M, the float unchanged"
+}
+],
+"reader|Comparison|Lock rate, % of circulating": [
+{
+"date": "2026-11-18",
+"from": 0.67029752,
+"to": 0.374631896,
+"why": "R9.2 (the rule, Jake 2026-11-17): Hyperliquid's team wallet 0x43e9abea… (238.25M, unvested but staked on 23 validators and earning) and Community Grants' spot (0.11M) are counted in circulating, off the free float — docs/r8_rule_audit.md §7; circulating about 301M -> about 540M, the float unchanged"
+}
+],
+"reader|Comparison|Net holder yield": [
+{
+"date": "2026-11-18",
+"from": -0.0612221974,
+"to": -0.0342173247,
+"why": "R9.2 (the rule, Jake 2026-11-17): Hyperliquid's team wallet 0x43e9abea… (238.25M, unvested but staked on 23 validators and earning) and Community Grants' spot (0.11M) are counted in circulating, off the free float — docs/r8_rule_audit.md §7; circulating about 301M -> about 540M, the float unchanged"
+}
+],
+"reader|Comparison|Revenue ÷ market cap, a year": [
+{
+"date": "2026-11-18",
+"from": 0.0300258323,
+"to": 0.0167815547,
+"why": "R9.2 (the rule, Jake 2026-11-17): Hyperliquid's team wallet 0x43e9abea… (238.25M, unvested but staked on 23 validators and earning) and Community Grants' spot (0.11M) are counted in circulating, off the free float — docs/r8_rule_audit.md §7; circulating about 301M -> about 540M, the float unchanged"
+}
+],
+"reader|Summary|Holder value yield": [
+{
+"date": "2026-11-18",
+"from": 0.0302582931,
+"to": 0.0169114779,
+"why": "R9.2 (the rule, Jake 2026-11-17): Hyperliquid's team wallet 0x43e9abea… (238.25M, unvested but staked on 23 validators and earning) and Community Grants' spot (0.11M) are counted in circulating, off the free float — docs/r8_rule_audit.md §7; circulating about 301M -> about 540M, the float unchanged"
+}
+],
+"reader|Summary|Market cap": [
+{
+"date": "2026-11-18",
+"from": 24425467400.0,
+"to": 43702446000.0,
+"why": "R9.2 (the rule, Jake 2026-11-17): Hyperliquid's team wallet 0x43e9abea… (238.25M, unvested but staked on 23 validators and earning) and Community Grants' spot (0.11M) are counted in circulating, off the free float — docs/r8_rule_audit.md §7; circulating about 301M -> about 540M, the float unchanged"
+}
+],
+"reader|Summary|Net holder yield": [
+{
+"date": "2026-11-18",
+"from": -0.0612221974,
+"to": -0.0342173247,
+"why": "R9.2 (the rule, Jake 2026-11-17): Hyperliquid's team wallet 0x43e9abea… (238.25M, unvested but staked on 23 validators and earning) and Community Grants' spot (0.11M) are counted in circulating, off the free float — docs/r8_rule_audit.md §7; circulating about 301M -> about 540M, the float unchanged"
+}
+]
+}
+}

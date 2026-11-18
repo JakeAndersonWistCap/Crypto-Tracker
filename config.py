@@ -43809,3 +43809,61 @@ PROJECT_BY_NAME["Aerodrome"].setdefault("series_handover", {})["unlock_release_t
            "no wallet is out of its circulating (R8.1) — the unlock leg is a declared zero",
     "composition_change": "the falls of the filing wallets' liquid AERO and stakes -> 0 (those wallets are circulating)",
     "declared": "2026-11-17"}
+
+
+# ---------------------------------------------------------------------------------------------------------------------
+# R9.2 HYPERLIQUID UNDER THE RULE (Jake 2026-11-17). docs/r8_rule_audit.md §7 (info API, read 2026-11-17):
+#   IN, off float: the team wallet 0x43e9abea… 238,246,928.78 HYPE — unvested, but STAKED across 23 validators and
+#     earning (delegatorRewards 14,232.22 HYPE on the last day, 439,864 in 30 days): "earns nothing" fails;
+#     Community Grants' spot 0xa20fcfa0… 105,001.00 — idle, but a keyed wallet the Foundation can move.
+#   OUT: futureEmissions 409,852,654.15 (the protocol's unreleased reserve: no wallet, idle — all three hold).
+#   BURNED: the Assistance Fund 0xfefe…fefe 49,030,908.79 (a system address with no key; its ledger since 2025-12-27
+#     holds 3,082 entries, all inbound) and the 0x0 / 0x…dEaD dust.
+# Circulating about 301.2M -> about 539.5M; the free float does not move (the team stake and the spot come off it).
+# The team's vesting payouts stay unlocks (UNLOCK_STOCKS, R9.3). The whole series is restated: a declared handover.
+CIRC_RELEASED_STAKED["Hyperliquid"]["rule_point"] = "the rule: team + foundation + grants in"
+declare_rule_in("Hyperliquid", ("team_wallet_tokens", "excluded_wallets_spot_tokens"),
+                "docs/r8_rule_audit.md §7: the team wallet 0x43e9abea… is staked across 23 validators and earned 439,864 "
+                "HYPE in 30 days (delegatorRewards); Grants' spot 0xa20fcfa0… is a keyed wallet",
+                circulating=(301_180_000, 539_530_000))
+PROJECT_BY_NAME["Hyperliquid"]["series_handover"]["circulating_supply_first_party"]["ordered_points"] = tuple(
+    PROJECT_BY_NAME["Hyperliquid"]["series_handover"]["circulating_supply_first_party"]["ordered_points"]) + (
+    "derived:released_staked[the rule: team + foundation + grants in]",)
+HYPERLIQUID_RULE_REFERENCES = {
+    "read_on": "2026-11-17", "ours": 539_530_000,
+    "tokendetails": (301_598_445, {"team wallet 0x43e9abea… (staked, earning)": 238_246_929,
+                                   "the HyperEVM burn (out of ours)": -318_850}),
+    "coingecko": (237_713_007, {"team wallet 0x43e9abea…": 238_246_929, "Hyper Foundation stake 0xd57ecca4…": 60_635_074,
+                                "Community Grants 0xa20fcfa0… (stake + spot)": 2_979_536}),
+    "coinmarketcap": (252_567_398, {"team wallet": 238_246_929, "Foundation stake": 60_635_074, "Grants": 2_979_536,
+                                    "CoinMarketCap counts 14.85M more than CoinGecko on a basis it does not publish":
+                                    -14_854_391}),
+    "basis": "a rule-basis difference: the references leave out staked issuer-side HYPE, which the rule counts in "
+             "circulating (off the float)"}
+CREDIBILITY["Hyperliquid"]["in_circ"]["ref"]["why"] += (
+    " R9.2 (THE RULE, Jake 2026-11-17): ours also counts the team wallet 0x43e9abea… (238.25M, unvested but staked and "
+    "earning) and Community Grants' spot (0.11M) — in circulating, off the float. Against tokenDetails 301.60M: +238.25M "
+    "team, −0.32M HyperEVM burn; against CoinGecko 237.71M: + team 238.25M + Foundation stake 60.64M + Grants 2.98M; "
+    "CoinMarketCap 252.57M counts 14.85M more than CoinGecko on an unpublished basis. A rule-basis difference, every "
+    "gap named by wallet (config.HYPERLIQUID_RULE_REFERENCES).")
+
+
+# R9.2 THE DECLARED MOVES OF THE FROZEN CELLS (tests/fixtures/frozen_moves_r9.json): every cell the rule moved on the
+# 15-dump build, per project, each step with its date, the value it now reads, the value before and why — appended to
+# the cell's record (declare_later_move), every earlier declaration kept.
+def _load_r9_moves() -> int:
+    import json as _json
+    from pathlib import Path as _Path
+    p = _Path(__file__).resolve().parent / "tests" / "fixtures" / "frozen_moves_r9.json"
+    if not p.exists():
+        return 0
+    n = 0
+    for proj, cells in _json.loads(p.read_text(encoding="utf-8")).items():
+        for key, steps in cells.items():
+            for st in steps:
+                declare_later_move(proj, key, st["to"], st["why"], st["date"])
+                n += 1
+    return n
+
+
+R9_MOVES_DECLARED = _load_r9_moves()

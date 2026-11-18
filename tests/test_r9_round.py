@@ -86,3 +86,46 @@ def test_2_a_day_missing_a_rule_leg_has_no_off_float_figure():
     bw._rule_in_views(g)
     s = g[("Aerodrome", "rule_in_off_float_tokens")].set_index("date")["value"]
     assert list(s.index) == [pd.Timestamp("2026-11-10")] and s.iloc[0] == pytest.approx(540e6)
+
+
+# ============================================================================= 2: Hyperliquid under the rule
+def test_2_hyperliquid_team_and_spot_are_counted_in_and_the_float_does_not_move(monkeypatch):
+    monkeypatch.setattr(bw, "scoped_projects", lambda: [config.PROJECT_BY_NAME["Hyperliquid"]])
+    d = [("2026-11-14", 0), ("2026-11-15", 0)]
+    mk = lambda m, v, src="hypercore_info:x": _g("Hyperliquid", m, [(x, v) for x, _ in d], src)  # noqa: E731
+    g = {("Hyperliquid", "circulating_supply_first_party"): mk(
+            "circulating_supply_first_party", 237.7e6, "hypercore_info:tokenDetails.circulatingSupply-exclude_wallets-hyperevm_burn"),
+         ("Hyperliquid", "excluded_wallets_tokens"): mk("excluded_wallets_tokens", 63.6e6),
+         ("Hyperliquid", "staked_noncirculating_tokens"): mk("staked_noncirculating_tokens", 301.7e6),
+         ("Hyperliquid", "team_wallet_tokens"): mk("team_wallet_tokens", 238.2e6)}
+    bw._released_staked_views(g)
+    circ = g[("Hyperliquid", "circulating_supply_first_party")]["value"].iloc[-1]
+    # stored net of Foundation + Grants: + their stake 63.5 + their spot 0.1 + the team 238.2
+    assert circ == pytest.approx(237.7e6 + 63.6e6 + 238.2e6, rel=1e-9)
+    assert "the rule" in g[("Hyperliquid", "circulating_supply_first_party")]["source"].iloc[-1]
+    bw._rule_in_views(g)
+    off = g[("Hyperliquid", "rule_in_off_float_tokens")]["value"].iloc[-1]
+    assert off == pytest.approx(238.2e6 + 0.1e6, rel=1e-6)           # the team stake and the spot leave the float
+    spec = config.RULE_IN["Hyperliquid"]
+    assert spec["legs"] == ("team_wallet_tokens", "excluded_wallets_spot_tokens") and "earned" in spec["evidence"]
+    assert config.UNLOCK_STOCKS["Hyperliquid"] == ("excluded_wallets_spot_tokens", "team_wallet_tokens")   # R9.3
+
+
+def test_2_hyperliquid_references_are_named_by_wallet():
+    r = config.HYPERLIQUID_RULE_REFERENCES
+    for key in ("tokendetails", "coingecko", "coinmarketcap"):
+        ref, legs = r[key]
+        assert ref + sum(legs.values()) == pytest.approx(r["ours"], rel=0.005), key
+    assert "rule-basis difference" in r["basis"] and "R9.2" in config.CREDIBILITY["Hyperliquid"]["in_circ"]["ref"]["why"]
+
+
+def test_2_every_declared_r9_move_keeps_the_earlier_declarations():
+    import json
+    rec = json.loads((ROOT / "tests" / "fixtures" / "frozen_moves_r9.json").read_text(encoding="utf-8"))
+    assert config.R9_MOVES_DECLARED == sum(len(s) for cells in rec.values() for s in cells.values()) > 0
+    for proj, cells in rec.items():
+        for key, steps in cells.items():
+            d = config.FROZEN_MOVES[proj][key]
+            last = (d.get("then") or [d])[-1]
+            assert last["to"] == steps[-1]["to"] and last["why"].startswith("R9."), (proj, key)
+            assert all(s["why"] and s["date"] and "from" in s for s in steps)

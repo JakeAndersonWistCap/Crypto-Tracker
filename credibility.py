@@ -2776,6 +2776,19 @@ def price_inputs(name: str) -> dict:
     return out
 
 
+def _rule_minus(name: str) -> tuple:
+    """R9.2: the issuer-side stock the rule counts IN our circulating and the references leave out — taken off OURS in
+    the like-for-like comparison (a declared rule-basis difference: config.RULE_IN names it wallet by wallet)."""
+    spec = config.circulating_onchain(name) or {}
+    return ("rule_in_off_float_tokens",) if (name in config.RULE_IN and spec.get("status") in ("established", "partial")
+                                             and config.RULE_IN[name].get("reference_leaves_out", True)) else ()
+
+
+def _rule_what(name: str) -> str:
+    return (" − rule_in_off_float_tokens (the issuer / treasury stock THE RULE counts in circulating and the reference "
+            "leaves out: a declared rule-basis difference, named by wallet in config.RULE_IN)") if _rule_minus(name) else ""
+
+
 def circulating_input(name: str) -> dict:
     """The circulating row every project gets. THE POLICY (Jake, 2026-10-07): the figure the ratios use is the
     project's own where one exists, else CoinGecko's; OUR ON-CHAIN SET is the credibility reference — a gap beyond
@@ -2875,12 +2888,16 @@ def circulating_input(name: str) -> dict:
         # PR1B.4: the wallets ours counts and CoinGecko EXCLUDES, out of ours from the day CoinGecko is on that basis
         excl, frm = config.coingecko_excludes_holdings(name), config.coingecko_excludes_from(name)
         dated = {"dated_minus": excl, "minus_from": frm} if excl else {}
+        rm = _rule_minus(name)
         return {"what": f"Circulating as CoinGecko counts it = OURS ({ours_m}) + {' + '.join(counts)} (documented "
                         f"wallets our convention excludes and CoinGecko counts)"
                         + (", on CoinGecko's own total (− total_supply + total_supply_coingecko)" if cg_total else "")
                         + (f" − {' − '.join(excl)} (wallets ours counts and CoinGecko excludes, from {frm})"
-                           if excl else ""),
-                "ours": ({"py": "now_combo", "args": {"metrics": (*a, "total_supply_coingecko"),
+                           if excl else "") + _rule_what(name),
+                "ours": ({"py": "now_combo", "args": {"metrics": (*a, "total_supply_coingecko") if cg_total else a,
+                                                      "minus": (("total_supply",) if cg_total else ()) + rm, **dated}}
+                         if rm else
+                         {"py": "now_combo", "args": {"metrics": (*a, "total_supply_coingecko"),
                                                       "minus": ("total_supply",), **dated}} if cg_total else
                          {"py": "now_combo", "args": {"metrics": a, **dated}} if excl else
                          {"py": "now_sum", "args": {"metrics": a}}),
@@ -2902,6 +2919,10 @@ def circulating_input(name: str) -> dict:
                                         "in_circ_static."}}
     if ours_m != "circulating_supply":           # first-party / on-chain chosen, no other set: CoinGecko
         static = spec.get("static_cross_check")
+        rm = _rule_minus(name)
+        if rm and ours_m == "circulating_supply_onchain":
+            base = {**base, "what": base["what"] + _rule_what(name),
+                    "ours": {"py": "now_combo", "args": {"metrics": (ours_m,), "minus": rm}}}
         return {**base, "ref": {"metric": "circulating_supply", "window": "now", "tol": 2.0,
                                 "source": "CoinGecko circulating_supply (an aggregator's own count)"
                                           + (f" — a STATIC figure ({static['who']}: {static['figure']:,}); "

@@ -4927,10 +4927,16 @@ def _released_staked_views(groups: dict) -> None:
         net = g.loc[idx, "source"].astype(str).str.contains("-exclude_wallets", regex=False)
         val = g.loc[idx, "value"].astype(float).where(~net, g.loc[idx, "value"].astype(float) + staked_out)
         val = val.where(net, g.loc[idx, "value"].astype(float) - spot)
+        point = spec["point"]
+        if name in config.RULE_IN:
+            # R9.2 (the rule, Jake 2026-11-17): the team wallet (unvested, but staked and earning) and the two
+            # wallets' spot (keyed wallets the Foundation can move) are circulating too — off the float (RULE_IN)
+            val = val + spot + team.reindex(idx)
+            point = spec["rule_point"]
         cols = groups[key].columns
         groups[key] = _as_stored(pd.DataFrame(
             {"date": idx, "project": name, "metric": spec["metric"], "value": val.values, "tier": 1,
-             "source": f"derived:released_staked[{spec['point']}]"}), cols)
+             "source": f"derived:released_staked[{point}]"}), cols)
         groups[(name, spec["spot_metric"])] = _as_stored(pd.DataFrame(
             {"date": legs, "project": name, "metric": spec["spot_metric"], "value": spot_all_days.values, "tier": 1,
              "source": "derived:released_staked[spot]"}), cols)
@@ -12971,6 +12977,11 @@ def _cp_cols(R: Refs, data_by_key: dict) -> list[tuple]:
                        if p["name"] in config.INSIDER_INSIDE_CIRCULATING else "=0" if (config.CIRCULATING_ONCHAIN.get(p["name"]) or {}).get("status") == "established"
                        and config.circulating_primary_metric(p["name"]) in ("circulating_supply_onchain",)
                        # R7.C1: the Foundation + Grants STAKE is insider-held and inside circulating (released)
+                       # R9.2: under the rule the team wallet and the two wallets' spot are inside circulating too
+                       else calc(f"({R.D(r, config.CIRC_RELEASED_STAKED[p['name']]['held'], 'now')}"
+                                 f"+{R.D(r, config.CIRC_RELEASED_STAKED[p['name']]['team'], 'now')})"
+                                 f"/({circ(r, p)})") if (p["name"] in config.CIRC_RELEASED_STAKED
+                                                         and p["name"] in config.RULE_IN)
                        else calc(f"({R.D(r, config.CIRC_RELEASED_STAKED[p['name']]['held'], 'now')}"
                                  f"-{R.D(r, config.CIRC_RELEASED_STAKED[p['name']]['spot_metric'], 'now')})"
                                  f"/({circ(r, p)})") if p["name"] in config.CIRC_RELEASED_STAKED
