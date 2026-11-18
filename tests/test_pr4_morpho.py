@@ -34,7 +34,7 @@ def _cell(cells, head):
 def test_0a_maple_is_frozen_with_round_3_and_3bs_moves_declared(built):
     assert config.FROZEN_PROJECTS["Maple"]["baseline"] == "tests/fixtures/frozen_maple.json"
     base = json.loads(pf.baseline_path("Maple").read_text(encoding="utf-8"))
-    moves = config.FROZEN_MOVES["Maple"]
+    moves = config.frozen_moves_before_r9("Maple")        # R9.2's moves (the rule) are their own record
     assert len(base) == 360 and len(moves) == 46
     assert all(d["date"] == "2026-11-11" and d["why"].startswith(("PR3.", "PR3B.")) for d in moves.values())
     assert all(base[k] == pf._norm(d["to"]) for k, d in moves.items())     # the baseline holds every declared value
@@ -129,7 +129,10 @@ def test_1_unlocks_follow_the_set_circulating_subtracts_and_never_count_claims_t
     swc = config.CIRCULATING_ONCHAIN["Morpho"]["subtract_when_complete"]
     monkeypatch.setitem(swc, "in_force", False)
     # PR4C.1: the relocked stock is a leg of the release too (each day's vesting is an unlock); kept out of this check
-    monkeypatch.setitem(config.CIRCULATING_ONCHAIN["Morpho"], "subtract", ("noncirculating_holding_tokens",))
+    # R9.3: the unlock legs are the PINNED vesting stocks (config.UNLOCK_STOCKS) — they no longer follow what
+    # circulating subtracts, since the rule counts the DAO in circulating while its releases stay unlocks
+    monkeypatch.setitem(config.UNLOCK_STOCKS, "Morpho", ("noncirculating_holding_tokens",))
+    assert "noncirculating_holding_tokens" in config.rule_in_legs("Morpho")
     assert config.unlock_stock_metrics("Morpho") == ("noncirculating_holding_tokens",)
     assert config.release_less("Morpho") == ((), False)
     monkeypatch.setitem(swc, "in_force", True)
@@ -160,16 +163,17 @@ def test_1_unlocks_follow_the_set_circulating_subtracts_and_never_count_claims_t
 
 
 def test_1_on_the_dumps_circulating_is_total_less_the_dao_pending_and_the_float_takes_the_entities(morpho):
-    """The dumps hold no morpho_undistributed_tokens rows: the switch is PENDING (said on the cell) and circulating is
-    total − the DAO − the relocked MORPHO modelled for 2026-10-13 (PR4C.1: 121.2M) = 574.8M; the released entities
-    (148.7M) leave the float: 426.05M."""
+    """The dumps hold no morpho_undistributed_tokens rows: the switch is PENDING (said on the cell). R9.2 (the rule):
+    the DAO is IN circulating — circulating is total − the relocked MORPHO modelled for 2026-10-13 (PR4C.1: 121.2M) =
+    878.8M (was 574.8M with the DAO out); the DAO (304.0M) and the released entities (148.7M) leave the float, which
+    does not move: 426.05M."""
     circ = _cell(morpho, "Circulating supply (tokens)")
     flt = _cell(morpho, "TRADEABLE FLOAT")
-    assert circ == pytest.approx(696_001_146.74 - 121_200_000, abs=1)
+    assert circ == pytest.approx(1_000_000_000 - 121_200_000, abs=1)
     assert flt == pytest.approx(547_252_376.94 - 121_200_000, abs=1)
     assert _cell(morpho, "Tradeable float ÷ circulating") == pytest.approx(flt / circ, rel=1e-9)
     assert morpho["reader|A2 Coordination|Free float (tokens)"] == pytest.approx(426_052_377, abs=1)
-    assert morpho["reader|A2 Coordination|Circulating supply"] == pytest.approx(574_801_147, abs=1)
+    assert morpho["reader|A2 Coordination|Circulating supply"] == pytest.approx(878_800_000, abs=1)
     note = config.circulating_rule_note("Morpho")
     assert "DECLARED HANDOVER" in note and "PENDING" in note and "Arbitrum" in note
 

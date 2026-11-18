@@ -124,7 +124,7 @@ def test_b_sky_and_hyperliquid_are_frozen_with_their_rounds_moves_on_record():
     assert len(config.FROZEN_BEFORE_R7D) == 5
     for p, n, rounds in (("Sky", 482, {"R6", "R7B", "R7C"}), ("Hyperliquid", 616, {"R7", "R7B", "R7C", "R7D"})):
         base = json.loads(pf.baseline_path(p).read_text(encoding="utf-8"))
-        moves = config.FROZEN_MOVES[p]
+        moves = config.frozen_moves_before_r9(p)          # R9.2's moves (the rule) are their own record
         assert len(base) == n and len(moves) > 200
         assert all(d["why"] and d["date"] and "from" in d for d in moves.values())
         assert all(base[k] == pf._norm(d["to"]) for k, d in moves.items())      # the baseline holds every declared value

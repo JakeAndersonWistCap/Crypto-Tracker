@@ -15049,8 +15049,7 @@ def flow_statements(groups: dict, asof) -> list[dict]:
                  "opening + minted + released − returned − burned", ""),
                 ("Closing circulating", tok["close"], "tokens", "circulating_supply_used (end of the quarter)", ""),
                 ("Residual (closing − expected)", tok["residual"], "tokens", "", note_tok),
-                (("memo: minted straight to issuer-side wallets (insider emission — INSIDE the lines above: under the rule "
-                  "those wallets are circulating)" if _rule_flow(name) else
+                ((config.FLOW_LEG_LINES["m_rule"] if _rule_flow(name) else
                   "memo: minted straight to issuer-side wallets (insider emission, not circulating until released)"),
                  [(_flow_sum(d("issuer_mint_tokens"), *_flow_window(asof, k))[0]
                    if (name, "issuer_mint_tokens") in groups else None) for k in range(5)], "tokens",

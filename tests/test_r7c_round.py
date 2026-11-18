@@ -119,7 +119,9 @@ def _val(built, tab, project, pred):
 
 def test_a1_the_two_lost_headlines_hold_values_and_hyperliquid_balances(built):
     pool = _val(built, A4, "Hyperliquid", lambda h: h.startswith("Pool release Q0 (tokens)"))
-    assert isinstance(pool, float) and pool == pytest.approx(3.8166e6, rel=0.05)     # the guard's 3.8166e6, ±5%
+    # R9.2 (the rule): the team wallet is circulating, so its payouts are no release INTO circulation (they stay the
+    # unlock leg, R9.3) — what enters is the staking rewards: 214,122 on the dump's stored days (was 3.8166e6)
+    assert isinstance(pool, float) and pool == pytest.approx(214_122.0, rel=0.05)
     nrr = _val(built, A1, "Hyperliquid", lambda h: h.startswith("NRR ON TRADING THROUGHPUT"))
     assert isinstance(nrr, float) and 0 < nrr < 0.05
     assert "Hyperliquid" not in reader.flow_blocks_of(built["audit"], bw)
@@ -134,7 +136,8 @@ def test_a1_sky_float_forms_on_its_refreshed_dump(built):
 # ============================================================================== B1: Sky's insider share of circulating
 def test_b1_sky_insider_share_is_the_endowments_over_circulating(built):
     spec = config.INSIDER_INSIDE_CIRCULATING["Sky"]
-    assert spec["held"] == "sky_endowment_tokens" and "R7B.B1" in spec["decided"]
+    # R9.2: + the converter's accrued fee and the SKY backing the Pause Proxy's MKR (in circulating by the rule)
+    assert spec["held"][0] == "sky_endowment_tokens" and "R7B.B1" in spec["decided"]
     share = _val(built, CP, "Sky", lambda h: h.startswith("Insider share of circulating"))
     c = _val(built, CP, "Sky", lambda h: h.startswith("Circulating supply (tokens)"))
     import real_dump

@@ -427,3 +427,26 @@ def test_2_an_addback_switch_in_force_adds_nothing_under_the_rule_and_leaves_the
         assert off + own == pytest.approx(43_620_000.0)                     # the whole set leaves the float, once
     finally:
         swc.update(keep)
+
+
+def test_2_sky_keeps_its_flow_statement_lines():
+    # the rule un-subtracts no Sky wallet (its legs are added from the converter, which stays outside circulating)
+    assert bw._rule_flow("Sky") is False and all(bw._rule_flow(n) for n in ("Uniswap", "Morpho", "Maple", "Pendle"))
+
+
+def test_2_the_daily_coingecko_check_is_like_for_like_not_a_review_row_for_the_rule():
+    """Uniswap's live reads of 2026-11-05: under the rule ours is total − burned (886.2M) and CoinGecko's is that less
+    the Timelock (624.0M). The fetch-time check compares CoinGecko with ours LESS the rule's wallets — no review row for
+    a difference the rule declares; the figure every ratio uses still counts the Timelock in."""
+    from fetch import circulating
+    from fetch.base import FetchOutput
+    live = {"total_supply_gross": 1_000_000_000.0, "burn_address_balance": 113_781_581.21,
+            "treasury_holding_tokens": 262_247_996.31, "noncirculating_holding_tokens": 219_165.09}
+    d = pd.Timestamp("2026-10-13")
+    h = pd.DataFrame([{"date": d, "project": "Uniswap", "metric": m, "value": v} for m, v in {
+        **live, "circulating_supply": 886_218_418.79 - 262_247_996.31 - 219_165.09}.items()])
+    in_use, like = circulating.series(h, "Uniswap").iloc[-1], circulating.series(h, "Uniswap", rule=False).iloc[-1]
+    assert in_use == pytest.approx(1e9 - 113_781_581.21) and in_use - like == pytest.approx(262_247_996.31 + 219_165.09)
+    out = FetchOutput()
+    circulating.check(out, h, [config.PROJECT_BY_NAME["Uniswap"]])
+    assert not [r for r in out.review if r["reason"] == "onchain_vs_coingecko"]

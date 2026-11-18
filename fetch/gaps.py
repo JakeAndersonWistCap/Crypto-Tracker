@@ -689,6 +689,14 @@ def _tier_note(project: dict, metric: str, scrape_entries: dict) -> tuple[str, s
                 "Voter.totalWeight) is configured but stored nothing this run",
                 f"Read the aero_voter lines in the Run Log for {name}; `python check_offline_items.py "
                 f"aerodrome_voter_rewards` runs the same read and prints each step.")
+    # R9.4: the incentives an issuer wallet created — written by the v3 epoch tier only (fetch/aero_v3.py: the creator
+    # of each IncentiveStreaming programme); the legacy voter never read a funder
+    if ve and metric == ve.get("issuer_bribes_metric"):
+        return ("written by the v3 voter-epoch read only (fetch/aero_v3.py epoch tier: each incentive programme's "
+                "creator against Aerodrome's filing wallets) — no v3 epoch is stored yet, and the legacy voter's "
+                "epochs carry no funder",
+                f"Nothing to do by hand: the aero_v3_epoch tier continues its log scan each run (read its line in the "
+                f"Run Log for {name}); a legacy epoch stays without this figure.")
     vi = (project.get("nearblocks") or {}).get("validators_info") or {}
     if vi and metric == vi.get("metric"):
         return (f"NearBlocks {vi['path']} ({vi['field']}, once a day) is configured but stored nothing this run",

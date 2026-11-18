@@ -15,7 +15,7 @@ def test_uniswap_burn_split_note_agrees_with_the_numbers():
 
 def test_every_round_1b_uniswap_move_is_declared_with_its_item_and_date():
     """PR1B.FREEZE: each of the 68 moves names the round-1B item that moved it, on 2026-11-09."""
-    moves = config.FROZEN_MOVES["Uniswap"]
+    moves = config.frozen_moves_before_r9("Uniswap")      # R9.2's moves (the rule) are their own record
     assert len(moves) == 68
     for key, d in moves.items():
         assert key.split("|", 1)[0] in ("audit", "reader"), key

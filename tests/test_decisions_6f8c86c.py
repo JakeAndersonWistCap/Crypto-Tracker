@@ -125,7 +125,8 @@ def test_sky_mkr_backing_is_circulating_and_the_vest_rate_is_stored():
     from fetch.base import FetchOutput
     from fetch.circulating import series
     from fetch.sky_mkr import SkyMkr
-    assert config.CIRCULATING_ONCHAIN["Sky"]["add"] == ("sky_mkr_nonissuer_backing_tokens",)
+    # R9.2: + the converter's accrued fee and the Pause Proxy's MKR backing (derived from stored series)
+    assert config.CIRCULATING_ONCHAIN["Sky"]["add"][0] == "sky_mkr_nonissuer_backing_tokens"
     assert config.unlock_stock_metrics("Sky") == ()                       # decision 2b
     out = FetchOutput()
     SkyMkr(reader=lambda spec: SKY_READ).run([config.PROJECT_BY_NAME["Sky"]], None, out)
@@ -137,10 +138,14 @@ def test_sky_mkr_backing_is_circulating_and_the_vest_rate_is_stored():
     d = pd.Timestamp("2026-10-12")
     h = pd.DataFrame([{"date": d, "project": "Sky", "metric": m, "value": v} for m, v in (
         ("total_supply", 23_459_804_203.61), ("treasury_holding_tokens", 100.0), ("noncirculating_holding_tokens", 50.0),
-        ("sky_mkr_nonissuer_backing_tokens", f.loc["sky_mkr_nonissuer_backing_tokens", "value"]))])
+        ("sky_mkr_nonissuer_backing_tokens", f.loc["sky_mkr_nonissuer_backing_tokens", "value"]),
+        # R9.2 (the rule): the converter's accrued fee and the Pause Proxy's MKR backing are in circulating too
+        ("sky_converter_take_tokens", 40.0), ("sky_issuer_mkr_backing_tokens", 1.0))])
     # R6.3 (Jake 2026-11-16): the Pause Proxy (treasury_holding_tokens) is the held buyback, in circulating — only the
     # converters' reserve comes off
-    assert series(h, "Sky").iloc[-1] == pytest.approx(23_459_804_203.61 - 50 + 1_903_042_128.0, rel=1e-9)
+    assert series(h, "Sky").iloc[-1] == pytest.approx(23_459_804_203.61 - 50 + 1_903_042_128.0 + 41.0, rel=1e-9)
+    # a day without one of the rule's two legs computes nothing either
+    assert series(h[h["metric"] != "sky_converter_take_tokens"], "Sky").empty
     # a day without the backing read computes nothing (never a figure on a basis missing a leg)
     assert series(h[h["metric"] != "sky_mkr_nonissuer_backing_tokens"], "Sky").empty
 

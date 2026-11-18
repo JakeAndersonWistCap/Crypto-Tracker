@@ -89,7 +89,8 @@ def test_key_is_burned_over_emissions_plus_unlocks_for_every_a3_project(monkeypa
             continue
         f = bw._a3_key_col(bw.Refs(100, 10, ["2026-09"]), {})[1](5, p)
         assert '|buyback_burned_tokens"' in f and "|retired_buyback_tokens" not in f, p["name"]
-        assert ('|unlock_release_tokens"' in f) == bool(config.unlock_stock_metrics(p["name"])), p["name"]
+        # R9.3: an unlock leg forms from the vesting stocks or as a DECLARED zero (Aerodrome: no schedule in its docs)
+        assert ('|unlock_release_tokens"' in f) == config.has_unlock_leg(p["name"]), p["name"]
     hl = bw._a3_key_col(bw.Refs(100, 10, ["2026-09"]), {})[1](5, P["Hyperliquid"])
     assert '|emissions_tokens"' in hl and '|unlock_release_tokens"' in hl
     sky = bw._a3_key_col(bw.Refs(100, 10, ["2026-09"]), {})[1](5, P["Sky"])
@@ -190,8 +191,10 @@ def test_tradeable_float_leaves_out_the_held_buyback_and_takes_it_back_when_it_m
     assert config.held_buyback_float_metric("Maple") == "ssf_holdings_tokens"
     # PR3.3 (Jake 2026-11-11): the Fund's chart counts its Safe 0x58BE…, which circulating already subtracts — the
     # float subtracts the chart LESS the Safe (it took the Safe out twice: 1,176,793,290 - 78,035,331)
-    vals = {("circulating_supply_used", "now"): 1_176_793_290.0, ("ssf_holdings_tokens", "now"): 78_035_331.0,
-            ("maple_ssf_safe_tokens", "now"): 48_624_987.59}
+    # R9.2 (the rule): the DAO multisig and the registry wallets are IN circulating (1,267,875,000) and leave the float
+    # as the rule's stock (91,081,710 on the dumps) — the float is what it was
+    vals = {("circulating_supply_used", "now"): 1_267_875_000.0, ("ssf_holdings_tokens", "now"): 78_035_331.0,
+            ("maple_ssf_safe_tokens", "now"): 48_624_987.59, ("rule_in_off_float_tokens", "now"): 91_081_710.0}
     R = FakeRefs(vals)
     f = "=" + bw._cp_float(R, 5, maple)
     assert evaluate(f, vals, R) == pytest.approx(1_176_793_290.0 - (78_035_331.0 - 48_624_987.59))
@@ -220,7 +223,8 @@ def test_buying_pressure_is_every_market_buyback_annualised_over_tradeable_float
     col = bw._buying_pressure_col(FakeRefs({}))
     assert col[0] == bw.BUYING_PRESSURE_HEAD and col[2] == bw.FMT_PCT
     vals = {("actual_buyback_tokens", "q0"): 2_000_000.0, **days("actual_buyback_tokens"),
-            ("circulating_supply_used", "now"): 330_000_000.0, ("locked_tokens", "now"): 400_000_000.0}
+            ("circulating_supply_used", "now"): 330_000_000.0, ("locked_tokens", "now"): 400_000_000.0,
+            ("rule_in_off_float_tokens", "now"): 100_000.0}       # R9.2: the rule's issuer-held stock, off the float
     for m in config.locked_excluded_metrics("Hyperliquid"):
         vals[(m, "now")] = 300_000_000.0
     R = FakeRefs(vals)
@@ -231,7 +235,9 @@ def test_buying_pressure_is_every_market_buyback_annualised_over_tradeable_float
     # Maple: the whole buyback (all of it held) counts, and the float leaves the Fund out; its monthly buyback is
     # annualised by events (12 a year)
     mv = {("actual_buyback_tokens", "q0"): 4_029_134.43, ("actual_buyback_tokens", "q0_events"): 3.0,
-          **days("actual_buyback_tokens", 92.0), ("circulating_supply_used", "now"): 1_176_793_290.0,
+          # R9.2 (the rule): circulating counts the DAO multisig and registry wallets (91,081,710), off the float
+          **days("actual_buyback_tokens", 92.0), ("circulating_supply_used", "now"): 1_267_875_000.0,
+          ("rule_in_off_float_tokens", "now"): 91_081_710.0,
           ("ssf_holdings_tokens", "now"): 78_035_331.0, ("maple_ssf_safe_tokens", "now"): 48_624_987.59}
     R = FakeRefs(mv)
     v = evaluate(bw._buying_pressure_col(R)[1](5, P["Maple"]), mv, R)
@@ -259,8 +265,12 @@ def test_buying_pressure_is_every_market_buyback_annualised_over_tradeable_float
 # R7C.A1 (Jake 2026-11-16, decision 1b): Sky's and Hyperliquid's dumps were refreshed from his store exports (more
 # stored history up to the same 10-13 as-of), so their figures are re-pinned on the refreshed dumps (were 0.024084003858726048
 # and 0.030133419313739723); the four other projects' dumps did not change and their pins hold to 1e-9.
-BEFORE_HVY = {"Maple": 0.009202065513863445, "Sky": 0.02447713721663361, "Hyperliquid": 0.030258293116699385,
-              "Pendle": 0.01114886645183712, "Chainlink": 0.005996886350660165, "Near": 0.0022805223703844632}
+# R9.2 (the rule, Jake 2026-11-17): the four frozen projects' market cap is on the larger circulating (issuer / treasury
+# wallets in, off the float), so their yield is the same $ over a larger market cap — declared moves; was Maple
+# 0.009202065513863445, Sky 0.02447713721663361, Hyperliquid 0.030258293116699385, Pendle 0.01114886645183712.
+# Chainlink and Near are untouched.
+BEFORE_HVY = {"Maple": 0.008541006768956963, "Sky": 0.024434984263792533, "Hyperliquid": 0.01691147794146245,
+              "Pendle": 0.009420640711118868, "Chainlink": 0.005996886350660165, "Near": 0.0022805223703844632}
 
 
 @pytest.fixture(scope="module")

@@ -48,8 +48,10 @@ def _daily(h: pd.DataFrame, name: str, metric: str) -> pd.Series:
     return g.drop_duplicates("date", keep="last").set_index("date")["value"].astype(float).sort_index()
 
 
-def series(h: pd.DataFrame, name: str) -> pd.Series:
-    """The on-chain circulating figure per day, where the total and every excluded balance exist."""
+def series(h: pd.DataFrame, name: str, rule: bool = True) -> pd.Series:
+    """The on-chain circulating figure per day, where the total and every excluded balance exist.
+    rule=False (R9.2): the figure WITHOUT the wallets the rule counts in circulating (config.RULE_IN) — what the
+    references (CoinGecko, CoinMarketCap) are compared with like for like, since they leave those wallets out."""
     spec = config.circulating_onchain(name) or {}
     if spec.get("status") not in ("established", "partial"):
         return pd.Series(dtype=float)
@@ -57,7 +59,9 @@ def series(h: pd.DataFrame, name: str) -> pd.Series:
     if total.empty:
         return total
     out = total.copy()
-    rule_in = set(config.rule_in_legs(name))               # R9.2: issuer-side legs the rule counts IN circulating
+    # R9.2: issuer-side legs the rule counts IN circulating (none when the like-for-like figure is asked for)
+    rule_in = set(config.rule_in_legs(name)) if rule else set()
+    rule_added = set() if rule else set((getattr(config, "DERIVED_LEGS", {}).get(name) or {}))
     for m in spec.get("subtract") or ():
         if m in rule_in:
             continue
@@ -66,6 +70,8 @@ def series(h: pd.DataFrame, name: str) -> pd.Series:
     # ADDED BACK (Sky, Jake 2026-10-12 decision 2a): a subtracted reserve's part that backs a legacy token held by
     # non-issuers — circulating in the legacy form; only days it was read
     for m in spec.get("add") or ():
+        if m in rule_added:                                # a leg the rule added (Sky): not in the like-for-like figure
+            continue
         out = (out + _daily(h, name, m)).dropna()
     # DECLARED EXCLUSIONS (Aerodrome, Jake 2026-09-30): a fixed, documented amount — permanently
     # locked team tokens — that stays in total supply and in the locked total, but not circulating.
@@ -84,7 +90,9 @@ def check(out, h: pd.DataFrame, projects: list[dict]) -> None:
         st = spec.get("status")
         _check_first_party_against_set(out, h, name, spec)
         if st in ("established", "partial"):
-            ours = series(h, name)
+            # R9.2: the references leave the issuer / treasury wallets out, so the check is made on our figure LESS the
+            # wallets the rule counts in (a rule-basis difference is declared per project, never a daily review row)
+            ours = series(h, name, rule=False)
         elif st == "first_party":
             ours = _daily(h, name, spec["metric"])
         else:

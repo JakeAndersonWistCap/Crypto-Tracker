@@ -193,9 +193,10 @@ def test_c1_the_foundation_and_grants_stake_is_released_and_their_spot_stays_out
              ("2026-10-10", 237_900_000, "x"), ("2026-10-12", 237_900_000, "x")])}           # 10-13: no team read
     bw._released_staked_views(g)
     c = g[("Hyperliquid", "circulating_supply_first_party")].set_index("date")["value"]
-    spot = 63_500_000 - (301_300_000 - 237_900_000)                                       # 100,000 unstaked
-    assert c[pd.Timestamp("2026-10-10")] == pytest.approx(302_000_000 - spot)            # raw day: their spot out
-    assert c[pd.Timestamp("2026-10-12")] == pytest.approx(238_500_000 + 63_400_000)      # net day: their stake back
+    # R9.2 (the rule, Jake 2026-11-17): the team wallet (staked and earning) and the two wallets' spot (keyed wallets)
+    # are IN circulating too — off the float (was: their spot out, the team out)
+    assert c[pd.Timestamp("2026-10-10")] == pytest.approx(302_000_000 + 237_900_000)     # raw day: + the team
+    assert c[pd.Timestamp("2026-10-12")] == pytest.approx(238_500_000 + 63_500_000 + 237_900_000)   # net day: all back
     assert pd.Timestamp("2026-10-13") not in c.index                                      # a leg missing: no value
     assert g[("Hyperliquid", "circulating_supply_first_party")]["source"].nunique() == 1  # one basis
     assert config.unlock_stock_metrics("Hyperliquid") == ("excluded_wallets_spot_tokens", "team_wallet_tokens")

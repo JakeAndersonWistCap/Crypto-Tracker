@@ -218,8 +218,12 @@ def test_dumps_uniswap_one_off_is_in_y1_with_its_share_and_the_flow_statement_ba
     flows = wb["Flows"]
     burned = next(r for r in range(1, flows.max_row + 1) if flows.cell(r, 1).value == "Uniswap"
                   and flows.cell(r, 3).value == "− burned")
-    assert all((flows.cell(burned, c).value or 0) < 100_000_000 for c in range(4, 9)), \
-        "the issuer-side one-off stays out of the circulating statement's burned leg"
+    # R9.2 (the rule, Jake 2026-11-17): the Timelock is IN circulating, so the 100M it burned is a CIRCULATING burn — it
+    # is in the burned leg of the quarter it landed in (was: out of the leg, on a memo line), and the memo line is gone
+    assert sum(1 for c in range(4, 9) if (flows.cell(burned, c).value or 0) >= 100_000_000) == 1, \
+        "the Timelock's one-off is in the circulating statement's burned leg, once"
+    assert not any(flows.cell(r, 1).value == "Uniswap" and "one-off burn from issuer-side" in str(flows.cell(r, 3).value)
+                   for r in range(1, flows.max_row + 1))
     status = [flows.cell(r, c).value for r in range(1, flows.max_row + 1) if flows.cell(r, 1).value == "Uniswap"
               and flows.cell(r, 3).value == "Status" for c in range(4, 9)]
     assert not any(str(s).startswith("BROKEN") for s in status), status

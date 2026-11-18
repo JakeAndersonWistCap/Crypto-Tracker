@@ -79,14 +79,19 @@ def test_1_the_gauge_funding_netted_out_of_the_release_is_its_own_flows_line(mon
          ("Pendle", "treasury_holding_tokens"): _rows("treasury_holding_tokens", days, 300.0),
          ("Pendle", "noncirculating_holding_tokens"): _rows("noncirculating_holding_tokens", days, gov),
          ("Pendle", "issuer_to_gauges_tokens"): _rows("issuer_to_gauges_tokens", days, fund.values)}
-    circ = 281_527_448.0 - 300.0 - gov
+    # R9.2 (the rule, Jake 2026-11-17): the multisigs are IN circulating (off the float), so circulating is the total and
+    # their funding of the gauges is a movement inside it — the statement carries no funding line (R5.1's) and no
+    # issuer-release line, and balances; the funding is still netted out of the unlock leg (e), which did not change
+    circ = 281_527_448.0 + 0.0 * gov
     g[("Pendle", "circulating_supply_used")] = _rows("circulating_supply_used", days, circ,
                                                      "derived:circulating_used[circulating_supply_onchain]")
     bw._unlock_views(g)
     tf = {r["Line"]: r for r in bw.flow_statements(g, pd.Timestamp("2026-11-12"))
           if r["Project"] == "Pendle" and r["Statement"] == "Token flow"}
-    line = tf[config.FLOW_LESS_LINE["Pendle"]["label"]]
-    assert line["Series"] == config.FLOW_LESS_LINE["Pendle"]["series"]
+    assert config.FLOW_LESS_LINE["Pendle"]["label"] not in tf and "+ released from issuer wallets" not in tf
+    assert config.release_less("Pendle") == (("issuer_to_gauges_tokens",), False)
+    rel = g[("Pendle", "unlock_release_tokens")]["value"]
+    assert rel.sum() == pytest.approx(50_000.0 * int((days.day == 20).sum()), rel=1e-6)   # (e): the falls less the funding
     for lab in bw.trajectory.LABELS[:4]:
         assert abs(tf["Residual (closing − expected)"][lab]) < 1e-3, lab
         assert tf["Status"][lab].startswith("OK"), tf["Status"][lab]
@@ -199,7 +204,10 @@ def test_5b2_a_partial_day_of_the_insider_sum_is_a_hole_not_a_second_point():
 
 def test_5b3_the_coingecko_row_takes_the_released_wallets_out_like_for_like():
     import credibility as cr
-    rows = {"Pendle|circulating_supply_onchain": {"now": 245_655_386.0, "latest_date": "2026-11-15"},
+    # R9.2 (the rule): circulating is the total (the two multisigs in, 35,872,062, off the float as the rule's stock) —
+    # the float CoinGecko's figure is compared with is unchanged
+    rows = {"Pendle|circulating_supply_onchain": {"now": 281_527_448.0, "latest_date": "2026-11-15"},
+            "Pendle|rule_in_off_float_tokens": {"now": 35_872_062.0},
             "Pendle|locked_tokens": {"now": 30_626_250.0}, "Pendle|locked_tokens_legacy_vependle": {"now": 63_177_152.0},
             "Pendle|issuer_held_released_tokens": {"now": 7_744_419.0}}
     import build_workbook

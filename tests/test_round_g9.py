@@ -310,7 +310,8 @@ def test_d_included_and_no_such_flow_lines_render_as_declared(built):
     assert eth_m["Q0"] == 0.0 and "Jake's decision J1" in eth_m["Note"]
     hv = fl[("Chainlink", "Holder value recorded, NOT credited")]
     assert hv["Q0"] == 0.0 and hv["Note"].startswith("0 — no such flow")
-    uni_m = fl[("Uniswap", config.FLOW_LEG_LINES["m"])]
+    # R9.2: under the rule Uniswap's issuer-side wallets are circulating — the memo line says so in its label
+    uni_m = fl[("Uniswap", config.FLOW_LEG_LINES["m_rule"])]
     assert uni_m["Q0"] == 0.0 and uni_m["Series"] == "issuer_mint_tokens", "a MEASURED 0, not 'no such flow'"
 
 

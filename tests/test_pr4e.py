@@ -43,7 +43,9 @@ def _morpho_in_force(monkeypatch):
               ("Morpho", "emissions_tokens_claims_katana"): _rows("emissions_tokens_claims_katana", days, kat)}
     bw._modelled_lock_views(groups)
     reloc = groups[("Morpho", "morpho_relocked_tokens")].set_index("date")["value"].reindex(days).values
-    circ = 1e9 - hold - reloc - undist
+    # R9.2 (the rule, Jake 2026-11-17): the DAO and the distributors are IN circulating (off the float); only the
+    # relock stays out — was 1e9 − hold − reloc − undist
+    circ = 1e9 - reloc
     groups[("Morpho", "circulating_supply_used")] = _rows(
         "circulating_supply_used", days, circ, "derived:circulating_used[circulating_supply_onchain]")
     return groups, days, eth + base + legacy + arb + kat
@@ -60,38 +62,44 @@ def _token_flow(groups, drop_claims_line=False):
 
 
 def test_1_the_residual_was_the_claims_and_the_claims_line_balances_every_quarter(monkeypatch):
+    """R9.2 (the rule): the DAO's releases and the distributors' claims are movements INSIDE circulating — the statement
+    no longer carries the claims line (PR4E.1) or the issuer-release line; it balances on the relock's scheduled
+    releases alone, in every quarter. The unlock leg (e) is untouched: still the falls net of the claims."""
     groups, days, claims = _morpho_in_force(monkeypatch)
     tf = _token_flow(groups)
-    line = tf[bw.FLOW_CLAIMS_LABEL]
-    assert line["Series"] == bw.FLOW_CLAIMS_LEG
+    assert bw.FLOW_CLAIMS_LABEL not in tf and "+ released from issuer wallets" not in tf
+    line = next(v for k, v in tf.items() if k.startswith("+ released from the relock schedule"))
+    assert line["Series"] == "unlock_release_outside_tokens"
     asof = pd.Timestamp("2026-11-12")
-    cl = pd.Series(claims, index=days)
+    reloc = groups[("Morpho", "morpho_relocked_tokens")].set_index("date")["value"]
     for k, lab in enumerate(bw.trajectory.LABELS[:4]):
         start, end = bw._flow_window(asof, k)
-        want = float(cl[(cl.index > start) & (cl.index <= end)].sum())
-        taken = bw.UNLOCK_LESS_TAKEN[("Morpho", "unlock_release_tokens")]
-        # the line is what was netted out of (e) in the quarter: the stored claims, a claim taken on the next day when
-        # its own day had no release left (PR4F: five claims legs now share each day's release)
-        assert line[lab] == pytest.approx(float(taken[(taken.index > start) & (taken.index <= end)].sum()), rel=1e-12)
-        assert line[lab] == pytest.approx(want, rel=1e-3)
+        want = float(reloc[reloc.index <= start].iloc[-1] - reloc[reloc.index <= end].iloc[-1])   # the relock's fall
+        assert line[lab] == pytest.approx(want, rel=1e-9)
         assert abs(tf["Residual (closing − expected)"][lab]) < 1e-3, lab
         assert tf["Status"][lab].startswith("OK — balances within ±0.5%"), tf["Status"][lab]
-    # the release (e) stays net of the claims: they are (b), counted once (PR4.1)
-    rel = tf["+ released from issuer wallets"]
-    assert rel["Q0"] > 0 and rel["Q0"] < 3 * 3_000_000 + 219_000_000 * 90 / 730 + 1
+    # the release (e) stays net of the claims: they are (b), counted once (PR4.1) — the unlock leg did not change
+    rel = groups[("Morpho", "unlock_release_tokens")].set_index("date")["value"]
+    start, end = bw._flow_window(asof, 0)
+    q0 = float(rel[(rel.index > start) & (rel.index <= end)].sum())
+    assert q0 > 0 and q0 < 3 * 3_000_000 + 219_000_000 * 90 / 730 + 1
+    taken = bw.UNLOCK_LESS_TAKEN[("Morpho", "unlock_release_tokens")]
+    cl = pd.Series(claims, index=days)
+    assert float(taken[(taken.index > start) & (taken.index <= end)].sum()) == pytest.approx(
+        float(cl[(cl.index > start) & (cl.index <= end)].sum()), rel=1e-3)
 
 
 def test_1_without_the_line_the_residual_is_exactly_the_claims_netted_out(monkeypatch):
-    """The hypothesis, reproduced: the residual Jake saw (positive every quarter) is the claims netted out of (e)."""
+    """R9.2 (the rule): the claims no longer move circulating, so the statement as it stood on ca9a077 (no claims line)
+    leaves NO residual either — what Jake saw (positive every quarter: the claims) was a property of the old basis."""
     groups, days, claims = _morpho_in_force(monkeypatch)
     tf = _token_flow(groups, drop_claims_line=True)
     assert bw.FLOW_CLAIMS_LABEL not in tf
-    taken = bw.UNLOCK_LESS_TAKEN_LAST                                  # kept for this check before the line was dropped
+    taken = bw.UNLOCK_LESS_TAKEN_LAST                                  # the claims netted out of (e): still positive
     for k, lab in enumerate(bw.trajectory.LABELS[:4]):
         start, end = bw._flow_window(pd.Timestamp("2026-11-12"), k)
-        assert tf["Residual (closing − expected)"][lab] == pytest.approx(
-            float(taken[(taken.index > start) & (taken.index <= end)].sum()), rel=1e-9)
-        assert tf["Residual (closing − expected)"][lab] > 0                 # positive in every quarter, as Jake saw
+        assert float(taken[(taken.index > start) & (taken.index <= end)].sum()) > 0
+        assert abs(tf["Residual (closing − expected)"][lab]) < 1e-3, lab
 
 
 def test_1_pending_and_the_other_projects_carry_no_claims_line(monkeypatch):

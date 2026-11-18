@@ -111,10 +111,16 @@ def test_3_the_pause_proxy_is_a_held_buyback_in_circulating_and_off_float(monkey
     g = {("Sky", "total_supply"): _sg("total_supply", [(d, 23_460_000_000)]),
          ("Sky", "noncirculating_holding_tokens"): _sg("noncirculating_holding_tokens", [(d, 2_023_933_778.79)]),
          ("Sky", "sky_mkr_nonissuer_backing_tokens"): _sg("sky_mkr_nonissuer_backing_tokens", [(d, 1_000_000)]),
-         ("Sky", "treasury_holding_tokens"): _sg("treasury_holding_tokens", [(d, 33_265_937.27)])}
+         ("Sky", "treasury_holding_tokens"): _sg("treasury_holding_tokens", [(d, 33_265_937.27)]),
+         # R9.2 (the rule): the MKR reads the two derived legs follow from (the converter's accrued fee = its SKY −
+         # MKR outstanding x 24,000; the SKY backing the Pause Proxy's MKR)
+         ("Sky", "mkr_outstanding_tokens"): _sg("mkr_outstanding_tokens", [(d, 82_664.63)]),
+         ("Sky", "mkr_issuer_tokens"): _sg("mkr_issuer_tokens", [(d, 49.56)])}
+    bw._derived_leg_views(g)
     bw._circulating_views(g)
     c = g[("Sky", "circulating_supply_onchain")].set_index("date")["value"]
-    assert c.loc[pd.Timestamp(d)] == pytest.approx(23_460_000_000 - 2_023_933_778.79 + 1_000_000)
+    take, issuer_backing = 2_023_933_778.79 - 82_664.63 * 24_000, 49.56 * 24_000
+    assert c.loc[pd.Timestamp(d)] == pytest.approx(23_460_000_000 - 2_023_933_778.79 + 1_000_000 + take + issuer_backing)
 
 
 def test_3_the_held_buyback_comes_off_a3s_effective_float_on_sky_only():
@@ -122,8 +128,11 @@ def test_3_the_held_buyback_comes_off_a3s_effective_float_on_sky_only():
     R = bw.Refs(100, 10, ["2026-09"])
     sky = bw._effective_float_held(R, 5, config.PROJECT_BY_NAME["Sky"])
     assert sky.startswith("-IF(ISNUMBER(") and '|treasury_holding_tokens"' in sky and sky.endswith(",NA())")
-    for frozen in config.FROZEN_BEFORE_R7D:                      # the other frozen projects' formula does not change
-        assert bw._effective_float_held(R, 5, config.PROJECT_BY_NAME[frozen]) == ""
+    for frozen in config.FROZEN_BEFORE_R7D:
+        # R9.2 (the rule): what leaves their effective float is the stock the rule moved INTO circulating (so the float
+        # does not move) — never the Pause Proxy's leg, which is Sky's
+        f = bw._effective_float_held(R, 5, config.PROJECT_BY_NAME[frozen])
+        assert '|rule_in_off_float_tokens"' in f and "treasury_holding_tokens" not in f, (frozen, f)
 
 
 # ================================================================== 5: done_check — declared, with a source

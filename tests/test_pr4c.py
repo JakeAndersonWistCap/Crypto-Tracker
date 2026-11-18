@@ -53,7 +53,8 @@ def test_1_on_the_dumps_the_schedule_takes_121_2m_out_and_unlocks_27m(built):
     m = pf.cells(built["audit"], built["reader"], "Morpho")
     cp = "audit|CP Comparability|"
     circ = next(v for k, v in m.items() if k.startswith(cp + "Circulating supply (tokens)"))
-    assert circ == pytest.approx(696_001_146.74 - config.relocked_on("2026-10-13"), abs=1)
+    # R9.2 (the rule): the DAO is in circulating (off the float) — the schedule's 121.2M is what stays out of the total
+    assert circ == pytest.approx(1_000_000_000 - config.relocked_on("2026-10-13"), abs=1)
     unl = next(v for k, v in m.items() if k.startswith(cp + "Unlocks Q0"))
     assert unl == pytest.approx(219_000_000 * 90 / 730, abs=1)
 
@@ -137,9 +138,9 @@ def test_3_the_pin_has_mantle_and_the_report_prints_no_key():
 def test_5_morpho_is_frozen_with_round_4_4b_and_4cs_moves_declared(built):
     assert config.FROZEN_PROJECTS["Morpho"]["baseline"] == "tests/fixtures/frozen_morpho.json"
     base = json.loads(pf.baseline_path("Morpho").read_text(encoding="utf-8"))
-    moves = config.FROZEN_MOVES["Morpho"]
+    moves = config.frozen_moves_before_r9("Morpho")       # R9.2's moves (the rule) are their own record
     assert len(base) > 250 and moves
     assert all(d["why"].startswith(("PR4.", "PR4B.", "PR4C.", "PR4F.")) for d in moves.values())   # PR4F.2 moves
     assert all(base[k] == pf._norm(d["to"]) for k, d in moves.items() if k in base)
     now = pf.cells(built["audit"], built["reader"], "Morpho")
-    assert pf.undeclared(base, now, moves) == []
+    assert pf.undeclared(base, now, config.FROZEN_MOVES["Morpho"]) == []      # every round's record, R9.2's included

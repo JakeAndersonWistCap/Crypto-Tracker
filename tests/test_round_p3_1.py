@@ -113,7 +113,10 @@ def test_r1_staked_is_zero_float_is_circulating_dilution_and_lock_rate_are_numbe
     assert "measured zero" in comment and words in comment, comment
     circ, _ = _cell(built, "audit", CP, name, "Circulating supply (tokens)")
     flt, _ = _cell(built, "audit", CP, name, "TRADEABLE FLOAT")
-    assert _num(circ) and _num(flt) and flt == pytest.approx(circ)
+    # R9.2 (the rule): the treasury / issuer wallets are IN circulating and OFF the float — the float stays what
+    # circulating was before the rule (nothing staked), and circulating is above it by exactly those wallets
+    was = {"Uniswap": 612_409_760.0, "Fluid": 77_971_195.0}[name]
+    assert _num(circ) and _num(flt) and flt == pytest.approx(was, abs=1.0) and circ > flt
     dil, _ = _cell(built, "reader", reader.COMPARISON, name, "Total dilution, % of float")
     if name == "Fluid":
         # PR3B.1: the dumps' build wires Fluid's Base / Plasma claim scans as Jake's probe does; the dumps hold no

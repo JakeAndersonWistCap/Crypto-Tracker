@@ -20290,7 +20290,11 @@ def test_onchain_circulating_excludes_only_documented_sourced_addresses_and_revi
         dict(date=d0, project="Uniswap", metric="noncirculating_holding_tokens", value=0.0, source="x"),
         dict(date=d1, project="Uniswap", metric="noncirculating_holding_tokens", value=0.0, source="x"),
         dict(date=d1, project="Uniswap", metric="circulating_supply", value=500.0, source="coingecko")])
-    s = C.series(h, "Uniswap")
+    # R9.2 (the rule, Jake 2026-11-17): the Timelock is IN circulating, so the figure in use needs no treasury read —
+    # total − burned on both days; the LIKE-FOR-LIKE figure (what CoinGecko is checked against) still takes the
+    # documented set out, and a day missing one of its balances is not computed
+    assert list(C.series(h, "Uniswap")) == [900.0, 900.0]
+    s = C.series(h, "Uniswap", rule=False)
     assert list(s.index) == [d1] and s.iloc[0] == 600.0, "d0 lacks the treasury balance: not computed"
     out = FetchOutput()
     C.check(out, h, [config.PROJECT_BY_NAME["Uniswap"]])
@@ -25765,10 +25769,15 @@ def test_circulating_decisions_are_applied_consistently_and_coingecko_free_float
     # like-for-like since Jake's run 2026-10-07: CoinGecko counts sPENDLE, so ours adds it back for the comparison
     assert spec["ours"] == {"py": "free_float_now", "args": {"add_back": ("locked_tokens",), "minus_released": True}} and \
         spec["ref"]["metric"] == "circulating_supply"
+    # R9.2 (the rule): circulating counts the two multisigs (30M here), which leave the float as the rule's stock
     long = pd.DataFrame({"date": pd.Timestamp("2026-10-05"), "project": "Pendle",
-                         "metric": ["circulating_supply_onchain", "locked_tokens"], "value": [250e6, 80e6]})
+                         "metric": ["circulating_supply_onchain", "locked_tokens", "rule_in_off_float_tokens"],
+                         "value": [280e6, 80e6, 30e6]})
     v, _d, _how = cred.FORMULAS["free_float_now"]("Pendle", {}, long, pd.Timestamp("2026-10-06"))
     assert v == 170e6
+    # a day without the rule's stock has no float (never the float with those wallets in it)
+    assert cred.FORMULAS["free_float_now"]("Pendle", {}, long[long["metric"] != "rule_in_off_float_tokens"],
+                                           pd.Timestamp("2026-10-06"))[0] is None
     # sign-off round: Chainlink's on-chain set (all 27 wallets) is primary, so ours is the on-chain figure
     assert "circulating_supply_onchain" in str(cred.circulating_input("Chainlink")["ours"])
 
@@ -25846,7 +25855,9 @@ def test_free_float_never_subtracts_the_lock_twice_from_coingeckos_free_float_ba
     lock again. It now reads the built rows; the workbook's fallback adds the lock back, so free float = CoinGecko."""
     import build_workbook as bw
     import credibility as cred
-    rows = {"Pendle|circulating_supply_onchain": {"now": 260e6, "latest_date": "2026-10-06"},
+    # R9.2 (the rule): circulating counts the two multisigs (10M here), off the float as the rule's stock
+    rows = {"Pendle|circulating_supply_onchain": {"now": 270e6, "latest_date": "2026-10-06"},
+            "Pendle|rule_in_off_float_tokens": {"now": 10e6},
             "Pendle|locked_tokens": {"now": 31.4e6}, "Pendle|locked_tokens_legacy_vependle": {"now": 63.5e6},
             "Pendle|circulating_supply": {"now": 173.7e6}}
     v, d, how = cred.FORMULAS["free_float_now"]("Pendle", rows, None, pd.Timestamp("2026-10-07"))
@@ -26368,7 +26379,9 @@ def test_pendle_is_compared_with_coingecko_like_for_like_and_ours_stays_the_docu
     assert config.coingecko_counted_lock_legs("Pendle") == ("locked_tokens",)
     spec = cred.circulating_input("Pendle")
     assert spec["ours"] == {"py": "free_float_now", "args": {"add_back": ("locked_tokens",), "minus_released": True}}
-    rows = {"Pendle|circulating_supply_onchain": {"now": 237.9e6, "latest_date": "2026-10-07"},
+    # R9.2 (the rule): circulating counts the two multisigs (35.9M), which leave the float as the rule's stock
+    rows = {"Pendle|circulating_supply_onchain": {"now": 273.8e6, "latest_date": "2026-10-07"},
+            "Pendle|rule_in_off_float_tokens": {"now": 35.9e6},
             "Pendle|locked_tokens": {"now": 31.4e6}, "Pendle|locked_tokens_legacy_vependle": {"now": 63.5e6}}
     ff, _d, _h = cred.FORMULAS["free_float_now"]("Pendle", rows, None, pd.Timestamp("2026-10-07"))
     v, _d, how = cred.FORMULAS["free_float_now"]("Pendle", rows, None, pd.Timestamp("2026-10-07"),
@@ -27244,7 +27257,9 @@ def test_onchain_circulating_is_compared_with_coingecko_like_for_like_and_the_ga
     # own total, as Ether.fi's; PR1B.4: less the three wallets CoinGecko excludes, from the day it does
     assert cred.circulating_input("Uniswap")["ours"] == {"py": "now_combo", "args": {
         "metrics": ("circulating_supply_onchain", "noncirculating_holding_tokens", "total_supply_coingecko"),
-        "minus": ("total_supply",), "dated_minus": ("coingecko_excluded_holdings_tokens",),
+        # R9.2 (the rule): less the stock the rule counts in circulating too (the Timelock, the distributor) — CoinGecko
+        # leaves it out, so the comparison stays like for like
+        "minus": ("total_supply", "rule_in_off_float_tokens"), "dated_minus": ("coingecko_excluded_holdings_tokens",),
         "minus_from": "2026-11-02"}}
     rows = {"Ether.fi|circulating_supply_onchain": {"now": 797_210_000.0, "latest_date": "2026-10-07"},
             "Ether.fi|noncirculating_holding_tokens": {"now": 168_140_000.0, "latest_date": "2026-10-07"}}
@@ -27851,9 +27866,12 @@ def test_fluid_igp137_custody_is_its_own_series_and_coingecko_is_compared_like_f
     # adjustment is 0
     assert tuple(row["ours"]["args"]["metrics"]) == ("circulating_supply_onchain", "noncirculating_igp137_tokens",
                                                      "total_supply_coingecko")
-    assert tuple(row["ours"]["args"]["minus"]) == ("total_supply",)
+    # R9.2 (the rule): ours counts the treasury, the multisig, the distributors and the IGP-137 wallet in (100M); the
+    # comparison takes the rule's stock (22.036M) out and adds back the 5M CoinGecko counts — the same 82.964M
+    assert tuple(row["ours"]["args"]["minus"]) == ("total_supply", "rule_in_off_float_tokens")
     asof = pd.Timestamp("2026-10-08")
-    long = pd.DataFrame([(asof, "Fluid", "circulating_supply_onchain", 77_964_000.0),
+    long = pd.DataFrame([(asof, "Fluid", "circulating_supply_onchain", 100_000_000.0),
+                         (asof, "Fluid", "rule_in_off_float_tokens", 22_036_000.0),
                          (asof, "Fluid", "noncirculating_igp137_tokens", 5_000_000.0),
                          (asof, "Fluid", "total_supply", 100_000_000.0),
                          (asof, "Fluid", "total_supply_coingecko", 100_000_000.0)],

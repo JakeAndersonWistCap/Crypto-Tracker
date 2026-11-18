@@ -16,7 +16,7 @@ def test_0_fluid_is_frozen_with_round_2s_moves_declared():
     assert config.FROZEN_PROJECTS["Fluid"]["baseline"] == "tests/fixtures/frozen_fluid.json"
     base = json.loads(pf.baseline_path("Fluid").read_text(encoding="utf-8"))
     assert len(base) > 300
-    moves = config.FROZEN_MOVES["Fluid"]
+    moves = config.frozen_moves_before_r9("Fluid")        # R9.2's moves (the rule) are their own record
     # round 2's 11 moves; round 3B's 18 (PR3B.1: Base / Plasma (b) legs pinned, the dumps read BLOCKED) join them
     pr2 = {k: d for k, d in moves.items() if d["why"].startswith("PR2.")}
     assert len(pr2) == 11 and all(d["date"] == "2026-11-10" for d in pr2.values())

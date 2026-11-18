@@ -141,18 +141,24 @@ def test_sky_onchain_circulating_takes_its_added_back_leg(monkeypatch):
     import build_workbook as bw
     monkeypatch.setattr(bw, "_SCOPE", [config.PROJECT_BY_NAME["Sky"]])
     spec = config.circulating_onchain("Sky")
-    assert spec["add"] == ["sky_mkr_nonissuer_backing_tokens"] or tuple(spec["add"]) == ("sky_mkr_nonissuer_backing_tokens",)
+    assert tuple(spec["add"])[0] == "sky_mkr_nonissuer_backing_tokens"       # R9.2 adds two derived legs after it
     days = pd.date_range("2026-10-05", "2026-10-11")
     groups = {}
     for m, v in (("total_supply", 23_459_804_204.0), ("treasury_holding_tokens", 27_996_757.0),
                  ("noncirculating_holding_tokens", 2_043_352_267.0),
                  ("sky_mkr_nonissuer_backing_tokens", 1_903_000_000.0)):
         groups[("Sky", m)] = pd.DataFrame(_rows("Sky", m, days, v, f"chain:ethereum:{m}"))
+    # R9.2 (the rule): the converter's accrued fee (its SKY − MKR outstanding x 24,000) and the SKY backing the Pause
+    # Proxy's MKR are added too — both derived from the stored MKR reads on the same days
+    for m, v in (("mkr_outstanding_tokens", 85_000.0), ("mkr_issuer_tokens", 50.0)):
+        groups[("Sky", m)] = pd.DataFrame(_rows("Sky", m, days, v, f"sky_mkr:{m}"))
+    bw._derived_leg_views(groups)
     bw._circulating_views(groups)
     g = groups[("Sky", "circulating_supply_onchain")]
     assert len(g) == len(days)
     # R6.3 (Jake 2026-11-16): the Pause Proxy's SKY (treasury_holding_tokens) is the held buyback, in circulating
-    assert g["value"].iloc[-1] == pytest.approx(23_459_804_204 - 2_043_352_267 + 1_903_000_000)
+    take, issuer_backing = 2_043_352_267 - 85_000 * 24_000, 50 * 24_000
+    assert g["value"].iloc[-1] == pytest.approx(23_459_804_204 - 2_043_352_267 + 1_903_000_000 + take + issuer_backing)
 
 
 # ------------------------------------------------------------------------------------------- 10 / 11 trajectory

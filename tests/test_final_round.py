@@ -151,9 +151,11 @@ def test_hyperliquid_circulating_excludes_foundation_and_grants():
     assert f.loc["circulating_supply_tokendetails", "value"] == 302_167_698.0
     h = config.declared_handover("Hyperliquid", "circulating_supply_first_party")
     from fetch.base import _measuring_point
-    # the stored (fetch-time) point is the last stored one; R7.C1 adds the read-time restatement after it
-    assert _measuring_point(f.loc["circulating_supply_first_party", "source"]) == h["ordered_points"][-2]
-    assert h["ordered_points"][-1].startswith("derived:released_staked")
+    # the stored (fetch-time) point is the last stored one; R7.C1 adds the read-time restatement after it, and R9.2
+    # the rule's (team + foundation + grants in) after that
+    assert _measuring_point(f.loc["circulating_supply_first_party", "source"]) == h["ordered_points"][-3]
+    assert all(pt.startswith("derived:released_staked") for pt in h["ordered_points"][-2:])
+    assert "the rule" in h["ordered_points"][-1]
 
 
 def test_hyperliquid_unread_wallet_stores_no_circulating():

@@ -44174,3 +44174,16 @@ PROJECT_BY_NAME["Hyperliquid"]["notes"] = PROJECT_BY_NAME["Hyperliquid"]["notes"
     "validators voted 27 Dec 2025,",
     "validators voted 27 Dec 2025 (DATE UNVERIFIED: secondary reports put the vote's close on 24 Dec; no primary post "
     "could be read — config.HL_VOTE_DATE),", 1)
+
+
+def frozen_moves_before_r9(project: str) -> dict:
+    """The cells a round BEFORE round 9 declared (each keeps its record; a round-9 step on one is under its "then").
+    A cell first moved by the rule in round 9 is not in it — the round-9 record is tests/fixtures/frozen_moves_r9.json."""
+    return {k: d for k, d in FROZEN_MOVES[project].items() if not str(d["why"]).startswith("R9.")}
+FLOW_LEG_LINES["m_rule"] = ("memo: minted straight to issuer-side wallets (insider emission — INSIDE the lines above: "
+                            "under the rule those wallets are circulating)")
+# Sky's token-flow statement keeps its lines: the rule un-subtracts no wallet of Sky's (its two legs are ADDED from the
+# converter, which stays outside circulating) — conversions still release SKY from outside, and the endowments'
+# unmeasured purchase stays named on the returned line (D6-4).
+RULE_IN["Sky"]["flow_rule"] = False
+PROJECT_BY_NAME["Aerodrome"]["voter_epochs"]["issuer_bribes_metric"] = "voter_rewards_onchain_bribes_issuer_usd"
