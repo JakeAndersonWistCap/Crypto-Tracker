@@ -44518,6 +44518,29 @@ RULE_IN["Near"].update({
 METRICS["circulating_supply_lockup_rule"]["label"] = (
     "Circulating supply — NEAR total supply − the lockup contracts' LOCKED NEAR that is idle (unreleased, immovable, "
     "not staked): the rule (Jake 2026-11-17; R10.B3). lockup.near, contributors.near and staked lockups are in")
+# THE CHANGE OF BASIS, DECLARED (the measuring-point guard reads the bracket of this view's source as its basis,
+# trajectory.BRACKET_BASIS): the whole series is restated on the rule's basis — the two accounts in on every day — and
+# hands over once more at the first weekly read that stores the staked part of LOCKED. The points are the view's own
+# source texts without their read date (build_workbook._near_lockup_views writes them).
+_R10N_CIRC = "derived:circulating_lockup_rule["
+NEAR_CIRC_RULE_POINTS = (
+    _R10N_CIRC + "first_party; no lockup read in force]",
+    _R10N_CIRC + "first_party + lockup.near + contributors.near (in circulating by the rule, R10.B3); no lockup read in "
+                 "force]",
+    _R10N_CIRC + "total_supply − LOCKED (its staked part is not read yet: all of LOCKED left out, at most LOCKED too "
+                 "low); lockup.near + contributors.near in circulating (the rule, R10.B3), lockups read]",
+    _R10N_CIRC + "total_supply − idle LOCKED (LOCKED − the part staked by its lockup, which earns); lockup.near + "
+                 "contributors.near in circulating (the rule, R10.B3), lockups read]")
+_R10N.setdefault("series_handover", {})["circulating_supply_lockup_rule"] = {
+    "ordered_points": NEAR_CIRC_RULE_POINTS,
+    "why": "Jake's rule (2026-11-17) applied to Near (R10.B3, 2026-11-18): NEAR's own figure plus the two accounts "
+           "before the first lockup read (2026-10-11); total − LOCKED from it; total − the idle LOCKED from the first "
+           "weekly read that stores the staked part",
+    "composition_change": "WIDENS: lockup.near + contributors.near (171,059 NEAR) are in circulating on every day (was "
+                          "out: total − LOCKED − lockup.near − contributors.near); from the first read with the staked "
+                          "part, the LOCKED NEAR a lockup has staked is in too (about 1.04M NEAR on the 2026-11-18 "
+                          "sample)",
+    "declared": "2026-11-18"}
 CIRCULATING_ONCHAIN["Near"]["why"] = (
     "THE RULE (R10.B3): total supply (block header) − the lockup contracts' LOCKED NEAR that is idle; lockup.near, "
     "contributors.near, treasury.near and the three buyback wallets are in circulating and off the float. NEAR's own "

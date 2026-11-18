@@ -258,6 +258,24 @@ def test_b3a_the_foundation_accounts_are_in_circulating_and_only_idle_locked_is_
         pytest.approx(total - locked)
 
 
+def test_b3a_every_basis_the_circulating_view_writes_is_a_declared_handover_point(scope):
+    """The change of basis is declared: whatever the view writes — before the first lockup read (with and without a
+    foundation-accounts read), with LOCKED alone, with its staked part — the measuring-point guard finds it among
+    the declared points, and the handover says the composition widens (never 'none')."""
+    import measuring_guard as mg
+    import trajectory
+    m = "circulating_supply_lockup_rule"
+    seen = set()
+    for kw in ({}, {"staked": 1_200_000.0}, {"foundation": False}, {"read_on": "2026-11-10"},
+               {"read_on": "2026-11-10", "foundation": False}):
+        g = _circ_groups(**kw)
+        bw._near_lockup_views(g)
+        seen |= {trajectory.basis_of(m, s) for s in g[("Near", m)]["source"]}
+    assert len(seen) == 4 and seen <= mg._declared("Near", m), seen - mg._declared("Near", m)
+    decl = config.declared_handover("Near", m)
+    assert decl["declared"] == "2026-11-18" and decl["composition_change"].startswith("WIDENS")
+
+
 def test_b3a_treasury_and_foundation_accounts_leave_the_float_and_a_missing_leg_is_no_float(scope):
     spec = config.RULE_IN["Near"]
     assert spec["off_float"] == ("near_foundation_accounts_tokens", "near_treasury_tokens")
