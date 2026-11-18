@@ -165,6 +165,14 @@ def parked(monkeypatch):
     monkeypatch.setattr(config, "aerodrome_park_reason", lambda state=None, day=None: "PARKED — migration: test")
 
 
+@pytest.fixture(autouse=True)
+def _option_c_not_passed(monkeypatch):
+    """R10: these tests are about the allowance that holds WHILE Hyperliquid's option C test fails. A build earlier on
+    the same worker leaves config.OPTION_C_STATE as that build found it (passed, on the refreshed dumps) — the state
+    the tests assume is set here, not inherited."""
+    monkeypatch.setattr(config, "OPTION_C_STATE", {})
+
+
 def test_p2e4_every_allowlist_entry_has_a_reason_and_an_accepted_date():
     for a in config.REGRESSION_ALLOWLIST:
         assert a.get("reason", "").strip(), a
