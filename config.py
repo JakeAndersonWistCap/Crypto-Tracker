@@ -46378,7 +46378,7 @@ MODELLED_POINTS["modelled:etherfi_team_schedule"] = (
 # stored, the stake is the old point (mainnet shares, as the float read it); from that day the new one, with no fallback.
 _SETHFI_DEPLOYED = ("https://etherfi.gitbook.io/etherfi/developers/contracts-and-integrations/deployed-contracts "
                     "('ETHFI Staking': sETHFI on Mainnet, Arbitrum, Base, Optimism, Scroll — read 2026-11-19)")
-_ACCOUNTANT = "0x05a1552c5e18f5a0bb9571b5f2d6a4765ebda32b"
+_ACCOUNTANT = "0x05A1552c5e18F5A0BB9571b5F2D6a4765ebdA32b"
 _SETHFI_L2 = (("arbitrum", 2_270_881.00), ("base", 315_167.17), ("optimism", 26_258_009.23), ("scroll", 5_756.15))
 DEFAULT_RPC.setdefault("scroll", ["https://rpc.scroll.io", "https://scroll-rpc.publicnode.com"])
 EVM_CHAINS.add("scroll")
@@ -46723,10 +46723,10 @@ ETHERFI_LP_WITHDRAWALS_2026_09_02 = {
 ETHERFI_PURCHASE_RULE_READ = {
     "read_on": "2026-11-19",
     "source": "https://eth.blockscout.com/api/v2/addresses/<holder>/token-transfers?type=ERC-20 (all pages)",
-    "counted_old_rule": {"0x2f5301a3": 17_984_520.10, "0x3fb6784e": 1_895_016.31, "0x43f4ca92": 2_888_646.80,
-                         "0xa7b1d3a0": 945_540.65},
-    "counted_new_rule": {"0x2f5301a3": 17_984_520.10, "0x3fb6784e": 847_258.84, "0x43f4ca92": 2_888_646.80,
-                         "0xa7b1d3a0": 945_540.65},
+    "counted_old_rule": {"0x2f5301a3…": 17_984_520.10, "0x3fb6784e…": 1_895_016.31, "0x43f4ca92…": 2_888_646.80,
+                         "0xa7b1d3a0…": 945_540.65},
+    "counted_new_rule": {"0x2f5301a3…": 17_984_520.10, "0x3fb6784e…": 847_258.84, "0x43f4ca92…": 2_888_646.80,
+                         "0xa7b1d3a0…": 945_540.65},
     "removed": sum(ETHERFI_LP_WITHDRAWALS_2026_09_02.values()),        # 1,047,757.47 = the four LP withdrawals
     "q0_was": {"tokens": 493_031.75, "usd": 277_512.85, "on": "2026-09-02",
                "why": "three of the four (0x61a48f70…, 0x79f94c16…, 0xb1acc8c3…) — the fourth was already excluded"},

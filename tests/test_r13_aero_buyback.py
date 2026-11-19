@@ -281,7 +281,11 @@ def test_purchases_that_left_the_wallets_are_flagged_not_subtracted(monkeypatch)
     flag = g[("Aerodrome", FB["held_check"]["flag_metric"])].set_index("date")["value"]
     assert flag.iloc[-1] == pytest.approx(818_679.81)
     notes = bw.foundation_flags("Aerodrome", "actual_buyback_tokens")
-    assert len(notes) == 1 and "818,679.81 AERO" in notes[0] and "NOT subtracted" in notes[0]
+    # R14 (Jake 2026-11-19, R13 decision 2): the shortfall is SUBTRACTED from held and retired as a named negative
+    # row (was: "NOT subtracted"); what was bought (actual_buyback_tokens, above) still does not move
+    assert len(notes) == 1 and "818,679.81 AERO" in notes[0] and "SUBTRACTED" in notes[0]
+    row = g[("Aerodrome", FB["held_check"]["subtract_metric"])].set_index("date")["value"]
+    assert row.sum() == pytest.approx(-818_679.81)
     g = _groups(liquid={str(d.date()): v for d, v in plenty.items()})
     _views(monkeypatch, g)
     assert bw.foundation_flags("Aerodrome", "actual_buyback_tokens") == []

@@ -70,7 +70,8 @@ def test_declared_uniswap_only_and_nothing_is_capped_or_loosened():
     for role in ("holder_revenue", "revenue"):
         m = config.METRICS[spec[role]["view"]]
         assert m["view_only"] and m["only_projects"] == (N,) and m["unit"] == "tokens" and m["kind"] == "flow"
-    assert config.METRICS["revenue_usd_s13d"]["only_projects"] == (N,)
+    # R14: Ether.fi's REVENUE_SPLIT (Jake 2026-11-19) reads the same-days revenue view too (was: (N,) alone)
+    assert config.METRICS["revenue_usd_s13d"]["only_projects"] == (N, "Ether.fi")
     assert N in config.METRICS["holder_value_revenue_usd_s13d"]["only_projects"]
     assert {"Hyperliquid", "Near"} <= set(config.METRICS["holder_value_revenue_usd_s13d"]["only_projects"])
     # the lines themselves are the same series as before: only the share's basis is declared

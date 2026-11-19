@@ -2908,7 +2908,10 @@ def test_stale_status_renders_visibly_on_the_a3_tab_not_just_the_data_tab():
                 "status": "ok", "source": "test", "n_points": 9, "entered_on": "",
                 "confidence": "GREEN", "why_amber": ""}
     stale_note = "last point 2026-07-10; last successful fetch dune"
-    data_by_key["Ether.fi|locked_tokens"] = {
+    # R14: the A3 lock cell reads the project's DISPLAYED lock metric (Ether.fi: sETHFI on five chains x the rate,
+    # config.LOCK_DISPLAY_METRIC) — that series going stale is what the reader must see (was: locked_tokens)
+    shown = config.lock_display_metric("Ether.fi")
+    data_by_key[f"Ether.fi|{shown}"] = {
         "status": "stale", "source": "test", "n_points": 9, "entered_on": "",
         "confidence": "RED", "why_amber": "", "note": stale_note}
 

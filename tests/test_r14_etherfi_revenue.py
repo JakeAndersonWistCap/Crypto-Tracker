@@ -64,9 +64,9 @@ def test_the_four_withdrawals_are_evidence_not_the_rule():
     q0 = sum(v for k, v in w.items() if not k.startswith("0x3b52e19b"))
     assert q0 == pytest.approx(config.ETHERFI_PURCHASE_RULE_READ["q0_was"]["tokens"], abs=0.01)
     r = config.ETHERFI_PURCHASE_RULE_READ
-    assert r["counted_old_rule"]["0x3fb6784e"] - r["counted_new_rule"]["0x3fb6784e"] == pytest.approx(
+    assert r["counted_old_rule"]["0x3fb6784e…"] - r["counted_new_rule"]["0x3fb6784e…"] == pytest.approx(
         r["removed"], abs=0.01)
-    for k in ("0x2f5301a3", "0x43f4ca92", "0xa7b1d3a0"):        # the CoW buyers: unchanged to the token
+    for k in ("0x2f5301a3…", "0x43f4ca92…", "0xa7b1d3a0…"):     # the CoW buyers: unchanged to the token
         assert r["counted_old_rule"][k] == r["counted_new_rule"][k]
     prog = next(s for s in config.PROJECT_BY_NAME[EF]["log_scans"] if s["key"] == "programmatic_buyback_inflow")
     assert prog["purchase_requires_payment"] is True

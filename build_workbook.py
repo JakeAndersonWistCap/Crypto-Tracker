@@ -12801,6 +12801,13 @@ def _voter_apr_voting_power(R: Refs):
 
 def _flags(data_by_key: dict, name: str, metrics: list[str]) -> str:
     out = []
+    # R14: the lock cell shows the project's DISPLAYED lock series (config.LOCK_DISPLAY_METRIC: Aerodrome's veAERO
+    # supply, Ether.fi's sETHFI on five chains) — its state is flagged beside locked_tokens', so a stale displayed
+    # series is said in plain text where the cell's fill already says it
+    disp = config.lock_display_metric(name)
+    if "locked_tokens" in metrics and disp and disp not in metrics:
+        i = list(metrics).index("locked_tokens")
+        metrics = list(metrics)[:i + 1] + [disp] + list(metrics)[i + 1:]
     for m in metrics:
         st = data_by_key.get(f"{name}|{m}")
         if st is None:
