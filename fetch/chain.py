@@ -59,6 +59,10 @@ ERC20_ABI = [
     # of staked principal, which is the figure balanceOf can only bound from above. Adding the
     # fragment here is harmless for every other contract: it is only encoded when it is called.
     {"constant": True, "inputs": [], "name": "getTotalPrincipal", "outputs": [{"name": "", "type": "uint256"}], "type": "function"},
+    # R14.4: the sETHFI vault's Accountant (BoringVault AccountantWithRateProviders 0x05a1552c…): getRate() returns the base
+    # asset (ETHFI) per share in the base's decimals (selector 0x679aefce, read on chain 2026-11-19: 1.20677615e18).
+    # Only encoded when called.
+    {"constant": True, "inputs": [], "name": "getRate", "outputs": [{"name": "", "type": "uint256"}], "type": "function"},
     # sUSDS's Sky Savings Rate: a per-second RAY factor (fetch/sky_ssr.py, Phase 3 2026-10-12). Read raw, never scaled.
     {"constant": True, "inputs": [], "name": "ssr", "outputs": [{"name": "", "type": "uint256"}], "type": "function"},
     # Aerodrome-family (ve(3,3)) Minter/RewardsDistributor. Also harmless elsewhere: only encoded

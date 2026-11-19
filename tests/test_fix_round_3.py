@@ -329,7 +329,9 @@ def test_w4_to_w7_are_wired():
     assert any(s["key"] == "drips_out" for s in config.PROJECT_BY_NAME["Maple"]["log_scans"])
     assert config.LEAKAGE_III["Sky"]["spend"] == "buyback_spending_usd_ba"
     for n in ("Ether.fi", "Maple", "Pendle"):
-        assert n not in config.INSIDER_LOCK                      # review W6: no insider identified -> NOT WIRED
+        # was: `n not in config.INSIDER_LOCK` for all three (review W6: no insider identified -> NOT WIRED). R14.4b (Jake
+        # 2026-11-19, decision 6): Ether.fi's nine INFERRED insider stakers are wired — INSIDER_LOCK, published + inferred
+        assert (n in config.INSIDER_LOCK) == (n == "Ether.fi")
         assert config.INSIDER_SHARE_MONITOR[n]["numerator"] == "insider_stake_shares"
         assert any(k.startswith("insider_stake_") for k in config.PROJECT_BY_NAME[n]["contracts"])
     assert config.RELEASE_LESS["Pendle"] == ("issuer_to_gauges_tokens",)
@@ -433,10 +435,19 @@ def test_w6_insider_share_is_not_wired_when_no_checked_wallet_holds_shares(tmp_p
     lead = ("n/a — DOCUMENTED LIMITATION: no first-party list ties stSYRUP stakers to Maple" if project == "Maple"
             # R5.5 (Jake 2026-11-13): Pendle's wallets are its published list — the dump holds no insider_stake_shares
             else "MISSING E — insider_stake_shares stored nothing yet" if project == "Pendle"
-            else f"{config.INSIDER_LIST_NEEDED}no insider wallet identified among {sym} holders")
+            # R14.4b (Jake 2026-11-19, decision 6): Ether.fi's insider set is wired (13 PUBLISHED + 9 INFERRED); the dump
+            # holds neither the restated 13-wallet series nor the new read, so the ratio is unknown — never 0. Was:
+            # f"{config.INSIDER_LIST_NEEDED}no insider wallet identified among {sym} holders"
+            else "n/a — etherfi_insider_stake_all_shares (now): no rows stored")
     assert cell.startswith(lead), cell
     assert len(cell) <= 255                                                   # an Excel string constant
     what = str(_get(o, "Insider share — what is divided"))
+    if project == "Ether.fi":
+        # R14.4b: the cell divides PUBLISHED + INFERRED shares by sETHFI totalSupply; was the 13 wallets' list
+        # "Wallets checked (13, 0 sETHFI each at Ethereum block 26,278,435, 2026-10-26)"
+        assert "PUBLISHED: the 13 issuer-side wallets" in what and "INFERRED" in what and "34,321,468" in what
+        assert str(_get(o, "Leakage (i)")).startswith(lead), _get(o, "Leakage (i)")
+        return
     # E6: re-read 2026-10-14 (E1 added two); D2-4: every wallet re-read 0 at block 26,278,435 (2026-10-26); Maple
     # re-read 2026-11-11 at block 26,391,252 (PR3.2)
     assert (f"Wallets checked ({n}" in what and "26,278,435" in what) if project == "Maple" else \

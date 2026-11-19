@@ -452,6 +452,10 @@ def _inputs(project: str, metric: str, groups: dict) -> tuple:
                                  *(spec.get("add") or ())) if x)
     if metric == "circulating_supply_lockup_rule":
         return ("total_supply", "near_lockup_locked_tokens", "near_foundation_accounts_tokens")
+    if metric == "rule_in_off_float_tokens" and (config.RULE_IN.get(project) or {}).get("modelled_legs"):
+        # R14.1b: a MODELLED off-float leg (Ether.fi's unvested team tokens) is followed, so every float on it reads
+        # MODELLED; only the declared modelled legs (a project without one is unchanged)
+        return tuple(config.RULE_IN[project]["modelled_legs"])
     return _stepping_parents(project, metric, groups)
 
 

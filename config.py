@@ -46251,3 +46251,429 @@ FROZEN_PROJECTS["Aerodrome"] = {
     "why": "rounds 8 to 13 done (Jake 2026-11-19): done_check READY on Jake's own store at 00bb8b2; the full gate green "
            "on the freeze commit"}
 FROZEN_MOVES["Aerodrome"] = _frozen_moves_record("aerodrome")
+
+
+
+# =====================================================================================================================
+# ===== R14 — ETHER.FI SUPPLY, FLOAT, INSIDERS, THEATRE =====
+# Jake's decisions of 2026-11-19 on the research pack docs/r13_etherfi_pack.md (decisions 1-4, 6 and 9 as recommended;
+# the theatre flag of 2026-10-27, research/theory/FAIR_TOKENOMICS_STANDARD.md "Financial-theatre flag"). SPEC: "Round 14
+# — Ether.fi on the rule". Reads of this round (Claude Code, 2026-11-19): Ethereum block ~26,451,790 and each L2's head
+# via the public RPCs (ethereum / arbitrum-one / base / optimism / scroll -rpc.publicnode.com, rpc.scroll.io); transfer
+# histories and address labels from Blockscout's free API (eth.blockscout.com/api/v2, User-Agent token-metrics-check/1.0).
+# =====================================================================================================================
+_R14_READ = "2026-11-19"
+_R14_PACK = "docs/r13_etherfi_pack.md"
+_R14_DECIDED = "Jake 2026-11-19 (R14; the pack's decisions 1-4, 6, 9 as recommended)"
+_EF14 = PROJECT_BY_NAME["Ether.fi"]
+_ETHFI_ETH = "0xFe0c30065B384F05761f15d0CC899D4F9F9Cc0eB"
+_SETHFI = "0x86B5780b606940Eb59A062aA85a07959518c0161"
+
+# ----- R14.1a THE ALLOCATION TABLE: the docs' (updated 2025-08-02), cited; the DropsTab table it replaces kept as `was`.
+_EF14["allocation_table"] = {
+    "total_supply": 1_000_000_000,
+    "source": "https://etherfi.gitbook.io/gov/ethfi-allocations (ether.fi's allocations page, 'updated 2025-08-02')",
+    "source_date": "2026-11-19",
+    "buckets": [
+        {"name": "Investors", "share": 0.3374, "tokens": 337_400_000,
+         "schedule": "docs: 2-year schedule, 1-year cliff; on-chain custody 325,000,010 sent to the custodian origin "
+                     "0x1b577834… 2024-07-24..29; fully vested 2026-03-18 (docs reading and chain evidence)"},
+        {"name": "Core contributors", "share": 0.2147, "tokens": 214_700_000,
+         "schedule": "docs: 3-year schedule, 1-year cliff (a third at the cliff 2025-03-18, monthly to 2027-03-18) — "
+                     "the MODELLED locked leg (ETHERFI_TEAM_SCHEDULE); on-chain custody 232,600,010 sent to the custodian "
+                     "origin 0x66FCfC15… 2024-07-24..27"},
+        {"name": "Treasury", "share": 0.2162, "tokens": 216_200_000, "schedule": "none (Safes)"},
+        {"name": "User airdrops", "share": 0.1927, "tokens": 192_700_000,
+         "schedule": "seasons S1 7.5% / S2 5.8% / S3 2.7% / S4 1.3% = 17.3% itemised; 1.97% not itemised on the docs"},
+        {"name": "Partnerships & liquidity (incl. 1% Protocol Guild)", "share": 0.039, "tokens": 39_000_000},
+    ],
+    "filing_at_genesis": {"Investors": 0.337, "Core contributors": 0.214, "Treasury": 0.315, "Community": 0.075,
+                          "Partnerships": 0.059,
+                          "source": "https://blockworks.com/token-transparency/filing/ether-fi (v1.0, 2025-08-19)"},
+    "not_explained": "the on-chain custody split (23.26% core / 32.5% investors) matches the launch figures, not the docs' "
+                     "21.47% / 33.74% — the 1.2-1.8 point reclassification is not explained in any source read",
+    "was": {"source": "Ether.fi governance gitbook, via DropsTab (2026-09-23)",
+            "buckets": "Investors & Advisors 32.5%, DAO Treasury 27.24%, Team 23.26% (232.6M, 151.46M unlocked, 318K a "
+                       "day into mid-2027 — not supported by any ether.fi source read 2026-11-19), Airdrop 11%, "
+                       "Liquidity 3%, Binance Launchpool 2%, Protocol Guild 1%"},
+    "decided": _R14_DECIDED + " — R14.1a"}
+
+# ----- R14.1b THE UNVESTED TEAM TOKENS: IN circulating, OFF the float, a LOCKED leg sized by the docs' schedule, MODELLED.
+# No vesting contract exists: the team tokens sit in 32 plain custodian wallets (funded by 0x66FCfC15…, 150,700,905
+# ETHFI held at Ethereum block 26,451,794, 0 sETHFI on any chain), so the unvested part cannot be read on chain. The
+# docs' reading (decision 2): 214.7M (21.47%), 36 months from the launch (2024-03-18) including a 12-month cliff, a
+# third at the cliff and 1/36 on each monthly anniversary (the 18th) to 2027-03-18. unvested(d) = 214.7M x (36 − k)/36,
+# k = the monthly anniversaries passed (0 before the cliff's 12). 2026-11-19: k = 32 -> 4/36 = 23,855,556; the
+# fixture's as-of 2026-10-13: k = 30 -> 6/36 = 35,783,333. The filing's reading (3/24 of 214.7M = 26.84M, ending
+# 2027-02-18) is the named alternative. In circulating (decision 1: the custodian wallets carry a key and do send — the
+# lock is the custodian's undertaking), so it never leaves circulating; it leaves the FLOAT, labelled MODELLED.
+ETHERFI_TEAM_SCHEDULE = {
+    "metric": "etherfi_team_unvested_modelled_tokens", "allocation": 214_700_000.0, "launch": "2024-03-18",
+    "months": 36, "cliff_months": 12, "end": "2027-03-18",
+    "source": "https://etherfi.gitbook.io/gov/ethfi-allocations (Core contributors 21.47%, '3-year schedule, 1-year "
+              "cliff'; updated 2025-08-02) — read 2026-11-19; launch 2024-03-18 (Season 1 page: claims live)",
+    "alternative": "the Blockworks filing: locked 12 months, 'unlock over months 13-36' in 24 equal monthly steps, last "
+                   "2027-02-18 — 3/24 x 214.7M = 26,837,500 on 2026-11-19 (2,981,944 more than the docs' reading)",
+    "chain_fit": "INFERRED: the docs' reading fits the chain better — custodian wallet 0x3CE6B172… had moved 34.5% by "
+                 "2025-05-17 (the docs allow 36.1%, the filing 8.3%)",
+    "decided": _R14_DECIDED + " — decisions 1 and 2 (a): in circulating, off the float, the docs' schedule, MODELLED"}
+
+
+def etherfi_team_unvested_on(day, spec: dict | None = None) -> float:
+    """R14.1b: the core-contributor tokens not yet vested on `day` under the docs' schedule (monthly steps on the
+    launch day's date; nothing vests before the cliff). A function of the day, never a constant."""
+    import pandas as _pd
+    spec = spec or ETHERFI_TEAM_SCHEDULE
+    d, s = _pd.Timestamp(day).normalize(), _pd.Timestamp(spec["launch"])
+    k = (d.year - s.year) * 12 + (d.month - s.month) - (1 if d.day < s.day else 0)
+    k = max(0, min(int(spec["months"]), k))
+    vested = 0 if k < int(spec["cliff_months"]) else k
+    return float(spec["allocation"]) * (int(spec["months"]) - vested) / int(spec["months"])
+
+
+# SCHEDULE_LOCK_LEGS (generic): a locked leg no wallet can be read for, computed from a published schedule on every day
+# the project's total supply is held (build_workbook._schedule_lock_leg_views); its source is a MODELLED point.
+SCHEDULE_LOCK_LEGS = {"Ether.fi": dict(ETHERFI_TEAM_SCHEDULE, fn=etherfi_team_unvested_on,
+                                       point="modelled:etherfi_team_schedule")}
+METRICS["etherfi_team_unvested_modelled_tokens"] = {
+    "label": "ETHFI of the core contributors not yet vested, MODELLED from the docs' schedule (214.7M, a third at the "
+             "2025-03-18 cliff, 1/36 a month to 2027-03-18) — in circulating, OFF the free float as locked (R14.1b; no "
+             "vesting contract: the custodian wallets cannot be split into vested and unvested on chain)",
+    "kind": "stock", "unit": "tokens", "archetypes": [1, 2, 3, 4], "tiers": [2], "sanity_min": 0, "sanity_max": 2.2e8,
+    "only_projects": ("Ether.fi",), "view_only": True}
+MODELLED_POINTS["modelled:etherfi_team_schedule"] = (
+    "PARTLY MODELLED — Ether.fi's unvested core-contributor ETHFI (214.7M, docs' 3-year schedule with a 1-year cliff, "
+    "monthly to 2027-03-18) is computed from the published schedule, no vesting contract existing: "
+    "etherfi.gitbook.io/gov/ethfi-allocations, read 2026-11-19; it leaves the free float only (in circulating)")
+
+# ----- R14.4 THE STAKE: sETHFI shares on all five chains x the vault Accountant's rate (decision 4 (a)). Today the
+# float subtracts locked_tokens = mainnet sETHFI.totalSupply() only (88.05M on the dump; 86,035,054 at block
+# 26,451,790). sETHFI is deployed at the same address on Arbitrum, Base, Optimism and Scroll (ether.fi's
+# deployed-contracts page, 'ETHFI Staking', read 2026-11-19); the vault's Accountant is read from the chain: sETHFI.hook()
+# = the Teller 0x35dd2463…, Teller.accountant() = 0x05a1552c5e18f5a0bb9571b5f2d6a4765ebda32b (vault() = sETHFI, base() =
+# ETHFI, decimals() = 18; getRate() 1.20677615 on 2026-11-19). Shares 2026-11-19 (head): Ethereum 86,035,054.29,
+# Arbitrum 2,270,881.00, Base 315,167.17, Optimism 26,258,009.23, Scroll 5,756.15 = 114,884,867.84 x 1.20677615 =
+# 138,640,319 ETHFI (the pack's read at 14:21-14:29 UTC: 114,380,001 shares = 138,031,058, reconciled to the ETHFI the
+# vaults + the Symbiotic position hold within 0.01%). ALL CHAINS OR NO ROW: a day missing a chain or the rate has no
+# value (unknown is never 0). THE CHANGE OF MEASURING POINT IS A DECLARED HANDOVER: before the first day every leg is
+# stored, the stake is the old point (mainnet shares, as the float read it); from that day the new one, with no fallback.
+_SETHFI_DEPLOYED = ("https://etherfi.gitbook.io/etherfi/developers/contracts-and-integrations/deployed-contracts "
+                    "('ETHFI Staking': sETHFI on Mainnet, Arbitrum, Base, Optimism, Scroll — read 2026-11-19)")
+_ACCOUNTANT = "0x05a1552c5e18f5a0bb9571b5f2d6a4765ebda32b"
+_SETHFI_L2 = (("arbitrum", 2_270_881.00), ("base", 315_167.17), ("optimism", 26_258_009.23), ("scroll", 5_756.15))
+DEFAULT_RPC.setdefault("scroll", ["https://rpc.scroll.io", "https://scroll-rpc.publicnode.com"])
+EVM_CHAINS.add("scroll")
+for _ch, _sh in _SETHFI_L2:
+    _EF14["contracts"][f"sethfi_shares_{_ch}"] = _contract(
+        _SETHFI, _ch, "erc20_total_supply", "sETHFI", _SETHFI_DEPLOYED, verified=_R14_READ,
+        provenance=f"ether.fi deployed-contracts page; totalSupply() {_sh:,.2f} at {_ch}'s head, 2026-11-19",
+        metric_override=f"sethfi_shares_{_ch}", token_standard="erc20", holder_has_code=True,
+        purpose=f"sETHFI.totalSupply() on {_ch} — one leg of the five-chain stake (R14.4)")
+    METRICS[f"sethfi_shares_{_ch}"] = {
+        "label": f"sETHFI shares on {_ch.capitalize()} (totalSupply) — a leg of the five-chain stake (R14.4)",
+        "kind": "stock", "unit": "tokens", "archetypes": [1, 2, 3, 4], "tiers": [2], "sanity_min": 0, "sanity_max": 1e9,
+        "only_projects": ("Ether.fi",)}
+_EF14["contracts"]["sethfi_accountant_rate"] = _contract(
+    _ACCOUNTANT, "ethereum", "stake_principal", "ETHFI", "https://etherscan.io/address/" + _ACCOUNTANT,
+    verified=_R14_READ, call="getRate", underlying="token", holder_has_code=True,
+    provenance="read on chain 2026-11-19: sETHFI.hook() -> Teller 0x35dd2463fa7a335b721400c5ad8ba40bd85c179b, "
+               "Teller.accountant() -> this; vault() = sETHFI, base() = ETHFI, decimals() = 18; getRate() 1.20677615",
+    metric_override="sethfi_accountant_rate",
+    purpose="the sETHFI vault Accountant's getRate() — ETHFI per share, scaled by ETHFI's decimals (R14.4)")
+METRICS["sethfi_accountant_rate"] = {
+    "label": "sETHFI vault Accountant getRate() — ETHFI per sETHFI share (0x05a1552c…; R14.4)",
+    "kind": "stock", "unit": "ratio", "archetypes": [1, 2, 3, 4], "tiers": [2], "sanity_min": 0.5, "sanity_max": 10,
+    "only_projects": ("Ether.fi",)}
+MULTICHAIN_STAKE = {
+    "Ether.fi": {"metric": "sethfi_staked_all_chains_tokens",
+                 "shares": ("locked_tokens", *(f"sethfi_shares_{c}" for c, _ in _SETHFI_L2)),
+                 "rate": "sethfi_accountant_rate", "old": "locked_tokens",
+                 "points": ("derived:sethfi_stake_mainnet_shares", "derived:sethfi_stake_five_chains_x_rate"),
+                 "read": {"block": 26_451_790, "shares": 114_884_867.84, "rate": 1.2067761500772427,
+                          "staked": 138_640_318.5, "pack": (114_380_001, 1.20677615, 138_031_058)},
+                 "decided": _R14_DECIDED + " — decision 4 (a)"}}
+METRICS["sethfi_staked_all_chains_tokens"] = {
+    "label": "ETHFI staked — sETHFI shares on Ethereum, Arbitrum, Base, Optimism and Scroll x the vault Accountant's "
+             "rate (R14.4); before the first day every leg is stored, mainnet shares only (a declared handover)",
+    "kind": "stock", "unit": "tokens", "archetypes": [1, 2, 3, 4], "tiers": [2], "sanity_min": 0, "sanity_max": 1e9,
+    "only_projects": ("Ether.fi",), "view_only": True}
+LOCK_DISPLAY_METRIC["Ether.fi"] = "sethfi_staked_all_chains_tokens"
+_EF14.setdefault("series_handover", {})["sethfi_staked_all_chains_tokens"] = {
+    "ordered_points": MULTICHAIN_STAKE["Ether.fi"]["points"],
+    "why": "R14.4 (Jake 2026-11-19, decision 4 (a)): the stake is the sETHFI shares on all five chains x the vault "
+           "Accountant's rate; before the first day the four L2 share supplies and the rate are all stored, the old "
+           "point (mainnet shares, the figure the float used) stands — `python archive_backfill.py --run --project "
+           "Ether.fi` moves the seam back",
+    "composition_change": "WIDENS: + the Arbitrum / Base / Optimism / Scroll shares (28.85M on 2026-11-19) and x the "
+                          "Accountant's rate (1.2068 ETHFI a share): 86.0M shares -> 138.6M ETHFI",
+    "declared": "2026-11-19"}
+
+# ----- R14.1 ETHER.FI ON THE RULE (decision 1 (a)). Circulating = totalSupply() (998,535,999: the 1,464,001 burned in
+# 2025-08..09 is already out of it). The 13 issuer-side wallets the repo subtracted (treasury_holding_tokens: the
+# protocol Treasury 0x0c83…; noncirculating_holding_tokens: 12 Safes / wallets — the five treasury Safes, the Foundation
+# Safe 0xe4439b1d…, the Operating Safe 0x3FB6784E…, the two Q18 Foundation EOAs, the two custodian origins and the old
+# buyback Safe) are IN circulating — Safes 4-of-6 / 3-of-7 / 3-of-7 / 1-of-2 / 3-of-7 / 3-of-7 / 2-of-5 and keyed wallets,
+# so "nobody can move it" fails; all hold 0 sETHFI, idle — and OFF the float (issuer-held). The unvested team leg is in
+# circulating and off the float (R14.1b, MODELLED); the stake is off the float as before (R14.4's figure). Vested tokens
+# in investor / team wallets stay in the float (decision 3), the insider share shown beside it (R14.1c). On the dump
+# (2026-10-13): circulating 810,696,040 -> 998,535,999 (the stored total); on 2026-11-19: 998,535,999.
+declare_rule_in(
+    "Ether.fi", ("treasury_holding_tokens", "noncirculating_holding_tokens"),
+    "docs/r13_etherfi_pack.md (b), (e): the 13 issuer-side wallets are Safes (4-of-6, 3-of-7, 3-of-7, 1-of-2, 3-of-7, "
+    "3-of-7, 2-of-5, 4-of-6 x2, 2-of-5) or keyed EOAs — each can be moved, none holds sETHFI on Ethereum, Arbitrum, Base "
+    "or Optimism; the unvested core-contributor tokens sit in 32 plain custodian wallets with a key that do send (2.3M "
+    "from 0x6630fF17… on 2026-08-21) — in circulating (decision 1 (a)), off the float as a MODELLED locked leg",
+    off_float=("treasury_holding_tokens", "noncirculating_holding_tokens", "etherfi_team_unvested_modelled_tokens"),
+    circulating=(810_696_040, 998_535_999),
+    references={"coingecko": (998_535_999, {}),
+                "coinmarketcap": (965_350_000, {
+                    "CoinMarketCap's implied non-circulating (1,000,000,000 − 965,350,000), NOT NAMED BY WALLET: a "
+                    "static self-reported figure (app.ether.fi/api/ethfi/coinmarketcap, last updated 2026-09-16; CMC "
+                    "lists no excluded wallet) — close to unvested team + post-TGE grants (30-35M), an inference, not "
+                    "established": 34_650_000,
+                    "less the burn of 2025-08..09 (CMC's total is still 1,000,000,000)": -1_464_001})},
+    float_answer="the float loses the issuer-side stock (182.71M on 2026-11-19), the unvested team leg (23.86M, MODELLED) "
+                 "and the five-chain stake (138.6M); circulating rises by the issuer-side stock only — 653.9M on the "
+                 "pack's read (65.5% of total)",
+    modelled_legs=("etherfi_team_unvested_modelled_tokens",),
+    restated="the whole stored series: circulating_supply_onchain = the stored total on every day it is held (the "
+             "legs are no longer subtracted), so no stored row of the old basis is read; one basis, never two",
+    reference_leaves_out=False)
+RULE_IN["Ether.fi"].update({"read_on": _R14_READ, "decided": _R14_DECIDED + " — decision 1 (a)"})
+CIRCULATING_ONCHAIN["Ether.fi"]["decision"] = (
+    "THE RULE (R14.1, Jake 2026-11-19): circulating = totalSupply(); the 13 issuer-side wallets are in circulating, off "
+    "the float; the unvested team tokens in the custodian wallets in circulating, off the float (MODELLED from the docs' "
+    "schedule). Was (2026-10-07): total − the treasury 0x0c83… − the filing's wallets")
+CIRCULATING_ONCHAIN["Ether.fi"]["handover"] = {
+    "on": "2026-11-19", "decided": RULE_IN["Ether.fi"]["decided"],
+    "from": "total − treasury_holding_tokens − noncirculating_holding_tokens (810,696,040 on the dump)",
+    "to": "total (998,535,999); the two legs and the MODELLED team leg leave the float",
+    "how": RULE_IN["Ether.fi"]["restated"]}
+CIRCULATING_POLICY["Ether.fi"].update({
+    "now": "THE RULE (Jake 2026-11-17), R14.1 (2026-11-19): circulating = totalSupply()",
+    "source": "ETHFI.totalSupply() on Ethereum (bridged L2 supply is inside it: the OFT lockbox 0xe0080d2F…); "
+              "CoinGecko (998,535,999 on 2026-11-19, = total) and CoinMarketCap (965,350,000, self-reported, stale) "
+              "the cross-checks",
+    "definition": "total supply; issuer / foundation / treasury holdings, the unvested team leg (MODELLED) and the "
+                  "five-chain stake off the free float",
+    "staked": "included in circulating, off the float (five chains x the Accountant's rate, R14.4)",
+    "previous": "total − the issuer-side wallets ether.fi's filing and docs name (2026-10-07 to 2026-11-19)"})
+
+# ----- R14.4b THE INSIDER STAKE (decision 6 (a)): the nine INFERRED staker wallets join the insider set. Evidence (the
+# pack's trace, Blockscout, 2026-11-19): every ETHFI each wallet ever received came from the investor / team custodian
+# wallets (funded by the filing-named origins 0x1b577834… / 0x66FCfC15…); a floor (three hops, transfers >= 500,000,
+# mainnet only). sETHFI at block 26,451,791 (re-read): 34,321,467.85 of 86,035,054.29 shares = 39.89%. The PUBLISHED
+# part stays the 13 issuer-side wallets (insider_stake_shares, 0 shares — their own series, unchanged); the INFERRED
+# part is its own series, so the published set is never restated by it. ALL NINE OR NO ROW (a partial sum is no row).
+ETHERFI_INSIDER_STAKERS = (
+    ("0x8B0E5095caB7C83674B330C8e06E856835EC1209", "investor", 8_523_470.78),
+    ("0x9C2F1182267aB2e9Ba8A20FB6e876A02E87538Ec", "investor", 5_440_587.23),
+    ("0x476df75820d7F66436E47d395c711Eba6af388df", "team", 4_099_342.70),
+    ("0xE61894033Eec8CE33862F8c6B8C1aeC56FD386e8", "investor", 3_953_430.90),
+    ("0x73ED1B6713299EF9F0D91923aA0E4c2E06AD1511", "team", 3_284_212.65),
+    ("0x6eba48529ADfdf55506Ea19AE2FC4453C22E6589", "team", 3_265_026.22),
+    ("0x3b937cF62a829b7Aa4C9713F71032918aCaFaC5b", "investor", 2_713_925.53),
+    ("0x31DAF145D209e48e58df7F42BBA2C8495f30a732", "investor", 1_813_649.97),
+    ("0xdc7074b79bE30eBC7A96f63177B95Dd538b443aB", "team", 1_227_821.86))
+_INFERRED_STAKER_EVIDENCE = (
+    "INFERRED (docs/r13_etherfi_pack.md (e), Blockscout trace read 2026-11-19): every ETHFI this wallet ever received "
+    "came from {group} custodian wallets (funded by the filing-named custodian origin {origin}); not named in any "
+    "ether.fi document")
+for _i, (_a, _grp, _sh) in enumerate(ETHERFI_INSIDER_STAKERS, start=1):
+    _EF14["contracts"][f"insider_inferred_staker_{_i}"] = _contract(
+        _a, "ethereum", "treasury_holding", "sETHFI", "https://eth.blockscout.com/address/" + _a, verified=_R14_READ,
+        provenance=_INFERRED_STAKER_EVIDENCE.format(
+            group=_grp, origin="0x1b577834…" if _grp == "investor" else "0x66FCfC15…")
+        + f"; balanceOf {_sh:,.2f} sETHFI at block 26,451,791",
+        metric_override="etherfi_insider_inferred_stake_shares", underlying="sethfi_shares", holder_has_code=False,
+        purpose=f"sETHFI shares of an INFERRED {_grp} insider staker (R14.4b; decision 6)")
+METRICS["etherfi_insider_inferred_stake_shares"] = {
+    "label": "sETHFI shares held by the nine INFERRED insider stakers (funded only by investor / team custodian wallets; "
+             "R14.4b) — a floor",
+    "kind": "stock", "unit": "tokens", "archetypes": [1, 2, 3, 4], "tiers": [2], "sanity_min": 0, "sanity_max": 1e9,
+    "only_projects": ("Ether.fi",)}
+METRICS["etherfi_insider_stake_all_shares"] = {
+    "label": "sETHFI shares held by insiders = PUBLISHED issuer-side wallets (insider_stake_shares, 13) + INFERRED "
+             "insider stakers (9) — the insider share's numerator (R14.4b)",
+    "kind": "stock", "unit": "tokens", "archetypes": [1, 2, 3, 4], "tiers": [2], "sanity_min": 0, "sanity_max": 1e9,
+    "only_projects": ("Ether.fi",), "view_only": True}
+# SET_SUM_VIEWS (generic): a view = the sum of its parts on the days every part is held; a part listed in `whole` must
+# be a whole read (a row marked PARTIAL — a component refused — is no row).
+SET_SUM_VIEWS = {("Ether.fi", "etherfi_insider_stake_all_shares"): {
+    "parts": ("insider_stake_shares", "etherfi_insider_inferred_stake_shares"),
+    "whole": ("etherfi_insider_inferred_stake_shares",),
+    "point": "derived:insider_stake[published 13 + inferred 9]"}}
+_EF14_INSIDER_PUBLISHED = sorted(k[len("insider_stake_"):] for k in _EF14["contracts"] if k.startswith("insider_stake_"))
+INSIDER_LOCK["Ether.fi"] = (
+    "etherfi_insider_stake_all_shares", "locked_tokens",
+    f"sETHFI shares held by insiders ÷ sETHFI totalSupply on Ethereum (shares over shares). PUBLISHED: the "
+    f"{len(_EF14_INSIDER_PUBLISHED)} issuer-side wallets (filing / docs), 0 shares. INFERRED (Jake 2026-11-19, decision "
+    f"6): 9 wallets funded only by investor / team custodian wallets, 34,321,468 shares at block 26,451,791 = 39.9% — a "
+    f"floor (three hops, mainnet only; config.ETHERFI_INSIDER_STAKERS)")
+ETHERFI_INSIDER_SET = {
+    "published": {"what": "the 13 issuer-side wallets (ether.fi's Blockworks filing Q9 / Q18, the allocations page, "
+                          "Deployed.s.sol)", "keys": tuple(_EF14_INSIDER_PUBLISHED)},
+    "inferred_stakers": {a: {"group": g, "shares_2026_11_19": s} for a, g, s in ETHERFI_INSIDER_STAKERS},
+    "decided": _R14_DECIDED + " — decision 6 (a)"}
+
+# ----- R14.1c THE INSIDER SHARE BESIDE THE FLOAT (decision 3 (a)): vested tokens in investor / team wallets stay IN the
+# float; what insiders hold is shown beside it, never subtracted. The custody wallets (INFERRED: each funded directly by
+# a filing-named custodian origin, which the filing says was "distributed out to individual addresses per investor /
+# core contributor"; their recipients read from Blockscout 2026-11-19 — 32 team, 108 investor) holding >= 1,000 ETHFI
+# at block 26,451,794, the six largest onward investor wallets funded by nothing else (the pack's trace) and the
+# stakers' liquid ETHFI. Liquid ETHFI 2026-11-19: team 150,700,905 (32 wallets; 150.70M in the 14 read), investor
+# 20,047,466 (108; 20.04M in the 29 read), onward 146,740,580 (6), stakers 1,722,546 (3 with liquid) = about 319.2M.
+# A floor: 7 more investor-onward wallets (~10M) and 4 team-onward ones (~6M) are not listed by address in the pack.
+_EF_CUSTODY = {
+    "team": ("0x95Bf94e06D5BE1000C23cd99968eff414Aa4995e", "0x6630fF17CF5357c5f9C3d2A21AC98D2fF1070739",
+             "0x1a8d277E6D2eCa5AE1Ce5B2054a4F51ec6aEbe90", "0xdBA8c05555b3A23A15251d5ca3E60e4840012b09",
+             "0xc00a8059F7C656B827462D4450D407dd15BFda0d", "0xd65F151aC6A7A85e85543c0cC0563b2b922b8c1d",
+             "0x792A79290F4911204a357450b19f18AC4527d12D", "0x0338D8909De5B2666159f220477B498317542393",
+             "0x417c1EdD3AFCF1f3994C864D1070AF1Ab91B2AE6", "0x4DF1BE9e97dc187eC609020663A5216fcAB1D195",
+             "0x4497c8e533dADBf54e1E5299B837387Bc0cf5c9f", "0xE6E90CD13F91526d9A42484ccC52b6b672378604",
+             "0xcfbD0271df7eC28d542Fb7619526f4fa95e8397B", "0x1ba116Ce93eeb31F2a451E57D66F3aEDBa380Eba"),
+    "investor": ("0xA73D268Db793DE0A6EE81D7729B21326183707A4", "0x4E8BA8Ef7D7efe9e0086d43fFa6deD92bf487FBD",
+                 "0xB6c5aE268cfF4F0b47f35D07df699C8E08d97397", "0x38B70fC4B3aa3F89427a0127A37418A19E0853A4",
+                 "0xD92C8Abb671D31067bC9cCC4ca34d430758962Fd", "0x9140604f574469C5b269825697eC3Ea19f5AE2E7",
+                 "0xA242BcF1cb513b4B0C383bFf76a304175BE9b2d6", "0x49DcC1107467146f41EBb1A3841A2296F4159B9f",
+                 "0x91A07E7A97d7DD455bf0C01Afab925F8Ffa8AC35", "0x8392614528736EEa1B669B73603da49766485E3C",
+                 "0x5F64C5Fd6ADBc6DeC9B9500F4EE6a0883C4eF00D", "0x7f900d3292F78FE5D62a93B187AD789a838fdF46",
+                 "0xf506396D347bAeD137F34116c8CAD79cC2701019", "0x746397aE16f59A3aa624b28DD01Ed97f8B0999B6",
+                 "0x57e9921FE82c4D6120bdee4032433b85068F9549", "0xc7297BB92e9BA143C4C839FB2D5f4b67405614C2",
+                 "0x90A91D2039a1AA73002001377009C8a952D3CceF", "0xA9A869c2D0bcb1f52b6e1Ba8c3d132c68C3F0614",
+                 "0x0F96558e6Bff585687aC901fAF0335995C9D8811", "0x4Fca7f954E4ad124e81Db49eF509bf3d0A7bd662",
+                 "0x50D8519ae6135017282A465d6F80783e9A6a07ad", "0x26efe2FF3959A4EA961D6e2af39D3820c75dac2F",
+                 "0xbE40Ca1fEC7c42d918b57e7e56947f9917c89a17", "0xD20AF16A303F877c6A961A11889123A39C52Fc7B",
+                 "0x9CAa16b7Aa0Ca51a0Ade270346D9E9CCDCE6C0Df", "0xEcb32e9d022bE6aEE755c71De3ceB63B7c58a135",
+                 "0x6c2b705D7ccC345E79208B4de155879a1aB4440c", "0xe17eeD2bA5a1024008Db0CfB2f2558cDA3A61c99",
+                 "0xe645fe6575276f81153F55d5552b4B40C36137FA"),
+    "investor_onward": ("0xf10873355B209B401262CAdc753d654E2b7e41aC", "0xF619ab1F33cDc8a0123E093DE92Ea4D7399De39f",
+                        "0x7A93190d436436BbB79fa2c0d24ca93AfB59B3fb", "0x1331669cdfD56a5a865FdB38d825451FdE8F13Bf",
+                        "0xb82DBD58d8F6705D13a493b1d81BE1e94f25b79e", "0x0AcA738068D512D7Be1b0ddE7E7587D43052468A"),
+    "staker_liquid": ("0x476df75820d7F66436E47d395c711Eba6af388df", "0x73ED1B6713299EF9F0D91923aA0E4c2E06AD1511",
+                      "0xdc7074b79bE30eBC7A96f63177B95Dd538b443aB"),
+}
+_EF_CUSTODY_WHY = {
+    "team": "INFERRED core-contributor custodian wallet: funded directly by the filing-named origin 0x66FCfC15… "
+            "(Blockscout, read 2026-11-19)",
+    "investor": "INFERRED investor custodian wallet: funded directly by the filing-named origin 0x1b577834… "
+                "(Blockscout, read 2026-11-19)",
+    "investor_onward": "INFERRED investor custody: funded by nothing but investor custodian wallets (the pack's trace, "
+                       "Blockscout 2026-11-19)",
+    "staker_liquid": "INFERRED insider staker's liquid ETHFI (R14.4b)"}
+for _grp, _ws in _EF_CUSTODY.items():
+    for _i, _a in enumerate(_ws, start=1):
+        _EF14["contracts"][f"insider_custody_{_grp}_{_i}"] = _contract(
+            _a, "ethereum", "treasury_holding", "ETHFI", "https://eth.blockscout.com/address/" + _a, verified=_R14_READ,
+            provenance=_EF_CUSTODY_WHY[_grp], metric_override="etherfi_insider_custody_tokens", holder_has_code=False,
+            purpose="liquid ETHFI held by an INFERRED insider wallet — inside circulating and the float, shown beside "
+                    "it (R14.1c, decision 3)")
+METRICS["etherfi_insider_custody_tokens"] = {
+    "label": "Liquid ETHFI in the INFERRED investor / core-contributor custody wallets (R14.1c: in circulating AND in "
+             "the float — shown beside it, never subtracted; a floor)",
+    "kind": "stock", "unit": "tokens", "archetypes": [1, 2, 3, 4], "tiers": [2], "sanity_min": 0, "sanity_max": 1e9,
+    "only_projects": ("Ether.fi",)}
+METRICS["etherfi_insider_stake_assets_tokens"] = {
+    "label": "ETHFI staked by the INFERRED insider stakers = their sETHFI shares x the Accountant's rate (R14.1c)",
+    "kind": "stock", "unit": "tokens", "archetypes": [1, 2, 3, 4], "tiers": [2], "sanity_min": 0, "sanity_max": 1e9,
+    "only_projects": ("Ether.fi",), "view_only": True}
+SHARES_X_RATE_VIEWS = {("Ether.fi", "etherfi_insider_stake_assets_tokens"): (
+    "etherfi_insider_inferred_stake_shares", "sethfi_accountant_rate", "derived:insider_stake_assets")}
+INSIDER_INSIDE_CIRCULATING["Ether.fi"] = {
+    "held": ("treasury_holding_tokens", "noncirculating_holding_tokens", "etherfi_insider_custody_tokens",
+             "etherfi_insider_stake_assets_tokens"),
+    "what": "PUBLISHED: the 13 issuer-side wallets (in circulating by the rule, off the float). INFERRED: the investor / "
+            "core-contributor custody wallets' liquid ETHFI (in the float, decision 3) and the nine insider stakers' "
+            "stake (x the Accountant's rate) — a floor",
+    "decided": _R14_DECIDED + " — decision 3 (a)"}
+
+# ----- R14.B THE FINANCIAL-THEATRE FLAG (Jake 2026-10-27: research/theory/SPEC_THEORY_ADDITIONS_2026-10-27.md P-F;
+# FAIR_TOKENOMICS_STANDARD.md "Financial-theatre flag": "Raised when issuer-side or insider wallets send tokens to
+# exchanges in a window in which the project retires tokens by buyback; size as % of retired tokens"). Nothing in the
+# repo implemented it (grep "theatre": the two research documents only). GENERIC, per project: the issuer / insider
+# wallet set (a log scan's holders), the exchange-tagged destinations (each with its label, the label's source and read
+# date — A LABEL IS EVIDENCE, NOT PROOF), the window, the outflow series the scan stores, and the buyback series the two
+# readings use. Read by build_workbook._theatre_flag_views; shown on CP (state + evidence; size).
+#   THE READINGS. "as_written": raised when tokens go to the destinations AND tokens are RETIRED (burned + held) by
+#   buyback in the window; size = sent ÷ retired. "any_buyback": raised when they go AND any buyback runs (bought, whatever
+#   happens to the tokens); size = sent ÷ bought. NOT TESTABLE: the outflow series or the buyback series is not stored
+#   over the window (unknown is never "not raised").
+# ETHER.FI (decision 9): 9,300,020 ETHFI since 2026-07-01 (Blockscout, every ETHFI transfer of the senders, read
+# 2026-11-19): the Operating Safe 0x3FB6784E… sent 7,100,020 to 0x80381dc3… (07-15 10, 07-20 3,100,000, 08-04 2,000,000
+# and 1,000,000, 11-18 10 and 1,000,000), which forwarded every token within the hour to 0x1157A207… ("FalconX:
+# 0x115...101", Open Labels Initiative via Blockscout); and 2,000,000 to 0x188C7b3C… (08-21 100 and 999,900, 09-04
+# 1,000,000), which forwarded them to 0x28C6c062… ("Binance: Hot Wallet" / "Binance 14", Blockscout and OLI); the deployer
+# EOA 0x9eaC7114… sent 200,000 to 0x188C7b3C… on 2026-10-12 (forwarded the same hour). The two forwarders carry NO label
+# themselves: that they are deposit addresses is INFERRED from the forwarding. Purpose not established (sale, loan or
+# collateral). Ether.fi's buyback since 2026-09-08 (Snapshot 0xed61adff…) buys ETHFI that is paid to card users as
+# cashback — distributed, NOT retired (0 burned, 0 held from the programme; nothing burned since 2025-09-19).
+THEATRE_FLAG = {
+    "Ether.fi": {
+        "window": {"from": "2026-07-01", "to": None,
+                   "why": "decision 9: 'since July 2026' — from the first transfer to a tagged address after the new "
+                          "programme's announcement period; open to the as-of"},
+        "outflow_metric": "theatre_exchange_outflow_tokens",
+        "retired_metric": "retired_buyback_tokens",
+        "bought_metrics": ("actual_buyback_tokens", "programmatic_buyback_tokens"),
+        "wallets": {"0x3FB6784E263643656f386A0371644931133D7b78": "Operating Safe (PUBLISHED: filing; Safe 2-of-5)",
+                    "0x9eaC7114D1a1EaBc4732A886795cFD9E6E35843f": "deployer / operations EOA (INFERRED: an owner of "
+                                                                   "every ether.fi Safe but one)",
+                    "0xe4439b1d150Ab2Febd72D699954c7b4ddE2b66e2": "Foundation Safe (PUBLISHED: filing Q18)",
+                    "0x01e42ad3acd58584ffc1d1982ecbbe758996d601": "ether.fi Safe (INFERRED: owners overlap the buyback "
+                                                                   "Safe)",
+                    "0x7A6A41F353B3002751d94118aA7f4935dA39bB53": "Treasury Safe (PUBLISHED: allocations page)",
+                    "0x7D4bBE471369a066186c18bAF33622796A08d5Cd": "Treasury Safe (PUBLISHED: allocations page)"},
+        "destinations": {
+            "0x80381dc31B249F3655B7B7f1ec36E3E7DdBDd07E": {
+                "tag": "FalconX (via a forwarder)", "label": "none on the forwarder itself",
+                "evidence": "forwarded every ETHFI it received (7,100,020) to 0x1157A2076b9bB22a85CC2C162f20fAB3898F4101 "
+                            "within the hour — 'FalconX: 0x115...101', tags Exchange / Fund / FalconX",
+                "label_source": "Blockscout eth.blockscout.com token-transfer metadata (OLI: openlabelsinitiative.org), "
+                                "read 2026-11-19"},
+            "0x188C7b3CAc163A137438b46654D57f7367AF7e67": {
+                "tag": "Binance (via a deposit address)", "label": "none on the deposit address itself",
+                "evidence": "forwarded every ETHFI it received (2,200,000) to 0x28C6c06298d514Db089934071355E5743bf21d60 "
+                            "— 'Binance: Hot Wallet' / 'Binance 14', tags Hot Wallet / Exchange",
+                "label_source": "Blockscout eth.blockscout.com token-transfer metadata (Blockscout + OLI), read "
+                                "2026-11-19"},
+            "0x1157A2076b9bB22a85CC2C162f20fAB3898F4101": {
+                "tag": "FalconX", "label": "FalconX: 0x115...101",
+                "label_source": "Blockscout (OLI), read 2026-11-19"},
+            "0x28C6c06298d514Db089934071355E5743bf21d60": {
+                "tag": "Binance", "label": "Binance: Hot Wallet / Binance 14",
+                "label_source": "Blockscout (Blockscout + OLI), read 2026-11-19"}},
+        "label_caveat": "an explorer label is evidence, not proof: neither FalconX nor Binance publishes these addresses "
+                        "here, and the two forwarders are deposit addresses by inference only",
+        "research_read": {"read_on": _R14_READ,
+                          "source": "Blockscout's free API (eth.blockscout.com/api/v2/…): every ETHFI transfer of the "
+                                    "senders and of the two forwarders since 2026-07-01",
+                          "sent": 9_300_020.0, "by_sender": {"Operating Safe": 9_100_020.0, "deployer EOA": 200_000.0},
+                          "by_destination": {"FalconX": 7_100_020.0, "Binance": 2_200_000.0},
+                          "while_programme_ran": {"from": "2026-09-08", "sent": 1_200_010.0,
+                                                  "programme_bought": 2_876_642.0},
+                          "retired_in_window": 0.0,
+                          "purpose": "not established (sale, loan or collateral)"},
+        "decided": _R14_DECIDED + " — item B; decision 9 (a): a NAMED FLOAT OUTFLOW, purpose not established"}}
+_EF14["log_scans"].append({
+    "key": "theatre_exchange_out", "metric": "theatre_exchange_outflow_tokens", "chain": "ethereum",
+    "token": _ETHFI_ETH, "holders": list(THEATRE_FLAG["Ether.fi"]["wallets"]), "direction": "out", "store": True,
+    "count_to": list(THEATRE_FLAG["Ether.fi"]["destinations"]),
+    "attribution_sources": [d["label_source"] for d in THEATRE_FLAG["Ether.fi"]["destinations"].values()],
+    "wired_on": _R14_READ, "own_tier": "explorer@Ether.fi",
+    "label": "ETHFI sent by ether.fi's issuer-side wallets to FalconX- and Binance-tagged addresses (R14.B; decision 9: a "
+             "named float outflow, purpose not established)"})
+METRICS["theatre_exchange_outflow_tokens"] = {
+    "label": "ETHFI sent by ether.fi's issuer-side wallets (Operating Safe, deployer EOA, Foundation / Treasury Safes) to "
+             "exchange-tagged addresses (FalconX, Binance; Blockscout / OLI labels) — a NAMED FLOAT OUTFLOW, purpose not "
+             "established (R14.B, decision 9)",
+    "kind": "flow", "unit": "tokens", "archetypes": [1, 2, 3, 4], "tiers": [2], "sanity_min": 0, "sanity_max": 1e9,
+    "only_projects": ("Ether.fi",)}
+# the token-flow statement's memo line (generic: FLOW_TOKEN_MEMO[project] = ((label, series, note), ...)) — a line BESIDE
+# the circulating identity, never in its expected closing: under the rule the tokens were circulating before and after
+# (an issuer-held -> float move); it is NOT hidden inside the unlock leg's figure on this statement
+FLOW_TOKEN_MEMO = {"Ether.fi": (
+    ("memo: named float outflow — issuer-side wallets to exchange-tagged addresses (purpose not established)",
+     "theatre_exchange_outflow_tokens",
+     "decision 9 (Jake 2026-11-19): FalconX / Binance-tagged destinations (Blockscout / OLI labels: evidence, not "
+     "proof; config.THEATRE_FLAG); in circulating before and after — an issuer-held -> float move, not in the expected "
+     "closing"),)}

@@ -4858,6 +4858,177 @@ def _modelled_lock_views(groups: dict) -> None:
     groups[(name, spec["metric"])] = _as_stored(view, tot.columns)
 
 
+def _schedule_lock_leg_views(groups: dict) -> None:
+    """R14.1b (config.SCHEDULE_LOCK_LEGS): a locked leg no wallet can be read for, computed from the published schedule
+    on every day the project's total supply is held — a MODELLED point (labelled wherever it shows)."""
+    for name, spec in getattr(config, "SCHEDULE_LOCK_LEGS", {}).items():
+        tot = groups.get((name, (config.circulating_onchain(name) or {}).get("total", "total_supply")))
+        if tot is None or tot.empty or name not in {p["name"] for p in scoped_projects()}:
+            continue
+        days = pd.to_datetime(tot["date"]).dt.normalize().drop_duplicates().sort_values()
+        groups[(name, spec["metric"])] = _as_stored(pd.DataFrame(
+            {"date": days.values, "project": name, "metric": spec["metric"], "value": [spec["fn"](d) for d in days],
+             "tier": 2, "source": f"{spec['point']}[{spec['launch']}..{spec['end']}]"}), tot.columns)
+
+
+def _whole_rows(g, whole: bool) -> pd.Series:
+    """A stored series as one value per day; where `whole`, a row marked PARTIAL (a component refused) is no row."""
+    if g is None or g.empty:
+        return pd.Series(dtype=float, index=pd.DatetimeIndex([]))
+    if whole:
+        g = g[~g["source"].astype(str).str.contains("PARTIAL")]
+    return _daily(g)
+
+
+def _multichain_stake_views(groups: dict) -> None:
+    """R14.4 (config.MULTICHAIN_STAKE): the stake = the share supplies on every chain x the vault's rate, on the days
+    every leg is held (all chains or no row). Before the first such day the old point (mainnet shares) stands — a
+    declared handover; from it there is no fallback."""
+    for name, spec in getattr(config, "MULTICHAIN_STAKE", {}).items():
+        if name not in {p["name"] for p in scoped_projects()}:
+            continue
+        old = _daily(groups.get((name, spec["old"])))
+        legs = [_whole_rows(groups.get((name, m)), m != spec["old"]) for m in (*spec["shares"], spec["rate"])]
+        idx = None
+        if all(not s.empty for s in legs):
+            idx = legs[0].index
+            for s in legs[1:]:
+                idx = idx.intersection(s.index)
+        parts = []
+        if idx is not None and len(idx):
+            new = sum(s.reindex(idx) for s in legs[:-1]) * legs[-1].reindex(idx)
+            parts.append(pd.DataFrame({"date": idx, "value": new.values, "source": spec["points"][1]}))
+            old = old[old.index < idx.min()]
+        if not old.empty:
+            parts.insert(0, pd.DataFrame({"date": old.index, "value": old.values, "source": spec["points"][0]}))
+        if not parts:
+            continue
+        cols = next(g.columns for (n_, _m), g in groups.items() if n_ == name and g is not None and not g.empty)
+        v = pd.concat(parts, ignore_index=True)
+        groups[(name, spec["metric"])] = _as_stored(v.assign(project=name, metric=spec["metric"], tier=2), cols)
+
+
+def _set_sum_views(groups: dict) -> None:
+    """R14.4b (config.SET_SUM_VIEWS): a view = the sum of its parts on the days every part is held; a part declared
+    `whole` must be a whole read (a PARTIAL row is no row). Then config.SHARES_X_RATE_VIEWS: shares x the day's rate."""
+    scoped = {p["name"] for p in scoped_projects()}
+    for (name, metric), spec in getattr(config, "SET_SUM_VIEWS", {}).items():
+        if name not in scoped:
+            continue
+        parts = [_whole_rows(groups.get((name, m)), m in spec.get("whole", ())) for m in spec["parts"]]
+        if any(s.empty for s in parts):
+            continue
+        idx = parts[0].index
+        for s in parts[1:]:
+            idx = idx.intersection(s.index)
+        if not len(idx):
+            continue
+        cols = groups[(name, spec["parts"][0])].columns
+        groups[(name, metric)] = _as_stored(pd.DataFrame(
+            {"date": idx, "project": name, "metric": metric, "value": sum(s.reindex(idx) for s in parts).values,
+             "tier": 2, "source": spec["point"]}), cols)
+    for (name, metric), (shares_m, rate_m, point) in getattr(config, "SHARES_X_RATE_VIEWS", {}).items():
+        if name not in scoped:
+            continue
+        sh, rt = _whole_rows(groups.get((name, shares_m)), True), _whole_rows(groups.get((name, rate_m)), True)
+        idx = sh.index.intersection(rt.index)
+        if not len(idx):
+            continue
+        groups[(name, metric)] = _as_stored(pd.DataFrame(
+            {"date": idx, "project": name, "metric": metric, "value": (sh.reindex(idx) * rt.reindex(idx)).values,
+             "tier": 2, "source": point}), groups[(name, shares_m)].columns)
+
+
+# R14.B THE FINANCIAL-THEATRE FLAG, per project (config.THEATRE_FLAG) — built by _theatre_flag_views, read by CP
+THEATRE_RESULTS: dict = {}
+
+
+def theatre_flag_state(sent, retired, bought) -> dict:
+    """R14.B: the flag under the standard's wording (tokens RETIRED by buyback in the window) and under the wider
+    reading (any buyback runs). Each input is the window's sum, or None where its series is not stored over the window
+    (NOT TESTABLE — unknown is never "not raised")."""
+    def one(base, what):
+        if sent is None or base is None:
+            return {"state": "NOT TESTABLE", "size": None,
+                    "why": ("the outflow series is not stored over the window" if sent is None
+                            else f"no {what} series stored over the window")}
+        if sent > 0 and base > 0:
+            return {"state": "RAISED", "size": sent / base, "why": f"{sent:,.0f} sent while {base:,.0f} {what}"}
+        return {"state": "NOT RAISED", "size": None,
+                "why": ("nothing sent to the tagged destinations" if sent <= 0
+                        else f"{sent:,.0f} sent, but 0 {what} in the window — the size (÷ 0) is undefined")}
+    return {"as_written": one(retired, "retired by buyback (burned + held)"),
+            "any_buyback": one(bought, "bought back (any destination)"), "sent": sent, "retired": retired,
+            "bought": bought}
+
+
+def _theatre_flag_views(groups: dict, asof) -> None:
+    THEATRE_RESULTS.clear()
+    for name, spec in getattr(config, "THEATRE_FLAG", {}).items():
+        if name not in {p["name"] for p in scoped_projects()}:
+            continue
+        lo = pd.Timestamp(spec["window"]["from"])
+        hi = pd.Timestamp(spec["window"].get("to") or asof)
+
+        late = []
+
+        def window_sum(metrics, from_first_activity=False):
+            vals = []
+            for m in metrics:
+                g = groups.get((name, m))
+                s = _daily(g)
+                # a LOG-SCAN series is stored daily from its holders' first transfer (fetch.logscan: every day of the
+                # span, zeros measured) — one that starts inside the window measured every day its holders existed
+                scanned = g is not None and not g.empty and g["source"].astype(str).str.startswith("explorer:").all()
+                starts_late = not s.empty and s.index.min() > lo + pd.Timedelta(days=3)
+                if s.empty or s.index.max() < hi - pd.Timedelta(days=3) or (
+                        starts_late and not (from_first_activity and scanned)):
+                    vals.append(None)                       # not stored over the window: unknown, never 0
+                    continue
+                if starts_late:
+                    late.append(f"{m} from its holders' first transfer {s.index.min().date()}")
+                vals.append(float(s[(s.index >= lo) & (s.index <= hi)].sum()))
+            return None if any(v is None for v in vals) else sum(vals)    # one leg unknown: the sum is unknown
+        r = theatre_flag_state(window_sum([spec["outflow_metric"]]), window_sum([spec["retired_metric"]]),
+                               window_sum(spec["bought_metrics"], from_first_activity=True))
+        r["window"] = (lo.date(), hi.date())
+        r["late"] = late
+        THEATRE_RESULTS[name] = r
+
+
+def theatre_flag_text(name: str) -> str:
+    """The CP cell: the flag's state under the standard's wording, the wider reading beside it, and the evidence."""
+    spec = (getattr(config, "THEATRE_FLAG", {}) or {}).get(name)
+    if not spec:
+        return ""
+    r = THEATRE_RESULTS.get(name) or theatre_flag_state(None, None, None) | {"window": (spec["window"]["from"], "as-of")}
+    a, b = r["as_written"], r["any_buyback"]
+    size = lambda x: f"; size {x['size']:.0%} of the base" if x["size"] is not None else ""  # noqa: E731
+    dests = "; ".join(f"{d['tag']} {a_[:10]}… ({d['label_source']})" for a_, d in spec["destinations"].items())
+    rr = spec.get("research_read") or {}
+    research = (f" RESEARCH READ (not the store; {rr.get('source', '')}, {rr.get('read_on', '')}): "
+                f"{rr.get('sent', 0):,.0f} sent since {spec['window']['from']} ("
+                + ", ".join(f"{k} {v:,.0f}" for k, v in (rr.get("by_destination") or {}).items())
+                + f"); {rr.get('retired_in_window', 0):,.0f} retired; purpose {rr.get('purpose', 'not established')}."
+                if rr else "")
+    return (f"AS WRITTEN (tokens RETIRED by buyback in the window): {a['state']} — {a['why']}{size(a)}. "
+            f"IF ANY BUYBACK COUNTS: {b['state']} — {b['why']}{size(b)}. Window {r['window'][0]}..{r['window'][1]}"
+            + (f" ({'; '.join(r['late'])})" if r.get("late") else "") + ". "
+            f"Destinations: {dests}. {spec.get('label_caveat', '')}.{research} DECISION FOR JAKE: which reading "
+            f"the flag scores")[:2400]
+
+
+def theatre_flag_size(name: str):
+    """The CP number: sent ÷ retired under the standard's wording; text where it is not formed."""
+    if name not in (getattr(config, "THEATRE_FLAG", {}) or {}):
+        return ""
+    a = (THEATRE_RESULTS.get(name) or {}).get("as_written") or {"state": "NOT TESTABLE", "size": None}
+    if a["size"] is not None:
+        return f"={a['size']!r}"
+    return f"n/a — {a['state']}: " + ("÷ 0 retired tokens in the window" if a["state"] == "NOT RAISED"
+                                      else "the window's series are not stored")
+
+
 def _derived_leg_views(groups: dict) -> None:
     """R9.2 (config.DERIVED_LEGS): a circulating leg that follows from series already stored — a linear combination of
     them on the days every input is held (Sky: the converter's accrued fee = its SKY − MKR outstanding x 24,000; the
@@ -7842,6 +8013,9 @@ def aggregate(long: pd.DataFrame, fetch_status: pd.DataFrame, asof: pd.Timestamp
     _modelled_lock_views(groups)  # PR4C.1: Morpho's relocked MORPHO, modelled, before circulating subtracts it
     _difference_views(groups)     # R7B.B1: e.g. Sky's endowments' liquid SKY, before the floats read it
     _derived_leg_views(groups)    # R9.2: Sky's converter fee and issuer MKR backing, from stored series
+    _schedule_lock_leg_views(groups)   # R14.1b: Ether.fi's unvested team leg, MODELLED from the docs' schedule
+    _multichain_stake_views(groups)    # R14.4: Ether.fi's stake on five chains x the Accountant's rate
+    _set_sum_views(groups)             # R14.4b: Ether.fi's insider stake, PUBLISHED + INFERRED
     _circulating_views(groups)
     _rule_in_views(groups)        # R9.2: the issuer-side stock the rule counts in circulating, off the floats (after
                                   # the circulating view: a switched leg's state is known then)
@@ -7888,6 +8062,7 @@ def aggregate(long: pd.DataFrame, fetch_status: pd.DataFrame, asof: pd.Timestamp
     _LAST_GROUPS.update(groups)       # the views, for Credibility rows that read them (credibility.VIEWS_LONG)
     _market_share_mean_views(groups)  # PR1.U4: market share's 30- / 60-day means (config.MARKET_SHARE_MEAN)
     _one_off_shares(groups, asof)     # P5-1C.B1: the share of each window that is a declared one-off (cell notes)
+    _theatre_flag_views(groups, asof)   # R14.B: the financial-theatre flag (config.THEATRE_FLAG), read by CP
     COVERED_SETS.clear()
     MEASURED_VS_MODELLED.clear()
     COVERED_SETS.update(_covered_day_sets(groups))   # D6-1: the days each daily flow's rows cover
@@ -14322,6 +14497,13 @@ def _cp_cols(R: Refs, data_by_key: dict) -> list[tuple]:
         ("ETF / ETP and DAT holders — product, tokens, as-of date (etf_dat_holdings.json)",
          lambda r, p: "; ".join(x for x in (config.etf_dat(p["name"], "etf_etp")[1],
                                             config.etf_dat(p["name"], "dat")[1]) if x), FMT_TEXT, "text"),
+        # ---- R14.B THE FINANCIAL-THEATRE FLAG (Jake 2026-10-27; config.THEATRE_FLAG) — LAST, so no earlier column moves;
+        # blank where a project declares none ----
+        ("FINANCIAL-THEATRE FLAG — issuer / insider sends to exchange-tagged addresses in a buyback window: state (as "
+         "written: tokens RETIRED by buyback; beside it: any buyback), window, destinations and their label sources",
+         lambda r, p: theatre_flag_text(p["name"]), FMT_TEXT, "text"),
+        ("Financial-theatre flag — size = sent to exchange-tagged addresses ÷ tokens retired by buyback, in the window",
+         lambda r, p: theatre_flag_size(p["name"]), FMT_PCT, "calc"),
     ]
 
 
@@ -16186,6 +16368,11 @@ def flow_statements(groups: dict, asof) -> list[dict]:
                        + ", ".join(f"{m} {v:,.0f}" for (n_, m), v in _ONE_OFF_UNMATCHED.items() if n_ == name)
                        if any(n_ == name for n_, _m in _ONE_OFF_UNMATCHED) else ""))]
                   if (name, "one_off_burn_tokens") in groups and not _rule_flow(name) else []),
+                # R14.B (config.FLOW_TOKEN_MEMO): a NAMED line beside the identity, never in the expected closing (Ether.fi's
+                # issuer-side sends to exchange-tagged addresses: issuer-held -> float, circulating before and after)
+                *[(lab, [_flow_sum(d(m), *_flow_window(asof, k))[0] for k in range(5)], "tokens", m,
+                   note if (name, m) in groups else f"{note} — NOT STORED YET: the log scan stores it on the next run")
+                  for lab, m, note in getattr(config, "FLOW_TOKEN_MEMO", {}).get(name, ())],
                 ("Residual ÷ opening", tok["pct"], "pct", "", f"CHECK beyond ±{FLOW_RESIDUAL_LIMIT:.1%}"),
                 ("Status", tok["status"], "text", "", basis)]
         for line, vals, unit, series, note in rows:

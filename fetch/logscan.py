@@ -1418,12 +1418,15 @@ class LogScan:
                         per_holder[h][0] += _amount(e)
                         per_holder[h][1] = max(per_holder[h][1], int(e.get("timeStamp") or 0))
         else:
+            # R14.B: `count_to` — only transfers TO these destinations count (the financial-theatre flag's exchange-
+            # tagged addresses, each declared with its label source); everything else is listed as uncounted
+            count_to = {a.lower() for a in spec["count_to"]} if spec.get("count_to") else None
             for h in holders:
                 for e in outs[h]:
                     to = topic_address(e["topics"][2])
                     if to in internal:
                         continue
-                    if to in excluded:
+                    if to in excluded or (count_to is not None and to not in count_to):
                         uncounted[to] += _amount(e)
                     else:
                         counted.append(e)
