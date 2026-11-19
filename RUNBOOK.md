@@ -566,14 +566,15 @@ python circ_legs.py Aerodrome
 #   expect: total_supply listed; read-only
 python circ_legs.py Near
 #   expect: "circulating_supply_lockup_rule [first-party figure]: built at read time (no stored rows)"
+gcloud auth login
+#   expect: a browser sign-in, then "You are now logged in as" - bq uses THIS login, not the application-default one (R12.A)
 Get-Content -Raw sql\near\bigquery_supply_flows.sql | bq query --dry_run --use_legacy_sql=false --project_id=near-data-510309 --parameter=d0:DATE:2025-07-15 --parameter=d1:DATE:2025-10-06
 #   expect: one line "Query successfully validated ... will process N bytes" - paste it back (nothing is billed by a dry run)
 python token_metrics.py
 #   expect: the run ends without error; a near_rpc line "near_foundation_staked_tokens=3,80..." and a payout-ledger line, either "338,430.08 NEAR in 85 payout(s) 2026-04-23..2026-10-21" or "... not read on chain yet (resumes next run)"; a near_bigquery line with a dry-run estimate and "not approved" for the burn history
 python token_metrics.py --project Near
 #   expect: only needed if the ledger line said "resumes next run" - repeat until it reads "338,430.08 NEAR in 85 payout(s)" (the archival node rate-limits; two or three passes)
-python near_lockups_weekly.py --force
-#   expect: a line naming the lockup contracts read and near_lockup rows stored (the second reading: lockup releases can then join the unlock leg)
+#   (R12.A: the weekly lockup read is NOT in this block - windows\daily_run.ps1 runs near_lockups_weekly.py when the last read is 7+ days old)
 python archive_backfill.py --run --project Aerodrome --budget-min 30
 #   expect: "Aerodrome supply ..."; "Aerodrome voter epochs Aerodrome: N row(s) written over M epoch(s)"; and a new line "Velodrome VELO history Aerodrome: N row(s) written over D day(s) ... - reached 2025-07-14" (about 2,325 rows over 465 days). If it ends "time budget spent" or "stopped at <day>", run this line again until it says "reached 2025-07-14"; if it stops at the same day twice, paste the line back
 python token_metrics.py --seed aero_buyback
