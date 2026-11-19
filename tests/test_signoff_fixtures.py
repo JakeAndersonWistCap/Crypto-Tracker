@@ -153,24 +153,27 @@ def test_chainlink_release_is_zero_when_the_only_step_is_wallets_added_to_the_se
 
 # -------------------------------------------------------------------------------------------------------------- NEAR
 def test_near_buyback_emissions_and_locked_close_on_the_real_store_shape(tmp_path, monkeypatch):
-    """3a. in_buyback: Σ d(buyback_fund_balance_eod) x that day's price over 09-07..10-07 against Jake's $2.08M (the
-    recompute read raw rows, so it said 'no figure'); 3b. a3_net_absorption's emissions input is the gross issuance
-    row; 3c. in_locked against NearBlocks' total_stake, 2%."""
+    """3a. in_buyback: Σ d(buyback_fund_balance_eod) x that day's price over the reference's own 30 days against the
+    page's tile (the recompute read raw rows, so it said 'no figure'); 3b. a3_net_absorption's emissions input is the
+    gross issuance row; 3c. in_locked against NearBlocks' total_stake, 2%.
+    R11.3c: the tile was re-read on 2026-11-19 ($1.90M, the 30 days to 2026-11-18; was $2.08M to 2026-10-07 with the
+    store's days 07-01..10-07 and the as-of 2026-10-08) — the store's days and the as-of follow the reference."""
+    asof = "2026-11-19"
     rows, bal = [], 3_000_000.0
-    for d in _days():
+    for d in _days("2026-08-01", "2026-11-18"):
         bal += 30_000.0
         rows += [(d, "Near", "buyback_fund_balance_eod", bal, "nearblocks:stats/balance[3]", 1),
                  (d, "Near", "price_usd", 2.3, "coingecko", 1),
                  (d, "Near", "gross_issuance_tokens", 87_000.0, "bigquery:header_supply", 1),
                  (d, "Near", "circulating_supply_first_party", 1.28e9, "bigquery:circulating", 1),
                  (d, "Near", "circulating_supply", 1.28e9, "coingecko", 1)]
-    t = pd.Timestamp(ASOF)
+    t = pd.Timestamp(asof)
     rows += [(t, "Near", "locked_tokens", 555_944_000.0, "near:validators", 1),
              (t, "Near", "locked_tokens_nearblocks", 556_100_000.0, "nearblocks:validators/info", 1)]
-    o = _evaluate(tmp_path, monkeypatch, "Near", rows)
+    o = _evaluate(tmp_path, monkeypatch, "Near", rows, asof=asof)
     bb = o["in_buyback"]
     assert bb["verdict"].startswith("PASS"), bb
-    # "30 days to 2026-10-07" (the page's "last 30 days"): 30 daily changes x 30,000 NEAR x $2.30 = $2.07M
+    # the page's "last 30 days": 30 daily changes x 30,000 NEAR x $2.30 = $2.07M (within the tile's ±15% of $1.90M)
     assert abs(float(bb["ours"]) - 30 * 30_000 * 2.3) < 1.0
     assert "a1_gross_issuance" in o["a3_net_absorption"]["note"] and "in_buyback" in o["a3_net_absorption"]["note"]
     assert o["in_locked"]["verdict"].startswith("PASS"), o["in_locked"]
