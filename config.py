@@ -45194,5 +45194,5 @@ VELO_MERGED["Aerodrome"]["primary_less"] = ("Master", "master_gross_issuance_q0_
 # the merger step's label says what it is on either basis: the whole 117.0M on the legacy basis, and on the merged basis
 # the part of the allocation VELO's supply had not yet reached at the merger block (0.49M; reached since)
 RULE_IN["Aerodrome"]["flow_in"] = tuple(
-    (("+ the Velodrome allocation not already counted at the merger (one-off, 2026-10-22)",) + tuple(_x[1:]))
+    (("+ the allocation of the Velodrome merger not already counted (one-off, 2026-10-22)",) + tuple(_x[1:]))
     if _x[1] == "aero_merger_issuance_tokens" else _x for _x in RULE_IN["Aerodrome"]["flow_in"])
