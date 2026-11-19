@@ -1263,15 +1263,19 @@ METRICS = {
     "issuer_return_tokens":       {"label": "Tokens RETURNED to the non-circulating wallets (the rise in their stock, same days and gating as the release) — leave circulating; the Flows tab's '− returned to issuer-side wallets'",
                                    "kind": "flow", "unit": "tokens", "archetypes": [1, 2, 3, 4], "tiers": [1],
                                    "sanity_min": 0, "sanity_max": 1e12, "view_only": True},
-    # NEAR's still-unvested lockups (Jake 2026-10-11, C): near_lockups, refreshed weekly, out of circulating
-    "near_lockup_unvested_tokens": {"label": "NEAR still UNVESTED in lockup contracts (lockup.near subaccounts) — out of circulating; refreshed weekly",
+    # NEAR's still-unvested lockups (Jake 2026-10-11, C): near_lockups, refreshed weekly. R14 (R13 decision 6, Jake
+    # 2026-11-19): the three labels below reworded to the rule in force (a declared label change, no value moves); was
+    # "… — out of circulating; refreshed weekly", "… — out of circulating under Jake's rule (decision 3 on 6f8c86c,
+    # 2026-10-12)" and the A1 detail "(tokens, latest; out of circulating)"
+    "near_lockup_unvested_tokens": {"label": "NEAR still UNVESTED in lockup contracts (lockup.near subaccounts) — out of circulating only where idle (not staked); staked by its lockup it is in circulating, off the float (Jake's rule, R10.B3b); refreshed weekly",
                                     "kind": "stock", "unit": "tokens", "archetypes": [1, 3, 4], "tiers": [2, 3],
                                     "sanity_min": 0, "sanity_max": 2e9, "only_projects": ("Near",)},
     "near_lockup_locked_tokens":  {"label": "NEAR LOCKED in lockup contracts (lockup or vesting; what NEAR's own circulating subtracts) — same weekly read",
                                    "kind": "stock", "unit": "tokens", "archetypes": [1, 3, 4], "tiers": [2, 3],
                                    "sanity_min": 0, "sanity_max": 2e9, "only_projects": ("Near",)},
-    "near_foundation_accounts_tokens": {"label": "NEAR held by lockup.near + contributors.near (amount + locked) — out "
-                                                "of circulating under Jake's rule (decision 3 on 6f8c86c, 2026-10-12)",
+    "near_foundation_accounts_tokens": {"label": "NEAR held by lockup.near + contributors.near (amount + locked) — in "
+                                                "circulating, off the free float under Jake's rule (R10.B3a, "
+                                                "2026-11-18; was out of circulating, decision 3 on 6f8c86c)",
                                         "kind": "stock", "unit": "tokens", "archetypes": [1, 3, 4], "tiers": [2, 3],
                                         "sanity_min": 0, "sanity_max": 2e9, "only_projects": ("Near",)},
     "circulating_supply_lockup_rule": {"label": "Circulating supply — NEAR total supply − lockups LOCKED (not yet transferable: unvested + lockup-locked; buggy lockups recomputed as NEAR's lakehouse does): Jake's rule, 2026-10-12",
@@ -34160,7 +34164,7 @@ DETAIL_COLUMNS: list = [
      "cells": {"Hyperliquid": ("future_emissions_tokens", "now")}, "ratio_to": ("total_supply", "now"), "fmt": "pct"},
     {"tab": "A1", "after": "Staked tokens", "header": "Detail — Staked OUTSIDE the active set or jailed (tokens, latest)",
      "cells": {"Hyperliquid": ("locked_tokens_inactive", "now")}},
-    {"tab": "A1", "after": "Circulating supply", "header": "Detail — NEAR still UNVESTED in lockup contracts (tokens, latest; out of circulating)",
+    {"tab": "A1", "after": "Circulating supply", "header": "Detail — NEAR still UNVESTED in lockup contracts (tokens, latest; out of circulating where idle, off the float where staked)",
      "cells": {"Near": ("near_lockup_unvested_tokens", "now")}},
     {"tab": "A1", "after": "Validator yield GROSS", "header": "Detail — Validator commission, stake-weighted (latest)",
      "cells": {"Plume": ("staking_commission_pct", "now")}, "fmt": "pct"},
@@ -45581,7 +45585,7 @@ def near_stage2_refusal(explicit_command: bool, today, stage1_ran_on, approval: 
     `python check_offline_items.py near_stage2` was typed (the exact name); `stage1_ran_on` is the day stage 1 saved its
     day list. The approval is NEAR_STAGE2_APPROVAL as it stands in this file: approved must be the value True, with who
     and a YYYY-MM-DD date that is not in the future and not before stage 1's day (an approval older than the day list
-    is not an approval of this stage 2)."""
+    is not an approval of this stage 2), in the calendar month of today (R14: an approval covers its own month only)."""
     import datetime as _dt                                 # noqa: PLC0415
     a = NEAR_STAGE2_APPROVAL if approval is None else approval
     cmd = NEAR_STAGE2_APPROVAL["command"]
@@ -45600,6 +45604,11 @@ def near_stage2_refusal(explicit_command: bool, today, stage1_ran_on, approval: 
                 "YYYY-MM-DD date)")
     if now is None or on > now:
         return f"the approval is dated {on}, after today ({now})"
+    # R14 (Jake 2026-11-19, R13 decision 5): an approval covers the CALENDAR MONTH it is dated in, and no other — a
+    # later month's stage 2 needs a new dated approval
+    if (on.year, on.month) != (now.year, now.month):
+        return (f"the approval is dated {on}: it covers {on:%Y-%m} only, and today is {now} — a new dated approval "
+                f"in config.NEAR_STAGE2_APPROVAL is needed for {now:%Y-%m}")
     if s1 is None:
         return "the day list does not say when stage 1 ran (ran_on): the approval cannot be set against it"
     if on < s1:
@@ -45761,11 +45770,15 @@ _r13_fb["purchase_day_basis"] = {
     # the liquid balance is what the check reads). IF THE SHORTFALL EVER READS ABOVE 0 the buyback
     # series is NOT reduced silently: the buyback cells carry a FLAG with the amount, and whether to subtract is Jake's
     # decision (SPEC R13.4; options there).
-    "while_held": "flagged, not subtracted (default until Jake decides)",
+    # R14 (Jake 2026-11-19, R13 decision 2, option (b)): a shortfall is SUBTRACTED from held and retired on the day it
+    # appears, as a named negative row (foundation_buyback_shortfall_tokens) — decided while it reads 0, so no figure
+    # moves today. Was: "flagged, not subtracted (default until Jake decides)".
+    "while_held": "subtracted from held and retired on the day it appears (a named negative row) — Jake 2026-11-19",
 }
 _r13_fb["liquid_from"] = _r13_fb["purchase_day_basis"]["from"]
 _r13_fb["held_check"] = {"liquid_metric": "foundation_liquid_aero_tokens",
-                         "flag_metric": "foundation_buyback_not_held_tokens"}
+                         "flag_metric": "foundation_buyback_not_held_tokens",
+                         "subtract_metric": "foundation_buyback_shortfall_tokens"}     # R14: R13 decision 2
 _r13_fb["extra_metrics"] = {"burned": "foundation_aero_burned_tokens",
                             "burned_other": "foundation_aero_burned_other_tokens",
                             "sent_out": "foundation_aero_sent_out_tokens",
@@ -45790,12 +45803,18 @@ for _m, _lab, _kind in (
          "Purchases counted on their purchase day that the Foundation's wallets NO LONGER HOLD and did not lock or burn "
          "= max(purchases since 2026-08-25 not locked − the wallets' liquid AERO at the day's end, 0) — a FLAG; the "
          "buyback is not reduced by it (R13)", "stock"),
+        ("foundation_buyback_shortfall_tokens",
+         "THE NAMED NEGATIVE ROW (R13 decision 2, Jake 2026-11-19): minus the day's change in purchases no longer "
+         "held (foundation_buyback_not_held_tokens) — added to held and retired on the day, so a purchase the "
+         "wallets no longer hold leaves the retired buyback the day it is found missing (a positive row if it "
+         "comes back)", "flow"),
         ("aero_buyer_liquid_tokens",
          "AERO (new + legacy) held liquid by the Foundation's BUYER wallets (the buyer Safe 0x10b42e92…) at the supply "
          "read's block — a purchase not yet forwarded: in circulating, off the float from the day it is bought (R13)",
          "stock")):
     METRICS[_m] = {"label": _lab, "kind": _kind, "unit": "tokens", "archetypes": [3], "tiers": [2], "sanity_min": 0,
                    "sanity_max": 2.5e9, "only_projects": ("Aerodrome",), "view_only": True}
+METRICS["foundation_buyback_shortfall_tokens"]["sanity_min"] = -2.5e9     # R14: a negative row by construction
 # THE HANDOVER OF THE BUYBACK SERIES, DECLARED: two bases, one after the other, never both on a day.
 for _m, _old, _new in (("actual_buyback_tokens", "derived:foundation_buyback[bought+matched+compounded]",
                         "derived:foundation_purchases[purchased on the day+compounded]"),
@@ -47096,3 +47115,34 @@ DECLARED_NA_REASONS.setdefault("Ether.fi", []).append(
             "outflow (c); the airdrop seasons, ended) and to stakers (the Foundation's top-ups, outflow (e)); the "
             "Partnerships & Liquidity allocation is spent — subsidy cover and leakage (ii) have no denominator. If ETHFI "
             "is ever paid to LPs it is counted (b) when paid"})
+
+
+# ===== R14 — ETHER.FI: THE TEAM LEG'S MONTHLY FALLS ARE RELEASES, (e) MODELLED =====
+# The unvested team leg (etherfi_team_unvested_modelled_tokens, Jake 2026-11-19 decisions 1-2: in circulating, off the
+# float, the docs' schedule, MODELLED) falls by 5,963,889 ETHFI on each 18th until 2027-03-18; each fall enters the free
+# float. Under the rule already in force for a modelled off-float leg (PR4C.1: Morpho's relocked tokens are an unlock
+# stock, their falls a release in (e), labelled MODELLED) the leg joins Ether.fi's unlock stocks beside the issuer-side
+# wallets. Not counted twice: the custodian's origin wallets hold 0 (PR4C.4) and the custody wallets the team tokens
+# sit in are INFERRED and inside the float, in no stock here. Was: the two wallet legs only (the falls not in (e)).
+UNLOCK_STOCKS["Ether.fi"] = tuple(CIRCULATING_ONCHAIN["Ether.fi"]["subtract"]) + (
+    SCHEDULE_LOCK_LEGS["Ether.fi"]["metric"],)
+
+
+# =====================================================================================================================
+# ===== R14 — FROZEN MOVES OF THE ROUND (tests/fixtures/frozen_moves_r14.json), every earlier declaration kept =====
+def _load_r14_moves() -> int:
+    import json as _json
+    from pathlib import Path as _Path
+    p = _Path(__file__).resolve().parent / "tests" / "fixtures" / "frozen_moves_r14.json"
+    if not p.exists():
+        return 0
+    n = 0
+    for proj, cells in _json.loads(p.read_text(encoding="utf-8")).items():
+        for key, steps in cells.items():
+            for st in steps:
+                declare_later_move(proj, key, st["to"], st["why"], st["date"])
+                n += 1
+    return n
+
+
+R14_MOVES_DECLARED = _load_r14_moves()

@@ -1416,7 +1416,7 @@ Funding: revenue (the default: the programme documented base)
 | out of circulating | retirement (bought, burned + held) | `retired_buyback_tokens` |
 | out of circulating | burn (every burn) | **NO SERIES** |
 
-Basis: user programmes are demand-side (c): the Cash ETHFI cashback (CashbackDistributor 0x38F2fBb2… on OP, cashback_paid_tokens, round 3 W3) — only the part NOT covered by the programme's market purchases is dilution (CASHBACK_FUNDING, FR2 S2); Season 5 was paid in KING (not ETHFI); Triple Dip has no identified distributor; the Sep-2025 membership drops are finished. Issuer-wallet releases are unlocks (e)
+Basis: user programmes are demand-side (c): the Cash ETHFI cashback (CashbackDistributor 0x38F2fBb2… on OP, cashback_paid_tokens, round 3 W3) — only the part NOT covered by the programme's market purchases is dilution (CASHBACK_FUNDING, FR2 S2); Season 5 was paid in KING (not ETHFI); Triple Dip has no identified distributor; the Sep-2025 membership drops are finished. Issuer-wallet releases are unlocks (e). (e) ALSO holds the Foundation's ETHFI top-ups to sETHFI stakers paid from its own stock (sethfi_issuer_topup_tokens; R14, Jake 2026-11-19) — emissions-funded yield, a treasury release like Sky's reserve-funded rewards: the release counts each day at least that day's top-ups (RELEASE_GROSS_UP). No supply-side (b) incentive is paid (decision 8, DECLARED_NA_REASONS)
 
 **Value flow statement**
 
@@ -1465,4 +1465,4 @@ Funding: 2025-05-09..2025-11-03 treasury: April 2025 withdrawal-fee buyback (pai
 | Pendle | 3 | `circulating_supply_onchain` | on-chain first | distribute | `gross_burn_tokens` | `gross_issuance_tokens` | `emissions_tokens` | `treasury_holding_tokens` + `noncirculating_holding_tokens` |
 | Fluid | 3 | `circulating_supply_onchain` | on-chain first | treasury_inflow | `gross_burn_tokens` | `gross_issuance_tokens` | `emissions_tokens` | `treasury_holding_tokens` + `noncirculating_holding_tokens` + `noncirculating_igp137_tokens` |
 | Aave | 3 | `circulating_supply` | CoinGecko first | distribute | `gross_burn_tokens` | `gross_issuance_tokens` | `emissions_tokens` | — |
-| Ether.fi | 3 | `circulating_supply_onchain` | on-chain first | distribute | `gross_burn_tokens` | `gross_issuance_tokens` | `emissions_tokens` | `treasury_holding_tokens` + `noncirculating_holding_tokens` |
+| Ether.fi | 3 | `circulating_supply_onchain` | on-chain first | distribute | `gross_burn_tokens` | `gross_issuance_tokens` | `emissions_tokens` | `treasury_holding_tokens` + `noncirculating_holding_tokens` + `etherfi_team_unvested_modelled_tokens` |

@@ -1,0 +1,20 @@
+{
+"Hyperliquid": {
+"audit|A1 Infrastructure|Detail — NEAR still UNVESTED in lockup contracts (tokens, latest; out of circulating where idle, off the float where staked)": [
+{
+"date": "2026-11-19",
+"from": "<absent>",
+"to": "n/a",
+"why": "R14: a declared label change (R13 decision 6, Jake 2026-11-19): the A1 detail header for Near's unvested lockups now names the rule in force (out of circulating where idle, off the float where staked); no value moves"
+}
+],
+"audit|A1 Infrastructure|Detail — NEAR still UNVESTED in lockup contracts (tokens, latest; out of circulating)": [
+{
+"date": "2026-11-19",
+"from": "n/a",
+"to": "<absent>",
+"why": "R14: a declared label change (R13 decision 6, Jake 2026-11-19): the A1 detail header for Near's unvested lockups now names the rule in force (out of circulating where idle, off the float where staked); no value moves"
+}
+]
+}
+}

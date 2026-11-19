@@ -7306,10 +7306,13 @@ def foundation_flags(project: str, metric: str) -> list:
         return []
     out = []
     if (f.get("not_held_now") or 0.0) > FOUNDATION_DUST:
+        sub = "shortfall_rows" in f
         out.append(f"FLAG — PURCHASES NO LONGER HELD: {f['not_held_now']:,.2f} AERO counted on its purchase day is not "
                    f"in the Foundation's wallets on {pd.Timestamp(f['not_held_day']).date()} and was not locked or "
-                   f"burned by them — sold or paid out, so not retired. NOT subtracted from this figure (a decision "
-                   f"for Jake, SPEC R13.4)")
+                   f"burned by them — sold or paid out, so not retired. "
+                   + ("SUBTRACTED from held and retired as a named negative row (foundation_buyback_shortfall_tokens; "
+                      "Jake 2026-11-19, SPEC R14.D2)" if sub else
+                      "NOT subtracted from this figure (a decision for Jake, SPEC R13.4)"))
     extra = (f.get("not_bought") or 0.0) + (f.get("other") or 0.0)
     if extra > FOUNDATION_DUST:
         out.append(f"FLAG — {extra:,.2f} AERO destroyed by a Foundation wallet is NOT counted as a burned buyback: it "
@@ -7379,6 +7382,56 @@ def _foundation_burn_views(groups: dict) -> None:
                                "liquid AERO at the day's end, floored at 0]"}), cols)
                 info.update({"not_held_now": float(nh.iloc[-1]), "not_held_max": float(nh.max()),
                              "not_held_day": nh.index[-1]})
+                if hc.get("subtract_metric"):
+                    _foundation_shortfall_rows(groups, name, nh, hc["subtract_metric"], cols, info)
+
+
+def foundation_shortfall_change(nh: pd.Series) -> pd.Series:
+    """R13 decision 2 (Jake 2026-11-19, R14): the NAMED NEGATIVE ROW. The shortfall (foundation_not_held) is a stock —
+    purchases counted held that the wallets no longer hold; the row on a day is minus its change from the previous day
+    read (the first day: minus the day's own shortfall), so the purchases leave held and retired on the day they are
+    found missing, and come back (a positive row) on a day the balance recovers. 0-change days carry no row."""
+    if nh is None or nh.empty:
+        return pd.Series(dtype=float)
+    nh = nh.sort_index().astype(float)
+    ch = -nh.diff()
+    ch.iloc[0] = -float(nh.iloc[0])
+    return ch[ch.abs() > FOUNDATION_DUST]
+
+
+def _foundation_shortfall_rows(groups: dict, name: str, nh: pd.Series, metric: str, cols, info: dict) -> None:
+    """Writes the named row `metric` (foundation_shortfall_change) and applies it to buyback_held_tokens and
+    retired_buyback_tokens (tokens) and to retired_buyback_usd at the day's price — the figures are reduced, never
+    silently: each changed day's source names the row. A day with a row but no price leaves retired_buyback_usd
+    without that day (unknown, never 0)."""
+    ch = foundation_shortfall_change(nh)
+    info["shortfall_rows"] = int(len(ch))
+    groups[(name, metric)] = _as_stored(pd.DataFrame(
+        {"date": nh.index, "project": name, "metric": metric,
+         "value": ch.reindex(nh.index).fillna(0.0).values, "tier": 2,
+         "source": "derived:foundation_shortfall_change[- day-on-day change of foundation_buyback_not_held_tokens]"}),
+        cols)
+    if ch.empty:
+        return
+    px = _daily(groups.get((name, "price_usd")))
+    note = f" (+ {metric}, R13 decision 2)"
+    for target, scale in (("buyback_held_tokens", None), ("retired_buyback_tokens", None),
+                          ("retired_buyback_usd", px)):
+        h = groups.get((name, target))
+        hs = _daily(h)
+        add = ch if scale is None else (ch * scale.reindex(ch.index)).dropna()
+        drop = ch.index.difference(add.index)                 # no price that day: the USD day is unknown
+        new = hs.reindex(hs.index.union(ch.index)).fillna(0.0)
+        new[add.index] = new[add.index] + add
+        new = new.drop(drop, errors="ignore")
+        base = str(h["source"].iloc[-1]) if h is not None and not h.empty else f"derived:{target}"
+        keep = h[~pd.to_datetime(h["date"]).dt.normalize().isin(ch.index)] if h is not None and not h.empty else None
+        days = add.index
+        mv = _as_stored(pd.DataFrame({"date": days, "project": name, "metric": target,
+                                      "value": new[days].values, "tier": 2, "source": base + note}),
+                        cols if h is None or h.empty else h.columns)
+        groups[(name, target)] = mv if keep is None or keep.empty else pd.concat(
+            [keep, mv], ignore_index=True).sort_values("date")
 
 
 def _unlock_declared_zero_view(groups: dict, name: str) -> None:

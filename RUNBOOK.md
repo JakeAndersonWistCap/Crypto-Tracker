@@ -534,6 +534,70 @@ A Plume seed started on code older than 2026-10-01 saved its state only at the e
 or stop it and start again on the new code. Don't run both at once: they write the same state file.
 
 
+## 11fc. Round 14 — Ether.fi on the rule; its buyback, revenue lines, top-ups and theatre flag; the R13 decisions (2026-11-19)
+
+ETHER.FI. Circulating = ETHFI.totalSupply() (998,535,999): the 13 issuer-side wallets are in circulating and off the
+free float. The unvested team tokens (the docs' schedule: 23,855,556 on 11-19, falling 5,963,889 on each 18th to 0 on
+2027-03-18) are in circulating and off the float, labelled MODELLED; each monthly fall is a release in unlocks (e),
+MODELLED (as Morpho's relock). The stake is sETHFI on five chains x the vault's rate (about 138.6M); older days keep the
+mainnet-shares figure until the backfill stores the history (a declared handover). An inflow is a purchase only when
+the buyer pays another token out in the same transaction: the four Arrakis withdrawals of 2026-09-02 (1,047,757.47)
+leave the buyback on the next run (the scan rewrites its series; no SQL). From 2026-09-03 the programme's purchases join
+the buyback as DISTRIBUTED TO CARD USERS - never holder value. FEES = DefiLlama's parent fees less the Cash cashback;
+REVENUE = the parent revenue (Cash leg an ESTIMATE); HOLDER REVENUE = credited holder value (0). The Foundation's ETHFI
+top-ups to stakers count in the release (e), not as holder revenue. The theatre flag shows two readings side by side.
+New reads: four L2 share supplies, the Accountant rate, 9 INFERRED insider stakers, 52 INFERRED custody wallets, the
+theatre scan, the Cash cashback and revenue (DefiLlama), the Labs USDC inflow, the issuer top-ups. RUN THE BACKFILL
+BEFORE THE BUILD. AERODROME: a purchase no longer held is now SUBTRACTED from held and retired as a named negative row
+(foundation_buyback_shortfall_tokens; it reads 0 today). NEAR: a stage-2 approval covers its own calendar month only;
+three labels now name the rule in force (one blank Hyperliquid header cell renamed: a declared move).
+
+```
+cd C:\Users\jake\Crypto-Tracker
+.venv\Scripts\Activate.ps1
+gcloud auth application-default login
+#   expect: a browser sign-in, then "Credentials saved to file"
+gcloud auth application-default set-quota-project near-data-510309
+#   expect: "Credentials saved to file" and a line naming the quota project near-data-510309
+git switch claude/crypto-metrics-supply-demand-ovkg8g
+git pull
+git log --oneline -1
+#   expect: the line contains "R14"
+python -c "import config as c; print(c.RULE_IN['Ether.fi']['off_float'][-1], round(c.etherfi_team_unvested_on('2026-11-19')), c.lock_display_metric('Ether.fi'), c.INSIDER_LOCK['Ether.fi'][0], len(c.ETHERFI_INSIDER_STAKERS), sorted(c.THEATRE_FLAG), c.unlock_stock_metrics('Ether.fi')[-1])"
+#   expect: etherfi_team_unvested_modelled_tokens 23855556 sethfi_staked_all_chains_tokens etherfi_insider_stake_all_shares 9 ['Ether.fi'] etherfi_team_unvested_modelled_tokens
+python -c "import config as c; s=c.revenue_split('Ether.fi'); print(s['fees']['metric'], s['revenue']['metric'], s['holder_revenue']['metric'], c.RELEASE_GROSS_UP['Ether.fi'], c.BUYBACK_LEGS['Ether.fi']['from'], c.PROJECT_BY_NAME['Aerodrome']['foundation_buyback']['held_check']['subtract_metric'])"
+#   expect: fees_net_cashback_usd revenue_usd holder_value_revenue_usd ('sethfi_issuer_topup_tokens',) 2026-09-03 foundation_buyback_shortfall_tokens
+python token_metrics.py
+#   expect: no error, and in the Run Log (Ether.fi):
+#   chain: "sethfi_shares_arbitrum component arbitrum:sethfi_shares_arbitrum=2,2xx,xxx.xxxx" (and _base 3xx,xxx, _optimism 2x,xxx,xxx, _scroll 5,7xx), "sethfi_accountant_rate component ethereum:sethfi_accountant_rate=1.20xx"
+#   chain: "etherfi_insider_inferred_stake_shares=34,xxx,xxx.xxxx from 9 components" and "etherfi_insider_custody_tokens=31x,xxx,xxx.xxxx from 52 components"
+#   explorer: "buyback_wallet_inflow: RECONCILED ... Bought = a transaction in which the holder paid ANOTHER token out ..." (0x3fb6784e... 847,258.84; 0x2f5301a3... 17,984,520.10); "programmatic_buyback_inflow: RECONCILED"; "labs_usdc_inflow: RECONCILED ... 2,505,229.0800 over 12 transfer(s)" (or more); "sethfi_issuer_topups: RECONCILED"; the theatre scan "... Counted outflow 9,300,020.0000 over 10 transfer(s)" (or more)
+#   defillama: "cash_cashback_usd_defillama = etherfi-cash-liquid:dailySupplySideRevenue" and "cash_revenue_usd_defillama = etherfi-cash-liquid:dailyRevenue"
+#   a "SCAN DOES NOT RECONCILE", time-budget or scroll RPC refusal line: python token_metrics.py --project Ether.fi; a second one: paste it back
+python archive_backfill.py --run --project Ether.fi --budget-min 45
+#   expect: rows written for sethfi_shares_arbitrum / _base / _optimism / _scroll, sethfi_accountant_rate, etherfi_insider_inferred_stake_shares, etherfi_insider_custody_tokens and eth_staked_etherfi_tokens. "time budget spent" -> run the line again
+python token_metrics.py --no-fetch
+#   expect: no error
+python done_check.py --verbose | Select-String "^(Uniswap|Fluid|Maple|Morpho|Pendle|Sky|Hyperliquid|Aerodrome|Near|Ether.fi)" -Context 0,10
+#   expect: the eight frozen projects READY; Ether.fi's list short (paste it back); Near as in 11fb
+New-Item -ItemType Directory -Force ..\tm-exports | Out-Null
+python store_export.py --project Ether.fi --out-dir ..\tm-exports
+#   expect: a line starting "wrote ../tm-exports/ether.fi-"
+python store_export.py --project Aerodrome --out-dir ..\tm-exports
+python store_export.py --project Near --out-dir ..\tm-exports
+git switch data/store-exports
+git pull
+Copy-Item ..\tm-exports\ether.fi-*.json.gz exports\
+Copy-Item ..\tm-exports\aerodrome-*.json.gz exports\
+Copy-Item ..\tm-exports\near-*.json.gz exports\
+git add -f exports
+git commit -m "data: Ether.fi, Aerodrome and Near store exports (R14)"
+git push
+git switch claude/crypto-metrics-supply-demand-ovkg8g
+python project_freeze.py --compare all
+#   expect: one line per frozen project, each "0 undeclared move(s)"
+```
+
 ## 11fb. Round 13 — Aerodrome's buyback on the purchase day and its burn, VELO v1, Near's stage 2 and float (2026-11-19)
 
 AERODROME. From 2026-08-25 the Foundation's buyback is what its wallets purchased on the day (before it: bought and
