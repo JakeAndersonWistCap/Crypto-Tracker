@@ -73,7 +73,9 @@ def test_fdv_handover_is_declared_in_config_and_the_switch_file_alike():
         "coingecko", "chain:base:token", "aero_v3:supply_once",
         # R11.2c: the total's two merged points before the merger (Aerodrome + Velodrome x 0.044), declared
         # (was the three above only)
-        "velo_merged:coingecko", "velo_merged:chain:base:token"]
+        "velo_merged:coingecko", "velo_merged:chain:base:token",
+        # R13.B3: the same two with VELO v1's certain part in the Velodrome leg (was: the five above)
+        "velo_merged_v1:coingecko", "velo_merged_v1:chain:base:token"]
     # handover_refusal reads the legs as measuring points: the same two the global fdv_usd declaration named
     from fetch.base import _measuring_point
     assert list(dict.fromkeys(_measuring_point(p) for p in decl["ordered_points"])) == list(
