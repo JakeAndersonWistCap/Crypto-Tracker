@@ -688,6 +688,11 @@ def put_number(sh: Sheet, data: Data, row: int, col: Col, project: str, field_id
     if fill is not None:
         c.fill = PatternFill("solid", fgColor=fill.fgColor.rgb)
     if comment:
+        # R13: a note longer than the comment's room is cut in its middle, never at its end — the number keeps the
+        # "Working: <audit cell>" reference that says where it comes from (a long audit note used to push it out)
+        tail = comment.rfind("\n\nWorking:")
+        if len(comment) > 2400 and 0 < tail and len(comment) - tail < 600:
+            comment = comment[:2400 - (len(comment) - tail) - 2].rstrip() + " …" + comment[tail:]
         c.comment = _comment(comment[:2400])
     sh.numbers += 1
     return c.coordinate

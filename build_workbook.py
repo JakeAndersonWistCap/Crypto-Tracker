@@ -1947,6 +1947,126 @@ def _s13_views(groups: dict) -> None:
         S13_STATE[name] = {"same_days": tuple(ms), "last": str(last.date())}
 
 
+def _s13_share_basis_views(groups: dict, asof=None) -> None:
+    """R13 (config.S13_SHARE_BASIS — Uniswap): THE HOLDER SHARE ON ONE BASIS. Where the two lines of the share are THE
+    SAME TOKENS valued at two points (revenue: DefiLlama's releases x the price at the END of the release day; holder
+    revenue: the burn landing at 0x…dEaD x the 00:00 UTC price of its day), the quotient of the two $ lines mixes a
+    price move into a share. Each line is turned back into the tokens it valued — its $ of a day ÷ the price THAT line
+    was valued at on that day — over the same covered days (the lines' same-days views, R9.5); the share reads the two
+    token views. A day whose price for either line is not stored is left out of BOTH (named, never valued at another
+    day's price). The lines' own $ cells are untouched. NEVER CAPPED: where more tokens landed than were released on
+    those days the share is above 1 and the note says how many and why. Not formed where this build handed revenue
+    over to another measuring point (the TokenJar inflows are not UNI): the share is then $ ÷ $ on the same days."""
+    for name, spec in (getattr(config, "S13_SHARE_BASIS", {}) or {}).items():
+        st = S13_STATE.setdefault(name, {})
+        st.pop("share_basis", None)
+        st.pop("share_basis_why_not", None)
+        split = config.revenue_split(name) or {}
+        if (config.TOKENJAR_NOTE.get(name) or {}).get("handed_over") and spec.get("not_after_handover"):
+            st["share_basis_why_not"] = ("revenue is the TokenJar inflows on this build (accrued assets, not UNI "
+                                         "released): the share is $ ÷ $ on the same covered days")
+            continue
+        legs, drop = {}, set()
+        for role in ("holder_revenue", "revenue"):
+            m = (split.get(role) or {}).get("metric")
+            usd = _daily(groups.get((name, s13_metric(name, role)))) if m else pd.Series(dtype=float)
+            px = _daily(groups.get((name, spec[role]["price"])))
+            if usd.empty or px.empty:
+                legs = {}
+                break
+            off = int(spec[role]["price_day_offset"])
+            p_at = pd.Series(px.reindex(usd.index + pd.Timedelta(days=off)).values, index=usd.index)
+            # a day with $ and no price for this line's basis is unknown in tokens: out of BOTH lines, never 0.
+            # A day whose $ is a stored 0 is 0 tokens at any price.
+            no_px = (p_at.isna() | (p_at <= 0)).values
+            drop |= set(usd.index[no_px & (usd != 0).values])
+            legs[role] = (usd, p_at.where(~(no_px & (usd == 0).values), 1.0))
+        if len(legs) < 2:
+            continue
+        cols = groups[(name, split["revenue"]["metric"])].columns
+        tok = {}
+        for role, (usd, p_at) in legs.items():
+            keep = pd.DatetimeIndex([d for d in usd.index if d not in drop])
+            t = (usd.reindex(keep) / p_at.reindex(keep)).astype(float)
+            tok[role] = t
+            off = int(spec[role]["price_day_offset"])
+            if t.empty:
+                continue
+            groups[(name, spec[role]["view"])] = _as_stored(pd.DataFrame(
+                {"date": t.index, "project": name, "metric": spec[role]["view"], "value": t.values, "tier": 2,
+                 "source": f"derived:s13_share_basis[{s13_metric(name, role)} ÷ {spec[role]['price']} of "
+                           f"{'the same day' if not off else f'day+{off}'}: {spec[role]['basis']}]"}), cols)
+        if any(t.empty for t in tok.values()):
+            continue
+        info = {"unit": spec["unit"], "left_out": sorted(str(pd.Timestamp(d).date()) for d in drop)}
+        if asof is not None:
+            hi = pd.Timestamp(asof).normalize()
+            lo = hi - pd.Timedelta(days=int(GLOBALS["period_days"]))
+            h_t, r_t = (tok[k][(tok[k].index > lo) & (tok[k].index <= hi)] for k in ("holder_revenue", "revenue"))
+            h_usd, r_usd = (legs[k][0].reindex(t_.index) for k, t_ in (("holder_revenue", h_t), ("revenue", r_t)))
+            if not h_t.empty and not r_t.empty and float(r_t.sum()) > 0 and float(r_usd.sum()) > 0:
+                # released − landed, cumulative from the mechanism's first day: the tokens in flight at a day's close
+                since = pd.Timestamp((config.VALUE_TIMING.get(name) or {}).get("since") or r_t.index.min())
+
+                def flight(day):
+                    return float(sum(sgn * t_[(t_.index >= since) & (t_.index <= day)].sum()
+                                     for sgn, t_ in ((1.0, tok["revenue"]), (-1.0, tok["holder_revenue"]))))
+                info["q0"] = {
+                    "holder_tokens": float(h_t.sum()), "revenue_tokens": float(r_t.sum()),
+                    "share": float(h_t.sum() / r_t.sum()),
+                    "days": (int(h_t.index.nunique()), int(r_t.index.nunique())),
+                    "first": str(min(h_t.index.min(), r_t.index.min()).date()),
+                    "last": str(max(h_t.index.max(), r_t.index.max()).date()),
+                    "holder_usd": float(h_usd.sum()), "revenue_usd": float(r_usd.sum()), "since": str(since.date()),
+                    "in_flight_start": flight(lo), "in_flight_end": flight(hi)}
+        st["share_basis"] = info
+
+
+def s13_share_metrics(name: str) -> tuple[str, str] | None:
+    """R13: (holder view, revenue view) the HOLDER SHARE reads where this build formed the one-basis views; else None."""
+    spec = (getattr(config, "S13_SHARE_BASIS", {}) or {}).get(name)
+    if not spec or not (S13_STATE.get(name) or {}).get("share_basis"):
+        return None
+    return spec["holder_revenue"]["view"], spec["revenue"]["view"]
+
+
+def s13_share_note(name: str) -> str:
+    """R13: what the one-basis HOLDER SHARE divides, this build's Q0 figures, and — where it reads above 1 — why
+    (said on the number, never capped). '' where the project declares no share basis."""
+    spec = (getattr(config, "S13_SHARE_BASIS", {}) or {}).get(name)
+    st = S13_STATE.get(name) or {}
+    if not spec:
+        return ""
+    sb = st.get("share_basis")
+    if not sb:
+        why = st.get("share_basis_why_not")
+        return f"ONE BASIS (R13, config.S13_SHARE_BASIS): NOT FORMED on this build — {why}" if why else ""
+    u = sb["unit"]
+    out = ""
+    q = sb.get("q0")
+    if q:                                     # this build's figures and the flag FIRST: they are what the number is
+        d_ = q["holder_tokens"] - q["revenue_tokens"]
+        flight = (f"released − burned since {q['since']}: {q['in_flight_start']:,.0f} {u} at the window's start, "
+                  f"{q['in_flight_end']:,.0f} at its end")
+        out = (f"Q0, THIS BUILD ({q['first']} to {q['last']}; holder revenue {q['days'][0]} day(s), revenue "
+               f"{q['days'][1]}): {q['holder_tokens']:,.0f} {u} burned ÷ {q['revenue_tokens']:,.0f} {u} released = "
+               f"{q['share']:.4f}. "
+               + (f"ABOVE 1 — REAL, NOT CAPPED: {d_:,.0f} more {u} landed in the window than were released in it — "
+                  f"{u} released before it ({flight}; the fall is the excess). {spec['above_one']}"
+                  if q["share"] > 1 else f"Not above 1 ({-d_:,.0f} {u} fewer landed than were released; {flight}).")
+               + f" In $, each line at its own basis: {q['holder_usd']:,.0f} ÷ {q['revenue_usd']:,.0f} = "
+                 f"{q['holder_usd'] / q['revenue_usd']:.4f}; the distance between the two quotients is price, not a "
+                 f"share.\n\n")
+    out += (f"ONE BASIS (R13, Jake 2026-11-19; config.S13_SHARE_BASIS): the share is read in {u} — {spec['what']}. "
+            f"The lines' own $ cells keep their bases (HOLDER REVENUE: {spec['holder_revenue']['basis']}; REVENUE: "
+            f"{spec['revenue']['basis']}). {spec['why']}")
+    if sb.get("left_out"):
+        out += ("\n\nLEFT OUT OF BOTH LINES (no price stored for one line's basis on that day — never valued at "
+                f"another day's): {', '.join(sb['left_out'][-5:])}"
+                + (f" (and {len(sb['left_out']) - 5} earlier)" if len(sb["left_out"]) > 5 else "") + ".")
+    return out
+
+
 def _s13_component_views(groups: dict, asof=None) -> None:
     """R11.3a (config.S13_COMPONENTS — Near): each S13 line's PARTS as series of their own, on the line's own covered
     days — the days of the line's cell (its same-covered-days view, R9.5) — so the parts of a line sum to the line.
@@ -7762,6 +7882,7 @@ def aggregate(long: pd.DataFrame, fetch_status: pd.DataFrame, asof: pd.Timestamp
     _subsidy_common_views(groups, asof)   # G13 6: subsidy cover over the days every leg covers once (b) is complete
     _s13_views(groups)                    # R9.4 / R9.5: the three revenue lines on the same covered days
     _s13_component_views(groups, asof)    # R11.3a: each line's gas / Intents parts on the line's own days (Near)
+    _s13_share_basis_views(groups, asof)  # R13: the holder share on one basis (Uniswap: UNI burned ÷ UNI released)
     _lag_matched_views(groups, asof)      # R5.3: a declared publish lag — the follow series cut at the lead's last day
     _as_published_views(groups, asof)     # R12.1: an outflow published in arrears counts as published (Near's (b))
     _LAST_GROUPS.update(groups)       # the views, for Credibility rows that read them (credibility.VIEWS_LONG)
@@ -13208,6 +13329,7 @@ def _revenue_line_cols(R: Refs) -> list[tuple]:
             return config.not_yet_split_text(p["name"])
         hv, rv = s13_metric(p["name"], "holder_revenue"), s13_metric(p["name"], "revenue")
         rv = lag_matched(p, rv)          # R5.3: the holder revenue stops at a declared publish lag (Pendle)
+        hv, rv = s13_share_metrics(p["name"]) or (hv, rv)     # R13: both lines on one basis (Uniswap), never capped
         f = _coverage_guard(R, r, [("holder revenue", hv, "q0"), ("revenue", rv, "q0")],
                             f"{_flow_rate(R, r, hv)}/{_flow_rate(R, r, rv)}")
         zz = split["holder_share"].get("zero_over_zero_text")
@@ -13224,8 +13346,10 @@ def _revenue_line_cols(R: Refs) -> list[tuple]:
             return ""
         above = _payout_above(p["name"])
         lag = lag_matched_note(p)
+        one = s13_share_note(p["name"])     # R13: this build's one-basis figures and the above-1 flag, first
         return (f"HOLDER SHARE (PR1.S13) = holder revenue ÷ revenue: {split['holder_share']['route']}."
-                + (f" {above}" if above else "") + (f"\n\n{lag}" if lag else "")
+                + (f"\n\n{one}\n\n" if one else "")
+                + (f"{'' if one else ' '}{above}" if above else "") + (f"\n\n{lag}" if lag else "")
                 + (f"\n\n{s13_note(p)}" if s13_note(p) else ""))
 
     def mf(role):                                      # R9.5: the same-covered-days view where one is built
@@ -13801,6 +13925,10 @@ def _cp_cols(R: Refs, data_by_key: dict) -> list[tuple]:
             hv = ("holder_value_fees_only_usd" if "holder_value_fees_only_usd" in config.metrics_for_project(p)
                   else "holder_value_revenue_usd")
             rv = lag_matched(p, rv)          # R5.3: the holder value stops at a declared publish lag (Pendle)
+            if (s13_share_metrics(p["name"])
+                    and rv == ((config.revenue_split(p["name"]) or {}).get("revenue") or {}).get("metric")):
+                # R13: the net payout ratio IS the holder share (PR1.U7) — the same one-basis quotient (Uniswap)
+                hv, rv = s13_share_metrics(p["name"])
             return _coverage_guard(R, r, [("holder value", hv, "q0"), ("revenue", rv, "q0")],
                                    f"{_flow_rate(R, r, hv)}/{_flow_rate(R, r, rv)}")
         return build
@@ -14069,7 +14197,11 @@ def _cp_cols(R: Refs, data_by_key: dict) -> list[tuple]:
          FMT_X, "calc", False, {"note_fn": lambda p: "\n\n".join(x for x in (_payout_note(p), lag_matched_note(p)) if x)}),
         ("Payout ratio — the project's own net basis = credited holder value ÷ revenue (config revenue basis)",
          payout(lambda p: config.revenue_ratio_base_metric(p["name"]), "n/a — the project's net basis is gross fees (as left)"),
-         FMT_X, "calc", False, {"note_fn": lambda p: "\n\n".join(x for x in (_payout_note(p), lag_matched_note(p)) if x)}),
+         FMT_X, "calc", False, {"note_fn": lambda p: "\n\n".join(x for x in (
+             _payout_note(p), lag_matched_note(p),
+             # R13: this ratio is the holder share (PR1.U7) — on the same one basis where that is formed (Uniswap)
+             s13_share_note(p["name"]) if config.revenue_ratio_base_metric(p["name"]) == (
+                 (config.revenue_split(p["name"]) or {}).get("revenue") or {}).get("metric") else "") if x)}),
         # ---- THE THREE REVENUE LINES (PR1.S13, Jake 2026-11-05; config.REVENUE_LINE_DEFS / REVENUE_SPLIT) ----
         *_revenue_line_cols(R),
         # ---- ATTRIBUTES (amendments 2 and 5: never penalties) ----

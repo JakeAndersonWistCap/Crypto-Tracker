@@ -46106,3 +46106,106 @@ NEAR_R13_STORE = {
     "guard": "a consequence of the unfinished ledger read; no allow-list entry",
 }
 del _R13S_PT
+
+
+# ===== R13 — UNISWAP HOLDER SHARE =====
+# Jake 2026-11-19 (his workbook, code 00bb8b2): Uniswap's S13 lines read HOLDER REVENUE 34,285,990 above REVENUE
+# 32,381,304 over Q0, HOLDER SHARE 1.0588. "Fix it the way Hyperliquid's was fixed (same covered days; check the price
+# basis of the burn), as a declared move. Never cap."
+#
+# WHAT WAS FOUND (Jake's export of 2026-11-18, as-of 11-18: holder revenue 34,502,277 / revenue 32,815,412 = 1.0514):
+#   (i)   COVERED DAYS: the same on both lines (89 days, 2026-08-21..11-17) — not the cause on that store. The two
+#         lines are nevertheless listed in S13_SAME_DAYS, as Hyperliquid's are: a read lag at the end never again
+#         makes them differ.
+#   (ii)  TOKENS: 5,142,001 UNI landed at 0x…dEaD in the window against 5,036,153 UNI released in it (+105,848 UNI,
+#         +2.1%): UNI released before the window and landed in it. Released − burned since 2025-12-29 stood at
+#         393,852 UNI on 2026-08-20 and 288,005 on 2026-11-17. The 100M treasury burn (2025-12-27) is not in the
+#         window and is never credited; 1.25 UNI in the window is not a multiple of a 2,000-UNI release (dust).
+#   (iii) PRICE BASIS: the two lines value the same UNI at two points. HOLDER REVENUE = each UTC day's burn x
+#         price_usd of that day = CoinGecko's 00:00 UTC point, the price at the START of the day (before the burn).
+#         REVENUE = DefiLlama's dailyRevenue = Released events x threshold() UNI x the CoinGecko 'uniswap' price at
+#         the Balances timestamp = the END of the day (DefiLlama dimension-adapters dexs/uniswap-v3.ts
+#         fetchHoldersRevenue and adapters/utils/runAdapter.ts createBalances, read 2026-11-19; a run made within a
+#         day of the day's end prices at run time). Confirmed on the stored rows: revenue ÷ the NEXT day's 00:00
+#         price is a whole number of 2,000-UNI releases (within 0.005) on 27.8% of the 324 days since the switch,
+#         revenue ÷ the same day's 00:00 price on 0.3%. In a rising market the later landing is valued higher: of
+#         the $1,686,865 gap, $689,702 is the 105,848 UNI of (ii) at revenue's average price ($6.516), $1,302,218
+#         is the burned UNI's average end-of-day landing price above the released UNI's ($6.769 vs $6.516), and
+#         −$305,055 is the burn's start-of-day price against the end-of-day price of the same days.
+# THE DECISION: neither line's $ is changed and nothing is capped. THE SHARE is read on ONE BASIS — in UNI: each
+# line's $ of a day ÷ the price THAT line was valued at that day (holder revenue ÷ the day's 00:00 price = the UNI
+# credited, so the treasury burn and any burn not funded by revenue stay out exactly as they are out of the line;
+# revenue ÷ the next day's 00:00 price = the UNI released), over the same covered days. Valuing both lines at any
+# single price gives this same number. A day whose price for either line is not stored is left out of both. What is
+# left is (ii), which is real: the share can still read above 1 over a window that opens with more UNI in flight
+# than it closes with, and the cell says so with its numbers (build_workbook.s13_share_note). The net payout ratio
+# is the same quotient (PR1.U7: "the payout ratio IS the holder share"). Not formed on a build where the TokenJar
+# inflows have taken the revenue line over (TOKENJAR_TAKEOVER): accrued assets are not UNI released — the share is
+# then $ ÷ $ on the same covered days, as declared in REVENUE_SPLIT["Uniswap"]["after_jar_handover"].
+# NOT ESTABLISHED: DefiLlama's price point is its code's and the stored rows' evidence, not a per-day read of its
+# price; the split of releases between mainnet (no bridge) and the L2 firepits (~7 days in flight) is not stored, so
+# the burn cannot be matched release by release.
+S13_SAME_DAYS["Uniswap"] = ("revenue", "holder_revenue")
+METRICS["holder_value_revenue_usd_s13d"]["only_projects"] = tuple(dict.fromkeys(
+    (*METRICS["holder_value_revenue_usd_s13d"]["only_projects"], "Uniswap")))
+METRICS["revenue_usd_s13d"] = {
+    "label": "revenue_usd over the days every S13 line compared with it holds (R9.5: same covered days, never capped)",
+    "kind": "flow", "unit": "usd", "archetypes": [1, 2, 3, 4], "tiers": [2], "sanity_min": 0,
+    "sanity_max": METRICS["revenue_usd"].get("sanity_max", 1e11), "view_only": True, "only_projects": ("Uniswap",)}
+S13_SHARE_BASIS = {"Uniswap": {
+    "unit": "UNI",
+    "what": "each line's $ of a day ÷ the price that line was valued at that day, on the same covered days; valuing "
+            "both lines at any one price gives the same number",
+    "why": "The two lines are the same UNI valued at two points, so their $ quotient carries the UNI price's move "
+           "between release and landing — a price effect, not a share of revenue.",
+    "above_one": "A mainnet release lands at 0x…dEaD at once, an L2 release after its bridge (OP-stack ~7 days), so "
+                 "the share over a window is 1 only where the UNI in flight is the same at both ends.",
+    "holder_revenue": {"price": "price_usd", "price_day_offset": 0, "view": "s13_share_holder_tokens",
+                       "basis": "the day's burn x the 00:00 UTC price of that day"},
+    "revenue": {"price": "price_usd", "price_day_offset": 1, "view": "s13_share_revenue_tokens",
+                "basis": "DefiLlama's releases x the price at the END of the release day (the next day's 00:00 UTC)"},
+    "not_after_handover": True,
+    "evidence": {"read_on": "2026-11-19",
+                 "defillama_adapter": "DefiLlama/dimension-adapters dexs/uniswap-v3.ts fetchHoldersRevenue: "
+                                      "releaseLogs.length x threshold ÷ 1e18 added as the CoinGecko token 'uniswap' "
+                                      "to options.createBalances(); adapters/utils/runAdapter.ts createBalances: "
+                                      "Balances({timestamp: closeToCurrentTime ? undefined : timestamp})",
+                 "stored_rows": "324 days 2025-12-29..2026-11-17 (Jake's export of 2026-11-18): revenue ÷ next day's "
+                                "00:00 price within 0.005 of a whole number of 2,000-UNI releases on 27.8% of days; "
+                                "÷ the same day's 00:00 price on 0.3%",
+                 "q0_export": {"asof": "2026-11-18", "holder_usd": 34_502_277, "revenue_usd": 32_815_412,
+                               "usd_quotient": 1.0514, "holder_uni": 5_142_001, "revenue_uni": 5_036_153,
+                               "share": 1.0210, "in_flight_start_uni": 393_852, "in_flight_end_uni": 288_005}},
+    "decided": "Jake 2026-11-19 (R13): same covered days, one basis, never capped"}}
+for _r13u, _r13w in (("s13_share_holder_tokens", "HOLDER REVENUE in UNI — holder revenue ÷ the 00:00 UTC price of its "
+                                                 "day (the UNI credited), on the S13 lines' same covered days"),
+                     ("s13_share_revenue_tokens", "REVENUE in UNI — DefiLlama's released value ÷ the price at the end "
+                                                  "of its day (the UNI released), on the S13 lines' same covered days")):
+    METRICS[_r13u] = {"label": f"{_r13w} (R13: the holder share on one basis, never capped)", "kind": "flow",
+                      "unit": "tokens", "archetypes": [1, 2, 3, 4], "tiers": [2], "sanity_min": 0, "sanity_max": 1e12,
+                      "view_only": True, "only_projects": ("Uniswap",)}
+# The words the decision makes untrue, corrected (text only; no figure reads them)
+REVENUE_SPLIT["Uniswap"]["holder_share"] = {
+    "was": REVENUE_SPLIT["Uniswap"]["holder_share"],
+    "route": "UNI burned ÷ UNI released over the same covered days (R13, config.S13_SHARE_BASIS) = CP's payout ratio on "
+             "the net basis. Both lines measure THE SAME burns at two points — revenue (DefiLlama) at the release, "
+             "holder revenue at the UNI's landing at 0x…dEaD on mainnet — so the share is 1 by mechanism (100% of "
+             "protocol fees reach holders); read in UNI, its distance from 1 is the UNI in flight at the window's two "
+             "ends, and the price between the two points moves the $ lines, not the share"}
+PAYOUT_ABOVE_ONE["Uniswap"] = (
+    "Can read above 1 — real, timing. The payout ratio on the net basis is the HOLDER SHARE (PR1.S13), read in UNI "
+    "(R13): UNI burned ÷ UNI released on the same covered days. An L2 release lands at 0x…dEaD after its bridge, so a "
+    "window that opens with more UNI in flight than it closes with burns more than was released in it. "
+    # PR1B.8 (Jake 2026-11-09): the monthly figures are computed on each build from the stored series
+    "The $ lines, each at its own basis: {live}")
+# each line's own cell says the price point its $ are valued at (R13.U2) — the figures are unchanged
+for _r13u, _r13w, _r13n in (
+        ("holder_revenue", "x the day's price;",
+         "x the day's price (price_usd: CoinGecko's 00:00 UTC point, the price at the START of the burn's day);"),
+        ("revenue", "× threshold() × the UNI price)",
+         "× threshold() × the UNI price at the END of the release day — its Balances timestamp, adapters/utils/"
+         "runAdapter.ts, read 2026-11-19)")):
+    assert _r13w in REVENUE_SPLIT["Uniswap"][_r13u]["route"]
+    REVENUE_SPLIT["Uniswap"][_r13u] = {**REVENUE_SPLIT["Uniswap"][_r13u],
+                                       "route": REVENUE_SPLIT["Uniswap"][_r13u]["route"].replace(_r13w, _r13n)}
+del _r13u, _r13w, _r13n

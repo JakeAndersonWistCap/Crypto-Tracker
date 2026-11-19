@@ -259,15 +259,25 @@ def test_gate_uniswap_three_lines_are_the_routed_series(built):
     dh = {str(data.cell(1, c).value): c for c in range(1, data.max_column + 1)}
     q0c = next(c for h, c in dh.items() if h.startswith("Q0 (flow"))
     drow = {data.cell(i, 1).value: i for i in range(2, data.max_row + 1)}
-    for head, m in ((bw.CP_FEES_LINE_HEAD, "fees_usd"), (bw.CP_REV_LINE_HEAD, "revenue_usd"),
-                    (bw.CP_HREV_LINE_HEAD, "holder_value_revenue_usd")):
+    # R13 (Jake 2026-11-19, config.S13_SAME_DAYS["Uniswap"]): revenue and holder revenue are each read to the last day
+    # both hold — the cells read the same-covered-days views. Was: "revenue_usd" and "holder_value_revenue_usd", each
+    # over its own days (on the dumps the burn held 2026-10-13 and revenue did not: 32,213,646.8, now 31,925,180.4).
+    for head, m in ((bw.CP_FEES_LINE_HEAD, "fees_usd"), (bw.CP_REV_LINE_HEAD, "revenue_usd_s13d"),
+                    (bw.CP_HREV_LINE_HEAD, "holder_value_revenue_usd_s13d")):
         assert X.value("CP Comparability", r, heads[head]) == pytest.approx(
             X.value("Data", drow[f"Uniswap|{m}"], q0c)), head
+    assert X.value("Data", drow["Uniswap|revenue_usd_s13d"], q0c) == pytest.approx(
+        X.value("Data", drow["Uniswap|revenue_usd"], q0c))       # revenue's own last day IS the last common day
     share = X.value("CP Comparability", r, heads[bw.CP_HSHARE_HEAD])
     pay = X.value("CP Comparability", r, _col(heads, "Payout ratio — the project's own net basis"))
     assert isinstance(share, float) and share == pytest.approx(pay)
+    # R13: the share is UNI burned ÷ UNI released on those days (one basis), not the two $ lines' quotient — and it
+    # is not capped: on the dumps it still reads above 1 (was 1.0692 in $ per covered day; 1.0394 in UNI)
+    tok = [X.value("Data", drow[f"Uniswap|{m}"], q0c) for m in ("s13_share_holder_tokens", "s13_share_revenue_tokens")]
+    assert share == pytest.approx(tok[0] / tok[1]) and share == pytest.approx(1.0394, abs=5e-4) and share > 1
     note = wb["CP Comparability"].cell(r, heads[bw.CP_HSHARE_HEAD]).comment.text
     assert "HOLDER SHARE" in note and "Can read above 1" in note
+    assert "ONE BASIS (R13" in note and "ABOVE 1 — REAL, NOT CAPPED" in note and "SAME COVERED DAYS" in note
 
 
 def _endpoints(groups, name, asof):
