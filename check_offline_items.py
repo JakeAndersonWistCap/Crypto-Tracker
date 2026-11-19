@@ -164,6 +164,11 @@ VEAERO = "0xeBf418Fe2512e7E6bd9b87a8F0f294aCDC67e6B4"
 # endpoint in BASE_RPC_URL goes first, the public ones stay behind it.
 # R10.A2: base.llamarpc.com dropped (HTTP 525 on every try)
 _PUBLIC_BASE_RPCS = ["https://base-rpc.publicnode.com", "https://mainnet.base.org"]
+# R13.4 (Jake's 00bb8b2 seed, 2026-11-19): base-rpc.publicnode.com answers every PAST-block read with HTTP 403 "Archive
+# requests require a personal token" — it is not asked for one (a read at a past block, a past block's receipts or
+# header). It stays in the pool for reads at the head.
+ARCHIVE_REFUSED_HOSTS = {"base": ("base-rpc.publicnode.com",)}
+_PUBLIC_BASE_ARCHIVE_RPCS = ["https://mainnet.base.org", "https://base.drpc.org"]
 
 # --- addresses for the three checks added 2026-09-17 -------------------------------------
 SYRUP = "0x643C4E15d7d62Ad0aBeC4a9BD4b001aA3Ef52d66"           # Maple SYRUP token
@@ -235,7 +240,46 @@ def head(title: str):
     print(f"\n{'=' * 78}\n{title}\n{'=' * 78}")
 
 
+# R13.4 (Jake's 00bb8b2 seed, 2026-11-19: "Alchemy returned 429"): A KEYED ALCHEMY ENDPOINT IS PACED TO ITS PLAN. Alchemy
+# meters compute units a second, and one eth_getBlockReceipts costs a whole second's allowance of the free plan — the
+# seed's block-receipt reads, sent back to back, were refused and fell to the public endpoints. Each request to an
+# alchemy.com host now waits until the units of the requests before it have been earned back (ALCHEMY_CU_PER_SECOND,
+# default 330 — at or under every plan's allowance; set it in .env to the plan's own figure to go faster). The unit
+# costs are Alchemy's published ones for the methods this file sends; an unlisted method is charged as an eth_call.
+ALCHEMY_CU = {"eth_getBlockReceipts": 500, "eth_getLogs": 75, "eth_call": 26, "eth_getCode": 26, "eth_getBalance": 26,
+              "eth_getBlockByNumber": 20, "eth_getTransactionReceipt": 20, "eth_blockNumber": 10, "eth_chainId": 0}
+ALCHEMY_CU_DEFAULT = 26
+_ALCHEMY_NEXT: dict = {}                  # host -> the monotonic time its next request may leave
+
+
+def alchemy_cu_per_second() -> float:
+    try:
+        v = float(os.environ.get("ALCHEMY_CU_PER_SECOND", "") or 330)
+    except ValueError:
+        v = 330.0
+    return max(v, 1.0)
+
+
+def _alchemy_pace(url: str, method: str, clock=None, nap=None) -> float:
+    """Wait (if needed) before a request to a keyed Alchemy host, then book the request's compute units. Returns the
+    seconds waited. Other hosts: 0, nothing booked."""
+    import time as _t                                      # noqa: PLC0415
+    host = urlparse(url).hostname or ""
+    if not host.endswith("alchemy.com"):
+        return 0.0
+    clock = clock or _t.monotonic
+    now = clock()
+    due = _ALCHEMY_NEXT.get(host, now)
+    wait = max(due - now, 0.0)
+    if wait > 0:
+        (nap or _nap)(wait, f"{method} via {host} (paced to {alchemy_cu_per_second():g} compute units a second)")
+    cost = ALCHEMY_CU.get(method, ALCHEMY_CU_DEFAULT)
+    _ALCHEMY_NEXT[host] = max(due, now) + cost / alchemy_cu_per_second()
+    return wait
+
+
 def rpc(url: str, method: str, params=None):
+    _alchemy_pace(url, method)
     r = requests.post(url, json={"jsonrpc": "2.0", "id": 1, "method": method, "params": params or []},
                       timeout=TIMEOUT)
     r.raise_for_status()
@@ -254,8 +298,23 @@ def eth_block_number(chain: str = "ethereum"):
     return None, None
 
 
-def _rpcs_for(chain: str) -> list:
-    """The endpoint list for a chain, keyed endpoint first. Ethereum and Base only.
+def is_archive_request(method: str, params) -> bool:
+    """A JSON-RPC request that needs a PAST block: an eth_call / balance / code read whose block tag is not a head tag,
+    any block's receipts, or a block header by number."""
+    head = ("latest", "pending", "safe", "finalized", None)
+    p = list(params or [])
+    if method == "eth_getBlockReceipts":
+        return True
+    if method == "eth_getBlockByNumber":
+        return bool(p) and p[0] not in head
+    if method in ("eth_call", "eth_getBalance", "eth_getCode", "eth_getStorageAt", "eth_getTransactionCount"):
+        return bool(p) and isinstance(p[-1], str) and p[-1] not in head
+    return False
+
+
+def _rpcs_for(chain: str, archive: bool = False) -> list:
+    """The endpoint list for a chain, keyed endpoint first. Ethereum and Base only. `archive`: the list for a read at a
+    PAST block — a host known to refuse those (ARCHIVE_REFUSED_HOSTS) is left out and the public archive hosts added.
 
     ** ADDED BECAUSE A BASE CONTRACT WAS ABOUT TO BE CALLED AGAINST ETHEREUM RPCs. ** Every
     helper here was Ethereum-only, and the veAERO reads are on Base — which would have returned
@@ -270,6 +329,9 @@ def _rpcs_for(chain: str) -> list:
         if not urls and os.environ.get("ALCHEMY_API_KEY", "").strip():
             urls.append(f"https://base-mainnet.g.alchemy.com/v2/{os.environ['ALCHEMY_API_KEY'].strip()}")
         urls += _PUBLIC_BASE_RPCS
+        if archive:
+            urls = [u for u in urls if (urlparse(u).hostname or "") not in ARCHIVE_REFUSED_HOSTS["base"]]
+            urls += _PUBLIC_BASE_ARCHIVE_RPCS
         seen, out = set(), []
         for u in urls:
             if u not in seen:
@@ -295,7 +357,8 @@ def eth_call(to: str, selector: str, block: str = "latest", chain: str = "ethere
     ratio of two figures is the difference between a measurement and a coincidence.
     """
     errors = []
-    for url in _rpcs_for(chain):
+    arch = chain in ARCHIVE_REFUSED_HOSTS and block not in ("latest", "pending", "safe", "finalized")
+    for url in (_rpcs_for(chain, archive=True) if arch else _rpcs_for(chain)):
         try:
             j = rpc(url, "eth_call", [{"to": to, "data": selector}, block])
             if "result" in j:
@@ -5877,8 +5940,9 @@ def _rpc_retry(chain: str, method: str, params: list, tries: int = 5):
     """`result` of a JSON-RPC call from the first endpoint that answers, retried with backoff over every endpoint
     (public Base endpoints rate-limit: 'request limit reached', archive 403s). Raises when none ever answers."""
     why = ""
+    arch = chain in ARCHIVE_REFUSED_HOSTS and is_archive_request(method, params)
     for k in range(tries):
-        for url in _rpcs_for(chain):
+        for url in (_rpcs_for(chain, archive=True) if arch else _rpcs_for(chain)):
             try:
                 j = rpc(url, method, params)
                 if j.get("result") is not None:
@@ -11823,7 +11887,8 @@ def _batch_eth_calls(chain: str, calls: list, chunk: int = 200, block: str = "la
     from eth_abi import decode, encode                    # noqa: PLC0415
     out = [None] * len(calls)
     code_seen = False
-    for url in _rpcs_for(chain):
+    arch = chain in ARCHIVE_REFUSED_HOSTS and block not in ("latest", "pending", "safe", "finalized")
+    for url in (_rpcs_for(chain, archive=True) if arch else _rpcs_for(chain)):
         host = urlparse(url).hostname or "?"
         try:
             if not code_seen:
@@ -11881,7 +11946,7 @@ def rpc_block_at(chain: str, ts: int, say=print) -> int | None:
                 return int(known[day])
         except Exception:  # noqa: BLE001 — no cache: read the headers
             pass
-    for url in _rpcs_for(chain):
+    for url in (_rpcs_for(chain, archive=True) if chain in ARCHIVE_REFUSED_HOSTS else _rpcs_for(chain)):
         try:
             cache: dict = {}
 

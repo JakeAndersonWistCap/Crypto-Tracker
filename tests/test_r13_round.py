@@ -109,3 +109,69 @@ def test_b3_the_reader_makes_the_parts_from_five_reads_and_refuses_a_read_that_d
     assert got["velo_v1_distributor_tokens"] == pytest.approx(m["distributor"], abs=1e-3)
     with pytest.raises(RuntimeError):
         vh.v1_parts(lambda to, sig, arg, blk: call(to, sig, arg, blk, gauge=5e9), v1, 158_514_211)
+
+
+# ================================================================= 4: Base archive reads — the pool and the pace
+def test_4_publicnode_is_not_asked_for_a_past_block_on_base(monkeypatch):
+    import check_offline_items as coi
+    monkeypatch.setenv("ALCHEMY_API_KEY", "SECRETKEY123")
+    monkeypatch.delenv("BASE_RPC_URL", raising=False)
+    host = lambda u: u.split("/")[2]                                           # noqa: E731
+    head, past = [host(u) for u in coi._rpcs_for("base")], [host(u) for u in coi._rpcs_for("base", archive=True)]
+    assert "base-rpc.publicnode.com" in head and "base-rpc.publicnode.com" not in past
+    assert past[0] == "base-mainnet.g.alchemy.com" and "mainnet.base.org" in past
+    asked = []
+
+    def fake(url, method, params=None):
+        asked.append(host(url))
+        if "alchemy" in url:
+            raise ValueError("refused")
+        return {"result": "0x1"}
+    monkeypatch.setattr(coi, "rpc", fake)
+    monkeypatch.setattr(coi, "_nap", lambda s, what: None)
+    assert coi._rpc_retry("base", "eth_getBlockReceipts", ["0x3000000"]) == "0x1"
+    assert coi._rpc_retry("base", "eth_call", [{"to": "0x0", "data": "0x"}, "0x3000000"]) == "0x1"
+    assert "base-rpc.publicnode.com" not in asked
+    asked.clear()
+    assert coi._rpc_retry("base", "eth_call", [{"to": "0x0", "data": "0x"}, "latest"]) == "0x1"
+    assert asked[:2] == ["base-mainnet.g.alchemy.com", "base-rpc.publicnode.com"]   # at the head it is still asked
+
+
+def test_4_what_counts_as_a_past_block_read():
+    import check_offline_items as coi
+    assert coi.is_archive_request("eth_getBlockReceipts", ["0x10"])
+    assert coi.is_archive_request("eth_getBlockByNumber", ["0x10", False])
+    assert not coi.is_archive_request("eth_getBlockByNumber", ["latest", False])
+    assert coi.is_archive_request("eth_call", [{"to": "0x0"}, "0x10"]) and not coi.is_archive_request("eth_call", [{"to": "0x0"}, "latest"])
+    assert not coi.is_archive_request("eth_blockNumber", []) and not coi.is_archive_request("eth_getLogs", [{}])
+
+
+def test_4_alchemy_is_paced_to_its_compute_units_and_other_hosts_are_not(monkeypatch):
+    """Three block-receipt reads (500 units each) at 500 units a second leave one second apart; an eth_call (26 units)
+    after them waits out the last receipt's second and books 0.052 s; a public host never waits."""
+    import check_offline_items as coi
+    monkeypatch.setenv("ALCHEMY_CU_PER_SECOND", "500")
+    monkeypatch.setattr(coi, "_ALCHEMY_NEXT", {})
+    now, naps = [100.0], []
+
+    def nap(sec, what):
+        naps.append(round(sec, 6))
+        now[0] += sec
+    url = "https://base-mainnet.g.alchemy.com/v2/SECRETKEY123"
+    waits = [coi._alchemy_pace(url, "eth_getBlockReceipts", clock=lambda: now[0], nap=nap) for _ in range(3)]
+    assert waits == pytest.approx([0.0, 1.0, 1.0])
+    assert coi._alchemy_pace(url, "eth_call", clock=lambda: now[0], nap=nap) == pytest.approx(1.0)
+    assert coi._alchemy_pace(url, "eth_call", clock=lambda: now[0], nap=nap) == pytest.approx(0.052)
+    assert coi._alchemy_pace("https://mainnet.base.org", "eth_getBlockReceipts", clock=lambda: now[0], nap=nap) == 0.0
+    assert len(naps) == 4 and not any("SECRETKEY" in str(x) for x in naps)
+    # an idle endpoint owes nothing: after a long pause the next request leaves at once
+    now[0] += 60
+    assert coi._alchemy_pace(url, "eth_getBlockReceipts", clock=lambda: now[0], nap=nap) == 0.0
+
+
+def test_4_the_default_pace_is_at_or_under_the_free_plans_allowance(monkeypatch):
+    import check_offline_items as coi
+    monkeypatch.delenv("ALCHEMY_CU_PER_SECOND", raising=False)
+    assert coi.alchemy_cu_per_second() <= 500
+    monkeypatch.setenv("ALCHEMY_CU_PER_SECOND", "not a number")
+    assert coi.alchemy_cu_per_second() == 330
