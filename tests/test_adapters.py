@@ -26513,7 +26513,8 @@ def test_jakes_readings_of_2026_10_07_are_stored_against_real_rows_and_name_no_p
     got = [r for r in mr.load() if r["read_on"] == "2026-10-07"]     # G6's World Mobile counters are another batch
     # 21 since Aethir's in_circ is checked against the docs table itself (Jake copied it, 2026-10-07)
     # R10.B5b: 20 — Near's in_buyback_wallets was re-read on 2026-11-18 and is no longer a 2026-10-07 reading (was 21)
-    assert len(got) == 20 and all(r["read_on"] == "2026-10-07" and r["read_by"] == "Jake" and r["url"] for r in got)
+    # R11.3c: 19 — Near's pool APR (a1_validator_yield) was replaced on 2026-11-19 by a measurement on chain (was 20)
+    assert len(got) == 19 and all(r["read_on"] == "2026-10-07" and r["read_by"] == "Jake" and r["url"] for r in got)
     assert all("entered by Claude Code" in r["note"] for r in got)
     for r in got:
         rows = set(config.CREDIBILITY.get(r["project"]) or {}) | set(cred.generic_inputs(r["project"])) | {"in_circ"}
@@ -26525,8 +26526,15 @@ def test_jakes_readings_of_2026_10_07_are_stored_against_real_rows_and_name_no_p
     assert ("Near", "in_buyback_wallets") not in by
     nbw = mr.by_row(mr.load())[("Near", "in_buyback_wallets")]
     assert len(nbw) == 1 and nbw[0]["read_on"] == "2026-11-18" and float(nbw[0]["value"]) == 4_409_111.65
-    near = by[("Near", "a1_validator_yield")][0]
-    assert "NET" in near["note"] and ".near" not in (near["url"] + near["note"])        # no account stored
+    # R11.3c (2026-11-19): the near.com page answers 404 and its pool was never named — the reading is now a measurement
+    # of NAMED validator pools on chain (was: by[("Near", "a1_validator_yield")][0] read 2026-10-07, 0.0456, with no
+    # ".near" in its url or note). Still no personal account: every NEAR account named is a public staking-pool contract
+    assert ("Near", "a1_validator_yield") not in by
+    near = mr.by_row(mr.load())[("Near", "a1_validator_yield")][0]
+    assert near["read_on"] == "2026-11-19" and "NET" in near["note"]
+    import re as _re
+    named = _re.findall(r"[a-z0-9_.-]+\.near", near["url"] + " " + near["note"])
+    assert named and all(a.endswith(".poolv1.near") for a in named)                     # no account stored
     # Plume and Morpho circulating are wired as daily references instead of a reading that would go stale
     assert ("Plume", "in_circ") not in by and ("Morpho", "in_circ") not in by
     ref, _ = mr.reference_for(by[("Aethir", "in_apr_ai")], None)
