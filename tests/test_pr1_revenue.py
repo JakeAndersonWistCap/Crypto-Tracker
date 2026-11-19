@@ -124,11 +124,14 @@ def test_s8_the_change_is_dated_only_on_consecutive_days_on_one_basis(monkeypatc
                                                         [a, a, a, a, a, b])}
     bw._circulating_change_views(g)
     ch = g[("Uniswap", "circulating_change_tokens")]
-    assert list(ch["date"].dt.strftime("%m-%d")) == ["10-02", "10-03", "10-06"]
-    assert ch["value"].tolist() == [3.0, -2.0, 1.0]
+    # R11.1 (Jake 2026-11-18, option b): the change across the hole (10-03 -> 10-05, both on one basis) is ONE two-day
+    # change dated 10-05 — a stock difference loses nothing (was: no row on 10-05, a gap); the basis change stays a gap
+    assert list(ch["date"].dt.strftime("%m-%d")) == ["10-02", "10-03", "10-05", "10-06"]
+    assert ch["value"].tolist() == [3.0, -2.0, 9.0, 1.0]
+    from fetch.validate import _span_days
+    assert [_span_days(x) for x in ch["source"]] == [1, 1, 2, 1]
     gaps = bw.CIRC_CHANGE_GAPS["Uniswap"]
-    assert [d.strftime("%m-%d") for d, _w in gaps] == ["10-05", "10-07"]
-    assert "no circulating reading" in gaps[0][1] and "basis changes" in gaps[1][1]
+    assert [d.strftime("%m-%d") for d, _w in gaps] == ["10-07"] and "basis changes" in gaps[0][1]
 
 
 def test_s8_a_full_window_telescopes_to_closing_minus_opening(monkeypatch):

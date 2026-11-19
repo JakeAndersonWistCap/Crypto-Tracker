@@ -44604,3 +44604,28 @@ PROJECT_BY_NAME["Aerodrome"].setdefault("series_handover", {})["buyback_burned_t
            "zero, not the purchases x 0 on the few days a purchase read exists",
     "composition_change": "the same 0, on every day the total supply is held instead of the purchase-read days",
     "declared": "2026-11-18"}
+
+
+# =====================================================================================================================
+# R11.1 HYPERLIQUID'S NET SUPPLY CHANGE — A CHANGE ACROSS A HOLE IS ONE MULTI-DAY CHANGE (Jake 2026-11-18, option b).
+# circulating_change_tokens dated a change only between consecutive days; a day after a hole got no row, so one missed
+# run left the 90-day cell n/a for a quarter. Where the readings either side of the hole are on the SAME basis, their
+# difference is the change over those days — a stock difference loses nothing — dated the later reading and tagged with
+# its span. A basis change is still no change. A hole ON the opening day is not bridged (the change began before the
+# window). Every frozen cell this moved on the 15 dumps is declared in tests/fixtures/frozen_moves_r11.json.
+def _load_r11_moves() -> int:
+    import json as _json
+    from pathlib import Path as _Path
+    p = _Path(__file__).resolve().parent / "tests" / "fixtures" / "frozen_moves_r11.json"
+    if not p.exists():
+        return 0
+    n = 0
+    for proj, cells in _json.loads(p.read_text(encoding="utf-8")).items():
+        for key, steps in cells.items():
+            for st in steps:
+                declare_later_move(proj, key, st["to"], st["why"], st["date"])
+                n += 1
+    return n
+
+
+R11_MOVES_DECLARED = _load_r11_moves()

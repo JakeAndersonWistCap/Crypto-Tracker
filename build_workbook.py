@@ -4815,25 +4815,38 @@ def _circulating_change_views(groups: dict, asof=None) -> None:
         s = g.assign(date=pd.to_datetime(g["date"]).dt.normalize()).sort_values("date").drop_duplicates("date",
                                                                                                          keep="last")
         d, v, src = list(s["date"]), [float(x) for x in s["value"]], [str(x) for x in s["source"]]
-        rows, gaps = [], []
+        rows, gaps, spans = [], [], []
         for i in range(1, len(s)):
-            if (d[i] - d[i - 1]).days != 1:
-                gaps.append((d[i], f"no circulating reading on the {(d[i] - d[i - 1]).days - 1} day(s) before"))
-            elif src[i] != src[i - 1]:
+            n = int((d[i] - d[i - 1]).days)
+            if src[i] != src[i - 1]:
                 gaps.append((d[i], f"the basis changes ({src[i - 1]} → {src[i]})"))
+            elif n != 1:
+                # R11.1 (Jake 2026-11-18, option b): A CHANGE ACROSS A HOLE IS ONE MULTI-DAY CHANGE when both readings
+                # are on the same basis — the difference of two stocks loses nothing; the row says the days it holds
+                rows.append((d[i], v[i] - v[i - 1], src[i], n))
+                spans.append((d[i - 1], d[i]))
             else:
-                rows.append((d[i], v[i] - v[i - 1], src[i]))
+                rows.append((d[i], v[i] - v[i - 1], src[i], 1))
         if asof is not None:                      # the Q0 window's undated days: the reason on the cell
             lo = pd.Timestamp(asof).normalize() - pd.Timedelta(days=int(config.NET_SUPPLY_CIRC["window_days"]) - 1)
             gaps = [(x, why) for x, why in gaps if lo <= x <= pd.Timestamp(asof).normalize()]
-            if not d or d[0] > lo - pd.Timedelta(days=1):
-                gaps.insert(0, (lo, f"no circulating reading on {(lo - pd.Timedelta(days=1)).date()} (the opening)"))
+            opening = lo - pd.Timedelta(days=1)
+            if not d or d[0] > opening:
+                gaps.insert(0, (lo, f"no circulating reading on {opening.date()} (the opening)"))
+            else:
+                # a multi-day change that STRADDLES the opening holds days before the window: it cannot be split, so
+                # closing − opening is not measured (never a change that began before the opening)
+                for before, after in spans:
+                    if before < opening < after:
+                        gaps.insert(0, (after, f"no circulating reading on {opening.date()} (the opening): the "
+                                               f"readings either side are {before.date()} and {after.date()}"))
+                        rows = [r for r in rows if r[0] != after]      # its days are then not covered: the cell is n/a
         CIRC_CHANGE_GAPS[name] = gaps
         if rows:
             view = pd.DataFrame({"date": [r[0] for r in rows], "project": name, "metric": "circulating_change_tokens",
                                  "value": [r[1] for r in rows], "tier": 1,
                                  "source": [f"derived:d_circulating_used[{r[2].split('[', 1)[-1].rstrip(']')}]"
-                                            for r in rows]})
+                                            + (f"[span={r[3]}d]" if r[3] > 1 else "") for r in rows]})
             groups[(name, "circulating_change_tokens")] = _as_stored(view, g.columns)
 
 
