@@ -317,8 +317,12 @@ def test_fixture_keys_and_ranks(built):
     cov = _data(built, "Sky|buyback_burned_tokens", "Q0: days of the 90")
     assert val["Sky"] == pytest.approx((burned / cov) / (rate / 365.0), rel=1e-9)
     assert round(val["Sky"], 2) == 0.13
-    for n in ("Maple", "Fluid", "Ether.fi"):
+    for n in ("Maple", "Fluid"):
         assert val[n] == 0.0, (n, val[n])
+    # R14 (Jake 2026-11-19, config.BUYBACK_LEGS): from 2026-09-03 Ether.fi's buyback = the wallet scan + the
+    # programme's purchases, which the dump never stored — the buyback covers 49 of 90 days, so the key is BLOCKED
+    # (unknown is never 0). Was 0.0 before R14.
+    assert isinstance(val["Ether.fi"], str) and "buyback_burned_tokens, q0) covers 49 days" in val["Ether.fi"]
     # PR1.S1: Pendle's burned buyback (its epoch distributions, read to 2026-09-21) covers 68 days against emissions over
     # 90 — the two sides of the ratio cover different days, so it is BLOCKED (rule 9), never a 0 over unequal spans
     assert isinstance(val["Pendle"], str) and val["Pendle"].startswith("BLOCKED — unequal coverage")
@@ -352,7 +356,8 @@ def test_fixture_keys_and_ranks(built):
     keyed = sorted((n for n in a3 if isinstance(keyv[n], float) and keyv[n] > 0), key=lambda n: -keyv[n])
     assert "Sky" in keyed and [rank[n] for n in keyed] == [1.0 + i for i in range(len(keyed))]
     zeros = sorted((n for n in a3 if keyv[n] == 0.0), key=lambda n: rank[n])
-    assert set(zeros) >= {"Maple", "Fluid", "Ether.fi"}
+    assert set(zeros) >= {"Maple", "Fluid"}                   # R14: Ether.fi left the zeros (key BLOCKED on the dump)
+    assert rank["Ether.fi"] == "unranked"                      # was ranked among the zeros before R14
     assert [rank[n] for n in zeros] == [len(keyed) + 1.0 + i for i in range(len(zeros))]
     nhy = [XR.value("Summary", srows[n], sn) for n in zeros]
     nums = [v for v in nhy if isinstance(v, float)]

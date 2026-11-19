@@ -46677,3 +46677,422 @@ FLOW_TOKEN_MEMO = {"Ether.fi": (
      "decision 9 (Jake 2026-11-19): FalconX / Binance-tagged destinations (Blockscout / OLI labels: evidence, not "
      "proof; config.THEATRE_FLAG); in circulating before and after — an issuer-held -> float move, not in the expected "
      "closing"),)}
+
+# ===== R14 — ETHER.FI BUYBACK, REVENUE, TOP-UPS =====
+# Round 14, items 2, 3, 5 and A (Jake 2026-11-19; the pack docs/r13_etherfi_pack.md, decisions 5, 7 and 8 as
+# recommended). SPEC.md "Round 14 — Ether.fi: the buyback read, the three revenue lines, the top-ups in dilution".
+# Circulating under the rule, the insider list / share and the theatre flag are another agent's (not touched here).
+# Every figure below was read 2026-11-19 from a primary source (Blockscout token transfers, DefiLlama's API and
+# methodology, coins.llama.fi prices); the scratch reads are named where they are used.
+# =====================================================================================================================
+_R14E = PROJECT_BY_NAME["Ether.fi"]
+
+# ----- R14.2a A PURCHASE PAYS A DIFFERENT TOKEN OUT (fetch/logscan.py `purchase_requires_payment`). A fill from a declared
+# venue is no longer enough: the Uniswap v4 PoolManager is also where an LP withdrawal comes from. Read 2026-11-19
+# (eth.blockscout.com /api/v2/addresses/<holder>/token-transfers, every ERC-20 transfer of each holder): under the rule
+# the old buyback Safe 0x2f5301a3… still counts 17,984,520.10 ETHFI (every CoW fill paid WETH / USDT / USDC out in the
+# same transaction — unchanged to the token), the Programmatic Buybacks Safe 0x43F4cA92… 2,888,646.80 and EthfiBuyback
+# 0xa7b1d3a0… 945,540.65 (unchanged), and the Operating Safe 0x3FB6784E… 847,258.84 instead of 1,895,016.31: the
+# four transactions below — and nothing else — leave the series. In each only ETHFI moves (Safe, PoolManager, Arrakis
+# vault 0xE8FD76BF…); no other token is paid out. The rule, not the hash list, takes them out; the list is the evidence.
+ETHERFI_LP_WITHDRAWALS_2026_09_02 = {
+    "0x3b52e19b49fca8a4cd417b3e2549a761e64cb9f03fd22d6848df8c635261112b": 554_725.7207666541,
+    "0x79f94c1622e4797bc9f0b410ad59cf4879ec9499e30d62efea0714b74c09f0ce": 245_159.94020794597,
+    "0x61a48f701c21bfbbaa1ca356df02767091072763cbdf3da839c0827cb47eea18": 242_697.0992862347,
+    "0xb1acc8c3861413e49b920ec6aa9941e389c2eae1d09b40dfb136e01555e90fbb": 5_174.714352516415,
+}
+ETHERFI_PURCHASE_RULE_READ = {
+    "read_on": "2026-11-19",
+    "source": "https://eth.blockscout.com/api/v2/addresses/<holder>/token-transfers?type=ERC-20 (all pages)",
+    "counted_old_rule": {"0x2f5301a3": 17_984_520.10, "0x3fb6784e": 1_895_016.31, "0x43f4ca92": 2_888_646.80,
+                         "0xa7b1d3a0": 945_540.65},
+    "counted_new_rule": {"0x2f5301a3": 17_984_520.10, "0x3fb6784e": 847_258.84, "0x43f4ca92": 2_888_646.80,
+                         "0xa7b1d3a0": 945_540.65},
+    "removed": sum(ETHERFI_LP_WITHDRAWALS_2026_09_02.values()),        # 1,047,757.47 = the four LP withdrawals
+    "q0_was": {"tokens": 493_031.75, "usd": 277_512.85, "on": "2026-09-02",
+               "why": "three of the four (0x61a48f70…, 0x79f94c16…, 0xb1acc8c3…) — the fourth was already excluded"},
+}
+for _sc in _R14E["log_scans"]:
+    if _sc.get("key") in ("buyback_wallet_inflow", "programmatic_buyback_inflow"):
+        _sc["purchase_requires_payment"] = True
+        _sc["purchase_rule"] = ("R14 (Jake 2026-11-19): an inflow is BOUGHT only in a transaction in which the holder "
+                                "paid another token out — a venue fill alone is not a purchase (the 2026-09-02 Arrakis "
+                                "LP withdrawals came from the v4 PoolManager)")
+
+# ----- R14.2b WHERE THE BOUGHT ETHFI WENT, MEASURED PER PURCHASE DAY (was "100% distributed", BUYBACK_DESTINATION_SHARES).
+# Read 2026-11-19 (Blockscout, every ETHFI transfer of the holder): each purchase day's ETHFI is followed FIRST-IN-FIRST-
+# OUT through the holder's outflows (every inflow queues, bought or not). Destinations: the sETHFI vault 0x86B5780b… =
+# DISTRIBUTED (to stakers); an ether.fi wallet (Safes 0x01e42ad3…, 0x3FB6784E…, 0xe4439b1d…, the Treasury Safes, the
+# deployer 0x9eaC7114…) = HELD; 0x0 = BURNED; anything else = NOT ESTABLISHED (that day has no declared share and is left
+# out of the split, named — never guessed). The old Safe 0x2f5301a3… (17,984,520.10 bought, 2025-05-09..2026-04-01):
+# distributed 8,460,420.10 (47.0%), held 8,060,100.00 (44.8%), burned 1,464,000.00 (8.1%) — of its whole outflow
+# (incl. 998,192 not bought) 49% / 43% / 8%, the pack's "49% vault, 40% Safe, 8% burned" plus 2.7% to the Operating
+# Safe and the deployer. The Operating Safe's own purchases (2024-07..10, 2025-08-04, 2026-01-30) went mostly to
+# wallets not identified: those days are NOT ESTABLISHED. From 2026-09-03 the programme's purchases join the buyback
+# (BUYBACK_LEGS): every token bridged to the OP CashbackDistributor and paid to CARD USERS — carved out BEFORE these
+# shares (buyback_to_customers_tokens: distributed, but not to stakers and never holder value).
+# Rows: (from, (burn, hold, distribute) | None = not established | "none bought" = no purchase from that day).
+ETHERFI_BUYBACK_DESTINATIONS = (
+    ("2024-07-06", None),  # 73,071.34 bought (Operating Safe; went to wallets not identified)
+    ("2024-07-08", "none bought"),
+    ("2024-08-05", None),  # 81,673.37 bought (Operating Safe)
+    ("2024-08-06", "none bought"),
+    ("2024-10-17", None),  # 56,293.08 bought (Operating Safe)
+    ("2024-10-18", "none bought"),
+    ("2025-05-09", (0.0, 0.0, 1.0)),  # 1,915,939.93 bought
+    ("2025-07-25", (0.032, 0.0, 0.968)),  # 150,863.92 bought
+    ("2025-08-02", (0.5284, 0.0, 0.4716)),  # 193,944.64 bought
+    ("2025-08-04", None),  # 598,131.13 bought (Operating Safe: 27.75% held, the rest to wallets not identified)
+    ("2025-08-05", "none bought"),
+    ("2025-08-08", (0.5402, 0.0, 0.4598)),  # 397,587.16 bought
+    ("2025-08-15", (1.0, 0.0, 0.0)),  # 601,291.13 bought
+    ("2025-08-29", (0.5814, 0.0, 0.4186)),  # 774,538.18 bought
+    ("2025-09-05", (0.3432, 0.0, 0.6568)),  # 263,241.90 bought
+    ("2025-09-13", (0.0, 0.0, 1.0)),  # 564,808.16 bought
+    ("2025-09-27", (0.0, 0.8361, 0.1639)),  # 126,595.00 bought
+    ("2025-10-04", (0.0, 1.0, 0.0)),  # 341,795.69 bought
+    ("2025-10-24", (0.0, 0.487, 0.513)),  # 107,711.75 bought
+    ("2025-11-03", (0.0, 0.2368, 0.7632)),  # 111,038.75 bought
+    ("2025-11-04", (0.0, 1.0, 0.0)),  # 770,938.85 bought
+    ("2025-11-07", (0.0, 0.9076, 0.0924)),  # 223,403.57 bought
+    ("2025-11-08", (0.0, 0.0, 1.0)),  # 9,961.53 bought
+    ("2025-11-09", (0.0, 0.454, 0.546)),  # 207,335.57 bought
+    ("2025-11-10", (0.0, 1.0, 0.0)),  # 202,261.87 bought
+    ("2025-11-12", (0.0, 0.0341, 0.9659)),  # 105,679.86 bought
+    ("2025-11-13", (0.0, 0.0, 1.0)),  # 63,992.60 bought
+    ("2025-11-14", (0.0, 0.5244, 0.4756)),  # 270,235.63 bought
+    ("2025-11-15", (0.0, 1.0, 0.0)),  # 1,362,874.15 bought
+    ("2025-12-01", (0.0, 0.7418, 0.2582)),  # 398,250.44 bought
+    ("2025-12-02", (0.0, 0.5851, 0.4149)),  # 117,278.50 bought
+    ("2025-12-03", (0.0, 1.0, 0.0)),  # 240,404.12 bought
+    ("2025-12-05", (0.0, 0.7616, 0.2384)),  # 250,764.20 bought
+    ("2025-12-06", (0.0, 0.2034, 0.7966)),  # 123,365.12 bought
+    ("2025-12-07", (0.0, 1.0, 0.0)),  # 750,626.39 bought
+    ("2025-12-15", (0.0, 0.2083, 0.7917)),  # 116,520.71 bought
+    ("2025-12-16", (0.0, 0.0, 1.0)),  # 263,171.29 bought
+    ("2025-12-22", (0.0, 0.1325, 0.8675)),  # 138,741.43 bought
+    ("2025-12-23", (0.0, 1.0, 0.0)),  # 709,514.35 bought
+    ("2025-12-28", (0.0, 0.517, 0.483)),  # 139,454.01 bought
+    ("2025-12-30", (0.0, 0.0, 1.0)),  # 396,493.94 bought
+    ("2026-01-05", (0.0, 0.618, 0.382)),  # 125,826.80 bought
+    ("2026-01-06", (0.0, 0.5785, 0.4215)),  # 124,873.26 bought
+    ("2026-01-08", (0.0, 0.0776, 0.9224)),  # 131,253.41 bought
+    ("2026-01-10", (0.0, 1.0, 0.0)),  # 1,391,383.45 bought
+    ("2026-01-30", None),  # 38,089.90 bought (Operating Safe, not identified) beside the old Safe's held purchases
+    ("2026-01-31", (0.0, 1.0, 0.0)),  # 423,278.89 bought
+    ("2026-02-05", (0.0, 0.8748, 0.1252)),  # 200,216.89 bought
+    ("2026-02-06", (0.0, 0.0, 1.0)),  # 340,118.59 bought
+    ("2026-02-08", (0.0, 0.4983, 0.5017)),  # 421,426.38 bought
+    ("2026-02-09", (0.0, 0.0, 1.0)),  # 2,415,518.05 bought (the last purchase 2026-04-01; a wallet purchase after
+    #                                    2026-11-19 reads this row — the programme page's "to sETHFI" — until measured)
+)
+_R14_DEST_SRC = ("MEASURED (R14, Jake 2026-11-19): the purchase day's ETHFI followed first-in-first-out through the "
+                 "buyer's own outflows (eth.blockscout.com token transfers, read 2026-11-19; "
+                 "config.ETHERFI_BUYBACK_DESTINATIONS) — vault = distributed, an ether.fi wallet = held, 0x0 = burned")
+BUYBACK_DESTINATION_SHARES["Ether.fi"] = [
+    ({"from": d, "unknown": True, "verified": True,
+      "source": "NOT ESTABLISHED — the purchase went on to wallets not identified (" + _R14_DEST_SRC + ")"}
+     if sh is None else
+     {"from": d, "burn": 0.0, "hold": 0.0, "distribute": 0.0, "verified": True, "none_bought": True,
+      "source": "no purchase from this day to the next row (" + _R14_DEST_SRC + ")"}
+     if sh == "none bought" else
+     {"from": d, "burn": sh[0], "hold": sh[1], "distribute": sh[2], "verified": True, "source": _R14_DEST_SRC})
+    for d, sh in ETHERFI_BUYBACK_DESTINATIONS]
+BUYBACK_DESTINATION_SHARES_WAS = {"Ether.fi": "100% distributed (etherfi.gitbook.io/gov/ethfi-buyback-program, "
+                                              "declared) — replaced by the measured destinations, R14"}
+_r14_buyback_destination_shares = buyback_destination_shares
+
+
+def buyback_destination_shares(project_name: str, date=None) -> dict | None:   # noqa: F811 — R14 wraps the R10 reader
+    """R14: as before, and a dated row marked `unknown` (a purchase whose destination is NOT ESTABLISHED) reads None —
+    the day is left out of the split and named, never given a share."""
+    rows = BUYBACK_DESTINATION_SHARES.get(project_name) or ()
+    if rows and any(r.get("unknown") for r in rows):
+        d = None if date is None else str(date)[:10]
+        pick = None
+        for r in rows:
+            if r["from"] is None or d is None or r["from"] <= d:
+                pick = r
+        if pick is None or pick.get("unknown"):
+            return None
+    return _r14_buyback_destination_shares(project_name, date)
+
+
+# ----- R14.2c THE PROGRAMME'S PURCHASES ARE A BUYBACK, PAID TO CUSTOMERS (build_workbook._buyback_leg_views). A3's
+# buying pressure is "all market buybacks (burned + held + distributed)" (P4-Q5c): the programme buys ETHFI on the
+# market, so from 2026-09-03 (Snapshot 0xed61adff… closed) actual_buyback_tokens = the wallet scan + the programme's
+# purchases (programmatic_buyback_tokens), on the days both hold a row (a day before the programme's first row is its
+# measured 0). A3 reads it: ACTUAL BUYBACK includes it; BURNED 0, HELD 0, DISTRIBUTED (to stakers) 0 — the programme is
+# carved out before the destination shares and shown as DISTRIBUTED TO CARD USERS (buyback_to_customers_tokens, its own
+# detail row); RETIRED 0; BUYING PRESSURE includes it.
+# HOLDER VALUE NEVER: it reads the wallet scan alone (actual_buyback_usd_wallet), and Flows' "distributed to holders"
+# leaves it out (its own line "distributed to customers"). The cashback (c) dilution rule is unchanged (CASHBACK_FUNDING).
+BUYBACK_LEGS = {
+    "Ether.fi": {"metric": "programmatic_buyback_tokens", "from": "2026-09-03", "to": "card users (OP cashback)",
+                 "points": ("derived:buyback_wallet_plus_programme", "derived:buyback_wallet_plus_programme_usd"),
+                 "why_line": "the Programmatic Buybacks Safe 0x43F4cA92… + EthfiBuyback 0xa7b1d3a0… buy ETHFI on CoW "
+                             "with Labs' USDC and bridge it to the OP CashbackDistributor 0x38F2fBb2… — paid to card "
+                             "users, none held (R14; decision 5: not holder value)",
+                 "decided": "Jake 2026-11-19 (R14 item 2, decision 5)"}}
+for _m, _pt, _was in (("actual_buyback_tokens", BUYBACK_LEGS["Ether.fi"]["points"][0], "explorer:buyback_wallet_inflow"),
+                      ("actual_buyback_usd", BUYBACK_LEGS["Ether.fi"]["points"][1], "derived:tokens*price")):
+    _R14E.setdefault("series_handover", {})[_m] = {
+        "ordered_points": (_was, _pt),
+        "why": "R14 (Jake 2026-11-19): the wallet scan (old buyback Safe + Operating Safe, purchases only — a "
+               "transaction paying another token out) to 2026-09-02; from 2026-09-03 the wallet scan + the "
+               "programme's CoW purchases (programmatic_buyback_tokens), paid to card users",
+        "composition_change": "WIDENS from 2026-09-03: the programme's purchases join (a market buyback whose tokens go "
+                              "to customers — buying pressure, not holder value). A trend across the seam is a SERIES "
+                              "BREAK",
+        "declared": "2026-11-19"}
+for _m, _l in (("buyback_to_customers_tokens", "ETHFI bought by the programme and paid on to CARD USERS as cashback "
+                                               "(R14: a buyback — DISTRIBUTED, not to holders, never holder value)"),
+               ("buyback_to_customers_usd", "the same x that day's price ($)")):
+    METRICS[_m] = {"label": _l, "kind": "flow", "unit": "tokens" if _m.endswith("tokens") else "usd",
+                   "archetypes": [3], "tiers": [2], "sanity_min": 0, "sanity_max": 1e10, "only_projects": ("Ether.fi",),
+                   "view_only": True}
+METRICS["actual_buyback_usd_wallet"] = {
+    "label": "Buyback $ of the wallet scan alone (before any declared purchase leg joins it) — what holder value reads "
+             "(R14)", "kind": "flow", "unit": "usd", "archetypes": [3], "tiers": [2], "sanity_min": 0,
+    "sanity_max": 1e10, "only_projects": ("Ether.fi",), "view_only": True}
+METRICS["programmatic_buyback_tokens"]["label"] = (
+    "ETHFI bought by the Programmatic Buybacks Safe 0x43F4cA92… (+ EthfiBuyback 0xa7b1d3a0…) on CoW (Snapshot "
+    "0xed61adff…, from 2026-09-03) — " + ETHERFI_PROGRAMMATIC_SAFE_LABEL + "; from R14 a leg of actual_buyback_tokens "
+    "(BUYBACK_LEGS: DISTRIBUTED to card users), never holder value; SILENT after 14 days with no fill (G7)")
+DETAIL_COLUMNS.append(
+    {"tab": "A3", "after": "Actual buyback Q0 DISTRIBUTED",
+     "header": "Detail — Actual buyback Q0 DISTRIBUTED to CARD USERS (tokens; the programme's cashback — not stakers, "
+               "not retired, not holder value)",
+     "cells": {"Ether.fi": ("buyback_to_customers_tokens", "q0")}})
+CREDIBILITY["Ether.fi"]["in_buyback"] = _c_in(
+    "ETHFI bought Q0 (purchases into 0x2f53… / 0x3fb6… + the programme's CoW purchases)", "actual_buyback_tokens", "q0",
+    _c_find("No ETHFI has been bought for stakers since 2026-04-01; from 2026-09-03 every purchase is the programme's, "
+            "paid to card users (R14).",
+            "Blockscout transfers read 2026-11-19: the old buyback Safe 0x2f5301a3…'s last CoW fill is 2026-04-01; the "
+            "1,047,757 ETHFI the Operating Safe 0x3fb6784e… received on 2026-09-02 were four Arrakis LP withdrawals "
+            "(only ETHFI moved; config.ETHERFI_LP_WITHDRAWALS_2026_09_02), not purchases; the Programmatic Buybacks "
+            "Safe 0x43F4cA92… and 0xa7b1d3a0… bought 841,413 ETHFI in 2026 Q3 and the rest to date in Q4, all bridged "
+            "to the OP CashbackDistributor. DefiLlama's holders revenue is $0 over 2026-08-21..11-18 by its own method "
+            "(it excludes the cashback purchases)."))
+
+# ----- R14.3 THE THREE REVENUE LINES (decision 7; decision 5 strict). DefiLlama, read 2026-11-19
+# (api.llama.fi/summary/fees/<slug>?dataType=…), 90 days 2026-08-21..11-18: parent fees $41,442,301 (Stake 30,136,235 +
+# Cash 10,946,698 + Liquid 251,453 + Borrowing 107,915); revenue $11,368,823 (Stake 5,526,719 + Cash 5,531,804 + Liquid
+# 247,134 + Borrowing 63,166); Cash supply side $5,414,890.47 = 'Cashback paid to card users' (its methodology); holders
+# revenue $0. FEES = 41,442,301 − 5,414,890 = $36,027,411. Same reads over the dumps' Q0 (2026-07-16..10-12, 89 days):
+# fees 38,222,041, Cash cashback 6,005,645 -> 32,216,396; revenue 10,174,105 (Cash 4,717,936).
+_R14E["defillama_component_slugs"] = list(_R14E.get("defillama_component_slugs") or ()) + [
+    {"slug": "etherfi-cash-liquid", "data_type": "dailySupplySideRevenue", "metric": "cash_cashback_usd_defillama"},
+    {"slug": "etherfi-cash-liquid", "data_type": "dailyRevenue", "metric": "cash_revenue_usd_defillama"}]
+METRICS["cash_cashback_usd_defillama"] = {
+    "label": "ether.fi Cash cashback paid to card users ($/day; DefiLlama 'etherfi-cash-liquid' dailySupplySideRevenue: "
+             "'Cashback paid to card users: stablecoin or ETH cashback through the Cash contract, and ETHFI cashback "
+             "bought with card revenue and paid through the CashbackDistributor') — booked by DefiLlama as FEES; taken "
+             "out of the S13 FEES line (R14, decision 7)",
+    "kind": "flow", "unit": "usd", "archetypes": [2, 3], "tiers": [1], "sanity_min": 0, "sanity_max": 1e9,
+    "only_projects": ("Ether.fi",)}
+METRICS["cash_revenue_usd_defillama"] = {
+    "label": "ether.fi Cash revenue ($/day; DefiLlama 'etherfi-cash-liquid' dailyRevenue) — an ESTIMATE: 1.38% of card "
+             "spend, before card-network and issuer costs (private) — the Cash leg of the S13 REVENUE line",
+    "kind": "flow", "unit": "usd", "archetypes": [2, 3], "tiers": [1], "sanity_min": 0, "sanity_max": 1e9,
+    "only_projects": ("Ether.fi",)}
+# FEES = DefiLlama's parent fees LESS the Cash cashback, per day, on the days both hold a row
+FEES_NET = {"Ether.fi": ("fees_usd", "-cash_cashback_usd_defillama")}
+METRICS["fees_net_cashback_usd"] = {
+    "label": "Fees less what is not a fee ($/day; config.FEES_NET — Ether.fi: DefiLlama's parent fees less the Cash "
+             "cashback it books as fees) — the S13 FEES line (R14, decision 7)",
+    "kind": "flow", "unit": "usd", "archetypes": [2, 3], "tiers": [1], "sanity_min": 0, "sanity_max": 1e11,
+    "view_only": True, "only_projects": ("Ether.fi",)}
+# THE CROSS-CHECK BESIDE REVENUE (R2): USDC that ether.fi Labs' Safe 0xf40bcc08… sends the Programmatic Buybacks Safe —
+# 2,505,229.08 USDC in 12 transfers 2026-09-09..11-16 (read 2026-11-19). A share of revenue chosen by Labs, not revenue.
+_R14E["log_scans"].append({
+    "key": "labs_usdc_inflow", "metric": "labs_usdc_to_programme_tokens", "chain": "ethereum",
+    "token": "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
+    "holders": ["0x43F4cA92F7F378bCdcF1508b866b5B6c47D6408C"], "direction": "in", "store": True,
+    "attribution": "count_from", "count_from": ["0xf40bcc0845528873784F36e5C105E62a93ff7021"],
+    "count_from_source": "Snapshot 0xed61adff… (Labs sends weekly USDC to the Foundation, bought by CoW TWAP); the Safe "
+                         "0xf40bcc08… is the programme's only USDC sender (pack (c), Blockscout read 2026-11-19)",
+    "attribution_sources": ["https://eth.blockscout.com/api/v2/addresses/0x43F4cA92F7F378bCdcF1508b866b5B6c47D6408C/"
+                            "token-transfers (USDC, read 2026-11-19: 2,505,229.08 from 0xf40bcc08… in 12 transfers)"],
+    "headline": False, "wired_on": "2026-11-19"})
+METRICS["labs_usdc_to_programme_tokens"] = {
+    "label": "USDC sent by ether.fi Labs' Safe 0xf40bcc08… to the Programmatic Buybacks Safe (per day; USDC at $1) — the "
+             "cross-check beside the S13 REVENUE line: a share of revenue Labs chooses to send, not revenue (R14)",
+    "kind": "flow", "unit": "tokens", "archetypes": [3], "tiers": [2], "sanity_min": 0, "sanity_max": 1e9,
+    "only_projects": ("Ether.fi",)}
+REVENUE_TIER["Ether.fi"] = (
+    "revenue", "DefiLlama 'ether.fi' parent dailyRevenue = Stake (the protocol's cut of staking and restaking rewards + "
+               "eETH withdrawal fees) + Cash (an ESTIMATE: 1.38% of card spend) + Liquid + Borrowing: fees minus what "
+               "stakers, vault depositors and card users receive (R14)")
+REVENUE_SPLIT["Ether.fi"] = {
+    "round": "R14 (Jake 2026-11-19; decisions 5 and 7)",
+    "fees": {"metric": "fees_net_cashback_usd", "primary": False,
+             "route": "DefiLlama 'ether.fi' parent dailyFees LESS the Cash cashback DefiLlama books as fees "
+                      "('etherfi-cash-liquid' dailySupplySideRevenue: cashback paid to card users), per day "
+                      "(config.FEES_NET; decision 7). Gross staking and restaking rewards to stakers and vault "
+                      "depositors + the protocol's cuts + the card fee ESTIMATE. SECONDARY: an aggregator's series. "
+                      "90 days to 2026-11-18: 41,442,301 − 5,414,890 = $36,027,411"},
+    "revenue": {"metric": "revenue_usd", "primary": False,
+                "route": "DefiLlama 'ether.fi' parent dailyRevenue: Stake (about 10% of staking rewards, 11% of "
+                         "EigenLayer rewards, 2.5% on stETH, + eETH withdrawal fees) + Cash + Liquid + Borrowing. THE "
+                         "CASH LEG IS AN ESTIMATE — 1.38% of card spend before card-network and issuer costs, which are "
+                         "private (DefiLlama's methodology; cash_revenue_usd_defillama). SECONDARY. CROSS-CHECK beside "
+                         "it: the USDC Labs sends the Foundation's programme (labs_usdc_to_programme_tokens: $2.51M in "
+                         "71 days to 2026-11-16) — a share Labs chooses, not revenue. 90 days to 2026-11-18: "
+                         "$11,368,823 (Stake 5.53M, Cash 5.53M, Liquid 0.25M, Borrowing 0.06M)"},
+    "holder_revenue": {"metric": "holder_value_revenue_usd", "primary": True,
+                       "route": "REVENUE-FUNDED value reaching holders, measured on chain (decision 5, strict): the "
+                                "credited holder value (config.HOLDER_VALUE) — a $0 measured: no ETHFI has been bought "
+                                "for stakers since 2026-04-01 (the purchases before were treasury-funded), and the "
+                                "programme's purchases go to card users (BUYBACK_LEGS). RECORDED, NOT CREDITED beside "
+                                "it: the Foundation's sETHFI top-ups paid from its own ETHFI (sethfi_issuer_topup_"
+                                "tokens x price: 412,000 ETHFI = $260,723 over 2026-08-21..11-18) — emissions-funded "
+                                "yield, counted in dilution (e)"},
+    "holder_share": {"route": "holder revenue ÷ revenue per covered day = 0 ÷ revenue = 0%: nothing revenue-funded "
+                              "reaches ETHFI holders (decision 5)"},
+    "other_recipients": "stakers (eETH) and vault depositors: fees − revenue on Stake / Liquid / Borrowing (the supply "
+                        "side); CARD USERS: the Cash cashback (out of FEES here; its ETHFI part is outflow (c) where the "
+                        "programme's purchases did not cover it, CASHBACK_FUNDING); ether.fi Labs keeps the card fee",
+    "crosscheck": "FEES beside DefiLlama's parent fees and the cashback subtracted (same days); REVENUE beside the Labs "
+                  "USDC sent to the programme; HOLDER REVENUE beside the top-ups recorded, not credited "
+                  "(S13_COMPONENTS['Ether.fi'])",
+    "composition": "Half of REVENUE is the Cash card fee ESTIMATE (1.38% of spend, DefiLlama); the rest is Stake's cut "
+                   "of staking rewards and withdrawal fees. HOLDER REVENUE is 0: the ETHFI stakers received since "
+                   "2026-04-01 came from the Foundation's own stock (recorded, not credited; dilution (e))",
+}
+S13_SAME_DAYS["Ether.fi"] = ("fees", "revenue", "holder_revenue")
+METRICS["fees_net_cashback_usd_s13d"] = {
+    "label": "fees_net_cashback_usd over the days every S13 line compared with it holds (R9.5: same covered days)",
+    "kind": "flow", "unit": "usd", "archetypes": [1, 2, 3, 4], "tiers": [2], "sanity_min": 0, "sanity_max": 1e11,
+    "view_only": True, "only_projects": ("Ether.fi",)}
+for _m in ("revenue_usd_s13d", "holder_value_revenue_usd_s13d"):
+    METRICS[_m]["only_projects"] = tuple(dict.fromkeys((*METRICS[_m]["only_projects"], "Ether.fi")))
+S13_COMPONENTS["Ether.fi"] = {
+    "lines": {
+        "fees": (("Cash: the card fee ESTIMATE (Cash fees less its cashback)", "cash_revenue_usd_defillama",
+                  "s13c_ef_fees_cash_usd"),
+                 ("Stake + Liquid + Borrowing (DefiLlama)", None, "s13c_ef_fees_other_usd")),
+        "revenue": (("Cash: the card fee ESTIMATE (1.38% of spend)", "cash_revenue_usd_defillama",
+                     "s13c_ef_revenue_cash_usd"),
+                    ("Stake + Liquid + Borrowing (DefiLlama)", None, "s13c_ef_revenue_other_usd")),
+        "holder_revenue": (("revenue-funded value reaching holders (on chain)", None, "s13c_ef_holder_usd"),)},
+    "crosschecks": (("s13x_ef_fees_parent_defillama_usd", "s13c_ef_fees_other_usd", "fees_usd", False),
+                    ("s13x_ef_fees_cashback_usd", "s13c_ef_fees_other_usd", "cash_cashback_usd_defillama", False),
+                    ("s13x_ef_revenue_labs_usdc_usd", "s13c_ef_revenue_cash_usd", "labs_usdc_to_programme_tokens",
+                     False),
+                    ("s13x_ef_holder_topups_recorded_usd", "s13c_ef_holder_usd", "sethfi_issuer_topup_tokens", True))}
+_R14_S13_LABELS = {
+    "s13c_ef_fees_cash_usd": "S13 FEES — of which Cash: the card fee ESTIMATE (Cash fees less the cashback = DefiLlama "
+                             "'etherfi-cash-liquid' dailyRevenue), on the FEES line's covered days",
+    "s13c_ef_fees_other_usd": "S13 FEES — of which Stake + Liquid + Borrowing (the line less its Cash part)",
+    "s13c_ef_revenue_cash_usd": "S13 REVENUE — of which Cash: an ESTIMATE, 1.38% of card spend (DefiLlama), on the "
+                                "REVENUE line's covered days",
+    "s13c_ef_revenue_other_usd": "S13 REVENUE — of which Stake + Liquid + Borrowing (the line less its Cash part)",
+    "s13c_ef_holder_usd": "S13 HOLDER REVENUE — revenue-funded value reaching holders, on chain (decision 5: strict)",
+    "s13x_ef_fees_parent_defillama_usd": "CROSS-CHECK of S13 FEES: DefiLlama's parent fees as published (the cashback "
+                                         "still in), on the same days",
+    "s13x_ef_fees_cashback_usd": "CROSS-CHECK of S13 FEES: the Cash cashback taken out (DefiLlama 'etherfi-cash-liquid' "
+                                 "dailySupplySideRevenue), on the same days",
+    "s13x_ef_revenue_labs_usdc_usd": "CROSS-CHECK of S13 REVENUE (Cash): the USDC Labs sent the programme's Safe (USDC at "
+                                     "$1) — a share of revenue chosen by Labs, not revenue",
+    "s13x_ef_holder_topups_recorded_usd": "RECORDED, NOT CREDITED beside S13 HOLDER REVENUE: the Foundation's sETHFI "
+                                          "top-ups paid from its own ETHFI x that day's price — emissions-funded yield, "
+                                          "in dilution (e)"}
+for _m, _l in _R14_S13_LABELS.items():
+    METRICS[_m] = {"label": _l, "kind": "flow", "unit": "usd", "archetypes": [2, 3], "tiers": [2], "sanity_min": 0,
+                   "sanity_max": 1e10, "only_projects": ("Ether.fi",), "view_only": True}
+VALUE_FLOW_COMPONENTS["Ether.fi"] = (
+    ("S13 FEES — of which Cash (the card fee estimate)", "s13c_ef_fees_cash_usd", _R14_S13_LABELS["s13c_ef_fees_cash_usd"]),
+    ("S13 FEES — of which Stake + Liquid + Borrowing", "s13c_ef_fees_other_usd",
+     _R14_S13_LABELS["s13c_ef_fees_other_usd"]),
+    ("cross-check, fees: DefiLlama's parent fees as published, same days", "s13x_ef_fees_parent_defillama_usd",
+     _R14_S13_LABELS["s13x_ef_fees_parent_defillama_usd"]),
+    ("cross-check, fees: the Cash cashback taken out, same days", "s13x_ef_fees_cashback_usd",
+     _R14_S13_LABELS["s13x_ef_fees_cashback_usd"]),
+    ("S13 REVENUE — of which Cash (ESTIMATE, 1.38% of spend)", "s13c_ef_revenue_cash_usd",
+     _R14_S13_LABELS["s13c_ef_revenue_cash_usd"]),
+    ("S13 REVENUE — of which Stake + Liquid + Borrowing", "s13c_ef_revenue_other_usd",
+     _R14_S13_LABELS["s13c_ef_revenue_other_usd"]),
+    ("cross-check, revenue: USDC Labs sent the programme", "s13x_ef_revenue_labs_usdc_usd",
+     _R14_S13_LABELS["s13x_ef_revenue_labs_usdc_usd"]),
+    ("S13 HOLDER REVENUE — revenue-funded, on chain", "s13c_ef_holder_usd", _R14_S13_LABELS["s13c_ef_holder_usd"]),
+    ("recorded, NOT credited: the Foundation's sETHFI top-ups (its own stock)", "s13x_ef_holder_topups_recorded_usd",
+     _R14_S13_LABELS["s13x_ef_holder_topups_recorded_usd"]))
+
+# ----- R14.A THE FOUNDATION'S ETHFI TOP-UPS TO STAKERS ARE EMISSIONS-FUNDED YIELD: DILUTION (e). Paid from the
+# Foundation's own ETHFI (the Operating Safe 0x3FB6784E… since July 2026, once the ether.fi Safe 0x01e42ad3…), not from
+# revenue: decision 5 records them, never credits them. Which category: (a) is declared no_such_flow for ETHFI (staking
+# secures no network; FLOW_LINE_EVIDENCE), (b) is supply-side incentives (none, decision 8), (c) is demand-side user
+# programmes, (d) ecosystem / grants. A payout to holders out of the issuer's stock is a TREASURY RELEASE — Sky's
+# rewards paid from Pause Proxy reserves are classed (e) on the same basis (OUTFLOW_CATEGORIES['Sky']). So (e), read
+# from its own series: sethfi_issuer_topup_tokens, the vault's inflows FROM the issuer wallets with no sETHFI minted in
+# the transaction (a deposit mints shares; a top-up does not), reconciled to the wei like every scan (all transfers or
+# no row). The Operating Safe is inside the non-circulating set, so a top-up is already in unlock_release_tokens on a
+# day the set's NET stock falls by at least the top-up; on a day another inflow hid it (2026-08-13: 273,069 paid while
+# 5M arrived from Binance) the release missed it. So the release counts each day at least that day's top-ups —
+# matched to the release on its day or the next (the stock is read at the first block of a day), the rest added, the hidden inflow on the returned line (RELEASE_GROSS_UP, build_workbook._unlock_release_view)
+# — and every reader of the release counts them once: CP's outflow (e) and total dilution AND the A-tabs' unlock
+# dilution / total dilution (which read unlock_release_tokens, not the categories). (A separate (e) leg netted out of
+# the release, the Pendle pattern, would have LOWERED the A-tabs' total dilution: built, measured and not kept.)
+# Read 2026-11-19 (Blockscout): Operating Safe -> vault 2026-07-15 319,068; 07-28 283,336; 08-13 273,069; 09-14 162,000;
+# 09-26 100,000; 11-02 50,000; 11-16 50,000; 0x01e42ad3… -> vault 2026-10-20 50,000. 2026-08-21..11-18: 412,000 ETHFI =
+# $260,723.78 at coins.llama.fi's daily price.
+ETHERFI_ISSUER_TOPUP_SENDERS = [
+    "0x3FB6784E263643656f386A0371644931133D7b78",     # Operating Safe (filing)
+    "0x01e42ad3acd58584ffc1d1982ecbbe758996d601",     # ether.fi Safe (owners shared with the buyback Safe)
+    "0xe4439b1d150Ab2Febd72D699954c7b4ddE2b66e2",     # Foundation Safe (the 20M buffer)
+    "0x7A6A41F353B3002751d94118aA7f4935dA39bB53", "0x7D4bBE471369a066186c18bAF33622796A08d5Cd",
+    "0x5f0E7A424d306e9E310be4f5Bb347216e473Ae55", "0xD022d6bb8B6C1C357ec77D930Dc6A0aD40FFC90b",
+    "0x5EC5e6b4eb6827914CA8BC3AE02C39417242ADDE",     # Treasury Safes (allocations page, filing)
+    "0x9eaC7114D1a1EaBc4732A886795cFD9E6E35843f",     # deployer / operations key
+]
+_R14E["log_scans"].append({
+    "key": "sethfi_issuer_topups", "metric": "sethfi_issuer_topup_tokens", "chain": "ethereum",
+    "token": "0xFe0c30065B384F05761f15d0CC899D4F9F9Cc0eB",
+    "holders": ["0x86B5780b606940Eb59A062aA85a07959518c0161"], "direction": "in", "store": True,
+    "attribution": "count_from", "count_from": list(ETHERFI_ISSUER_TOPUP_SENDERS),
+    "count_from_source": "the issuer wallets of docs/r13_etherfi_pack.md (e) (filing, allocations page, on-chain Safe "
+                         "owners) less the old buyback Safe 0x2f5301a3… (its top-ups paid out tokens it BOUGHT — a "
+                         "distribution of a buyback, not dilution) and the programme's Safes (their ETHFI goes to OP)",
+    "share_mint": {"token": "0x86B5780b606940Eb59A062aA85a07959518c0161",
+                   "source": "sETHFI is its own share token (contracts.sethfi_shares): a mint is a Transfer from 0x0"},
+    "attribution_sources": ["https://eth.blockscout.com/api/v2/addresses/0x3FB6784E263643656f386A0371644931133D7b78/"
+                            "token-transfers (ETHFI, read 2026-11-19)",
+                            "https://eth.blockscout.com/api/v2/addresses/0x01e42ad3acd58584ffc1d1982ecbbe758996d601/"
+                            "token-transfers (ETHFI, read 2026-11-19)"],
+    "headline": True,          # it reaches unlock dilution / total dilution (RELEASE_GROSS_UP)
+    "wired_on": "2026-11-19"})
+METRICS["sethfi_issuer_topup_tokens"] = {
+    "label": "ETHFI paid INTO the sETHFI vault by ether.fi's own wallets with no shares minted (a top-up, not a deposit) "
+             "— staker yield funded from the Foundation's stock, not revenue: outflow (e), recorded not credited (R14)",
+    "kind": "flow", "unit": "tokens", "archetypes": [3], "tiers": [2], "sanity_min": 0, "sanity_max": 1e9,
+    "only_projects": ("Ether.fi",)}
+OUTFLOW_CATEGORIES["Ether.fi"]["basis"] = (
+    OUTFLOW_CATEGORIES["Ether.fi"]["basis"] + ". (e) ALSO holds the Foundation's ETHFI top-ups to sETHFI stakers paid "
+    "from its own stock (sethfi_issuer_topup_tokens; R14, Jake 2026-11-19) — emissions-funded yield, a treasury "
+    "release like Sky's reserve-funded rewards: the release counts each day at least that day's top-ups "
+    "(RELEASE_GROSS_UP). No supply-side (b) incentive is paid (decision 8, DECLARED_NA_REASONS)")
+RELEASE_GROSS_UP = {"Ether.fi": ("sethfi_issuer_topup_tokens",)}
+DETAIL_COLUMNS.append(
+    {"tab": "A3", "after": "UNLOCK DILUTION Q0",
+     "header": "Detail — of which the Foundation's sETHFI top-ups from its own stock (tokens; emissions-funded yield, "
+               "in dilution (e), recorded not credited)",
+     "cells": {"Ether.fi": ("sethfi_issuer_topup_tokens", "q0")}})
+ETHERFI_TOPUPS_READ = {
+    "read_on": "2026-11-19", "window": ("2026-08-21", "2026-11-18"), "tokens": 412_000, "usd": 260_723.78,
+    "by_day": {"2026-09-14": 162_000, "2026-09-26": 100_000, "2026-10-20": 50_000, "2026-11-02": 50_000,
+               "2026-11-16": 50_000},
+    "earlier": {"2026-07-15": 319_068, "2026-07-28": 283_336, "2026-08-13": 273_069},
+    "price": "coins.llama.fi/chart/ethereum:0xFe0c3006… daily (read 2026-11-19)"}
+
+# ----- R14.5 SUPPLY-SIDE INCENTIVES (b): NONE (decision 8). The mechanism other projects use for a declared none.
+DECLARED_NA_REASONS.setdefault("Ether.fi", []).append(
+    {"cols": (), "match": "no supply-side incentive (b) series on file",
+     "source": "https://etherfi.gitbook.io/gov/ethfi-allocations ('Partnerships & Liquidity 3.9% — These funds have "
+               "been distributed strategically by the Foundation'; ETHFI 'fully minted … no further issuance') ; "
+               "https://etherfi.gitbook.io/gov/ethfi-buyback-program ; docs/r13_etherfi_pack.md decision 8",
+     "read_on": "2026-11-19", "decided": "Jake 2026-11-19 (R14 decision 8: declare none)", "recheck": "2026-12-19",
+     "why": "no ETHFI is paid to liquidity providers or other suppliers: ETHFI rewards go to users (the Cash cashback, "
+            "outflow (c); the airdrop seasons, ended) and to stakers (the Foundation's top-ups, outflow (e)); the "
+            "Partnerships & Liquidity allocation is spent — subsidy cover and leakage (ii) have no denominator. If ETHFI "
+            "is ever paid to LPs it is counted (b) when paid"})
