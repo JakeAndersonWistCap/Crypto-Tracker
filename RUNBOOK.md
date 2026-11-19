@@ -546,8 +546,8 @@ window opens on the last reading before it and the rate is annualised over the r
 AERODROME. The Foundation's buyback is read across the migration (both AERO tokens, sAERO stakes, Relays): run the seed
 below BEFORE the build. Velodrome's gauge emissions before the merger count in dilution once the backfill has stored
 VELO's history with the Minter's terms. NEAR. The operator payouts count in total dilution and net holder yield as
-published (the cells end "- AS PUBLISHED: (b) to <date>, revisable for 45 days"); the Foundation's liquid NEAR (196
-published and same-key accounts) leaves the free float; the header-burn history read is approved (289,127,592 bytes,
+published (the cells end "- AS PUBLISHED: (b) to <date>, revisable for 45 days"); the Foundation's liquid NEAR (200 accounts: published, same-key and,
+from R13, the four payer-evidence nf-payments accounts) leaves the free float; the header-burn history read is approved (289,127,592 bytes,
 capped at 1 GB) and runs once on the next run.
 
 ```
@@ -562,7 +562,7 @@ git pull
 git log --oneline -1
 #   expect: the line contains "R12"
 python -c "import config; h=config.PROJECT_BY_NAME['Near']['near_bigquery']['supply_flows']['history']; print(h['approved'], h['dry_run_bytes'], h['max_bytes'], config.RULE_IN['Near']['off_float'][-1], len(config.NEAR_FOUNDATION_LIQUID_ACCOUNTS), ('Near','b') in config.OUTFLOW_AS_PUBLISHED)"
-#   expect: True 289127592 1000000000 near_foundation_liquid_tokens 196 True
+#   expect: True 289127592 1000000000 near_foundation_liquid_tokens 200 True
 python -c "import config; v=config.VELO_MERGED['Aerodrome']; print(len(v['legs']), len(v['issuer_wallets']), config.CIRC_CHANGE_DECLARED_GAP['Hyperliquid']['clear_by'], config.R12_MOVES_DECLARED, config.PROJECT_BY_NAME['Aerodrome']['foundation_buyback']['seed_from'])"
 #   expect: 7 2 2027-01-11 2 2026-07-15
 python circ_legs.py Aerodrome
@@ -571,7 +571,7 @@ python circ_legs.py Near
 #   expect: "circulating_supply_lockup_rule [first-party figure]: built at read time (no stored rows)"
 python token_metrics.py
 #   expect: the run ends without error, and these Run Log lines:
-#   near_rpc:      "near_foundation_staked_tokens=3,80..." and "near_foundation_liquid_tokens=1,04x,xxx.xxxx - liquid NEAR (view_account amount) summed over 196 account(s); ..."
+#   near_rpc:      "near_foundation_staked_tokens=3,80..." and "near_foundation_liquid_tokens=1,04x,xxx.xxxx - liquid NEAR (view_account amount) summed over 200 account(s); ..."
 #   near_rpc:      the payout ledger, either "338,430.08 NEAR in 85 payout(s) 2026-04-23..2026-10-21" or "... not read on chain yet (resumes next run)"
 #   near_bigquery: "supply flows HISTORY 2025-07-15..2025-10-06: 84 row(s); 0.29 GB billed (dry run 0.29 GB); ..." (or "BACKFILL HELD": it then runs on a later run by itself; "over the 1,000,000,000-byte condition" or "dry run failed": paste the line back)
 #   any "Multicall3 aggregate3 via ... failed" line now ends with its cause ("HTTP 429 ...", "HTTP 400: ...") - paste one back if it still appears
