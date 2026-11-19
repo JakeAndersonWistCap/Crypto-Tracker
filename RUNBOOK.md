@@ -534,6 +534,84 @@ A Plume seed started on code older than 2026-10-01 saved its state only at the e
 or stop it and start again on the new code. Don't run both at once: they write the same state file.
 
 
+## 11fb. Round 13 — Aerodrome's buyback on the purchase day and its burn, VELO v1, Near's stage 2 and float (2026-11-19)
+
+AERODROME. From 2026-08-25 the Foundation's buyback is what its wallets purchased on the day (before it: bought and
+locked). From the migration the burned part is measured: 407,815.83 AERO bought and burned on 10-28 and 10-30 read
+BURNED, not HELD. `--seed aero_buyback` now also stores, for days whose window is already stored, the burn (v3 days)
+and the wallets' liquid AERO at the day's end (from 08-25): run it and the backfill BEFORE the build - until the burn
+rows are stored the A3 key reads BLOCKED. A line "FLAG - PURCHASES NO LONGER HELD" on the buyback cells means purchased
+AERO left the wallets without being locked or burned: paste it back. VELO v1's certain convertible part (liquid and v1
+veNFTs) joins the pre-merger series once the backfill has stored its three reads. NEAR. Stage 2 of the wallet-inflow
+read never follows stage 1 by itself (a dated approval in config AND its own command). The four nf-payments accounts'
+liquid NEAR leaves the free float: the liquid series is read on 200 accounts, a declared handover from the 196-account
+set. The lockup read's messages state the final rule; no figure moves. ETHER.FI. The research pack is
+docs/r13_etherfi_pack.md; nothing of it is wired yet.
+
+```
+cd C:\Users\jake\Crypto-Tracker
+.venv\Scripts\Activate.ps1
+gcloud auth application-default login
+#   expect: a browser sign-in, then "Credentials saved to file"
+gcloud auth application-default set-quota-project near-data-510309
+#   expect: "Credentials saved to file" and a line naming the quota project near-data-510309
+git switch claude/crypto-metrics-supply-demand-ovkg8g
+git pull
+git log --oneline -1
+#   expect: the line contains "R13"
+python -c "import config; fb=config.PROJECT_BY_NAME['Aerodrome']['foundation_buyback']; print(fb['purchase_day_basis']['from'], fb['burn_leg']['from'], config.RULE_IN['Aerodrome']['off_float'][-1], config.BURNED_DECLARED_ZERO['Aerodrome']['until'], config.PROJECT_BY_NAME['Aerodrome']['burn_mechanism']['model'])"
+#   expect: 2026-08-25 2026-10-22 aero_buyer_liquid_tokens 2026-10-22 protocol_level_destruction
+python -c "import config; a=config.NEAR_STAGE2_APPROVAL; s=config.PROJECT_BY_NAME['Near']['node_api']['liquid_set']; print(a['approved'], a['approved_on'], len(config.NEAR_FOUNDATION_LIQUID_ACCOUNTS), s['point'], config.VELO_V1['in_merged_series'], len(config.VELO_MERGED['Aerodrome']['legs']['total_supply']['plus']))"
+#   expect: False None 200 liquid_set_200 True 2
+python check_offline_items.py near_stage2
+#   expect: "NOT RUN: stage 1 has not saved its day list (wallet_inflow_days.json) ... Nothing billed."
+python token_metrics.py
+#   expect: no error, and these Run Log lines:
+#   near_rpc: "near_foundation_liquid_tokens=1,11x,xxx.xxxx - liquid NEAR (view_account amount) summed over 200 account(s); ..." (if it says "accounts read inside 100 s - NOTHING STORED": python token_metrics.py --project Near)
+#   aero_v3:  "aero_buyer_liquid_tokens at Base block N = 0.0000: the 1 Foundation buyer wallet(s)' liquid AERO, new + legacy ..."
+#   ve_managed: "Foundation buyback <yesterday>: ... burned out of the escrow 0.00; liquid AERO held at the day's end 2,6xx,xxx.xx"
+python token_metrics.py --seed aero_buyback
+#   expect: one line a day, e.g. "2026-10-28: buyback window already stored; burn READ, blocks 53,178,127..53,221,327 - burned out of the escrow 174,600.64; liquid AERO at the day's end READ - 1,702,156.66; lock stock already stored" and "2026-10-30: ... burned out of the escrow 233,215.20 ..."
+#   closing line, if the R12 seed already ran: "... 170 row(s) stored; ... beside the windows 28 burn read(s) and 58 liquid balance(s) (0 not read)" (counts grow by one a day after 11-19). About 8 minutes; resumable; a "NOT read" day stores nothing - run the line again. RUN THIS BEFORE THE BUILD
+python archive_backfill.py --run --project Aerodrome --budget-min 45
+#   expect: "Aerodrome supply Aerodrome: 28 row(s) written over 28 day(s) (legs: ..., aero_buyer_liquid_tokens) - reached the migration cutover (2026-10-22)"; "Velodrome VELO history Aerodrome: N row(s) written over 465 day(s) (12 per day ...) - reached 2025-07-14" (about 1,395 new rows if the R12 backfill already stored the VELO v2 terms; about 5,580 if not). If it ends "time budget spent" or "stopped at <day>", run this line again; if it stops at the same day twice, paste the line back
+python token_metrics.py --no-fetch
+#   expect: no error
+python done_check.py --verbose | Select-String "^(Uniswap|Fluid|Maple|Morpho|Pendle|Sky|Hyperliquid|Aerodrome|Near)" -Context 0,8
+#   expect: the seven frozen projects READY; Aerodrome READY; Near NOT READY with only Rank in archetype, NRR ON SETTLEMENT VOLUME and Archetype key - paste Aerodrome's and Near's lists back
+New-Item -ItemType Directory -Force ..\tm-exports | Out-Null
+python store_export.py --project Aerodrome --out-dir ..\tm-exports
+#   expect: a line starting "wrote ../tm-exports/aerodrome-"
+python store_export.py --project Near --out-dir ..\tm-exports
+#   expect: a line starting "wrote ../tm-exports/near-"
+git switch data/store-exports
+git pull
+Copy-Item ..\tm-exports\aerodrome-*.json.gz exports\
+Copy-Item ..\tm-exports\near-*.json.gz exports\
+git add -f exports
+git commit -m "data: Aerodrome and Near store exports (R13)"
+git push
+git switch claude/crypto-metrics-supply-demand-ovkg8g
+git log --oneline -1
+#   expect: the same line as above
+python project_freeze.py --compare all
+#   expect: seven lines, each "0 undeclared move(s)": Fluid 353, Hyperliquid 616, Maple 360, Morpho 285, Pendle 373, Sky 482, Uniswap 309 cells
+```
+
+STAGE 2 OF NEAR'S WALLET INFLOWS (BigQuery), after stage 1 has been run by hand in December (11fa step 5) and only
+when Jake decides. It never starts by itself: the daily run prints "NEAR STAGE 2 WAITING FOR JAKE'S APPROVAL ...
+Nothing run, nothing billed."
+
+```
+# 1. edit config.py, block "R13 - NEAR": NEAR_STAGE2_APPROVAL -> "approved": True, "approved_by": "Jake", "approved_on": "2026-12-DD" (stage 1's day or later; not a future date)
+gcloud auth application-default login
+gcloud auth application-default set-quota-project near-data-510309
+python check_offline_items.py near_stage2
+#   expect: "APPROVED by Jake on 2026-12-DD (config.NEAR_STAGE2_APPROVAL) and started by its command.", then "SKIPPED: NEAR stage 2 wallet_inflows_alltime: N row(s); X GB billed (dry run X GB) ...", then "STAGE 2 RUN: ... saved wallet_inflows_alltime.json"
+#   "BACKFILL HELD" or "STAGE 2 NOT RUN this time": nothing billed; nothing retries by itself - give the command again
+```
+
+
 ## 11fa. Round 12 — Aerodrome's buyback across the migration, Velodrome in dilution, Near's float and payouts (2026-11-19)
 
 HOW A BLOCK IS WRITTEN (R12.A, Jake 2026-11-19). Both `gcloud auth application-default` lines open every block.
