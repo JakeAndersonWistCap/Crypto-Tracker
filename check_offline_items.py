@@ -312,9 +312,24 @@ def is_archive_request(method: str, params) -> bool:
     return False
 
 
-def _rpcs_for(chain: str, archive: bool = False) -> list:
-    """The endpoint list for a chain, keyed endpoint first. Ethereum and Base only. `archive`: the list for a read at a
-    PAST block — a host known to refuse those (ARCHIVE_REFUSED_HOSTS) is left out and the public archive hosts added.
+def _rpcs_archive(chain: str) -> list:
+    """The endpoint list for a read at a PAST block: _rpcs_for(chain) with every host known to refuse those
+    (ARCHIVE_REFUSED_HOSTS) replaced, where it stood, by the chain's public archive hosts. A list holding no such host
+    is returned as it is."""
+    urls = _rpcs_for(chain)
+    bad = ARCHIVE_REFUSED_HOSTS.get(chain) or ()
+    if not any((urlparse(u).hostname or "") in bad for u in urls):
+        return urls
+    out = []
+    for u in urls:
+        for x in (_PUBLIC_BASE_ARCHIVE_RPCS if (urlparse(u).hostname or "") in bad else [u]):
+            if x not in out:
+                out.append(x)
+    return out
+
+
+def _rpcs_for(chain: str) -> list:
+    """The endpoint list for a chain, keyed endpoint first. Ethereum and Base only.
 
     ** ADDED BECAUSE A BASE CONTRACT WAS ABOUT TO BE CALLED AGAINST ETHEREUM RPCs. ** Every
     helper here was Ethereum-only, and the veAERO reads are on Base — which would have returned
@@ -329,9 +344,6 @@ def _rpcs_for(chain: str, archive: bool = False) -> list:
         if not urls and os.environ.get("ALCHEMY_API_KEY", "").strip():
             urls.append(f"https://base-mainnet.g.alchemy.com/v2/{os.environ['ALCHEMY_API_KEY'].strip()}")
         urls += _PUBLIC_BASE_RPCS
-        if archive:
-            urls = [u for u in urls if (urlparse(u).hostname or "") not in ARCHIVE_REFUSED_HOSTS["base"]]
-            urls += _PUBLIC_BASE_ARCHIVE_RPCS
         seen, out = set(), []
         for u in urls:
             if u not in seen:
@@ -358,7 +370,7 @@ def eth_call(to: str, selector: str, block: str = "latest", chain: str = "ethere
     """
     errors = []
     arch = chain in ARCHIVE_REFUSED_HOSTS and block not in ("latest", "pending", "safe", "finalized")
-    for url in (_rpcs_for(chain, archive=True) if arch else _rpcs_for(chain)):
+    for url in (_rpcs_archive(chain) if arch else _rpcs_for(chain)):
         try:
             j = rpc(url, "eth_call", [{"to": to, "data": selector}, block])
             if "result" in j:
@@ -5942,7 +5954,7 @@ def _rpc_retry(chain: str, method: str, params: list, tries: int = 5):
     why = ""
     arch = chain in ARCHIVE_REFUSED_HOSTS and is_archive_request(method, params)
     for k in range(tries):
-        for url in (_rpcs_for(chain, archive=True) if arch else _rpcs_for(chain)):
+        for url in (_rpcs_archive(chain) if arch else _rpcs_for(chain)):
             try:
                 j = rpc(url, method, params)
                 if j.get("result") is not None:
@@ -11888,7 +11900,7 @@ def _batch_eth_calls(chain: str, calls: list, chunk: int = 200, block: str = "la
     out = [None] * len(calls)
     code_seen = False
     arch = chain in ARCHIVE_REFUSED_HOSTS and block not in ("latest", "pending", "safe", "finalized")
-    for url in (_rpcs_for(chain, archive=True) if arch else _rpcs_for(chain)):
+    for url in (_rpcs_archive(chain) if arch else _rpcs_for(chain)):
         host = urlparse(url).hostname or "?"
         try:
             if not code_seen:
@@ -11946,7 +11958,7 @@ def rpc_block_at(chain: str, ts: int, say=print) -> int | None:
                 return int(known[day])
         except Exception:  # noqa: BLE001 — no cache: read the headers
             pass
-    for url in (_rpcs_for(chain, archive=True) if chain in ARCHIVE_REFUSED_HOSTS else _rpcs_for(chain)):
+    for url in _rpcs_archive(chain):
         try:
             cache: dict = {}
 

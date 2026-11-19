@@ -117,7 +117,7 @@ def test_4_publicnode_is_not_asked_for_a_past_block_on_base(monkeypatch):
     monkeypatch.setenv("ALCHEMY_API_KEY", "SECRETKEY123")
     monkeypatch.delenv("BASE_RPC_URL", raising=False)
     host = lambda u: u.split("/")[2]                                           # noqa: E731
-    head, past = [host(u) for u in coi._rpcs_for("base")], [host(u) for u in coi._rpcs_for("base", archive=True)]
+    head, past = [host(u) for u in coi._rpcs_for("base")], [host(u) for u in coi._rpcs_archive("base")]
     assert "base-rpc.publicnode.com" in head and "base-rpc.publicnode.com" not in past
     assert past[0] == "base-mainnet.g.alchemy.com" and "mainnet.base.org" in past
     asked = []
