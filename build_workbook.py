@@ -5514,13 +5514,17 @@ def _released_staked_views(groups: dict) -> None:
 
 
 def _near_lockup_views(groups: dict) -> None:
-    """NEAR UNDER JAKE'S RULE (2026-10-11 C, clarified 2026-10-12 decision 8 on e4e50b0): everything NOT YET
-    TRANSFERABLE leaves circulating — the lockups' LOCKED amount (still unvested + vested-but-lockup-locked; NEAR's own
-    'locked', with the buggy-code lockups recomputed as NEAR's lakehouse does), the same as unreleased vesting elsewhere;
-    released-but-not-withdrawn stays circulating. lockup.near and contributors.near leave too (decision 3 on 6f8c86c).
-    circulating_supply_lockup_rule = total_supply − LOCKED − those two accounts, from the latest
-    weekly lockup read on or before the day and at most NEAR_LOCKUP_MAX_AGE_DAYS old. A day without such a read carries
-    NEAR's own figure, and its source says so; a day with one names the read's date."""
+    """NEAR UNDER JAKE'S RULE (final, 2026-11-17/18; R10.B3): of the lockups' LOCKED amount (still unvested +
+    vested-but-lockup-locked; NEAR's own 'locked', with the buggy-code lockups recomputed as NEAR's lakehouse does) the
+    part a lockup has STAKED is earning — it counts as CIRCULATING, off the free float (inside the validators' stake);
+    only the IDLE part (locked, not staked, earning nothing) is out. Released-but-not-withdrawn stays circulating.
+    lockup.near and contributors.near can be moved: in circulating, off the float (config.RULE_IN).
+    circulating_supply_lockup_rule = total_supply − (LOCKED − LOCKED and staked), from the latest weekly lockup read on
+    or before the day and at most NEAR_LOCKUP_MAX_AGE_DAYS old; a read without the staked part leaves all of LOCKED
+    out, and the source says so. Before the first read a day carries NEAR's own figure plus the two accounts, and its
+    source says so; a day with a read names the read's date. (R13.4, text only: the earlier wording here was the
+    2026-10-12 convention — all of LOCKED and the two accounts out — which the code below has not applied to Near
+    since R10.B3; where config.rule_in_legs does not hold the accounts the old branch still stands.)"""
     LOCKUP_AGE_AMBER.clear()
     for p in scoped_projects():
         if config.circulating_primary_metric(p["name"]) != "circulating_supply_lockup_rule":

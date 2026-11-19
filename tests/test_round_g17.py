@@ -187,7 +187,10 @@ def test_2b_near_inflow_before_stage_2_is_c_with_its_date(monkeypatch, tmp_path)
     assert len(res) == 3
     for x in res:
         assert x["status"] == "MISSING" and x["detail"].startswith("MISSING [C — NEEDS HISTORY]")
-        assert f"valid from {config.NEAR_STAGE2_BY}" in x["detail"]
+        # R13.1 (Jake 2026-11-19): stage 2 is not scheduled any more — no date the calendar brings
+        # (was: assert f"valid from {config.NEAR_STAGE2_BY}" in x["detail"], NEAR_STAGE2_BY "2026-11-08")
+        assert config.NEAR_STAGE2_BY is None and "valid from" not in x["detail"]
+        assert "valid once stage 2 has run" in x["detail"] and "NEAR_STAGE2_APPROVAL" in x["detail"]
 
 
 # ================================================================================================== 3a / 3b

@@ -248,6 +248,10 @@ if ($run[0] -eq 75) {
 
 # 2c. NEAR stage 1 (Round G3 item 6): wallet_inflow_days runs ONCE, inside 2026-11-01..2026-11-07, under that month's
 #     BigQuery budget and the top-up reserve rule; on any other day it says so and exits 0. Never wallet_inflows_alltime.
+#     R13.1 (Jake 2026-11-19): STAGE 2 NEVER STARTS FROM THIS STEP. When stage 1's day list is there, the step prints one
+#     line - "NEAR STAGE 2 WAITING FOR JAKE'S APPROVAL ... Nothing run, nothing billed." - and exits 0, approved or not.
+#     Stage 2 starts only by hand: a dated approval in config.NEAR_STAGE2_APPROVAL AND
+#     "python check_offline_items.py near_stage2". Do not add that command to this script or to any scheduled task.
 [void](Invoke-Step "NEAR stage 1 (November)" @("check_offline_items.py", "near_wallet_inflow_days"))
 
 # 3. Credibility: the root-cause map, then the full report.

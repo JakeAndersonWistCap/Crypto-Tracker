@@ -45544,3 +45544,165 @@ HANDOVER_STEP[("Aerodrome", "aero_merger_issuance_tokens")]["from"] = tuple(
 # R13 (B4, Jake 2026-11-19): the issuer-linked wallets' LOCKED VELO is recorded at the merger only (VELO_ISSUER_AT_MERGER);
 # no daily history is read.
 VELO_ISSUER_AT_MERGER["locked_history"] = "recorded at the merger only (Jake 2026-11-19, R13)"
+
+
+# ===== R13 — NEAR =====
+# Round 13, Near items (Jake's decisions of 2026-11-19 on Round 12). SPEC.md "Round 13 — Near". Near is not frozen;
+# everything of the round is in this one block. 1 BigQuery stage 2 never follows stage 1 by itself: a dated approval
+# here AND an explicit command; 2 the four nf-payments accounts' liquid NEAR leaves the free float (INFERRED, payer
+# evidence) — a declared handover of the series' measuring point, 196 accounts -> 200; 3 the other Near points
+# confirmed as built; 4 the lockup read's messages state the final rule (text only). No BigQuery query was run by
+# Claude Code.
+# =====================================================================================================================
+_R13N = PROJECT_BY_NAME["Near"]
+
+# ----- R13.1 STAGE 2 MUST NOT FOLLOW STAGE 1 AUTOMATICALLY (Jake 2026-11-19: "Change it so it can't").
+# Stage 2 (sql/near/bigquery_wallet_inflows.sql, the three revenue wallets' all-time inflows on stage 1's days) starts
+# ONLY when BOTH hold: (a) this approval is set by hand — approved True, approved_by, approved_on a date not in the
+# future and not before the day stage 1 saved its day list; (b) the explicit command named here was typed. The day
+# list (data/near/wallet_inflow_days.json) is never enough; the daily run (windows/daily_run.ps1 step 2c ->
+# check_offline_items.near_wallet_inflow_days) finding it says in one line that stage 2 is waiting and bills nothing —
+# with or without the approval. `python check_offline_items.py` with no name (every check) is not the command either.
+NEAR_STAGE2_APPROVAL = {
+    "approved": False, "approved_by": None, "approved_on": None,       # Jake edits these three; default: NOT approved
+    "command": "python check_offline_items.py near_stage2",
+    "check": "near_stage2",
+    "decided": "Jake 2026-11-19 (R13.1): stage 2 must NOT follow stage 1 automatically",
+    "was": "G8 4c / G17-2b: the first daily run after stage 1 saved its day list ran stage 2 by itself "
+           "(near_wallet_inflow_days' DONE branch)"}
+NEAR_STAGE2_BY = None        # was: "2026-11-08" (G17-2b: 'stage 2 runs on the first daily run after stage 1') — no date
+NEAR_STAGE2_WAITING = "NEAR STAGE 2 WAITING FOR JAKE'S APPROVAL"
+
+
+def near_stage2_refusal(explicit_command: bool, today, stage1_ran_on, approval: dict | None = None) -> str | None:
+    """R13.1: None when BigQuery stage 2 may start, else why not (one line). `explicit_command` is True only when
+    `python check_offline_items.py near_stage2` was typed (the exact name); `stage1_ran_on` is the day stage 1 saved its
+    day list. The approval is NEAR_STAGE2_APPROVAL as it stands in this file: approved must be the value True, with who
+    and a YYYY-MM-DD date that is not in the future and not before stage 1's day (an approval older than the day list
+    is not an approval of this stage 2)."""
+    import datetime as _dt                                 # noqa: PLC0415
+    a = NEAR_STAGE2_APPROVAL if approval is None else approval
+    cmd = NEAR_STAGE2_APPROVAL["command"]
+
+    def _day(x):
+        try:
+            return _dt.date.fromisoformat(str(x)[:10]) if x is not None and len(str(x)) >= 10 else None
+        except ValueError:
+            return None
+    if a.get("approved") is not True:
+        return (f"not approved (config.NEAR_STAGE2_APPROVAL: approved is not True) — it starts only on Jake's dated "
+                f"approval there AND `{cmd}`")
+    on, now, s1 = _day(a.get("approved_on")), _day(today), _day(stage1_ran_on)
+    if not str(a.get("approved_by") or "").strip() or on is None:
+        return ("the approval is not complete (config.NEAR_STAGE2_APPROVAL needs approved_by and approved_on, a "
+                "YYYY-MM-DD date)")
+    if now is None or on > now:
+        return f"the approval is dated {on}, after today ({now})"
+    if s1 is None:
+        return "the day list does not say when stage 1 ran (ran_on): the approval cannot be set against it"
+    if on < s1:
+        return (f"the approval is dated {on}, before stage 1 saved its day list ({s1}): it is not an approval of this "
+                f"stage 2")
+    if not explicit_command:
+        return (f"approved by {str(a['approved_by']).strip()} on {on}, waiting for the explicit command `{cmd}` — "
+                f"the approval alone starts nothing")
+    return None
+
+
+# ----- R13.2 THE FOUR nf-payments ACCOUNTS GO OFF THE FLOAT (Jake 2026-11-19: "you traced the House of Stake payouts
+# to them, which makes them Foundation accounts by evidence"). They stay IN circulating; their LIQUID NEAR (view_account
+# `amount`) joins near_foundation_liquid_tokens' account set, tagged INFERRED (payer evidence) — they carry none of the
+# five signer keys (NEAR_FOUNDATION_KEYS_READ["payer_accounts"]). LIQUID ONLY: nf-payments.near's 62,603.95 NEAR staked
+# with trust-nodes.poolv1.near is a stake pair of near_foundation_staked_tokens and already off the float as stake;
+# `amount` does not hold a pool deposit, so nothing is counted twice (nf-payments1.near's 30,000 NEAR UNSTAKED in a
+# pool is in neither series, as before).
+# A DECLARED HANDOVER OF THE MEASURING POINT: the series was read on 196 accounts (source near_rpc:liquid_set, R12.2)
+# and is read on 200 from this round (source near_rpc:liquid_set_200). The stock steps up by the four accounts' liquid
+# NEAR at the seam (67,532.83 at block 225,253,770) and every float steps down by it; the step is not a flow.
+NEAR_FOUNDATION_LIQUID_POINT_R12 = "near_rpc:liquid_set"             # 196 accounts: published + same signer keys
+NEAR_FOUNDATION_LIQUID_POINT = "near_rpc:liquid_set_200"             # + the four payer-evidence accounts
+NEAR_FOUNDATION_LIQUID_GROUPS = {
+    **NEAR_FOUNDATION_LIQUID_GROUPS,
+    # INFERRED — payer evidence (R11.5: they sign the HSP-007 payouts in House of Stake's ledger), NOT the signer keys
+    "nf-payments1 / 2 / 8.near": ("nf-payments1.near", "nf-payments2.near", "nf-payments8.near"),
+    "nf-payments.near": ("nf-payments.near",)}
+NEAR_FOUNDATION_PAYER_GROUPS = ("nf-payments1 / 2 / 8.near", "nf-payments.near")
+NEAR_FOUNDATION_LIQUID_ACCOUNTS = tuple(                             # was: 196 accounts (R12.2)
+    a for _g, _accs in NEAR_FOUNDATION_LIQUID_GROUPS.items() for a in _accs
+    if a not in NEAR_FOUNDATION_KEYS_READ["removed"])
+_r13_left = NEAR_FOUNDATION_FLOAT["left_in_float"]
+NEAR_FOUNDATION_FLOAT = {
+    **NEAR_FOUNDATION_FLOAT,
+    "liquid_by_group": {
+        **NEAR_FOUNDATION_FLOAT["liquid_by_group"],
+        "nf-payments1 / 2 / 8.near": round(sum(_r13_left[a]["liquid"] for a in (
+            "nf-payments1.near", "nf-payments2.near", "nf-payments8.near")), 2),                       # 53,286.00
+        "nf-payments.near": _r13_left["nf-payments.near"]["liquid"]},                                   # 14,246.83
+    "off_float_liquid": 1_116_105.03, "accounts": 200,      # was: 1,048,572.20 on 196 accounts (R12.2)
+    # MOVED OFF THE FLOAT in R13.2 (was "left_in_float", R12.2): the same read at block 225,253,770, the same reasons
+    "payer_evidence_off_float": {
+        a: {"liquid": v["liquid"], "tag": "INFERRED (payer evidence)", "why": v["why"]} for a, v in _r13_left.items()},
+    "payer_evidence_liquid": 67_532.83,
+    "left_in_float": {}, "left_in_float_liquid": 0.0,       # was: the four nf-payments accounts, 67,532.83 (R12.2)
+    "decided": "Jake 2026-11-19 (R13.2): the nf-payments accounts are Foundation accounts by evidence — off the float",
+    # liquid only: what the four accounts hold in staking pools is not in this series
+    "not_in_liquid": {"nf-payments.near": "62,603.95 NEAR staked with trust-nodes.poolv1.near — a stake pair of "
+                                          "near_foundation_staked_tokens, off the float as stake",
+                      "nf-payments1.near": "30,000 NEAR unstaked in shitzuapes-nf.pool.near — not staked, not on the "
+                                           "account: in neither series (R11.4)"}}
+del _r13_left
+METRICS["near_foundation_liquid_tokens"]["label"] = (
+    "Liquid NEAR held by the NEAR Foundation account set — the published accounts, the INFERRED ones that carry the "
+    "Foundation's multisig signer keys, and (from R13.2) the four nf-payments accounts, INFERRED on payer evidence "
+    "(they sign the House of Stake payouts; none of the signer keys) (config.NEAR_FOUNDATION_LIQUID_ACCOUNTS, 200 "
+    "accounts; view_account amount on each, summed, all accounts or nothing) — in circulating, OFF the free float "
+    "(the rule, R12.2 / R13.2). Read on 196 accounts before the handover (source near_rpc:liquid_set), on 200 after "
+    "(near_rpc:liquid_set_200). treasury.near, the buyback wallets, lockup.near and contributors.near have their own "
+    "series")
+_R13N["node_api"]["liquid_set"] = {
+    **_R13N["node_api"]["liquid_set"],
+    "accounts": NEAR_FOUNDATION_LIQUID_ACCOUNTS,
+    # the measuring point names the SET: a change of the account list without a new point stores nothing
+    # (fetch/near.NearNode._liquid_set checks point_accounts against the list)
+    "point": NEAR_FOUNDATION_LIQUID_POINT.split(":", 1)[1], "point_accounts": 200,
+    "set": "The set holds INFERRED wallets (config.NEAR_FOUNDATION_SET; signer keys re-read, "
+           "config.NEAR_FOUNDATION_KEYS_READ) — the four nf-payments accounts among them on PAYER EVIDENCE only "
+           "(R13.2). 200 accounts; 196 before the declared handover."}
+_R13N.setdefault("series_handover", {})["near_foundation_liquid_tokens"] = {
+    "ordered_points": (NEAR_FOUNDATION_LIQUID_POINT_R12, NEAR_FOUNDATION_LIQUID_POINT),
+    "why": "Jake 2026-11-19 (R13.2): the four nf-payments accounts are Foundation accounts by payer evidence — their "
+           "liquid NEAR joins the set (196 accounts -> 200)",
+    "composition_change": "WIDENS: + nf-payments.near, nf-payments1.near, nf-payments2.near, nf-payments8.near "
+                          "(INFERRED, payer evidence; 67,532.83 NEAR liquid at block 225,253,770). The stock steps up "
+                          "by their liquid NEAR at the seam and the free float steps down by it; the step is not a "
+                          "flow and nothing differences across it.",
+    "declared": "2026-11-19"}
+RULE_IN["Near"]["evidence"] += (
+    "; R13.2 (Jake 2026-11-19): the four nf-payments accounts' liquid NEAR joins it — INFERRED on payer evidence (they "
+    "sign the House of Stake payouts), in circulating, off the float; a declared handover of the series, 196 accounts "
+    "-> 200")
+NEAR_FOUNDATION_SET["float"] = (
+    "R13.2 (Jake 2026-11-19): the liquid NEAR of the published wallets, the same-signer-key wallets AND the four "
+    "nf-payments accounts (INFERRED, payer evidence) is OFF the free float (near_foundation_liquid_tokens, read every "
+    "run on 200 accounts), in circulating. Was (R12.2): the payer-evidence accounts stayed in the float, named")
+
+# ----- R13.3 THE OTHER NEAR POINTS, AS BUILT — confirmed by Jake 2026-11-19 (R13); no figure changes.
+NEAR_R12_CONFIRMED = {
+    "by": "Jake", "on": "2026-11-19", "round": "R13",
+    "items": ("the operator payouts count in total dilution and net holder yield as published (R12.1)",
+              "the Foundation set's published and same-key liquid NEAR is off the float (R12.2)",
+              "the signer keys of every inferred account as re-read; threshold 3 of 5 (R12.3)",
+              "the round-11 readings (R12.4)",
+              "the header-burn history read approved under the 1 GB condition (R12.5)",
+              "the December BigQuery order: the P2P chunk first, stage 1 by hand (R12.B)")}
+
+# ----- R13.4 THE LOCKUP READ'S MESSAGES STATE THE FINAL RULE (text only; no figure moves). The figures already
+# follow it since R10.B3b (build_workbook._near_lockup_views; RULE_IN["Near"]["locked_staked"]): of the lockups'
+# LOCKED NEAR, the part staked by its lockup earns — IN circulating, off the float inside the validators' stake
+# (locked_tokens); only the idle part (LOCKED − staked) is out of circulating.
+NEAR_LOCKUP_RULE_TEXT = (
+    "UNDER JAKE'S RULE (final, 2026-11-17/18): LOCKED NEAR that its lockup has STAKED is earning — it counts as "
+    "CIRCULATING, off the free float (it is inside the validators' stake). Only IDLE locked NEAR (locked, not staked, "
+    "earning nothing) is OUT of circulating: LOCKED minus LOCKED and STAKED. Released-not-withdrawn stays in.")
+NEAR_LOCKUP_RULE_READ_2026_11_19 = {       # Jake's weekly read at block 225,245,079 (his export of 2026-11-19)
+    "block": 225_245_079, "locked": 1_872_900.53, "locked_staked": 1_084_482.68, "idle_out_of_circulating": 788_417.85}

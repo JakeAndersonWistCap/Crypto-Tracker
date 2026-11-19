@@ -455,8 +455,11 @@ def test_g3_6_near_stage1_never_runs_in_october(monkeypatch, capsys):
     assert "bigquery_wallet_inflows.sql" not in body, "stage 1 never runs the inflow query itself"
     assert "backfill=True" in body, "the existing top-up reserve rule (NearBigQuery._run backfill)"
     # G8 4c: stage 2 (stage 1's days only) is reached only from the DONE branch, under the same rule
+    # R13.1 (Jake 2026-11-19): MOVED — stage 2 must not follow automatically. The DONE branch no longer calls it
+    # (was: assert "near_wallet_inflows_stage2(done_file)" in done_branch); it prints the waiting line and returns
     done_branch = body[body.index("if done_file.exists():"):body.index("day = pd.Timestamp.now")]
-    assert "near_wallet_inflows_stage2(done_file)" in done_branch
+    stage1 = body[:body.index("NEAR_INFLOW_REF_DAY =")]            # stage 1's own function, nothing after it
+    assert "near_wallet_inflows_stage2(" not in stage1 and "near_stage2_waiting_line(done_file)" in done_branch
     s2 = src[src.index("def near_wallet_inflows_stage2"):src.index("def worldmobile_probe")]
     assert "backfill=True" in s2 and "IN UNNEST(@days)" in (ROOT / "sql" / "near" / "bigquery_wallet_inflows.sql").read_text()
     assert "near_wallet_inflow_days" in (ROOT / "windows" / "daily_run.ps1").read_text()

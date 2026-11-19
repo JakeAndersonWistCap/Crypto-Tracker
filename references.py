@@ -461,9 +461,11 @@ def _our_value(route: tuple, groups: dict, project: str, at: pd.Timestamp, ref: 
         try:
             got = json.loads(f.read_text(encoding="utf-8"))
         except (OSError, ValueError):
-            return None, "BigQuery stage 2", (f"{route[1]}: stage 2 has not run yet — stage 1 runs in "
-                                              f"{config_window()} (NEAR_STAGE1_WINDOW), stage 2 after it "
-                                              f"(check_offline_items near_wallet_inflow_days)")
+            # R13.1: stage 2 never follows stage 1 by itself — was "stage 1 runs in <window>, stage 2 after it"
+            return None, "BigQuery stage 2", (f"{route[1]}: stage 2 has not run yet — it does not follow stage 1 "
+                                              f"(run by hand; NEAR_STAGE1_WINDOW {config_window()}) by itself: it "
+                                              f"waits for Jake's dated approval (config.NEAR_STAGE2_APPROVAL) and "
+                                              f"check_offline_items near_stage2")
         a = got.get(route[1])
         if not a:
             return None, f"{f.name}", f"{route[1]}: no inflow row in stage 2's answer"
@@ -713,11 +715,12 @@ def check(groups: dict, headline=None, projects: set[str] | None = None, rows: l
         if route[0] == "zero_sum":
             ref = 0.0                                      # the zero address: no fee recipient = no protocol fee
         if ours is None and route[0] == "near_inflow" and "stage 2 has not run yet" in str(why):
-            # G17-2b: the route is built; it waits on the scheduled BigQuery run — a date the calendar brings
-            import config                                   # noqa: PLC0415
+            # G17-2b: the route is built; it waits on the BigQuery history read. R13.1 (Jake 2026-11-19): that read
+            # is NOT scheduled any more — no date the calendar brings (was "pending the scheduled BigQuery run … valid
+            # from 2026-11-08"); the class is unchanged
             out.append(base | {"ours": None, "status": "MISSING", "route": how,
-                               "detail": f"MISSING [C — NEEDS HISTORY] — pending the scheduled BigQuery run: {why} — "
-                                         f"valid from {config.NEAR_STAGE2_BY}"})
+                               "detail": f"MISSING [C — NEEDS HISTORY] — pending a BigQuery run that is not scheduled: "
+                                         f"{why} — valid once stage 2 has run"})
             continue
         if ours is None:
             out.append(base | {"ours": None, "status": "NOT WIRED", "route": how,

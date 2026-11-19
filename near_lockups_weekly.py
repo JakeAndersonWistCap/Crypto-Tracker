@@ -1,11 +1,14 @@
 #!/usr/bin/env python3
 """
-near_lockups_weekly.py — NEAR's still-UNVESTED lockups, refreshed weekly (Jake, 2026-10-11, C on 5b87610).
+near_lockups_weekly.py — NEAR's lockup contracts (LOCKED, its staked part, still unvested), refreshed weekly (Jake,
+2026-10-11, C on 5b87610; the rule as final, 2026-11-17/18).
 
-Under Jake's rule only tokens STILL UNVESTED leave circulating; NEAR's own circulating figure subtracts everything
-LOCKED in the lockup contracts. So the circulating the ratios use for NEAR is NEAR's first-party figure + (locked −
-unvested), both from ONE read of every live *.lockup.near at one block (check_offline_items.near_lockups: the
-contracts' own getters, near/core-contracts@1b0436c9 lockup/src/getters.rs). It runs once a week:
+JAKE'S RULE (final): locked NEAR that its lockup has STAKED is earning — it counts as CIRCULATING, off the free float
+(it is inside the validators' stake). Only IDLE locked NEAR (locked, not staked, earning nothing) is OUT of circulating.
+So the circulating the ratios use for NEAR is total supply − (LOCKED − LOCKED and STAKED), all from ONE read of every
+live *.lockup.near at one block (check_offline_items.near_lockups: the contracts' own getters,
+near/core-contracts@1b0436c9 lockup/src/getters.rs; build_workbook._near_lockup_views applies it — R10.B3b; a read
+without the staked part leaves all of LOCKED out and says so). Released-not-withdrawn stays in. It runs once a week:
 
     python near_lockups_weekly.py                  read and store when the last stored read is 7+ days old (else says so)
     python near_lockups_weekly.py --force          read and store now
@@ -15,8 +18,9 @@ contracts' own getters, near/core-contracts@1b0436c9 lockup/src/getters.rs). It 
 ONE READ AT A TIME (D3-2): a lock file (LogCache root near-lockups.lock: PID and start time) — a second copy finds a live
 lock and exits 0 saying so; a lock older than LOCK_MAX_H hours, or whose process is gone, is taken over.
 
-Stores near_lockup_unvested_tokens and near_lockup_locked_tokens at the PINNED BLOCK's UTC date (source names the
-block). NOTHING IS STORED when a lockup could not be READ (a network or RPC failure) — never a partial total.
+Stores near_lockup_unvested_tokens, near_lockup_locked_tokens and near_lockup_locked_staked_tokens (the staked part,
+only when every lockup of the read carried it) at the PINNED BLOCK's UTC date (source names the block). NOTHING IS
+STORED when a lockup could not be READ (a network or RPC failure) — never a partial total.
 
 RESUMABLE (Round D2-8, Jake 2026-10-26 — the 10-26 run read 1,367 of 1,956 in ~2.5 h, 673 unreadable after HTTP 429s
 and near.org errors, and stored nothing): every lockup is read at ONE pinned block and its result kept (LogCache root
@@ -220,8 +224,11 @@ def _read_and_store(store_mod, today) -> int:
     n = st.upsert(rows_for(got, day))
     print(f"NEAR lockups stored for {day.date()} at block {got['height']:,}: unvested {got['unvested']:,.0f}, "
           f"locked {got['locked']:,.0f} NEAR"
-          + (f", of which staked by its lockup {got['locked_staked']:,.0f}" if got.get("locked_staked") is not None
-             else ", the staked part NOT formed (a lockup read without its staked deposit)")
+          + (f", of which staked by its lockup {got['locked_staked']:,.0f} (earning: in circulating, off the float); "
+             f"idle {got['locked'] - got['locked_staked']:,.0f} (out of circulating)"
+             if got.get("locked_staked") is not None
+             else ", the staked part NOT formed (a lockup read without its staked deposit: all of LOCKED stays out "
+                  "of circulating until a read carries it)")
           + f" ({got['read']:,} live lockups read; {n} row(s))"
           + (f"; {faults} lockup(s) whose own getter fails ({CONTRACT_FAULT}) left out" if faults else ""))
     return 0

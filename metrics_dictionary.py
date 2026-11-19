@@ -114,9 +114,13 @@ ENTRIES = {
                                                        "reserves, burned",
         decided=[(J, "2026-10-07", "the circulating policy and convention"),
                  (J, "2026-10-11", "Hyperliquid: Foundation + Community Grants wallets out (A1)"),
-                 (J, "2026-10-12", "NEAR: everything not yet transferable out — total − lockups LOCKED (unvested + "
-                                   "lockup-locked; buggy lockups recomputed as NEAR's lakehouse does); released-not-"
-                                   "withdrawn stays in")]),
+                 (J, "2026-10-12", "NEAR: total − lockups LOCKED (unvested + lockup-locked; buggy lockups "
+                                   "recomputed as NEAR's lakehouse does); released-not-withdrawn stays in — "
+                                   "SUPERSEDED by the final rule (2026-11-17/18)"),
+                 (J, "2026-11-18", "NEAR under the final rule (R10.B3): locked NEAR that is staked by its lockup and "
+                                   "earning counts as circulating, off the float; only idle locked NEAR (locked, not "
+                                   "staked, earning nothing) is out — total − (LOCKED − LOCKED and staked); "
+                                   "lockup.near and contributors.near in circulating, off the float")]),
     "Circulating supply — CoinGecko (cross-check)": dict(
         what="CoinGecko's circulating figure, shown beside ours.", formula="circulating_supply now", window="now",
         unit="tokens", inputs=["circulating_supply"]),

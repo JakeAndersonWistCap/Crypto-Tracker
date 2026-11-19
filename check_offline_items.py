@@ -5444,8 +5444,9 @@ def near_lockups(limit: int | None = None, resume: bool = True, workers: int = 4
                f"(known to be off; {buggy['rpc_unread']:,} read by the state route, where the RPC figure is not read)")
     print(f"  buggy-code lockups: {buggy['n']:,}, balance {n(buggy['balance'])}, {rpc_txt} "
           f"-> RECOMPUTED {n(buggy['recomputed'])} (lakehouse lockup.rs; the totals above use it)")
-    print("  UNDER JAKE'S RULE (clarified 2026-10-12) everything NOT YET TRANSFERABLE — LOCKED, i.e. unvested + "
-          "lockup-locked — comes out of circulating; released-not-withdrawn stays in. PASTE BACK the totals.")
+    # R13.4 (text only): the FINAL rule — was "(clarified 2026-10-12) everything not yet transferable ... out"
+    import config as _cfg13                               # noqa: PLC0415
+    print("  " + _cfg13.NEAR_LOCKUP_RULE_TEXT + " PASTE BACK the totals.")
     return {"height": height, "accounts": len(accounts), "read": n_read, "zero": n_zero, "unreadable": n_err,
             "errors": dict(errs), "pinned_at": cache["pinned_at"], "block_ts": block_ts,
             "buggy_rpc_locked": None if buggy.get("rpc_unread") else buggy["locked"] / yocto,
@@ -15065,8 +15066,10 @@ def near_wallet_inflow_days():
     budget. Refuses before 2026-11-01 and after 2026-11-07 (October: 644.0 of 900 GB used, 216.7 GB left). Dry-runs,
     then runs only when the bytes fit monthly_budget − used − the top-up reserve (NearBigQuery._reserve, the existing
     rule) and the per-query cap, with maximum_bytes_billed = the dry run; saves the day list (data/near) and never runs
-    again once done. The one-stage all-time query (2,001.57 GB) is never run by any code path; stage 2 (G8 4c) reads
-    only stage 1's days, once stage 1 is done (near_wallet_inflows_stage2). daily_run.ps1 step 2c."""
+    again once done. The one-stage all-time query (2,001.57 GB) is never run by any code path. daily_run.ps1 step 2c.
+    R13.1 (Jake 2026-11-19): STAGE 2 NEVER FOLLOWS FROM HERE. When the day list is there this says, in one line, that
+    stage 2 is waiting for Jake's approval, and returns — it calls nothing and bills nothing, approved or not. Stage 2
+    starts only from its own command (near_stage2) under a dated approval in config (config.near_stage2_refusal)."""
     import json as _json                                  # noqa: PLC0415
     from pathlib import Path                              # noqa: PLC0415
     import pandas as pd                                   # noqa: PLC0415
@@ -15077,7 +15080,8 @@ def near_wallet_inflow_days():
     done_file = Path(__file__).resolve().parent / "data" / "near" / "wallet_inflow_days.json"
     if done_file.exists():
         print(f"  DONE already ({done_file.name}) — not run again.")
-        return near_wallet_inflows_stage2(done_file)
+        print("  " + near_stage2_waiting_line(done_file))        # R13.1: one line; stage 2 is never started from here
+        return 0
     day = pd.Timestamp.now(tz="UTC").tz_localize(None).normalize()
     if not (pd.Timestamp(w["from"]) <= day <= pd.Timestamp(w["to"])):
         print(f"  NOT RUN: today {day.date()} is outside {w['from']}..{w['to']} ({w['why']}).")
@@ -15109,20 +15113,67 @@ def near_wallet_inflow_days():
     done_file.parent.mkdir(parents=True, exist_ok=True)
     done_file.write_text(_json.dumps({"ran_on": str(day.date()), "days": days}))
     print(f"  RUN: {len(days)} day(s) with a native TRANSFER in to the three wallets; saved {done_file.name}. Stage 2 "
-          f"(args on those days) is dry-run only — by near_settlement_routes. wallet_inflows_alltime never runs.")
+          f"(args on those days) does NOT follow: it waits for Jake's dated approval (config.NEAR_STAGE2_APPROVAL) and "
+          f"`{_cfg.NEAR_STAGE2_APPROVAL['command']}` (R13.1). The one-stage all-time query never runs.")
     return 0
 
 
 NEAR_INFLOW_REF_DAY = "2026-10-13"      # the three references' as_of (revenue.near.org, read 2026-10-13)
 
 
-def near_wallet_inflows_stage2(done_file) -> int:
+_NEAR_STAGE2_COMMAND = False     # R13.1: True only when main() was given the check name `near_stage2`, exactly
+
+
+def _near_stage2_state(done_file):
+    """(already done?, stage 1's day, days in the list) — reads the two files, nothing else."""
+    import json as _json                                  # noqa: PLC0415
+    from pathlib import Path                              # noqa: PLC0415
+    done = Path(done_file).with_name("wallet_inflows_alltime.json").exists()
+    try:
+        got = _json.loads(Path(done_file).read_text())
+    except (OSError, ValueError):
+        got = {}
+    return done, got.get("ran_on"), len(got.get("days") or ())
+
+
+def near_stage2_waiting_line(done_file, explicit_command: bool = False) -> str:
+    """R13.1: the ONE line a run prints when it finds stage 1's day list — stage 2 is done already, or it is waiting
+    and why (config.near_stage2_refusal). It reads two local files and config; it calls nothing and bills nothing."""
+    import pandas as pd                                   # noqa: PLC0415
+    import config as _cfg                                 # noqa: PLC0415
+    done, ran_on, n = _near_stage2_state(done_file)
+    if done:
+        return "STAGE 2 DONE already (wallet_inflows_alltime.json)."
+    why = _cfg.near_stage2_refusal(explicit_command, pd.Timestamp.now(tz="UTC").date(), ran_on)
+    return (f"{_cfg.NEAR_STAGE2_WAITING} — the day list is saved ({n} day(s), stage 1 ran {ran_on}); "
+            f"{why or 'approved, and the command was given'}. Nothing run, nothing billed.")
+
+
+def near_stage2():
+    """R13.1 (Jake 2026-11-19: "stage 2 must NOT follow automatically. Change it so it can't"). THE ONLY WAY STAGE 2
+    STARTS: this check typed by its exact name (`python check_offline_items.py near_stage2`) AND a dated approval in
+    config (NEAR_STAGE2_APPROVAL: approved True, approved_by, approved_on — not in the future, not before the day stage 1
+    saved its list). Run with every check, by a prefix, or without the approval, it prints the waiting line and bills
+    nothing. The presence of the day list is never enough."""
+    from pathlib import Path                              # noqa: PLC0415
+    head("NEAR STAGE 2 — the three wallets' all-time inflows on stage 1's days; only on Jake's dated approval AND this "
+         "command")
+    done_file = Path(__file__).resolve().parent / "data" / "near" / "wallet_inflow_days.json"
+    if not done_file.exists():
+        print(f"  NOT RUN: stage 1 has not saved its day list ({done_file.name}) — stage 1 is run by hand first "
+              f"(near_wallet_inflow_days). Nothing billed.")
+        return 0
+    return near_wallet_inflows_stage2(done_file, explicit_command=_NEAR_STAGE2_COMMAND)
+
+
+def near_wallet_inflows_stage2(done_file, explicit_command: bool = False) -> int:
     """ROUND G8 item 4c (Jake 2026-10-20: wire the BigQuery receipt_actions TRANSFER route for the three accounts'
-    all-time inflows). Once stage 1 has saved its day list, stage 2 (sql/near/bigquery_wallet_inflows.sql: native
-    TRANSFER deposits on those days + wNEAR ft_events) runs ONCE under the same rule — dry run, refused over the per-query
-    cap, held unless it fits budget − used − the month's top-up reserve, billing capped — cut at NEAR_INFLOW_REF_DAY so it
-    is the same span as the references, and saves data/near/wallet_inflows_alltime.json, which the three references
-    read (references route `near_inflow`). Never re-run once saved."""
+    all-time inflows). Stage 2 (sql/near/bigquery_wallet_inflows.sql: native TRANSFER deposits on stage 1's days + wNEAR
+    ft_events) runs ONCE under the same rule — dry run, refused over the per-query cap, held unless it fits budget − used
+    − the month's top-up reserve, billing capped — cut at NEAR_INFLOW_REF_DAY so it is the same span as the references,
+    and saves data/near/wallet_inflows_alltime.json, which the three references read (references route `near_inflow`).
+    Never re-run once saved. R13.1: IT NEVER FOLLOWS STAGE 1 BY ITSELF — refused here, before any client is made, unless
+    config.near_stage2_refusal(explicit_command, today, stage 1's day) is None (the dated approval AND the command)."""
     import json as _json                                  # noqa: PLC0415
     from pathlib import Path                              # noqa: PLC0415
     import pandas as pd                                   # noqa: PLC0415
@@ -15133,6 +15184,13 @@ def near_wallet_inflows_stage2(done_file) -> int:
     if out_file.exists():
         print(f"  STAGE 2 DONE already ({out_file.name}).")
         return 0
+    # R13.1: the gate — before the day list is used, before a client exists
+    _done, ran_on, _n = _near_stage2_state(done_file)
+    if _cfg.near_stage2_refusal(explicit_command, pd.Timestamp.now(tz="UTC").date(), ran_on) is not None:
+        print("  " + near_stage2_waiting_line(done_file, explicit_command))
+        return 0
+    print(f"  APPROVED by {_cfg.NEAR_STAGE2_APPROVAL['approved_by']} on {_cfg.NEAR_STAGE2_APPROVAL['approved_on']} "
+          f"(config.NEAR_STAGE2_APPROVAL) and started by its command.")
     cut = pd.Timestamp(NEAR_INFLOW_REF_DAY)
     days = [d for d in _json.loads(Path(done_file).read_text()).get("days") or () if pd.Timestamp(d) <= cut]
     if not days:
@@ -15152,7 +15210,8 @@ def near_wallet_inflows_stage2(done_file) -> int:
     for e in out.log:
         print(f"  {e.status.upper()}: {e.message}")
     if rows is None:
-        print("  STAGE 2 NOT RUN this time (see above); the next scheduled run tries again.")
+        print(f"  STAGE 2 NOT RUN this time (see above); nothing billed. No run tries again by itself: give the "
+              f"command again (`{_cfg.NEAR_STAGE2_APPROVAL['command']}`).")
         return 0
     acc: dict = {}
     for r in rows:
@@ -15239,7 +15298,7 @@ CHECKS = (
     morpho_incentives, settlement_sources, hyperevm_etherscan, maple_ssf_inflows, aethir_pages,
     geod_stake_recipient, geod_stake_wallets, maple_ssf_lp_test, maple_drips, plume_archive, settlement_rebuild_coverage,
     near_settlement_routes,
-    env_keys, aero_migration, near_wallet_inflow_days, worldmobile_probe, stale_series, mcap_inputs, hl_circulating_overlap, na_reasons, missing_triage, gap_routes, spec_coverage,
+    env_keys, aero_migration, near_wallet_inflow_days, near_stage2, worldmobile_probe, stale_series, mcap_inputs, hl_circulating_overlap, na_reasons, missing_triage, gap_routes, spec_coverage,
     stored_but_unshown, review_triage, wiring, settlement_legs, total_supply_rows, flow_stock_days, morning_reads, wiring_complete, chainlink_staking_funding,
     aethir_mint_path,
     near_activity_break,
@@ -15340,8 +15399,10 @@ def main():
             print(f"\n  {err}\n")
             return 1
         selected = (fn,)
-        global _RUN_BY_NAME
+        global _RUN_BY_NAME, _NEAR_STAGE2_COMMAND
         _RUN_BY_NAME = True
+        # R13.1: stage 2's command is its check name typed in full — a prefix, or every check, is not the command
+        _NEAR_STAGE2_COMMAND = args.check.strip().lower() == "near_stage2"
 
     if selected is CHECKS:
         print("check_offline_items.py — running every check the build sandbox cannot reach.")

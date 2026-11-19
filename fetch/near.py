@@ -322,7 +322,9 @@ class NearNode:
         ALL ACCOUNTS OR NOTHING: an account that does not answer with a number, or a read that runs past its own
         budget, stores nothing and says how far it got — unknown is never 0, and a sum missing one account is a wrong
         figure. The set is ~190 accounts: the client's pacing is shortened for this read only (min_interval_s), and
-        the read's own endpoint list is taken in turn, one call each (a public node answers a burst with HTTP 429)."""
+        the read's own endpoint list is taken in turn, one call each (a public node answers a burst with HTTP 429).
+        R13.2: the stored source is `near_rpc:<point>` — the read's declared measuring point, which names the account
+        set (liquid_set: R12's 196 accounts; liquid_set_200: + the four payer-evidence accounts)."""
         name, metric, accounts = p["name"], read.get("metric"), list(read.get("accounts") or ())
         exp = api.get("yocto_exponent")
         if not metric or not accounts or exp is None:
@@ -330,6 +332,15 @@ class NearNode:
             return
         if len(set(accounts)) != len(accounts):
             out.fail(SOURCE, name, f"{metric}: the account list names an account twice — nothing read", TIER)
+            return
+        # R13.2: THE MEASURING POINT NAMES THE SET. The source carries the read's declared point, and the point declares
+        # how many accounts it stands for: an account list changed without a new point (a silent change of what the
+        # series measures) reads nothing and stores nothing
+        n_decl = read.get("point_accounts")
+        if n_decl is not None and int(n_decl) != len(accounts):
+            out.fail(SOURCE, name, f"{metric}: the measuring point {read.get('point')!r} is declared for {int(n_decl)} "
+                                   f"account(s) and the list holds {len(accounts)} — NOTHING READ: a changed account "
+                                   f"set is a new measuring point, declared as a handover (config series_handover)", TIER)
             return
         pace = getattr(self.http, "min_interval", None)
         if pace is not None:
@@ -379,7 +390,7 @@ class NearNode:
                      TIER)
             return
         top.sort(reverse=True)
-        out.add(point(name, metric, value, f"{SOURCE}:liquid_set", TIER, when), SOURCE, name,
+        out.add(point(name, metric, value, f"{SOURCE}:{read.get('point') or 'liquid_set'}", TIER, when), SOURCE, name,
                 f"{metric}={value:,.4f} — liquid NEAR (view_account amount) summed over {len(accounts)} account(s); "
                 f"largest: " + "; ".join(f"{a} {v / scale:,.2f}" for v, a in top[:3])
                 + f". {read.get('set', '')}", TIER)

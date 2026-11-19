@@ -196,7 +196,8 @@ def test_2_the_liquid_read_sums_amount_over_every_account_or_stores_nothing():
     assert list(f["metric"]) == ["near_foundation_liquid_tokens"]
     # `amount` only — `locked` (validator stake) is not liquid and is already off the float as stake
     assert f["value"].iloc[0] == pytest.approx(1_000_000 + 5 * (len(accts) - 1), abs=1e-6)
-    assert f["source"].iloc[0] == "near_rpc:liquid_set"
+    # R13.2: the set is 200 accounts and its measuring point says so (was: "near_rpc:liquid_set", the 196-account set)
+    assert f["source"].iloc[0] == "near_rpc:liquid_set_200"
     assert calls == [("view_account", a) for a in accts] and node.http.min_interval == pace
     # one account without an answer: NOTHING stored (unknown is never 0), and the gap names the account
     node, _ = _liquid_node(amounts, fail=(accts[57],))
@@ -247,15 +248,20 @@ def test_2_the_set_is_the_published_and_same_key_accounts_and_nothing_leaves_the
         own |= set(r.get("accounts") or ())
     assert not own & set(accts)
     # the payer-evidence accounts are not same-key: left IN the float, each named with its reason
+    # R13.2 (Jake 2026-11-19): MOVED — the four nf-payments accounts are OFF the float, in the series, tagged INFERRED
+    # (payer evidence). Was: left = NEAR_FOUNDATION_FLOAT["left_in_float"] holding the four, none of them in accts
+    payers = {"nf-payments.near", "nf-payments1.near", "nf-payments2.near", "nf-payments8.near"}
     left = config.NEAR_FOUNDATION_FLOAT["left_in_float"]
-    assert {"nf-payments.near", "nf-payments1.near", "nf-payments2.near", "nf-payments8.near"} <= set(left)
-    assert not set(left) & set(accts) and all(str(v["why"]).strip() and v["liquid"] >= 0 for v in left.values())
-    # every account in the series is PUBLISHED or carries the signer keys (R12.3's re-read)
+    moved = config.NEAR_FOUNDATION_FLOAT["payer_evidence_off_float"]
+    assert not left and set(moved) == payers and payers <= set(accts)
+    assert all(str(v["why"]).strip() and v["liquid"] >= 0 and "payer evidence" in v["tag"] for v in moved.values())
+    # every account in the series is PUBLISHED, carries the signer keys (R12.3's re-read), or is a payer account
     ev = config.NEAR_FOUNDATION_KEYS_READ
     grp = {a: g for g, accs in config.NEAR_FOUNDATION_LIQUID_GROUPS.items() for a in accs}
     for a in accts:
         tag = config.NEAR_FOUNDATION_SET["groups"][grp[a]][0]
-        assert tag == "PUBLISHED" or (grp[a] in ev["groups"] and a not in ev["removed"]), a
+        assert (tag == "PUBLISHED" or (grp[a] in ev["groups"] and a not in ev["removed"])
+                or (tag == "INFERRED" and a in ev["payer_accounts"] and a in payers)), a
     assert config.RULE_IN["Near"]["off_float"][-1] == "near_foundation_liquid_tokens"
     assert "near_foundation_liquid_tokens" not in config.rule_in_legs("Near")      # in circulating: circulating does not move
     assert config.METRICS["near_foundation_liquid_tokens"]["only_projects"] == ("Near",)
