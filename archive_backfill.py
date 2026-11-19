@@ -234,7 +234,7 @@ def _work(a) -> int:
         rows, why = velo_history.history(p["name"], spec, have,
                                          deadline=time.monotonic() + a.budget_min * 60, write=_land_velo)
         print(f"  Velodrome VELO history {p['name']}: {vw[0]} row(s) written over "
-              f"{len({str(r['date'])[:10] for r in rows})} day(s) (9 per day: total, escrow balance, locked, permanent, voting power, tail rate, active period, weekly, issuer liquid) "
+              f"{len({str(r['date'])[:10] for r in rows})} day(s) (12 per day: VELO v2 total, escrow balance, locked, permanent, voting power, tail rate, active period, weekly, issuer liquid; VELO v1 locked, liquid, distributor) "
               f"— {why}")
     if a.near:
         near = config.PROJECT_BY_NAME.get("Near")

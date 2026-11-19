@@ -275,6 +275,11 @@ def test_w_the_liquid_read_is_every_wallet_at_one_block_or_no_row():
 
     def call(to, sig, arg, block, fail=None):
         blocks.add(block)
+        v1 = config.VELO_MERGED["Aerodrome"]["v1"]            # R13: the five v1 reads, answered so they add up
+        if sig == "locked(uint256)":
+            return int(1.72e27)
+        if to == v1["token"]:
+            return int(2.0e27) if sig == "totalSupply()" else int({v1["escrow"]: 1.75e27}.get(arg, 1e26))
         if sig == "balanceOf(address)" and arg and arg.lower() in wallets:
             if fail and arg.lower() == fail:
                 raise RuntimeError("no archive state")

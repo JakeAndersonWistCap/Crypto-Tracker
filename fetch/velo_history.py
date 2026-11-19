@@ -47,7 +47,30 @@ READS = (("velo_total_supply_tokens", "token", "totalSupply()", False, "VELO.tot
 # R12: the liquid VELO of Velodrome's issuer-linked wallets (spec["issuer_wallets"]: VELO.balanceOf each, summed — every
 # wallet at the same block or no row)
 ISSUER_LIQUID = "velo_issuer_liquid_tokens"
-METRICS = tuple(r[0] for r in READS) + (ISSUER_LIQUID,)
+# R13 (Jake 2026-11-19): VELO v1's CERTAIN convertible part, from five reads of the v1 token and escrow at the same block
+# (spec["v1"]: token, escrow, sink_lock_id, distributor, sink_gauge):
+#     velo_v1_locked_tokens       v1 held by the v1 escrow − the SinkManager's own lock (the other v1 veNFTs)
+#     velo_v1_liquid_tokens       v1 total supply − the escrow's balance − the v1 RewardsDistributor's − the sink gauge's
+#     velo_v1_distributor_tokens  the v1 RewardsDistributor's balance — recorded, NOT in the series (its claimable share
+#                                 is not established)
+V1_METRICS = ("velo_v1_locked_tokens", "velo_v1_liquid_tokens", "velo_v1_distributor_tokens")
+METRICS = tuple(r[0] for r in READS) + (ISSUER_LIQUID,) + V1_METRICS
+
+
+def v1_parts(call, v1: dict, blk: int) -> dict:
+    """{metric: VELO v1} from the five reads at `blk`; raises if any read fails or a part comes out negative (a read
+    that does not add up is no reading)."""
+    tok = v1["token"]
+    total = call(tok, "totalSupply()", None, blk) / 1e18
+    in_ve = call(tok, "balanceOf(address)", v1["escrow"], blk) / 1e18
+    sink = call(v1["escrow"], "locked(uint256)", hex(int(v1["sink_lock_id"])), blk) / 1e18
+    dist = call(tok, "balanceOf(address)", v1["distributor"], blk) / 1e18
+    gauge = call(tok, "balanceOf(address)", v1["sink_gauge"], blk) / 1e18
+    out = {"velo_v1_locked_tokens": in_ve - sink, "velo_v1_liquid_tokens": total - in_ve - dist - gauge,
+           "velo_v1_distributor_tokens": dist}
+    if min(out.values()) < 0:
+        raise RuntimeError(f"VELO v1 parts do not add up at block {blk:,}: {out}")
+    return out
 
 
 def block_at(ts: int) -> int:
@@ -66,7 +89,7 @@ def _chain_reader():
         h, why = coi.eth_call(to, data, block=hex(block), chain="optimism")
         if h is None:
             raise RuntimeError(f"{to[:10]} {sig}: {why}")
-        return int(h, 16)
+        return int(h[2:66], 16)                         # the first word (locked(id) returns amount, end)
 
     def block_ts(block):
         errs = []
@@ -117,6 +140,11 @@ def history(project: str, spec: dict, have: dict, first_day=None, deadline: floa
                 if wallets:
                     held = sum(_balance_of(call, spec["token"], w, blk) for w in wallets) / 1e18
                     vals.append((ISSUER_LIQUID, held, f"VELO.balanceOf({len(wallets)} issuer-linked wallets)"))
+                if spec.get("v1"):
+                    labels = {"velo_v1_locked_tokens": "VELOv1.balanceOf(escrow)-locked(sink)",
+                              "velo_v1_liquid_tokens": "VELOv1.totalSupply-escrow-distributor-sink_gauge",
+                              "velo_v1_distributor_tokens": "VELOv1.balanceOf(RewardsDistributor)"}
+                    vals += [(m, v, labels[m]) for m, v in v1_parts(call, spec["v1"], blk).items()]
             except Exception as e:  # noqa: BLE001 — unknown, never 0: the day keeps no row
                 from .chain import redact_urls             # noqa: PLC0415
                 why = f"stopped at {key}: VELO is not readable there ({str(redact_urls(e))[:200]})"

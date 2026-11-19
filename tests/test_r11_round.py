@@ -175,6 +175,18 @@ def test_2c_the_allocation_is_velodromes_supply_converted_within_half_a_percent(
     assert m["allocation"] - conv == pytest.approx(m["at_merger"]["headroom"], abs=0.01)
 
 
+def _v1_answer(to, sig, arg):
+    """R13: the reader also makes the five VELO v1 reads — an answer that adds up (None for any other read)."""
+    v1 = config.VELO_MERGED["Aerodrome"]["v1"]
+    if sig == "locked(uint256)":
+        return int(1.72e27)
+    if to == v1["token"]:
+        if sig == "totalSupply()":
+            return int(2.0e27)
+        return int({v1["escrow"]: 1.75e27}.get(arg, 1e26))
+    return None
+
+
 def test_2c_the_reader_takes_each_day_at_its_first_block_and_stops_on_a_failed_read():
     from fetch import velo_history as vh
     spec = dict(config.VELO_MERGED["Aerodrome"])
@@ -188,6 +200,8 @@ def test_2c_the_reader_takes_each_day_at_its_first_block_and_stops_on_a_failed_r
         if block < vh.block_at(int(pd.Timestamp("2026-10-19", tz="UTC").timestamp())):
             raise RuntimeError("no archive state")
         calls.append((sig, block))
+        if _v1_answer(to, sig, arg) is not None:              # R13: the v1 reads (were not made before)
+            return _v1_answer(to, sig, arg)
         return int({"totalSupply()": 2.6e27, "balanceOf(address)": 1.3e27, "supply()": 1.33e27,
                     "permanentLockBalance()": 1.1e27}.get(sig, 9e26))
     stamp = lambda b: vh.BEDROCK_TS + (b - vh.BEDROCK_BLOCK) * 2               # noqa: E731

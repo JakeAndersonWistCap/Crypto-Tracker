@@ -901,6 +901,16 @@ def _velo_merged_views(groups: dict) -> None:
             g = groups.get((name, metric))
             if v.empty or g is None or g.empty:
                 continue
+            # R13: VELO v1's certain convertible part joins the leg on every day ALL its `plus` series are stored — those
+            # days carry their own declared point (the composition is wider); a day without them stays on VELO v2 alone
+            plus = [_daily(groups.get((name, m))) for m in leg.get("plus") or ()]
+            with_v1 = pd.DatetimeIndex([])
+            if plus and all(not x.empty for x in plus):
+                with_v1 = v.index
+                for x in plus:
+                    with_v1 = with_v1.intersection(x.index)
+                v = v.copy()
+                v.loc[with_v1] = v.loc[with_v1] + sum(x.loc[with_v1] for x in plus)
             add = v * ratio
             if leg.get("cap"):
                 add = add.clip(upper=float(spec["allocation"]))
@@ -914,8 +924,10 @@ def _velo_merged_views(groups: dict) -> None:
             hit = has[out.index]
             out.loc[hit, "value"] = out.loc[hit, "value"].astype(float) + day[out.index][hit].map(add).values
             # a flow leg keeps its own source text (its annotations — the tail rate, a span — are read downstream)
-            out.loc[hit, "source"] = [config.VELO_MERGED_POINT.format(
-                point=str(x) if leg.get("keep_source") else _measuring_point(str(x))) for x in out.loc[hit, "source"]]
+            out.loc[hit, "source"] = [
+                (config.VELO_MERGED_V1_POINT if d in with_v1 else config.VELO_MERGED_POINT).format(
+                    point=str(x) if leg.get("keep_source") else _measuring_point(str(x)))
+                for x, d in zip(out.loc[hit, "source"], day[out.index][hit])]
             groups[(name, metric)] = out
             VELO_MERGED_NOTE[(name, metric)] = (
                 f"{int(has.sum())} day(s) {v.index.min().date()}..{(until - pd.Timedelta(days=1)).date()} restated on the "
@@ -928,6 +940,16 @@ def _velo_merged_views(groups: dict) -> None:
         tot = tot[tot.index < until]
         if len(tot) < 2:
             continue
+        # R13: with VELO v1 in the series a v1 -> v2 conversion mints v2 and takes the same v1 out — no mint of the merged
+        # supply — so the line reads the rise of v2 + v1's certain part between two readings that BOTH hold v1
+        v1s = [_daily(groups.get((name, m))) for m in spec["legs"]["total_supply"].get("plus") or ()]
+        v1_days = pd.DatetimeIndex([])
+        if v1s and all(not x.empty for x in v1s):
+            v1_days = tot.index
+            for x in v1s:
+                v1_days = v1_days.intersection(x.index)
+            tot = tot.copy()
+            tot.loc[v1_days] = tot.loc[v1_days] + sum(x.loc[v1_days] for x in v1s)
         # (a store holding no Minter terms at all cannot tell the two apart and merges no emission: the line is then
         # the whole rise, as in R11.2c)
         flips = VELO_FLIPS.get(name)
@@ -936,6 +958,8 @@ def _velo_merged_views(groups: dict) -> None:
             f = 0.0 if flips is None else flips.get(d)
             if f is None:
                 continue                                    # more than one flip in the hole: not attributable
+            if (prev in v1_days) != (d in v1_days):
+                continue                                    # the two readings are on two compositions: no change
             other = (float(tot[d]) - float(tot[prev]) - f) * ratio
             if other > 0:
                 n = int((d - prev).days)

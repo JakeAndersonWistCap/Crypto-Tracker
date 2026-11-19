@@ -45484,3 +45484,63 @@ _R12N["near_bigquery"]["supply_flows"]["history"] = {
 NEAR_BIGQUERY_R10["proposed_this_round"] = (
     "supply_flows history 2025-07-15..2025-10-06 — APPROVED by Jake 2026-11-19 on a dry run of 289,127,592 bytes "
     "(R12.5); runs once on the next run",)
+
+
+# =====================================================================================================================
+# ===== R13 — VELO v1's CERTAIN CONVERTIBLE PART IN THE PRE-MERGER SERIES (Jake 2026-11-19) =====
+# VELO v1 can convert (v1 -> v2 through the SinkManager, which mints new v2, then v2 -> AERO: R12.V4), so it is not out.
+# Jake: add the CERTAIN part — v1 held liquid and v1 locked in v1 veNFTs other than the SinkManager's own lock; the
+# 239.6M in the v1 RewardsDistributor STAYS OUT until its claimable share is established. Read on Optimism at the merger
+# block 158,514,211 (2026-11-19): v1 totalSupply 2,011,016,903.74; held by the v1 escrow 0x9c7305eb… 1,753,985,116.20,
+# of which the sink's lock #26637 1,722,375,353.43 (already converted: out); v1 RewardsDistributor 0x5d5bea9f…
+# 239,562,809.33 (out, not established); the sink gauge 0x987e7922… 1,480,239.26 (captured by the sink: out).
+#     locked  = escrow balance − sink lock                         = 31,609,762.77 v1
+#     liquid  = total − escrow − distributor − sink gauge          = 15,988,738.95 v1
+#     certain = 47,598,501.73 v1 -> x 0.044 = 2,094,334.08 AERO
+# On every day these reads are stored the merged total = Aerodrome + min((VELO v2 + v1 liquid + v1 locked) x 0.044,
+# 117,000,000) and the merged locks add v1 locked x 0.044, under their own declared point velo_merged_v1:<point> (a
+# wider composition: a declared handover from velo_merged:<point>, the days read on VELO v2 alone).
+# WHAT THE CAP THEN DOES: (2,648,026,538 + 47,598,502) x 0.044 = 118.61M is above the allocation, so the Velodrome leg is
+# AT THE CAP at the merger and the merger step is 0. The cap is reached once VELO v2 passes about 2,611.5M (September
+# 2026): from there Velodrome's emissions no longer raise the merged SUPPLY (the 117.0M pool is all there is to claim),
+# while they still count as emissions in dilution (Jake's R12 decision) — the token-flow statement shows the difference
+# as a small negative residual in those weeks (about 0.35M AERO-equivalent a flip). Named; a decision for Jake.
+VELO_MERGED_V1_POINT = "velo_merged_v1:{point}"
+VELO_MERGED["Aerodrome"]["v1"] = {
+    "token": VELO_V1["token"], "escrow": "0x9c7305eb78a432ced5c4d14cac27e8ed569a2e26", "sink_lock_id": 26637,
+    "distributor": "0x5d5bea9f0fc13d967511668a60a3369fd53f784f", "sink_gauge": "0x987e7922367b23c4a5fa34c8c5b1385174a095d6",
+    "source": "SinkManager 0x5aeE5F0E… getters ve(), rewardsDistributor(), gauge(), ownedTokenId(), read 2026-11-19",
+    "at_merger": {"optimism_block": 158_514_211, "total": 2_011_016_903.7437704, "escrow": 1_753_985_116.2038836,
+                  "sink_lock": 1_722_375_353.4308355, "distributor": 239_562_809.3279233,
+                  "sink_gauge": 1_480_239.2570064068, "locked": 31_609_762.773048162, "liquid": 15_988_738.954957008}}
+VELO_V1.update({"in_merged_series": True, "in_series": ("velo_v1_liquid_tokens", "velo_v1_locked_tokens"),
+                "stays_out": "velo_v1_distributor_tokens (239.56M at the merger: the claimable share is not established)",
+                "certain_at_merger": 47_598_501.73, "decided": "Jake 2026-11-19 (R13)"})
+VELO_V1["x_ratio"]["certain"] = 2_094_334.08
+VELO_V1.pop("why_not", None)
+VELO_MERGED["Aerodrome"]["legs"]["total_supply"]["plus"] = ("velo_v1_liquid_tokens", "velo_v1_locked_tokens")
+for _r13m in ("locked_tokens", "ve_locked_supply_tokens"):
+    VELO_MERGED["Aerodrome"]["legs"][_r13m]["plus"] = ("velo_v1_locked_tokens",)
+for _r13m, _r13l in (("velo_v1_locked_tokens", "VELO v1 locked in v1 veNFTs other than the SinkManager's own lock"),
+                     ("velo_v1_liquid_tokens", "VELO v1 held liquid (total − the v1 escrow − the v1 RewardsDistributor − the "
+                                               "sink gauge)"),
+                     ("velo_v1_distributor_tokens", "VELO v1 in the v1 RewardsDistributor — recorded, NOT in the merged "
+                                                    "series (its claimable share is not established)")):
+    METRICS[_r13m] = {"label": _r13l + " — in VELO v1, before the merger (R13)", "kind": "stock", "unit": "tokens",
+                      "archetypes": [3], "tiers": [2], "sanity_min": 0, "sanity_max": 1e10,
+                      "only_projects": ("Aerodrome",)}
+# the handovers, declared: each series that takes v1 gains the wider point after its VELO v2 point
+for _r13m in ("total_supply", "locked_tokens", "ve_locked_supply_tokens"):
+    _r13h = PROJECT_BY_NAME["Aerodrome"]["series_handover"][_r13m]
+    _r13p = tuple(_r13h["ordered_points"])
+    _r13h["ordered_points"] = (_r13p[:-1] + tuple(_x.replace("velo_merged:", "velo_merged_v1:", 1) for _x in _r13p
+                                                  if _x.startswith("velo_merged:")) + _r13p[-1:])
+PROJECT_BY_NAME["Aerodrome"]["series_handover"]["fdv_usd"]["ordered_points"] = tuple(
+    PROJECT_BY_NAME["Aerodrome"]["series_handover"]["fdv_usd"]["ordered_points"]) + tuple(
+    f"derived:price_x_total_supply[{VELO_MERGED_V1_POINT.format(point=_x)}]" for _x in ("coingecko", "chain:base:token"))
+HANDOVER_STEP[("Aerodrome", "aero_merger_issuance_tokens")]["from"] = tuple(
+    HANDOVER_STEP[("Aerodrome", "aero_merger_issuance_tokens")]["from"]) + (
+    VELO_MERGED_V1_POINT.format(point="chain:base:token"),)
+# R13 (B4, Jake 2026-11-19): the issuer-linked wallets' LOCKED VELO is recorded at the merger only (VELO_ISSUER_AT_MERGER);
+# no daily history is read.
+VELO_ISSUER_AT_MERGER["locked_history"] = "recorded at the merger only (Jake 2026-11-19, R13)"

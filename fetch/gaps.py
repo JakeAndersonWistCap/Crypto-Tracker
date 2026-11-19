@@ -1232,7 +1232,8 @@ def _tier_note(project: dict, metric: str, scrape_entries: dict) -> tuple[str, s
     # R11.2c: Velodrome's VELO before the merger (fetch/velo_history.py, read by archive_backfill only)
     for _vm in ("velo_total_supply_tokens", "velo_locked_tokens", "velo_ve_locked_supply_tokens",
                 "velo_permanent_locked_tokens", "velo_ve_voting_power_tokens", "velo_tail_emission_rate_bps",
-                "velo_minter_active_period", "velo_minter_weekly_tokens", "velo_issuer_liquid_tokens"):
+                "velo_minter_active_period", "velo_minter_weekly_tokens", "velo_issuer_liquid_tokens",
+                "velo_v1_locked_tokens", "velo_v1_liquid_tokens", "velo_v1_distributor_tokens"):
         r3[_vm] = (
             "Velodrome's VELO history (fetch/velo_history.py: Optimism, each day's first block from 2025-07-14 to "
             "2026-10-21) is not stored: it is read by archive_backfill, not by the daily run",
