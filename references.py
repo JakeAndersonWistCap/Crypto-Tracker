@@ -357,6 +357,14 @@ ROUTES.update({(PROJECT_ALIASES.get(p, p), m): r for (p, m), r in G6_ROUTES.item
 
 def _series(groups: dict, project: str, metric: str) -> pd.DataFrame | None:
     g = groups.get((project, metric))
+    # R11.2c: a series restated on the merged basis before the merger (config.VELO_MERGED) is checked LIKE FOR LIKE —
+    # a figure published before the merger is the project's alone, so the days before it read the series as stored
+    import config as _cfg                                  # noqa: PLC0415
+    vm = (getattr(_cfg, "VELO_MERGED", {}) or {}).get(project)
+    own = groups.get((project, metric + vm["aero_only_suffix"])) if vm and metric in vm["legs"] else None
+    if own is not None and not own.empty and g is not None and not g.empty:
+        g = pd.concat([own.assign(metric=metric),
+                       g[pd.to_datetime(g["date"]).dt.normalize() >= pd.Timestamp(vm["until"])]], ignore_index=True)
     if g is None or g.empty:
         return None
     s = g[["date", "value", "source"]].copy()

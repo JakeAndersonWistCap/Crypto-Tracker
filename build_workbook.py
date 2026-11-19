@@ -906,6 +906,9 @@ def _velo_merged_views(groups: dict) -> None:
             day = pd.to_datetime(g["date"]).dt.normalize()
             span = (day >= v.index.min()) & (day < until)
             has = span & day.isin(add.index)
+            # the series as stored, kept for the reference checks (figures published before the merger are Aerodrome's)
+            groups[(name, metric + spec["aero_only_suffix"])] = g[day < until].assign(
+                metric=metric + spec["aero_only_suffix"])
             out = g[~(span & ~has)].copy()
             hit = has[out.index]
             out.loc[hit, "value"] = out.loc[hit, "value"].astype(float) + day[out.index][hit].map(add).values

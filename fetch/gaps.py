@@ -1222,6 +1222,13 @@ def _tier_note(project: dict, metric: str, scrape_entries: dict) -> tuple[str, s
         "yet — the read resumes from its cache on the next run",
         "Check the Run Log's near_rpc line for {name} (near_mpc_operator_payouts_tokens); a first read can take two or "
         "three runs.")
+    # R11.2c: Velodrome's VELO before the merger (fetch/velo_history.py, read by archive_backfill only)
+    for _vm in ("velo_total_supply_tokens", "velo_locked_tokens", "velo_ve_locked_supply_tokens",
+                "velo_permanent_locked_tokens", "velo_ve_voting_power_tokens"):
+        r3[_vm] = (
+            "Velodrome's VELO history (fetch/velo_history.py: Optimism, each day's first block from 2025-07-14 to "
+            "2026-10-21) is not stored: it is read by archive_backfill, not by the daily run",
+            "Run python archive_backfill.py --run --project {name} until its Velodrome line says it reached 2025-07-14.")
     for c in getattr(config, "PENDLE_RATE_CHECK", {}).get("chains", ()):
         r3[f"emissions_tokens_gauge_rate_{c}"] = (
             f"the subsidy-targeting reader (fetch/subsidy_targeting.py) has no complete UTC day with a rewardData sample "

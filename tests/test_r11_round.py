@@ -182,7 +182,7 @@ def test_2c_the_reader_takes_each_day_at_its_first_block_and_stops_on_a_failed_r
             raise RuntimeError("no archive state")
         calls.append((sig, block))
         return int({"totalSupply()": 2.6e27, "balanceOf(address)": 1.3e27, "supply()": 1.33e27,
-                    "permanentLockBalance()": 1.1e27}[sig])
+                    "permanentLockBalance()": 1.1e27}.get(sig, 9e26))
     stamp = lambda b: vh.BEDROCK_TS + (b - vh.BEDROCK_BLOCK) * 2               # noqa: E731
     rows, why = vh.history("Aerodrome", spec, {m: {"2026-10-20"} for m in vh.METRICS}, first_day="2026-10-10",
                            call=call, block_ts=stamp)
@@ -193,3 +193,17 @@ def test_2c_the_reader_takes_each_day_at_its_first_block_and_stops_on_a_failed_r
     # a block whose timestamp is not the day's first is refused before any value is used
     rows, why = vh.history("Aerodrome", spec, {}, first_day="2026-10-21", call=call, block_ts=lambda b: stamp(b) - 2)
     assert rows == [] and "block rule" in why
+
+
+def test_2c_a_reference_published_before_the_merger_is_checked_against_aerodrome_alone(_aero):
+    """Like for like: the reference checks read the series as stored before the merger and the new read after it."""
+    import references
+    g = _aero_groups(["2026-10-20", "2026-10-21"], [2_647_000_000.0, 2_648_026_538.38])
+    aero = g[("Aerodrome", "total_supply")].set_index("date")["value"].copy()
+    bw._velo_merged_views(g)
+    s = references._series(g, "Aerodrome", "total_supply").set_index("date")["value"]
+    assert s[pd.Timestamp("2026-10-21")] == aero[pd.Timestamp("2026-10-21")]          # not + VELO x 0.044
+    assert s[pd.Timestamp("2026-10-22")] == 2_119_380_000.0
+    assert len(s) == len(aero)
+    merged = g[("Aerodrome", "total_supply")].set_index("date")["value"]
+    assert merged[pd.Timestamp("2026-10-21")] > aero[pd.Timestamp("2026-10-21")] + 116e6

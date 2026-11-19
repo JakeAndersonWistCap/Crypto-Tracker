@@ -540,7 +540,7 @@ HYPERLIQUID. A change of circulating across a hole is now one multi-day change w
 No frozen cell moved on the 15 dumps. On your store the cell first forms on 2027-01-11 (the rule-basis series starts
 2026-10-13), not 12-29. AERODROME. The 117.0M AERO for VELO holders is Velodrome's existing supply converted (VELO's
 supply at the merger x 0.044 = 116.51M), so it stays out of dilution. The backfill below now also reads VELO's history
-on Optimism (about 465 days, 4 rows a day, 25-30 minutes); once stored, Aerodrome's supply before 10-22 reads on the
+on Optimism (about 465 days, 5 rows a day, about 30 minutes); once stored, Aerodrome's supply before 10-22 reads on the
 merged basis. Run the backfill line until the Velodrome line ends "reached 2025-07-14": a part-read history leaves
 one quarter of the token-flow statement straddling the two bases. NEAR. See the Near lines below.
 
@@ -559,9 +559,9 @@ gcloud auth application-default set-quota-project near-data-510309
 git switch claude/crypto-metrics-supply-demand-ovkg8g
 git pull
 git log --oneline -1
-#   expect: the line ends "R11: RUNBOOK 11ez"
+#   expect: the line contains "R11"
 python -c "import config; print(len(config.VELO_MERGED['Aerodrome']['legs']), config.VELO_MERGED['Aerodrome']['from'], config.R11_MOVES_DECLARED, config.OUTFLOW_CATEGORIES['Near']['b'], config.SUBSIDY_REVENUE_METRIC['Near'])"
-#   expect: 4 2025-07-14 0 ('near_mpc_operator_payouts_tokens',) revenue_total_usd
+#   expect: 5 2025-07-14 0 ('near_mpc_operator_payouts_tokens',) revenue_total_usd
 python circ_legs.py Aerodrome
 #   expect: total_supply listed; read-only
 python circ_legs.py Near
@@ -573,7 +573,7 @@ python token_metrics.py
 python near_lockups_weekly.py --force
 #   expect: a line naming the lockup contracts read and near_lockup rows stored (the second reading: lockup releases can then join the unlock leg)
 python archive_backfill.py --run --project Aerodrome --budget-min 30
-#   expect: "Aerodrome supply ..."; "Aerodrome voter epochs Aerodrome: N row(s) written over M epoch(s)"; and a new line "Velodrome VELO history Aerodrome: N row(s) written over D day(s) ... - reached 2025-07-14" (about 1,860 rows over 465 days). If it ends "time budget spent" or "stopped at <day>", run this line again until it says "reached 2025-07-14"; if it stops at the same day twice, paste the line back
+#   expect: "Aerodrome supply ..."; "Aerodrome voter epochs Aerodrome: N row(s) written over M epoch(s)"; and a new line "Velodrome VELO history Aerodrome: N row(s) written over D day(s) ... - reached 2025-07-14" (about 2,325 rows over 465 days). If it ends "time budget spent" or "stopped at <day>", run this line again until it says "reached 2025-07-14"; if it stops at the same day twice, paste the line back
 python token_metrics.py --seed aero_buyback
 #   expect: a line ending "row(s) stored" - the Foundation's purchases day by day (needs BASE_RPC_URL)
 python token_metrics.py --no-fetch

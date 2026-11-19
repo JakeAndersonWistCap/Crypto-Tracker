@@ -44290,13 +44290,18 @@ VELO_MERGED = {"Aerodrome": {
     "legs": {"total_supply": {"velo": "velo_total_supply_tokens", "cap": True},
              "locked_tokens": {"velo": "velo_locked_tokens"},
              "ve_locked_supply_tokens": {"velo": "velo_ve_locked_supply_tokens"},
-             "permanent_locked_tokens": {"velo": "velo_permanent_locked_tokens"}},
+             "permanent_locked_tokens": {"velo": "velo_permanent_locked_tokens"},
+             "ve_voting_power_tokens": {"velo": "velo_ve_voting_power_tokens"}},
+    # a published figure dated before the merger is Aerodrome's alone: the reference checks read the series as stored
+    # (kept beside the restated one at read time as <metric>_aero_only), never the merged figure
+    "aero_only_suffix": "_aero_only",
     "issuance": "velo_merged_issuance_tokens"}}
 VELO_MERGED_POINT = "velo_merged:{point}"
 for _vm, _vlab in (("velo_total_supply_tokens", "VELO total supply on Optimism (VELO.totalSupply())"),
                    ("velo_locked_tokens", "VELO held by Velodrome's VotingEscrow (VELO.balanceOf)"),
                    ("velo_ve_locked_supply_tokens", "VELO locked in veVELO (VotingEscrow.supply())"),
-                   ("velo_permanent_locked_tokens", "VELO permanently locked (VotingEscrow.permanentLockBalance())")):
+                   ("velo_permanent_locked_tokens", "VELO permanently locked (VotingEscrow.permanentLockBalance())"),
+                   ("velo_ve_voting_power_tokens", "veVELO voting power (VotingEscrow.totalSupply())")):
     METRICS[_vm] = {"label": _vlab + " — in VELO, before the merger; x 0.044 joins Aerodrome's series on the merged "
                                      "basis (R11.2c)",
                     "kind": "stock", "unit": "tokens", "archetypes": [3], "tiers": [2], "sanity_min": 0,
@@ -44306,6 +44311,12 @@ METRICS["velo_merged_issuance_tokens"] = {
              "readings x 0.044 — on the token-flow statement only (R11.2c)",
     "kind": "flow", "unit": "tokens", "archetypes": [3], "tiers": [2], "sanity_min": 0, "sanity_max": 1e9,
     "only_projects": ("Aerodrome",), "view_only": True}
+for _vmet in VELO_MERGED["Aerodrome"]["legs"]:
+    METRICS[_vmet + "_aero_only"] = {
+        "label": f"{_vmet} before the merger as stored — Aerodrome alone, for the reference checks of figures published "
+                 "before 2026-10-22 (R11.2c)",
+        "kind": "stock", "unit": "tokens", "archetypes": [3], "tiers": [2], "sanity_min": 0, "sanity_max": 1e10,
+        "only_projects": ("Aerodrome",), "view_only": True}
 # the handovers, declared: each restated series' points, in order (the legacy point, its merged form, the new read)
 for _vmet in VELO_MERGED["Aerodrome"]["legs"]:
     _vh = PROJECT_BY_NAME["Aerodrome"]["series_handover"][_vmet]

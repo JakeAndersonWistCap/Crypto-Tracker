@@ -11,6 +11,7 @@ merged entity's supply BEFORE the merger is Aerodrome's AERO + Velodrome's VELO 
     velo_locked_tokens             VELO.balanceOf(VotingEscrow)      (like Aerodrome's locked_tokens: tokens the escrow holds)
     velo_ve_locked_supply_tokens   VotingEscrow.supply()
     velo_permanent_locked_tokens   VotingEscrow.permanentLockBalance()
+    velo_ve_voting_power_tokens    VotingEscrow.totalSupply()        (veVELO voting power at that block)
 
 all in VELO (the 0.044 is applied by the view, never stored). Each day is read at its FIRST block; Optimism has produced
 one block every 2 s since Bedrock, so the block follows from the timestamp, and its timestamp is checked before any value
@@ -31,7 +32,8 @@ BEDROCK_BLOCK, BEDROCK_TS, BLOCK_S = 105_235_063, 1_686_068_903, 2
 READS = (("velo_total_supply_tokens", "token", "totalSupply()", False, "VELO.totalSupply"),
          ("velo_locked_tokens", "token", "balanceOf(address)", True, "VELO.balanceOf(VotingEscrow)"),
          ("velo_ve_locked_supply_tokens", "escrow", "supply()", False, "VotingEscrow.supply"),
-         ("velo_permanent_locked_tokens", "escrow", "permanentLockBalance()", False, "VotingEscrow.permanentLockBalance"))
+         ("velo_permanent_locked_tokens", "escrow", "permanentLockBalance()", False, "VotingEscrow.permanentLockBalance"),
+         ("velo_ve_voting_power_tokens", "escrow", "totalSupply()", False, "VotingEscrow.totalSupply"))
 METRICS = tuple(r[0] for r in READS)
 
 
@@ -66,9 +68,9 @@ def _chain_reader():
 
 def history(project: str, spec: dict, have: dict, first_day=None, deadline: float | None = None, call=None,
             block_ts=None, write=None, clock=time.monotonic) -> tuple[list, str]:
-    """The four VELO reads on each day from the day before `spec['until']` back to `first_day` (default: spec['from']),
-    newest first. `have`: {metric: {'YYYY-MM-DD'}} — a day holding all four costs no call; a day is written whole or
-    not at all (the four at one block). Returns (rows, why it ended)."""
+    """The VELO reads (READS) on each day from the day before `spec['until']` back to `first_day` (default: spec['from']),
+    newest first. `have`: {metric: {'YYYY-MM-DD'}} — a day holding every one costs no call; a day's reads are
+    made at one block and written together. Returns (rows, why it ended)."""
     import config                                          # noqa: PLC0415
     if call is None or block_ts is None:
         c, b = _chain_reader()
