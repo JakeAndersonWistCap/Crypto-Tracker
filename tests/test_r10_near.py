@@ -313,7 +313,10 @@ def test_b3a_treasury_and_foundation_accounts_leave_the_float_and_a_missing_leg_
 def test_b3f_the_token_flow_statement_no_longer_counts_a_release_from_an_account_inside_circulating(scope):
     """lockup.near released 380,804 NEAR on 2025-11-04. With the account inside circulating that is no circulating
     change: the statement is opening + minted − burned and balances without it (it was a '+ released' line before)."""
-    assert bw._rule_flow("Near") and not config.RULE_IN["Near"].get("flow_outside")
+    # was (R10.B3f): `not config.RULE_IN["Near"].get("flow_outside")` — no outside leg. R13 (Near on Jake's store): the
+    # lockup CONTRACTS' net release is the one outside leg; a release from lockup.near / contributors.near still is none
+    assert bw._rule_flow("Near")
+    assert [m for _lab, m in config.RULE_IN["Near"]["flow_outside"]] == ["near_lockup_net_release_tokens"]
     d = pd.date_range("2025-08-01", "2026-01-31")
     circ = [1_250_000_000.0 + 80_000.0 * i for i in range(len(d))]          # +100,000 minted − 20,000 burned a day
     g = {("Near", "circulating_supply_used"): _g("circulating_supply_used", d, circ),

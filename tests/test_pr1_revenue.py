@@ -283,6 +283,33 @@ def _endpoints(groups, name, asof):
     return float(s.loc[o, "value"]), float(s.loc[c, "value"])
 
 
+def _declared_steps(groups, name, asof) -> float:
+    """R13 (Near on Jake's store): the steps of the DECLARED handovers of the circulating figure inside the window
+    (config.CIRC_USED_BASIS_FROM), each recomputed from the stored legs of its seam day — the day's figure on the new
+    basis less the same day's figure on the basis before it. 0.0 for a project that declares none."""
+    spec = (getattr(config, "CIRC_USED_BASIS_FROM", {}) or {}).get(name)
+    if not spec or (name, spec["metric"]) not in groups:
+        return 0.0
+    import trajectory
+    day = lambda m: bw._daily(groups.get((name, m)))                          # noqa: E731
+    u = groups[(name, spec["metric"])]
+    u = u.assign(date=pd.to_datetime(u["date"]).dt.normalize()).sort_values("date")
+    pts = [trajectory.basis_of(spec["metric"], x) for x in u["source"].astype(str)]
+    n = int(config.NET_SUPPLY_CIRC["window_days"])
+    fp, fa, tot, lk = (day(m) for m in ("circulating_supply_first_party", "near_foundation_accounts_tokens",
+                                        "total_supply", "near_lockup_locked_tokens"))
+    step = 0.0
+    for (d, v), before, now in zip(list(zip(u["date"], u["value"].astype(float)))[1:], pts, pts[1:]):
+        if before == now or not asof - pd.Timedelta(days=n) < d <= asof:
+            continue
+        if before.startswith("first_party"):                                  # NEAR's own table + the two accounts
+            prior = float(fp[d]) + float(fa[fa.index <= d].iloc[-1])
+        else:                                                                 # all of LOCKED out, from the same read
+            prior = float(tot[d]) - float(lk[d])
+        step += float(v) - prior
+    return step
+
+
 def test_gate_net_supply_change_is_closing_minus_opening_circulating(built):
     """S8 GATE (tolerance declared in config.NET_SUPPLY_CIRC before measuring): on every project Master's NET SUPPLY
     CHANGE (tokens) = closing − opening circulating_supply_used read from the store; where the window has a hole or a
@@ -302,7 +329,12 @@ def test_gate_net_supply_change_is_closing_minus_opening_circulating(built):
             continue
         o, c = ends
         assert isinstance(v, float), (name, v)
-        assert abs(v - (c - o)) <= max(tol["abs_tokens"], tol["rel_of_opening"] * abs(o)), (name, v, c - o)
+        # was `abs(v - (c - o))` on every project. R13 (Near on Jake's store): a figure that hands over between
+        # declared measuring points inside the window reads closing − opening LESS each handover's step (measured on
+        # both bases on the seam day) — the step is not a change in supply. Every other project: unchanged (step 0)
+        step = _declared_steps(groups, name, asof)
+        assert (step != 0.0) <= (name in config.CIRC_USED_BASIS_FROM), (name, step)
+        assert abs(v - (c - o - step)) <= max(tol["abs_tokens"], tol["rel_of_opening"] * abs(o)), (name, v, c - o, step)
         assert pct == pytest.approx(v * 365 / 90 / circ, rel=1e-9), name
         checked += 1
     assert checked >= 10, checked

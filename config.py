@@ -46001,3 +46001,108 @@ PHASE2_ATTRIBUTES["Aerodrome"]["destination"] = {
               "foundation (Momentum Fund: 'buyback-and-burn AERO') ; aerodrome-finance/docs@99680a79 about.mdx",
     "was": PHASE2_ATTRIBUTES["Aerodrome"]["destination"]}
 del _m, _lab, _kind, _old, _new
+
+
+# ===== R13 — NEAR ON JAKE'S STORE =====
+# Jake 2026-11-19, on his own run of Round 12 (code 00bb8b2, store export near-2026-11-19-151752): the token-flow
+# statement's Q-4 read BROKEN (+0.90% of opening unexplained), net supply change read 2.94% a year beside an issuance
+# of about 2.5%, and the regression guard tripped on net holder yield. SPEC.md "Round 13 — Near on Jake's store".
+# The rule is unchanged; no tolerance, bound or allow-list is touched. Tests: tests/test_r13_near_store.py.
+#
+# (c) THE CAUSE OF 2.94%: circulating_supply_used names only the series it took ("derived:circulating_used[
+# circulating_supply_lockup_rule]") on every day, although that series hands over between four declared measuring
+# points (NEAR_CIRC_RULE_POINTS, R10.B3a). The net supply change forms a change only between two readings whose
+# source is the same — and here it always was: the step of each handover was summed as growth. On Jake's store:
+# 2026-11-19, the first weekly read that stores the staked part of LOCKED — circulating stepped up by the staked
+# part, 1,084,482.68 NEAR (counted in from that day; R10.B3b); 2026-10-11, the first lockup read — NEAR's own table
+# gave way to total − LOCKED, a step of −2,219 NEAR. Together +1,082,264 NEAR of the 9,514,408 the cell read
+# (2.943% a year; 8,432,144 and 2.608% without them). THE BASIS OF A DAY of circulating_supply_used is therefore read
+# from the series it names where that series carries the measuring point itself:
+CIRC_USED_BASIS_FROM = {
+    "Near": {"metric": "circulating_supply_lockup_rule",
+             "why": "the lockup-rule view hands over between declared points (series_handover "
+                    "circulating_supply_lockup_rule, NEAR_CIRC_RULE_POINTS); the figure in use inherits them",
+             "declared": "2026-11-19"}}
+# THE SEAM IS MEASURED ON BOTH BASES ON ONE DAY, so nothing is lost and nothing is invented: the day a new point starts,
+# the same day's readings also form the figure on the point before it (the read that stores the staked part also
+# holds all of LOCKED; NEAR's own table still holds the day of the first lockup read). The seam day's change is formed
+# on the basis of the day before; the difference between the two figures of that day is the handover's STEP — not a
+# change in supply, not a release, not a flow. Where the day's readings cannot form the earlier basis (a later read
+# WITHOUT its staked part after one with it: the idle part is then unknown, never 0), the day holds no change — a
+# gap, as before. DAYS BEFORE THE FIRST STAKED READING are not restated: the staked part of LOCKED was not read on
+# them (the four reads of 2026-10-11, 10-26, 11-05 and 11-14 store LOCKED and the unvested part only), so they stay on
+# their own declared point — all of LOCKED out, "at most LOCKED too low" — and are never given a staked part of 0
+# under the name of the final rule, nor one carried back from a later block.
+_R13S_PT = lambda _x: _x[len(_R10N_CIRC):].rstrip("]")   # noqa: E731 — a point as trajectory.basis_of reads it
+NEAR_CIRC_SEAM = {
+    "decided": "Jake 2026-11-19 (R13, on his store): a change of composition is a declared handover, never growth",
+    # the lockup contracts' NET RELEASE, the statement's missing leg (a): the fall of what the day's circulating
+    # figure leaves out, between two days on one basis (build_workbook._near_seam_views)
+    "release": "near_lockup_net_release_tokens",
+    # THE NET SUPPLY CHANGE ACROSS A SEAM (PR1.S8 said: a basis change in the window reads n/a, never a number). True:
+    # a seam measured on both bases on one day is LINKED — the cell is closing − opening less each step, and says so
+    # in its note. False: the strict reading — the seam day holds no change and the cell reads "n/a — not measured on
+    # one basis" until the window has passed the seam (2027-02-17 for the 2026-11-19 seam). A decision for Jake; built
+    # linked because both figures of the seam day are measured, so no number is assumed.
+    "link_net_supply_change": True,
+    # each point's name on the cells (the full text is the row's source)
+    "points": {
+        _R13S_PT(NEAR_CIRC_RULE_POINTS[0]): "NEAR's own table",
+        _R13S_PT(NEAR_CIRC_RULE_POINTS[1]): "NEAR's own table + lockup.near + contributors.near",
+        _R13S_PT(NEAR_CIRC_RULE_POINTS[2]): "total − LOCKED (staked part not read)",
+        _R13S_PT(NEAR_CIRC_RULE_POINTS[3]): "total − idle LOCKED (the final rule)"},
+}
+# (a) THE STATEMENT'S MISSING LEG. Q-4 (2025-08-26..2025-11-24) is wholly on one basis (NEAR's own table + the two
+# accounts): no handover is inside it. Its +0.90% is NEAR LEAVING THE LOCKUP CONTRACTS — the locked NEAR in NEAR's own
+# table fell from 17,273,282 to 6,093,366 (11,179,916 NEAR), 4,387,972 of it on 2025-09-12 and 4,277,009 on
+# 2025-10-12, two monthly cliffs. R10.B3f left that leg in the residual "until the reads cover a quarter" — the weekly
+# reads start 2026-10-11 — and until Round 12 the quarter read a COVERAGE CHECK (the mint held 73 of its 90 days); the
+# header history read approved in R12.5 filled the mint, so nothing named was left and the same residual read BROKEN.
+# The leg is measurable on every stored day from the figure itself: what the day's circulating leaves out is the
+# chain's total less it — NEAR's own table's locked NEAR before the first read, LOCKED from it, the idle LOCKED from
+# the first read with the staked part. Its fall on one basis is the release (signed: NEAR that goes back behind a
+# lock is negative). What the residual then tests: the change of the total against minted − burned, and nothing of
+# the lockups (the leg is the difference of the two stocks the statement opens and closes on, as every project's
+# "+ released from issuer wallets" is).
+METRICS["near_lockup_net_release_tokens"] = {
+    "label": "NEAR released from the lockup CONTRACTS, net — the fall of what the circulating figure leaves out "
+             "(NEAR's own table's locked NEAR before the first lockup read; LOCKED from it; the idle LOCKED from the "
+             "first read with the staked part), between two days on one basis; a handover's step is never in it (R13)",
+    "kind": "flow", "unit": "tokens", "archetypes": [1, 2, 3, 4], "tiers": [1], "sanity_min": -1e12, "sanity_max": 1e12,
+    "view_only": True, "only_projects": ("Near",)}
+RULE_IN["Near"]["flow_outside"] = (
+    ("+ released from the lockup contracts, net (the fall of what circulating leaves out, on one basis)",
+     NEAR_CIRC_SEAM["release"]),)
+# was (R10.B3f): "flow_outside_when_covered": "near_lockup_release_tokens" — the weekly reads' falls, not a line "until
+# the reads cover a quarter". Superseded: the leg above covers every stored day.
+RULE_IN["Near"]["flow_outside_was"] = RULE_IN["Near"].pop("flow_outside_when_covered")
+PROJECT_BY_NAME["Near"]["series_handover"]["circulating_supply_lockup_rule"] = {
+    **PROJECT_BY_NAME["Near"]["series_handover"]["circulating_supply_lockup_rule"],
+    "seam": "measured on both bases on the seam day (config.NEAR_CIRC_SEAM, R13): the net supply change, the "
+            "token-flow statement and the lockup release form no change across a handover — the step is named on the "
+            "cell with its size",
+    "seam_declared": "2026-11-19"}
+# (b) THE REGRESSION GUARD ON NET HOLDER YIELD — an explanation, no entry. The guard (sanity.lost_headlines, Coverage
+# "Regression guard") reads BROKEN when a headline that held a number in the previous run's snapshot holds none now.
+# Jake's previous snapshot was written before the operator payouts (b) joined net holder yield (R12.1); his run of
+# 2026-11-19 has no near_mpc_operator_payouts_tokens row (the ledger stopped 28 of 85 transactions short and stores
+# nothing until whole — a partial ledger reads low), so the cell names the missing leg instead of a number. It is the
+# consequence of a leg added by decision whose first read is not finished; it clears on the first run that stores the
+# ledger. REGRESSION_ALLOWLIST is NOT extended (Jake's standing rule: no accepted-loss entries).
+NEAR_R13_STORE = {
+    "export": "near-2026-11-19-151752-00bb8b2", "asof": "2026-11-19",
+    "q4_window": ("2025-08-26", "2025-11-24"),
+    "q4_locked_fall": {"from": 17_273_282, "to": 6_093_366,
+                       "cliffs": {"2025-09-12": 4_387_972, "2025-10-12": 4_277_009}},
+    "ledger": {"unread": 28, "of": 85, "stored": False},
+    # his next export (16:21 UTC, same code) holds the ledger whole — 197 daily rows, 338,430.08 NEAR in 85 payouts —
+    # and on it the cell reads 9,540,311.49 (2.950%) before and 8,458,047.32 (2.616%) after; net holder yield −2.104%
+    "later_export": {"export": "near-2026-11-19-162140-00bb8b2", "ledger_rows": 197, "ledger_tokens": 338_430.08,
+                     "net_supply_change": {"was": (9_540_311.49, 0.0295048885), "now": (8_458_047.32, 0.0261578192)}},
+    # the build of this round from that export: the two seams' steps, and the cell before / after
+    "seam_steps": {"2026-10-11": -2_219, "2026-11-19": 1_084_482.68},
+    "net_supply_change": {"was": (9_514_408.49, 0.0294253607), "now": (8_432_144.32, 0.0260782253)},
+    "q4_residual": {"was": (11_231_156, "BROKEN"), "now": (51_240, "OK"), "release_leg": 11_179_916},
+    "guard": "a consequence of the unfinished ledger read; no allow-list entry",
+}
+del _R13S_PT

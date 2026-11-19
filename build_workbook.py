@@ -5170,6 +5170,39 @@ CIRC_CHANGE_GAPS: dict = {}
 CIRC_CHANGE_OPENING: dict = {}
 
 
+def _circ_used_basis(groups: dict, name: str, days: list, srcs: list) -> list:
+    """R13: per day of circulating_supply_used, ITS BASIS. The row's own source, except where config declares that the
+    series it names carries the measuring point itself (config.CIRC_USED_BASIS_FROM — NEAR's lockup rule, whose view
+    hands over between declared points): there the day's basis is "<source> · <the point of that series' row on the
+    day>" (a carried day keeps the point of the row it carries). Every other project: unchanged."""
+    spec = (getattr(config, "CIRC_USED_BASIS_FROM", {}) or {}).get(name)
+    u = groups.get((name, spec["metric"])) if spec else None
+    if u is None or u.empty:
+        return list(srcs)
+    pts = pd.Series(u["source"].astype(str).map(lambda x: trajectory.basis_of(spec["metric"], x)).values,
+                    index=pd.to_datetime(u["date"]).dt.normalize())
+    pts = pts[~pts.index.duplicated(keep="last")].sort_index()
+    out = []
+    for day, src in zip(days, srcs):
+        w = pts[pts.index <= day]
+        out.append(f"{src}{_BASIS_SEP}{w.iloc[-1]}" if f"[{spec['metric']}]" in src and not w.empty else src)
+    return out
+
+
+_BASIS_SEP = " · "
+
+
+def _circ_basis_key(basis: str) -> str:
+    """The measuring point inside a _circ_used_basis text (CIRC_SEAM_ALT is keyed on it)."""
+    return basis.split(_BASIS_SEP, 1)[1] if _BASIS_SEP in basis else basis
+
+
+def _circ_basis_name(basis: str) -> str:
+    """A basis as the cells name it: the declared short name of a measuring point (config.NEAR_CIRC_SEAM), else itself."""
+    short = (getattr(config, "NEAR_CIRC_SEAM", {}) or {}).get("points") or {}
+    return short.get(_circ_basis_key(basis), basis)
+
+
 def _circulating_change_views(groups: dict, asof=None) -> None:
     """PR1.S8 (Jake 2026-11-05, config.NET_SUPPLY_CIRC): circulating_change_tokens = circulating_supply_used minus the
     previous day's, ONLY where both days are held and on the same basis (the source names the leg) — so its Q0 sum is
@@ -5177,6 +5210,8 @@ def _circulating_change_views(groups: dict, asof=None) -> None:
     a change across two different measures is not a change in supply. The undated days are kept in CIRC_CHANGE_GAPS."""
     CIRC_CHANGE_GAPS.clear()
     CIRC_CHANGE_OPENING.clear()
+    CIRC_SEAM_STEPS.clear()
+    CIRC_SEAM_STEPS_Q0.clear()
     for p in scoped_projects():
         name = p["name"]
         g = groups.get((name, "circulating_supply_used"))
@@ -5186,10 +5221,28 @@ def _circulating_change_views(groups: dict, asof=None) -> None:
                                                                                                          keep="last")
         d, v, src = list(s["date"]), [float(x) for x in s["value"]], [str(x) for x in s["source"]]
         rows, gaps, spans = [], [], []
+        # R13 (Near on Jake's store, config.CIRC_USED_BASIS_FROM): the figure in use names only the series it took —
+        # where that series itself hands over between declared measuring points (NEAR's lockup rule), a day's basis is
+        # the point its row is read on, so the step of a handover is never formed as a change
+        basis = _circ_used_basis(groups, name, d, src)
+        steps = CIRC_SEAM_STEPS.setdefault(name, [])
+        steps.clear()
         for i in range(1, len(s)):
             n = int((d[i] - d[i - 1]).days)
-            if src[i] != src[i - 1]:
-                gaps.append((d[i], f"the basis changes ({src[i - 1]} → {src[i]})"))
+            if basis[i] != basis[i - 1]:
+                # THE SEAM MEASURED ON BOTH BASES ON ONE DAY: the day's change is formed on the basis of the day
+                # before (that day's own readings on it), and the step between the two bases is no change at all
+                prior = (CIRC_SEAM_ALT.get((name, d[i])) or {}).get(_circ_basis_key(basis[i - 1]))
+                if not (getattr(config, "NEAR_CIRC_SEAM", {}) or {}).get("link_net_supply_change"):
+                    prior = None            # the strict reading of PR1.S8: any basis change in the window is a gap
+                if prior is None:
+                    gaps.append((d[i], f"the basis changes ({_circ_basis_name(basis[i - 1])} → "
+                                       f"{_circ_basis_name(basis[i])})"))
+                else:
+                    rows.append((d[i], float(prior) - v[i - 1], src[i], n))
+                    steps.append((d[i], _circ_basis_name(basis[i - 1]), _circ_basis_name(basis[i]), v[i] - float(prior)))
+                    if n != 1:
+                        spans.append((d[i - 1], d[i]))
             elif n != 1:
                 # R11.1 (Jake 2026-11-18, option b): A CHANGE ACROSS A HOLE IS ONE MULTI-DAY CHANGE when both readings
                 # are on the same basis — the difference of two stocks loses nothing; the row says the days it holds
@@ -5200,6 +5253,7 @@ def _circulating_change_views(groups: dict, asof=None) -> None:
         if asof is not None:                      # the Q0 window's undated days: the reason on the cell
             lo = pd.Timestamp(asof).normalize() - pd.Timedelta(days=int(config.NET_SUPPLY_CIRC["window_days"]) - 1)
             gaps = [(x, why) for x, why in gaps if lo <= x <= pd.Timestamp(asof).normalize()]
+            CIRC_SEAM_STEPS_Q0[name] = [x for x in steps if lo <= x[0] <= pd.Timestamp(asof).normalize()]
             opening = lo - pd.Timedelta(days=1)
             if not d or d[0] > opening:
                 gaps.insert(0, (lo, f"no circulating reading on {opening.date()} (the opening)"))
@@ -5605,6 +5659,32 @@ def _near_lockup_views(groups: dict) -> None:
         first_read = lk.index.min() if lk is not None and not lk.empty else None
         unformed = []
         idx, vals, srcs, read_on = [], [], [], []
+        # R13 (Near on Jake's store): what each day's figure LEAVES OUT of circulating (`outs`), and the day's figure on
+        # every OTHER declared basis it can be formed on from that day's own readings (`alt`) — the seam of a declared
+        # handover is then measured on both bases on one day: the change across it is formed on the basis of the day
+        # before, never across the two (config.NEAR_CIRC_SEAM)
+        outs, alt = [], {}
+        hdr = s(groups.get((name, (config.TOTAL_SUPPLY_HISTORY.get(name) or {}).get("total") or "")))
+        _b = lambda src: trajectory.basis_of("circulating_supply_lockup_rule", src)   # noqa: E731
+
+        def own_figure(d):
+            """(value, source, what it leaves out) of NEAR's own figure on `d` — plus the two accounts under the rule."""
+            if base is None or d not in base.index:
+                return None
+            add = None
+            if rule_in and fa is not None:             # R10.B3a: NEAR's own figure leaves the two accounts out
+                w = fa[(fa.index <= d) & (fa.index >= d - pd.Timedelta(days=NEAR_LOCKUP_MAX_AGE_DAYS))]
+                add = float(w.iloc[-1]) if not w.empty else None
+            v = float(base[d]) + (add or 0.0)
+            src = ("derived:circulating_lockup_rule[first_party; no lockup read in force]" if add is None else
+                   "derived:circulating_lockup_rule[first_party + lockup.near + contributors.near (in "
+                   "circulating by the rule, R10.B3); no lockup read in force]")
+            # NEAR's own table leaves out the lockups' locked NEAR: the chain's total that day less the figure (a day
+            # without a total has no such reading — unknown, never 0)
+            t = (float(hdr[d]) if hdr is not None and d in hdr.index else
+                 float(total[d]) if total is not None and d in total.index else None)
+            return v, src, (None if t is None else t - v)
+
         for d in days:
             read = acc = None
             if lk is not None and (fa is not None or rule_in) and total is not None and d in total.index:
@@ -5619,16 +5699,27 @@ def _near_lockup_views(groups: dict) -> None:
                 # the staked part belongs to the SAME read (one block); a read without it leaves all of LOCKED out
                 staked = float(stk[read[0]]) if stk is not None and read[0] in stk.index else None
                 idx.append(d)
+                all_out = (f"derived:circulating_lockup_rule[total_supply − LOCKED (its staked part is not read "
+                           f"yet: all of LOCKED left out, at most LOCKED too low); lockup.near + contributors.near "
+                           f"in circulating (the rule, R10.B3), lockups read {read[0].date()}]")
+                other = {}
                 if staked is None:
                     vals.append(float(total[d]) - read[1])
-                    srcs.append(f"derived:circulating_lockup_rule[total_supply − LOCKED (its staked part is not read "
-                                f"yet: all of LOCKED left out, at most LOCKED too low); lockup.near + contributors.near "
-                                f"in circulating (the rule, R10.B3), lockups read {read[0].date()}]")
+                    srcs.append(all_out)
+                    outs.append(read[1])
                 else:
-                    vals.append(float(total[d]) - max(0.0, read[1] - max(0.0, staked)))
+                    idle = max(0.0, read[1] - max(0.0, staked))
+                    vals.append(float(total[d]) - idle)
                     srcs.append(f"derived:circulating_lockup_rule[total_supply − idle LOCKED (LOCKED − the part "
                                 f"staked by its lockup, which earns); lockup.near + contributors.near in circulating "
                                 f"(the rule, R10.B3), lockups read {read[0].date()}]")
+                    outs.append(idle)
+                    # R13: the same read on the basis before it — all of LOCKED out (the staked part known, not used)
+                    other[_b(all_out)] = (float(total[d]) - read[1], read[1])
+                own = own_figure(d)
+                if own is not None:
+                    other[_b(own[1])] = (own[0], own[2])
+                alt[d] = other
                 read_on.append(read)
             elif read is not None and acc is not None:
                 idx.append(d)
@@ -5639,15 +5730,12 @@ def _near_lockup_views(groups: dict) -> None:
             elif first_read is not None and d >= first_read:
                 unformed.append(d)
             elif base is not None and d in base.index:
+                own = own_figure(d)
                 idx.append(d)
-                add = None
-                if rule_in and fa is not None:             # R10.B3a: NEAR's own figure leaves the two accounts out
-                    w = fa[(fa.index <= d) & (fa.index >= d - pd.Timedelta(days=NEAR_LOCKUP_MAX_AGE_DAYS))]
-                    add = float(w.iloc[-1]) if not w.empty else None
-                vals.append(float(base[d]) + (add or 0.0))
-                srcs.append("derived:circulating_lockup_rule[first_party; no lockup read in force]" if add is None else
-                            "derived:circulating_lockup_rule[first_party + lockup.near + contributors.near (in "
-                            "circulating by the rule, R10.B3); no lockup read in force]")
+                vals.append(own[0])
+                srcs.append(own[1])
+                if rule_in:
+                    outs.append(own[2])
         # D3-1: A READ 11-30 DAYS OLD STILL FORMS THE RULE, AMBER — the reason names the read, its age and the most the
         # figure can be off by: circulating can move between reads by at most LOCKED itself (no rate is established)
         if idx and read_on:
@@ -5681,6 +5769,49 @@ def _near_lockup_views(groups: dict) -> None:
         groups[(name, "circulating_supply_lockup_rule")] = _as_stored(pd.DataFrame(
             {"date": idx, "project": name, "metric": "circulating_supply_lockup_rule", "value": vals,
              "tier": 1, "source": srcs}), cols)
+        if rule_in and len(outs) == len(idx):
+            _near_seam_views(groups, name, idx, [_b(x) for x in srcs], outs, alt, cols)
+
+
+# R13 (Near on Jake's store): (project, day) -> {basis: circulating on that basis} — a day's figure on every OTHER
+# declared basis its own readings form (the seam of a declared handover, measured on both bases on one day)
+CIRC_SEAM_ALT: dict = {}
+# project -> [(day, basis before, basis from, the step = the day's figure on the new basis − on the old)], last build
+CIRC_SEAM_STEPS: dict = {}
+CIRC_SEAM_STEPS_Q0: dict = {}          # ... those inside the net supply change's window
+
+
+def _near_seam_views(groups: dict, name: str, days: list, bases: list, outs: list, alt: dict, cols) -> None:
+    """R13 (config.NEAR_CIRC_SEAM). (1) CIRC_SEAM_ALT: each day's circulating on the other declared bases, for the net
+    supply change (_circulating_change_views forms the change of a seam day on the basis of the day before). (2) THE
+    LOCKUP CONTRACTS' NET RELEASE (config.NEAR_CIRC_SEAM["release"]): the fall of what the circulating figure leaves
+    out — NEAR's own table's locked NEAR before the first lockup read, LOCKED from it, the idle LOCKED from the first
+    read that stores the staked part — between two days ON THE SAME BASIS; on a seam day the fall is formed on the
+    basis of the day before (from that day's own readings), and where it cannot be the day holds no row (a gap, never
+    a step counted as a release). Signed: NEAR going back behind a lock, or a locked lockup unstaking, is negative."""
+    for k in [k for k in CIRC_SEAM_ALT if k[0] == name]:
+        del CIRC_SEAM_ALT[k]
+    for d, other in alt.items():
+        CIRC_SEAM_ALT[(name, pd.Timestamp(d))] = {b: v[0] for b, v in other.items()}
+    metric = (getattr(config, "NEAR_CIRC_SEAM", {}) or {}).get("release")
+    if not metric:
+        return
+    rows, prev = [], None
+    for d, b, o in zip(days, bases, outs):
+        if prev is not None:
+            o_same = o if b == prev[1] else ((alt.get(d) or {}).get(prev[1]) or (None, None))[1]
+            if o_same is not None and prev[2] is not None:
+                n = int((d - prev[0]).days)
+                rows.append((d, prev[2] - o_same,
+                             f"derived:d_lockups_out[the fall of what circulating leaves out, on one basis: {prev[1]}"[:400]
+                             + "]" + (f"[span={n}d]" if n > 1 else "")))
+        prev = (d, b, o)
+    if rows:
+        groups[(name, metric)] = _as_stored(pd.DataFrame(
+            {"date": [r[0] for r in rows], "project": name, "metric": metric, "value": [r[1] for r in rows],
+             "tier": 1, "source": [r[2] for r in rows]}), cols)
+    else:
+        groups.pop((name, metric), None)
 
 
 def _epoch_primary_views(groups: dict, asof=None) -> None:
@@ -10393,7 +10524,20 @@ def _net_supply_circ_note(p: dict) -> str:
             "circulating_supply_used over the 90 days (the sum of its day-on-day changes on one basis, "
             "circulating_change_tokens). It includes every release into circulation (unlocks, grants, emissions) and "
             "every burn; issuance − burn is beside it as a component (cross_tab: A1 / A4), and Total Yield reads that "
-            "component with the releases added, so nothing is counted twice.")
+            "component with the releases added, so nothing is counted twice."
+            + _circ_seam_note(p))
+
+
+def _circ_seam_note(p: dict) -> str:
+    """R13: the declared handovers of the circulating figure inside the window, each with its measured step — said on
+    the net supply change, which leaves the steps out ('' where there is none)."""
+    steps = CIRC_SEAM_STEPS_Q0.get(p["name"]) or []
+    if not steps or _SHIFT["k"]:
+        return ""
+    return (" DECLARED HANDOVER(S) OF THE CIRCULATING FIGURE INSIDE THE WINDOW, LEFT OUT (R13): "
+            + "; ".join(f"{d.date()} {a} → {b}, a step of {st:+,.0f} measured on both bases that day" for d, a, b, st in steps)
+            + ". Each day's change is formed between two readings on ONE basis (the seam day's on the basis before "
+              "it): a change of what is counted is not a change in supply.")
 
 
 def _a4_net_kind_flag(p: dict) -> tuple[str, str] | None:
@@ -15719,6 +15863,12 @@ def flow_statements(groups: dict, asof) -> list[dict]:
         circ_mp = (pd.Series(gc["source"].astype(str).map(lambda x: trajectory.basis_of("circulating_supply_used", x)).values,
                              index=pd.to_datetime(gc["date"]).dt.normalize()) if gc is not None and not gc.empty
                    else pd.Series(dtype=str))
+        if gc is not None and not gc.empty and (getattr(config, "CIRC_USED_BASIS_FROM", {}) or {}).get(name):
+            # R13: where the series in use carries the measuring point itself (NEAR's lockup rule), the quarter's
+            # basis is that point — a declared handover inside the quarter reads as a SERIES BREAK here too
+            _gd = gc.assign(date=pd.to_datetime(gc["date"]).dt.normalize()).sort_values("date")
+            circ_mp = pd.Series([_circ_basis_name(b) for b in _circ_used_basis(
+                groups, name, list(_gd["date"]), [str(x) for x in _gd["source"]])], index=_gd["date"].values)
         pre = _premint(p)
         mint_m = None if pre else (config.issuance_basis(name) if config.issuance_basis(name) in have else None)
         rel_m = "pool_release_tokens" if pre else ("unlock_release_tokens" if config.has_unlock_leg(name) else None)
@@ -15832,8 +15982,11 @@ def flow_statements(groups: dict, asof) -> list[dict]:
             # a change of circulating basis inside the quarter (SPEC.md section 7) explains a step the flows cannot
             pts = circ_mp[(circ_mp.index > start - pd.Timedelta(days=4)) & (circ_mp.index <= end)].unique()
             if len(pts) > 1:
+                # R13: a declared handover measured on both bases on its seam day says the size of its step
+                seam = [x for x in CIRC_SEAM_STEPS.get(name) or () if start < x[0] <= end]
                 why.append(f"the circulating basis changes inside the quarter ({' -> '.join(pts)}) — a SERIES BREAK, "
-                           f"not a flow")
+                           f"not a flow" + ("".join(f"; {x[0].date()}: a step of {x[3]:+,.0f} measured on both bases that "
+                                                    f"day, inside the residual" for x in seam)))
             if note_tok:
                 why.append("named: " + note_tok.split(" — ")[0])
             # a quarter whose circulating is wholly or partly a THIRD PARTY's figure (CoinGecko's circulating, with or
