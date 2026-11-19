@@ -136,7 +136,8 @@ def parse_args(argv=None) -> argparse.Namespace:
                          "Ethereum, Arbitrum, Polygon, Base and OP; routine runs skip it until it is complete. pendle_gauges: "
                          "Pendle's gauge-payout log scans on mainnet, Arbitrum and Optimism, to the head. aero_epochs: every Q0 "
                          "Aerodrome voter epoch (fees, bribes, totalWeight at each epoch start). aero_buyback: the "
-                         "Aerodrome Foundation's locked AERO at each day start over 100 days (archive) — its buy-and-lock. "
+                         "Aerodrome Foundation's buyback window of each UTC day and its locked AERO at each day start, "
+                         "from 2026-07-15 (archive; day by day, resumable; the v3 read from the 2026-10-22 migration). "
                          "aero_managed_locks: the filing wallets' managed-veNFT deposits at each past day start "
                          "(archive, keyed BASE_RPC_URL) — Aerodrome's circulating history on the current basis. "
                          "hyperevm_burn: the HyperEVM zero address's HYPE at each past day start (archive) — "
@@ -645,21 +646,33 @@ def seed_aero_epochs(st, log) -> int:
 
 
 def seed_aero_buyback(st, log) -> int:
-    """The Aerodrome Foundation's buy-and-lock (external audit 2026-10-09, item 1): the AERO locked by its buyback
-    wallets at each UTC day start over the last 100 days, read at past blocks (archive), only where no row is stored —
-    the daily change is the buyback (build_workbook._foundation_buyback_views). Records no gaps."""
+    """The Aerodrome Foundation's buy-and-lock (external audit 2026-10-09, item 1; the agreed basis, Jake 2026-10-11):
+    for every UTC day of the span (fetch/ve_managed.seed_span: the last 100 days, back to foundation_buyback.seed_from)
+    the day's buyback window and the AERO locked at the day's first block — two independent reads, each only where no
+    row is stored (R12: a legacy-basis row dated after the Aero migration is read again on the v3 basis), stored day by
+    day, one log line a day. build_workbook._foundation_buyback_views sums the parts. Records no gaps."""
     from fetch.aero_voter import _stored
-    from fetch.ve_managed import seed_foundation
+    from fetch.ve_managed import LAST_SEED, seed_foundation, stored_source, why_nothing_stored
     from fetch.validate import validate_frame
     pl = [p for p in config.PROJECTS if p.get("foundation_buyback")]
     out = fetch.FetchOutput()
     t0 = time.monotonic()
-    frames = seed_foundation(pl, stored=_stored, say=lambda m: log.info("--seed aero_buyback:%s", m))
     prior = st.latest_values()
-    written = sum(st.upsert(f) for f in (validate_frame(f, prior, out) for f in frames) if f is not None and not f.empty)
-    log.info("--seed aero_buyback: AFTER (%.0fs) — %d row(s) stored", time.monotonic() - t0, written)
+    done = {"rows": 0}
+
+    def write(day_frames):
+        # R12: STORED DAY BY DAY (a seed that is stopped keeps what it read; the next run reads only what is missing)
+        done["rows"] += sum(st.upsert(f) for f in (validate_frame(f, prior, out) for f in day_frames)
+                            if f is not None and not f.empty)
+    frames = seed_foundation(pl, stored=_stored, stored_src=stored_source, write=write,
+                             say=lambda m: log.info("--seed aero_buyback:%s", m))
+    written = done["rows"]
+    log.info("--seed aero_buyback: AFTER (%.0fs) — %d row(s) stored; of %d day(s): %d already held, %d buyback "
+             "window(s) read (%d already stored, %d not read), %d lock stock(s) read (%d not read), %d day(s) with no "
+             "block", time.monotonic() - t0, written, LAST_SEED.get("days", 0), LAST_SEED.get("already_stored", 0),
+             LAST_SEED.get("window_read", 0), LAST_SEED.get("window_stored", 0), LAST_SEED.get("window_error", 0),
+             LAST_SEED.get("stock_read", 0), LAST_SEED.get("read_error", 0), LAST_SEED.get("no_block", 0))
     if not written:
-        from fetch.ve_managed import LAST_SEED, why_nothing_stored
         n = sum(len(f) for f in frames if f is not None)
         log.warning("--seed aero_buyback: WHY 0 STORED — %s", why_nothing_stored(LAST_SEED, n))
     return 0

@@ -868,12 +868,16 @@ def test_aerodrome_seed_says_why_it_stored_nothing(monkeypatch):
     monkeypatch.delenv("BASE_RPC_URL", raising=False)
     import check_offline_items as coi
     monkeypatch.setattr(coi, "rpc_block_at", lambda *a, **k: 123)
+    # R12 (2026-11-19): the buyback window is its own read now — it used to be skipped whenever the lock-stock read
+    # failed (old: no window_reader injected, nothing asked), so a window reader is injected here and fails too
     frames = vm.seed_foundation([config_aero()], days=3, stored=lambda *a: False,
                                 reader=lambda owners, block: {"error": "HTTP 403 historical state not available"},
+                                window_reader=lambda b0, b1: {"error": "HTTP 403 receipts not available"},
                                 say=lambda m: None)
     assert frames == []
     why = vm.why_nothing_stored(vm.LAST_SEED, 0)
     assert "3 lock-stock read(s) failed (first: HTTP 403" in why and "NO KEYED BASE_RPC_URL" in why
+    assert "3 buyback-window read(s) failed (first: HTTP 403 receipts" in why
     vm.seed_foundation([config_aero()], days=2, stored=lambda *a: True, say=lambda m: None)
     assert vm.why_nothing_stored(vm.LAST_SEED, 0).startswith("all 2 days already stored")
 

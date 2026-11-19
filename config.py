@@ -45196,3 +45196,90 @@ VELO_MERGED["Aerodrome"]["primary_less"] = ("Master", "master_gross_issuance_q0_
 RULE_IN["Aerodrome"]["flow_in"] = tuple(
     (("+ the allocation of the Velodrome merger not already counted (one-off, 2026-10-22)",) + tuple(_x[1:]))
     if _x[1] == "aero_merger_issuance_tokens" else _x for _x in RULE_IN["Aerodrome"]["flow_in"])
+
+
+# ===== R12 — AERODROME FOUNDATION BUYBACK =====
+# Jake 2026-11-19 (run on 325061a): "Net absorption Q0 — MISSING — [D — ROUTE NOT FILLED] — actual_buyback_tokens (q0)".
+# Two causes. (A) `--seed aero_buyback` read a day's buyback WINDOW only inside the iteration of a day whose lock STOCK
+# was missing; his store holds the stock for every day, so the windows of 2026-08-21..10-15 were never read (fixed in
+# fetch/ve_managed.seed_foundation: two independent reads a day). (B) Both readers knew only the legacy token and the
+# legacy escrow, and Aerodrome migrated on 2026-10-22 00:00 UTC.
+#
+# TRACED ON BASE 2026-11-19 (public RPC logs + receipts; contract sources: Sourcify, chain 8453 — sAERO VotingEscrow
+# 0xBF7977E1…, AerodromeMigration 0x22a2F734…, Relay implementations 0x3de62ff7… and 0x3909f8b8…):
+#   2026-10-22 02:14-13:39  the Public Goods Fund migrates 26 legacy veNFTs to itself as sAERO #2794..#7987,
+#                           193,780,936.11 AERO (VeNFTMigrated; each sAERO Deposit's provider is the MIGRATION contract)
+#   2026-10-22 20:39        its liquid 1,728,692.45 legacy AERO -> new AERO, 1:1 (LiquidMigrated, tx 0xd8d435af…)
+#   2026-10-23 20:06-21:20  the 26 stakes move into four Aero Relays (rebalanceUnderlying -> DepositRequested; no
+#                           Deposit event): principal 193,780,936.11, unchanged to the wei at every read since
+#   2026-10-28, 10-30       the buyer Safe buys 174,600.64 and 233,215.20 NEW AERO for 122,988 and 147,085 USDC (txs
+#                           0xcc305e6c…, 0x4304725f…), stakes each itself (createStake, permanent: sAERO #19526, #20540)
+#                           and moves the stake to the escrow's tokenId-0 accumulator, which burns it (txs 0xe00ba4ce…,
+#                           0xf800fc31…: Transfer sAERO -> 0x0 of the same amounts) — 407,815.83 AERO bought and BURNED
+#   2026-11-04, 11-11       the Safe buys 243,612.23 and 294,003.10 LEGACY AERO for 159,040 and 166,948 USDC and
+#                           forwards them to the PGF, which holds them liquid, unmigrated (537,615.33 on 2026-11-19)
+#   2026-11-10              the PGF's last two legacy veNFTs (816,485.12 of weights) migrate to sAERO #23940, #23941
+#                           (957,657.48 with their locked managed reward)
+#   2026-11-18              the Safe buys 503,340.91 NEW AERO for 218,887 USDC and forwards it to the PGF (held liquid)
+# So the legacy readers were not wrong about what they saw (243,612.23 and 294,003.10 were purchases, of the LEGACY
+# token) — they missed every purchase of the new token, every sAERO stake, and read the migrated lock stock as 0.
+#
+# THE BASIS DOES NOT CHANGE (Jake 2026-10-11, B): bought and locked in one transaction + locks paid from balance
+# matched oldest-first to purchases + compounded voting rewards on accrual. What changes at the cutover is WHERE it is
+# read — a declared handover of every metric of the read (series_handover below), each v3 row on its own point:
+_r12_fb = PROJECT_BY_NAME["Aerodrome"]["foundation_buyback"]
+_r12_fb["migration"] = {
+    "cutover": AERODROME_MIGRATION["cutover_utc"],            # rows dated on/after it are read on the v3 basis
+    "window_source": "ve_managed:buyback_window_v3", "stock_source": "ve_managed:foundation_locks_v3",
+    # BOTH TOKENS ARE AERO: a purchase is AERO of either token received where the wallet paid out a token that is
+    # neither; the 1:1 migration (AERO from / to the migration contract) is neither a purchase nor a payment.
+    "bought": "legacy or new AERO received from outside the Foundation's wallets in a transaction where the wallet "
+              "paid out a token that is neither AERO token; AERO from the migration contract or from an escrow is "
+              "never a purchase",
+    # A LOCK: legacy VotingEscrow Deposit (createLock / increaseAmount / depositFor) or sAERO Deposit (createStake,
+    # increaseStakeAmount, reviveStake — IVotingEscrow.sol L28-33) by a locker. A migrated veNFT is a Deposit by the
+    # MIGRATION contract and a Relay deposit is a rebalance of an existing stake: neither is a new lock.
+    "locked": "legacy lock deposits + sAERO stakes (createStake / increaseStakeAmount / reviveStake) by the lockers; "
+              "a lock migrated to sAERO, or a stake moved into a Relay, is not a new lock",
+    # WHO LOCKS. Before the migration only the owners locked (the Safe forwarded what it bought). On 2026-10-28 and
+    # 10-30 the Safe staked what it bought ITSELF, and the stake was burned: with "owners" alone that AERO — bought
+    # with USDC and destroyed — would never be counted. A DECISION FOR JAKE (SPEC R12.5): "owners+buyers" until he says.
+    "lockers": "owners+buyers",
+    # COMPOUNDING EXISTS IN THE NEW SYSTEM AND IS READ: a Relay's COMPOUNDER stakes rewards back (Relay.compound ->
+    # increaseStakeAmount, totalBacking += net, event Compounded(net); RelayBase.sol L527-546) — the only write that
+    # raises totalBacking without minting principal, so the only thing that moves the principal's price. The owners'
+    # share is their principal x the rise of that price (totalBacking / principal supply), read from state. MEASURED
+    # 0 SO FAR, not assumed: the PGF's four Relays give the same 193,780,936.11 at every read from 2026-10-24 to
+    # 2026-11-19. sAERO itself has no rebase (the legacy RewardsDistributor's rebase stays read on the legacy escrow).
+    "compounded": "legacy managed veNFTs' compounding (while any is held) + the owners' Relay principal x the rise of "
+                  "the principal's price (totalBacking / principal supply) — read from state; 0 where no Relay the "
+                  "owners hold compounded",
+    "source": "sourcify.dev chain 8453: 0xBF7977E1521e9a3032bf7243Ee4712f311f13915 (V3/src/core/VotingEscrow.sol), "
+              "0x22a2F7340a3fB4C7C389D91eE954766B12476721 (V3/src/migration/Migration.sol, AerodromeMigration.sol), "
+              "0x3de62ff7eaa843acd85ba4ee28a4981e890b1f4d (V3/src/relay/RelayBase.sol, RelayRewardsLib.sol); "
+              "read 2026-11-19",
+    "decided": "Jake 2026-11-19 (R12): the agreed basis read across the migration, the change of measuring point "
+               "declared at the cutover",
+}
+# THE SEED REACHES BACK TO THE POOL OF THE FIRST LOCK IN Q0: the 2026-08-24 lock (#130786) is matched oldest-first to
+# the purchases since 2026-07-15 (the trace above). A seed that starts later would match it to a part of them only.
+_r12_fb["seed_from"] = _r12_fb["trace"]["rows"][0]["date"]
+for _r12m, _r12old, _r12new, _r12what in (
+        [(_r12_fb["stock_metric"], "ve_managed:foundation_locks", _r12_fb["migration"]["stock_source"],
+          "legacy: locked(id).amount of the wallets' NORMAL veNFTs + weights(id, idToManaged) of those in a managed "
+          "veNFT; v3: the legacy locks still held + sAERO staked(id).amount + Relay principal x totalBacking / "
+          "principal supply + pending Relay deposits (fetch/aero_v3.AeroV3.locked_read, one block)"),
+         (_r12_fb["claimable_metric"], "ve_managed:foundation_locks", _r12_fb["migration"]["stock_source"],
+          "the legacy RewardsDistributor's claimable of the veNFTs still held (sAERO has no rebase): the same read, "
+          "written with the v3 lock stock from the cutover")]
+        + [(_m, "ve_managed:buyback_window", _r12_fb["migration"]["window_source"],
+            "legacy: the legacy AERO token and the legacy escrow only; v3: both AERO tokens (the 1:1 migration is not "
+            "a purchase), legacy lock deposits + sAERO stakes, the legacy managed veNFTs' compounding + the Relays' "
+            "(check_offline_items.aerodrome_buyback_window_v3)")
+           for _m in _r12_fb["window_metrics"].values()]):
+    PROJECT_BY_NAME["Aerodrome"].setdefault("series_handover", {})[_r12m] = {
+        "ordered_points": (_r12old, _r12new), "cut": True,
+        "why": "the Aero migration (2026-10-22 00:00 UTC): the Foundation's wallets hold, buy and stake in both "
+               "systems (R12, Jake 2026-11-19)",
+        "composition_change": _r12what, "declared": AERODROME_MIGRATION["cutover_utc"]}
+del _r12m, _r12old, _r12new, _r12what

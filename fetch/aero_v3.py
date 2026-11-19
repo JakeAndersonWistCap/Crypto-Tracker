@@ -707,13 +707,37 @@ class AeroV3:
         is written from a partial read."""
         spec = config.PROJECT_BY_NAME[name].get("ve_managed_holdings") or {}
         labels = {o.lower(): v for o, v in (spec.get("owners") or {}).items()}
+        g = self.locked_read(labels, str(spec.get("escrow") or LEGACY_ESCROW).lower(), blk, st)
+        by, managed, new_ids, relays, factories = g["by"], g["managed"], g["new_ids"], g["relays"], g["factories"]
+        pend_ids, getters, held_in = g["pend_ids"], g["getters"], g["held_in"]
+        parts = [sum(v[i] for v in by.values()) / WAD for i in range(4)]
+        total = sum(parts)
+        return total, (
+            f"filing_managed_lock_tokens at Base block {blk:,} = {total:,.4f}: legacy managed veAERO "
+            f"{parts[0]:,.4f} ({len(managed)} veNFT(s)) + sAERO stakes {parts[1]:,.4f} ({len(new_ids)} sAERO) + "
+            f"Relay principal {parts[2]:,.4f} ({len(relays)} Relay(s) of {len(factories)} factory(ies)) + pending "
+            f"Relay deposits {parts[3]:,.4f}"
+            + (f" ({len(pend_ids)} queue entr(ies) read: "
+               + ", ".join(f"{n} by {fn}" for fn, n in getters.items()) + ")" if pend_ids else "")
+            + "; by wallet: " + "; ".join(f"{labels[o]} {sum(v) / WAD:,.2f}" for o, v in by.items() if sum(v))
+            + (f"; Relays: {'; '.join(held_in)}" if held_in else ""))
+
+    def locked_read(self, labels: dict, legacy_ve: str, blk: int, st: dict, allow_no_factory: bool = False) -> dict:
+        """THE READ BEHIND _filing_read, FOR ANY SET OF WALLETS (R12: the Foundation's buyback wallets read their
+        post-migration lock stock through the same code — check_offline_items.aerodrome_foundation_locks_v3). `labels`
+        {wallet (lower-case): label}. Returns {"by": {wallet: [legacy managed weights, direct sAERO stakes, Relay
+        principal, pending Relay deposits]} (wei), "managed", "new_ids", "relays", "factories", "pend_ids", "getters",
+        "held_in", "relay_state": {relay: {"pt", "backing", "supply", "shares": {wallet: PT balance}}}}. Every read
+        goes through Multicall3 at `blk`; any sub-call that fails raises with its name — never a partial figure.
+        `allow_no_factory`: a registry that ANSWERS an empty factory list is "no Relay exists at this block" (read on
+        Base 2026-11-19: relayFactories() = [] at the cutover block 52,918,927 and at 52,950,000, [0xA972232e…] at
+        52,962,127) — the Relay legs are then 0 by the registry's own answer. The filing read keeps it an error."""
         owners = list(labels)
         reg = str((st or {}).get("relay_factory_registry") or "").lower()
         ve = str(((st or {}).get("addresses") or {}).get("voting_escrow") or "").lower()
         if not owners or not reg or not ve:
             raise RuntimeError("no filing owners (ve_managed_holdings), no relay_factory_registry or no voting_escrow "
                                "in aero_migration.json — the Relay principal cannot be enumerated")
-        legacy_ve = str(spec.get("escrow") or LEGACY_ESCROW).lower()
         W = _words_of
         # round 1: NFT counts on both escrows, the Relay factories
         r1 = self.multi([(ve, "balanceOf", (o,)) for o in owners] + [(legacy_ve, "balanceOf", (o,)) for o in owners]
@@ -721,7 +745,7 @@ class AeroV3:
         n_new = [W(x)[0] for x in r1[:len(owners)]]
         n_old = [W(x)[0] for x in r1[len(owners):2 * len(owners)]]
         factories = _address_array(r1[-1])
-        if not factories:
+        if not factories and not allow_no_factory:
             raise RuntimeError(f"RelayFactoryRegistry {reg} lists no factory")
         # round 2: token ids, Relay counts
         new_pairs = [(o, i) for o, n in zip(owners, n_new) for i in range(n)]
@@ -778,17 +802,11 @@ class AeroV3:
             rec, at, _tid, amt = decode_words(x, FILING_CALLS["pendingDeposits"][1])
             if at and rec.lower() in by:
                 by[rec.lower()][3] += amt
-        parts = [sum(v[i] for v in by.values()) / WAD for i in range(4)]
-        total = sum(parts)
-        return total, (
-            f"filing_managed_lock_tokens at Base block {blk:,} = {total:,.4f}: legacy managed veAERO "
-            f"{parts[0]:,.4f} ({len(managed)} veNFT(s)) + sAERO stakes {parts[1]:,.4f} ({len(new_ids)} sAERO) + "
-            f"Relay principal {parts[2]:,.4f} ({len(relays)} Relay(s) of {len(factories)} factory(ies)) + pending "
-            f"Relay deposits {parts[3]:,.4f}"
-            + (f" ({len(pend_ids)} queue entr(ies) read: "
-               + ", ".join(f"{n} by {fn}" for fn, n in getters.items()) + ")" if pend_ids else "")
-            + "; by wallet: " + "; ".join(f"{labels[o]} {sum(v) / WAD:,.2f}" for o, v in by.items() if sum(v))
-            + (f"; Relays: {'; '.join(held_in)}" if held_in else ""))
+        relay_state = {r: {"pt": pt, "backing": backing[k], "supply": sup[k],
+                           "shares": {o: W(bals[k * len(owners) + j])[0] for j, o in enumerate(owners)}}
+                       for k, (r, pt) in enumerate(zip(relays, pts))}
+        return {"by": by, "managed": managed, "new_ids": new_ids, "relays": relays, "factories": factories,
+                "pend_ids": pend_ids, "getters": getters, "held_in": held_in, "relay_state": relay_state}
 
     def _filing_locks(self, name: str, blk: int, out, st: dict) -> None:
         total, msg = self._filing_read(name, blk, st)

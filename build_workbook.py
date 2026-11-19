@@ -3961,15 +3961,19 @@ def _foundation_buyback_views(groups: dict) -> None:
     (check_offline_items.py aerodrome_foundation_q0 names those days). ONE source string for every row, seeded or daily
     (Jake's run on 20d0eb4: a "[NEGATIVE …]" annotation stripped to a trailing space and read as a second measuring
     point, blanking the series as BUG). actual_buyback_usd = tokens x the same-day price."""
+    FOUNDATION_MIGRATION_CUT.clear()
     for p in scoped_projects():
         fb = p.get("foundation_buyback")
         if not fb:
             continue
+        _foundation_migration_cut(groups, p, fb)
         name, g = p["name"], groups.get((p["name"], fb["stock_metric"]))
         if fb.get("trace"):
             _foundation_trace_rows(groups, p, fb)
         if g is None or g.empty:
-            if fb.get("trace") and fb.get("basis") == "bought_plus_compounded":
+            # R12: the agreed basis is built from the WINDOW rows; it never needed the stock (it used to be skipped
+            # here unless a trace was configured — a store whose stock rows are all cut would have lost the series)
+            if fb.get("basis") == "bought_plus_compounded":
                 _foundation_agreed_basis(groups, p, fb, lambda m: _ser_of(groups, name, m), _view_cols(groups, name))
             continue
         ser = lambda m: (lambda x: None if x is None or x.empty else (  # noqa: E731
@@ -4001,6 +4005,40 @@ def _foundation_buyback_views(groups: dict) -> None:
                             "value": (both * pmap.reindex(both.index)).values, "tier": 2,
                             "source": "derived:tokens*price"})
         groups[(name, "actual_buyback_usd")] = _as_stored(usd, g.columns)
+
+
+FOUNDATION_MIGRATION_CUT: dict = {}      # (project, metric) -> what the migration cut dropped, said
+
+
+def _foundation_migration_cut(groups: dict, p: dict, fb: dict) -> None:
+    """R12 (Jake 2026-11-19): THE DECLARED HANDOVER OF THE FOUNDATION'S READ AT THE AERO MIGRATION, MADE AT READ TIME.
+    A row the LEGACY reader wrote for a day on or after the cutover (config foundation_buyback.migration.cutover) is
+    not on that day's declared basis: it read only the legacy token and the legacy escrow, so it missed every purchase
+    of the new token and every sAERO stake and read the migrated lock stock as 0 (Jake's store: 816,485 then 0 from
+    2026-11-11). Such a row is dropped — the day holds no value until the v3 read stores it (`--seed aero_buyback`
+    re-reads those days). Unknown, never the migration-blind figure. The series_handover `cut` does the same from the
+    first v3 row on; this covers the days between the cutover and it."""
+    mig = fb.get("migration")
+    if not mig:
+        return
+    from fetch.base import _measuring_point              # noqa: PLC0415
+    name, cut = p["name"], pd.Timestamp(mig["cutover"])
+    for metric in (fb["stock_metric"], fb["claimable_metric"], *fb["window_metrics"].values()):
+        g = groups.get((name, metric))
+        decl = config.declared_handover(name, metric) or {}
+        pts = tuple(decl.get("ordered_points") or ())
+        if g is None or g.empty or len(pts) < 2:
+            continue
+        legacy = _measuring_point(pts[0])
+        drop = (g["source"].astype(str).map(_measuring_point) == legacy) & (pd.to_datetime(g["date"]) >= cut)
+        if drop.any():
+            FOUNDATION_MIGRATION_CUT[(name, metric)] = (
+                f"{int(drop.sum())} row(s) of {pts[0]} dated on/after the migration cutover ({cut.date()}) dropped — "
+                f"read by the legacy reader, not on the declared v3 basis")
+            # said on the cell beside any declared cut (_series_note reads HANDOVER_CUT)
+            HANDOVER_CUT[(name, metric)] = "; ".join(x for x in (HANDOVER_CUT.get((name, metric)),
+                                                                 FOUNDATION_MIGRATION_CUT[(name, metric)]) if x)
+            groups[(name, metric)] = g[~drop]
 
 
 def _ser_of(groups: dict, name: str, metric: str):

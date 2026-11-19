@@ -1277,10 +1277,12 @@ def test_foundation_lock_read_stores_both_series_once_a_day_and_the_seed_marks_a
     frames = vm.seed_foundation([p], days=5, stored=stored, say=lambda *_: None,
                                 reader=lambda o, block="latest": got, window_reader=lambda b0, b1: win)
     seeded = pd.concat(frames)
-    assert set(seeded[seeded["metric"] == wm["compounded_owner"]]["source"]) == {"ve_managed:buyback_window"}
+    # R12 (2026-11-19): rows dated on/after the migration cutover (2026-10-22) carry the declared v3 points
+    # (old pins, every day: "ve_managed:buyback_window" and "ve_managed:foundation_locks")
+    assert set(seeded[seeded["metric"] == wm["compounded_owner"]]["source"]) == {"ve_managed:buyback_window_v3"}
     seeded = seeded[seeded["metric"].isin([fb["stock_metric"], fb["claimable_metric"]])]
-    # ONE source string, seeded or daily (Jake's run on 20d0eb4)
-    assert set(seeded["source"]) == {"ve_managed:foundation_locks"} == set(rows["source"])
+    # ONE source string per basis, seeded or daily (Jake's run on 20d0eb4)
+    assert set(seeded["source"]) == {"ve_managed:foundation_locks_v3"} == set(rows["source"])
     assert not any(str(x.date()).endswith("-01") for x in seeded["date"])
 
 

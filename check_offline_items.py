@@ -6860,7 +6860,8 @@ def _is_safe(addr: str) -> bool:
     return bool(r) and r != "0x" and int(r, 16) > 0
 
 
-def aerodrome_buyback_window(b0: int, b1: int, owners: list | None = None, say=print) -> dict:
+def aerodrome_buyback_window(b0: int, b1: int, owners: list | None = None, say=print,
+                             parts: tuple = ("locks", "purchases", "compounded"), also_aero: tuple = ()) -> dict:
     """THE FOUNDATION'S BUYBACK OVER BLOCKS (b0, b1] ON THE BASIS JAKE AGREED (2026-10-11, B):
       (a) AERO BOUGHT and locked by the Foundation wallets (config foundation_buyback.owners). "Bought" = AERO received
           in a transaction in which the wallet paid out a DIFFERENT token (the Ether.fi rule). Returned in parts: locks
@@ -6875,11 +6876,15 @@ def aerodrome_buyback_window(b0: int, b1: int, owners: list | None = None, say=p
           emits msg.sender), so it cannot tell the two apart. Owners' share = their weights in the managed NFT ÷ the
           LockedManagedReward's totalSupply at b1.
       Excluded in every form: the rebase; withdrawManaged realisations (no NotifyReward); veNFT transfers; splits/merges.
-    Reads: state bisection + block receipts on Base (the keyed RPC: BASE_RPC_URL). Returns the parts, or "error"."""
+    Reads: state bisection + block receipts on Base (the keyed RPC: BASE_RPC_URL). Returns the parts, or "error".
+    R12: `parts` names which of the three reads run (the migration-aware reader aerodrome_buyback_window_v3 takes the
+    legacy escrow's locks and compounding from here and reads the purchases itself, across both AERO tokens);
+    `also_aero` = further token addresses that are AERO (the new token: paying it out is not paying a different token)."""
     import config                                          # noqa: PLC0415
     from eth_utils import keccak                           # noqa: PLC0415
     fb = config.PROJECT_BY_NAME["Aerodrome"]["foundation_buyback"]
     owners = [o.lower() for o in (owners or list(fb["owners"]))]
+    same_token = {str(x).lower() for x in also_aero}
     own = set(owners)
     # UPSTREAM BUYERS (config foundation_buyback.buyer_wallets — the Safe 0x10b42e92…, Jake 2026-10-12): a wallet that
     # buys AERO and passes it to the owners. Its purchases join the pool the owners' balance-funded locks are matched
@@ -6907,7 +6912,8 @@ def aerodrome_buyback_window(b0: int, b1: int, owners: list | None = None, say=p
         got: dict = {}
         for lg in logs:
             tp = lg.get("topics") or []
-            if (len(tp) == 3 and tp[0] == T_XFER and lg["address"].lower() != aero and adr(tp[1]) == who):
+            if (len(tp) == 3 and tp[0] == T_XFER and lg["address"].lower() != aero and adr(tp[1]) == who
+                    and lg["address"].lower() not in same_token):
                 got[lg["address"].lower()] = got.get(lg["address"].lower(), 0) + int(lg["data"], 16)
         return got
     try:
@@ -6973,7 +6979,7 @@ def aerodrome_buyback_window(b0: int, b1: int, owners: list | None = None, say=p
                                          "amount": val, "aero_in_same_tx": aero_in, "paid_out": paid,
                                          "bought_same_tx": bought})
         # (a2) PURCHASES INTO THE WALLETS: each block the wallet's AERO balance rises; bought iff it paid another token
-        for o in owners + buyers:
+        for o in (owners + buyers if "purchases" in parts else []):
             # A PURCHASE IS THE WALLET'S OWN TRANSACTION (it pays): for a Safe, every block its nonce() rose, as well
             # as every block its AERO balance moved — a pass-through buyer that forwards at once never shows a balance
             # change at any checkpoint (the Safe 0x10b42e92…, 2026-10-11)
@@ -7001,7 +7007,7 @@ def aerodrome_buyback_window(b0: int, b1: int, owners: list | None = None, say=p
                         for f, a in ins:
                             out["inflows"][f] = out["inflows"].get(f, 0.0) + a
         # (b) COMPOUNDED, OWNERS' SHARE: the managed NFTs the owners' LOCKED NFTs sit in at b1
-        mids = sorted({v[2] for v in s1.values() if v[0] and v[1] == 1})
+        mids = sorted({v[2] for v in s1.values() if v[0] and v[1] == 1}) if "compounded" in parts else []
         for m in mids:
             lmr = "0x" + _retry(lambda: _rpc_retry("base", "eth_call", [{"to": AERO_VE, "data": _selx(
                 "managedToLocked(uint256)") + _word(m)}, hex(b1)]))[-40:]
@@ -7032,6 +7038,314 @@ def aerodrome_buyback_window(b0: int, b1: int, owners: list | None = None, say=p
                         out["compounders"][prov] = out["compounders"].get(prov, 0.0) + amt * share
     except Exception as e:  # noqa: BLE001
         out["error"] = f"{type(e).__name__}: {str(e)[:300]}"
+    return out
+
+
+# ===== R12 (Jake 2026-11-19): THE FOUNDATION'S BUYBACK ACROSS THE AERO MIGRATION (2026-10-22 00:00 UTC). =====
+# Traced on Base 2026-11-19 (SPEC "Round 12"; sources: the verified contracts on Sourcify, chain 8453 — sAERO
+# VotingEscrow 0xBF7977E1…, AerodromeMigration 0x22a2F734…, Relay implementations 0x3de62ff7… / 0x3909f8b8…):
+#   * the Public Goods Fund migrated its 26 legacy veNFTs to itself as 26 sAERO (VeNFTMigrated; sAERO Deposit with
+#     provider = the MIGRATION contract, 2026-10-22), its liquid 1,728,692.45 legacy AERO 1:1 to new AERO
+#     (LiquidMigrated, tx 0xd8d435af…), moved the stakes into four Aero Relays (VotingEscrow.rebalanceUnderlying ->
+#     Relay.DepositRequested, 2026-10-23) and migrated its last two veNFTs on 2026-11-10 (sAERO #23940, #23941);
+#   * the buyer Safe bought NEW AERO with USDC (2026-10-28, 10-30), staked it itself (createStake, permanent) and moved
+#     the stake to the escrow's tokenId-0 accumulator, where it was burned (Transfer sAERO -> 0x0 of the same amount);
+#     it bought LEGACY AERO with USDC (2026-11-04, 11-11) and forwarded it to the Public Goods Fund, which holds it.
+# So after the cutover the legacy-keyed reader misses purchases of the new token and every sAERO stake, and a reader
+# keyed on the new token alone would take the 1:1 migration for a purchase paid in "a different token".
+V3_SEEDS_A_DAY = 24                  # state seeds per window when every family wallet is a Safe (its nonce cannot net out)
+V3_DEPOSIT_KINDS = (0, 1, 3)         # sAERO DepositType: CREATE_STAKE_TYPE, INCREASE_STAKE_AMOUNT, REVIVE_STAKE_TYPE
+                                     # (IVotingEscrow.sol L28-33; 2 = INCREASE_STAKING_PERIOD moves no AERO)
+
+
+def _sig_move_blocks(sig, b0: int, b1: int, seed_span: int, max_calls: int = 3000) -> list[int]:
+    """Every block in (b0, b1] at which `sig(block)` — any hashable state signature — differs from the block before,
+    by bisection (the shape of _base_move_blocks, for a signature read in one Multicall3 per block). Seeded every
+    `seed_span` blocks: a change that reverts inside one seed interval is missed unless the signature holds something
+    monotonic (a Safe's nonce). Raises past `max_calls` reads; a failed read raises in `sig` (never a value)."""
+    seen: dict = {}
+
+    def at(b):
+        if b not in seen:
+            if len(seen) >= max_calls:
+                raise ValueError(f"state bisection stopped after {max_calls} archive reads")
+            seen[b] = _retry(lambda: sig(b))
+        return seen[b]
+    edges = list(range(b0, b1, max(int(seed_span), 1))) + [b1]
+    out, stack = [], list(zip(edges[:-1], edges[1:]))[::-1]
+    while stack:
+        a, b = stack.pop()
+        if at(a) == at(b):
+            continue
+        if b - a <= 1:
+            out.append(b)
+            continue
+        m = (a + b) // 2
+        stack += [(m, b), (a, m)]
+    return sorted(set(out))
+
+
+def v3_classify_tx(logs: list, ctx: dict, tx_to: str = "") -> dict:
+    """ONE TRANSACTION'S PART IN THE FOUNDATION'S BUYBACK AFTER THE MIGRATION, FROM ITS LOGS (pure; R12).
+    ctx: {"aero": {legacy token, new token}, "owners": set, "buyers": set, "lockers": set (wallets whose stakes count
+    as locks), "escrows": {legacy VotingEscrow, sAERO}, "saero": sAERO, "migration": the migration contract} — all
+    lower-case. Rules (SPEC Round 12):
+      * BOTH TOKENS ARE AERO. A purchase is AERO of either token received by a family wallet from outside the family
+        in a transaction where that wallet paid out a token that is NEITHER AERO token. AERO from the migration
+        contract (the 1:1 conversion) or from an escrow (a withdrawal of the wallet's own stake) is never a purchase,
+        and legacy AERO handed to the migration is never a payment.
+      * A LOCK is a legacy VotingEscrow Deposit (kinds 0-2) or an sAERO Deposit (createStake, increaseStakeAmount,
+        reviveStake) whose provider is a locker and whose value is positive. A veNFT migrated to sAERO is a Deposit
+        by the MIGRATION contract — not a locker — so an existing lock that merely migrates is not a new lock; a
+        stake moved into a Relay (rebalanceUnderlying) emits no Deposit at all.
+    Returns {"bought_same_tx", "lock_from_balance", "purchased", "locks": [...], "purchases": [...], "inflows":
+    {sender: AERO}, "migrated_liquid", "migrated_locks", "burned"} — AERO, token units."""
+    from eth_utils import keccak                           # noqa: PLC0415
+    top = lambda x: "0x" + keccak(text=x).hex().removeprefix("0x")  # noqa: E731
+    adr = lambda h: "0x" + h[-40:].lower()  # noqa: E731
+    T_XFER = top("Transfer(address,address,uint256)")
+    T_DEP_OLD = top("Deposit(address,uint256,uint8,uint256,uint256,uint256)")
+    T_DEP_NEW = top("Deposit(address,uint256,uint8,uint128,uint256,uint256)")
+    T_LIQ = top("LiquidMigrated(address,address,uint256,uint256)")
+    T_NFT = top("VeNFTMigrated(address,address,uint256,uint256,uint256,bool,bool)")
+    aero, fam = ctx["aero"], ctx["owners"] | ctx["buyers"]
+    not_a_seller = fam | ctx["escrows"] | {ctx["migration"], "0x" + "0" * 40}
+    out = {"bought_same_tx": 0.0, "lock_from_balance": 0.0, "purchased": 0.0, "locks": [], "purchases": [],
+           "inflows": {}, "migrated_liquid": 0.0, "migrated_locks": 0.0, "burned": 0.0}
+    xf = [(lg["address"].lower(), adr(lg["topics"][1]), adr(lg["topics"][2]), int(lg["data"], 16))
+          for lg in logs if len(lg.get("topics") or []) == 3 and lg["topics"][0] == T_XFER
+          and lg.get("data") not in (None, "0x")]
+    for lg in logs:
+        tp = lg.get("topics") or []
+        a = lg["address"].lower()
+        if a == ctx["migration"] and tp and tp[0] == T_LIQ and adr(tp[2]) in fam:
+            out["migrated_liquid"] += _words(lg["data"])[1] / 1e18
+        elif a == ctx["migration"] and tp and tp[0] == T_NFT and adr(tp[2]) in fam:
+            out["migrated_locks"] += _words(lg["data"])[1] / 1e18
+    # AERO destroyed out of the escrow in a transaction a family wallet executed (the tokenId-0 accumulator's burn)
+    if str(tx_to or "").lower() in fam:
+        out["burned"] = sum(v for t, f, to, v in xf if t in aero and f == ctx["saero"] and to == "0x" + "0" * 40) / 1e18
+    for w in sorted(fam):
+        ins = [(f, v / 1e18) for t, f, to, v in xf if t in aero and to == w and f not in not_a_seller]
+        paid: dict = {}
+        for t, f, _to, v in xf:
+            if f == w and t not in aero:
+                paid[t] = paid.get(t, 0) + v
+        left = sum(v for _f, v in ins)                     # AERO from outside still unassigned to a lock of this tx
+        locks = []
+        for lg in logs:
+            tp = lg.get("topics") or []
+            a = lg["address"].lower()
+            if a not in ctx["escrows"] or len(tp) != 4 or tp[0] not in (T_DEP_OLD, T_DEP_NEW) or adr(tp[1]) != w:
+                continue
+            kind = int(tp[3], 16)
+            val = _words(lg["data"])[0] / 1e18
+            ok = kind in (V3_DEPOSIT_KINDS if a == ctx["saero"] else (0, 1, 2))
+            if not ok or val <= 0 or w not in ctx["lockers"]:
+                continue
+            bought = min(val, left) if paid else 0.0
+            left -= bought
+            out["bought_same_tx"] += bought
+            out["lock_from_balance"] += val - bought
+            locks.append({"nft": int(tp[2], 16), "owner": w, "amount": val, "bought_same_tx": bought,
+                          "escrow": "sAERO" if a == ctx["saero"] else "veAERO", "paid_out": paid})
+        out["locks"] += locks
+        if left <= 0:
+            continue
+        if paid:
+            out["purchased"] += left
+            out["purchases"].append({"owner": w, "aero": left, "paid_out": paid})
+        else:
+            k = left / sum(v for _f, v in ins)
+            for f, v in ins:
+                out["inflows"][f] = out["inflows"].get(f, 0.0) + v * k
+    return out
+
+
+def _v3_reader(state: dict | None = None):
+    """(AeroV3 reader, migration state) — the Foundation's v3 reads go through fetch/aero_v3's Multicall3 plumbing."""
+    import config                                          # noqa: PLC0415
+    from fetch.aero_v3 import AeroV3                       # noqa: PLC0415
+    from fetch.aero_v3 import _is_revert                    # noqa: PLC0415
+    st = state if state is not None else config.aerodrome_migration_state()
+    base = AeroV3(state=st)
+
+    def rpc_retry(method, params, tries=4):
+        """A refused or rate-limited read is asked again (public endpoints); a revert is the answer, raised at once."""
+        for k in range(tries):
+            try:
+                return base.rpc(method, params)
+            except RuntimeError as e:
+                if _is_revert(e) or k == tries - 1:
+                    raise
+                _nap(2 ** k, f"base {method} ({str(e)[:80]})")
+    return AeroV3(state=st, rpc=rpc_retry), st
+
+
+V3_DUST_AERO = 1e-6                  # a principal-price move below this is share-mint rounding, not compounding
+
+
+def aerodrome_relay_compounding(b0: int, b1: int, owners: list, rdr=None, state: dict | None = None) -> dict:
+    """THE NEW SYSTEM'S COMPOUNDING, OWNERS' SHARE, OVER (b0, b1] (R12). A Relay's COMPOUNDER stakes voting rewards
+    back into the Relay's sAERO: Relay.compound(amount) -> VotingEscrow.increaseStakeAmount(net) and totalBacking += net,
+    with event Compounded(net) (RelayBase.sol L527-546, RelayRewardsLib.compound L173-198, verified source of
+    0x3de62ff7…) — the equivalent of the legacy AutoCompounder. It is the ONLY write that raises totalBacking without
+    minting principal (the others: the seed at initialize, processDeposits and processWithdrawals, which move backing
+    and principal supply together at the current price), so it is the only thing that moves the principal's price
+    totalBacking / supply. READ FROM STATE, no receipts: for every Relay in which an owner holds principal,
+        owners' compounding = their principal x (price at the end - price at the start)
+    over each stretch in which their principal is constant — the window whole when it did not change, else split at
+    the blocks it changed (bisected). Others' deposits and exits, however many, cost no read. A move below
+    V3_DUST_AERO is share-mint rounding and reads 0; a FALL beyond it has no cause in the source and raises.
+    {"compounded_owner": AERO, "compounders": {relay: AERO}, "relays": n held} — raises on an unread state."""
+    if rdr is None:
+        rdr, state = _v3_reader(state)
+    labels = {o.lower(): o for o in owners}
+    s0 = rdr.locked_read(labels, AERO_VE.lower(), b0, state, allow_no_factory=True)["relay_state"]
+    s1 = rdr.locked_read(labels, AERO_VE.lower(), b1, state, allow_no_factory=True)["relay_state"]
+    out = {"compounded_owner": 0.0, "compounders": {}, "relays": 0}
+    for r in sorted(set(s0) | set(s1)):
+        a, b = s0.get(r), s1.get(r)
+        if not any((x or {}).get("shares", {}).get(o) for x in (a, b) for o in labels):
+            continue
+        out["relays"] += 1
+        if a is not None and b is not None and (a["backing"], a["supply"]) == (b["backing"], b["supply"]):
+            continue                                       # nothing moved in this Relay at all
+        pt = (b or a)["pt"]
+
+        def at(blk, r=r, pt=pt):
+            """(owners' principal, totalBacking, principal supply) at a block; a Relay not yet deployed reads 0s."""
+            got = rdr.multi_try([(r, "totalBacking", ()), (pt, "totalSupply", ())]
+                                + [(pt, "balanceOf", (o,)) for o in labels], blk)
+            v = [int(x, 16) if x else 0 for x in got]
+            return sum(v[2:]), v[0], v[1]
+        cuts = _sig_move_blocks(lambda blk: at(blk)[0], b0, b1, max((b1 - b0) // V3_SEEDS_A_DAY, 1))
+        gained = 0
+        for lo, hi in zip([b0] + cuts, [c - 1 for c in cuts] + [b1]):
+            if hi <= lo:
+                continue
+            (mine, back_lo, sup_lo), (_m, back_hi, sup_hi) = at(lo), at(hi)
+            if mine and sup_lo and sup_hi:
+                gained += mine * back_hi // sup_hi - mine * back_lo // sup_lo
+        amt = gained / 1e18
+        if amt < -V3_DUST_AERO:
+            raise ValueError(f"Relay {r[:10]}…: the principal's price FELL over blocks {b0:,}..{b1:,} "
+                             f"({amt:,.6f} AERO on the owners' principal) — nothing in the source lowers it")
+        if amt > V3_DUST_AERO:
+            out["compounded_owner"] += amt
+            out["compounders"][r] = out["compounders"].get(r, 0.0) + amt
+    return out
+
+
+def aerodrome_buyback_window_v3(b0: int, b1: int, owners: list | None = None, say=print, state: dict | None = None,
+                                legacy_reader=None, relay_reader=None) -> dict:
+    """THE FOUNDATION'S BUYBACK OVER BLOCKS (b0, b1] AFTER THE AERO MIGRATION — the agreed basis (Jake 2026-10-11, B)
+    read across both systems (R12, Jake 2026-11-19; the declared handover of the window metrics at 2026-10-22):
+      legacy escrow   locks by the owners and the managed veNFTs' compounding / rebase, from aerodrome_buyback_window
+                      (its own purchases read switched off);
+      both tokens     purchases, sAERO stakes and what is NOT a purchase (the 1:1 migration, escrow withdrawals), by
+                      v3_classify_tx on the receipts of every block at which a family wallet's state moved — ONE
+                      Multicall3 a block: its legacy and new AERO balances, its Safe nonce, its veNFT and sAERO counts;
+      Relays          compounding, owners' share, from the principal's price (aerodrome_relay_compounding).
+    The lockers are the owners AND the declared buyer wallets (config foundation_buyback.migration.lockers): the
+    buyer Safe staked what it bought itself (2026-10-28, 10-30) before the stake was burned.
+    Returns the legacy reader's keys plus "migrated_liquid", "migrated_locks", "burned"; "error" set = nothing usable."""
+    import config                                          # noqa: PLC0415
+    fb = config.PROJECT_BY_NAME["Aerodrome"]["foundation_buyback"]
+    st = state if state is not None else config.aerodrome_migration_state()
+    adrs = {k: str(v).lower() for k, v in (st.get("addresses") or {}).items()}
+    owners = [o.lower() for o in (owners or list(fb["owners"]))]
+    buyers = [b.lower() for b in (fb.get("buyer_wallets") or {})]
+    fam = owners + [b for b in buyers if b not in owners]
+    legacy = config.PROJECT_BY_NAME["Aerodrome"]["contracts"]["token"]
+    legacy = (legacy["address"] if isinstance(legacy, dict) else legacy).lower()
+    if not all(adrs.get(k) for k in ("token", "voting_escrow", "migration")):
+        return {"error": "aero_migration.json names no new token / voting_escrow / migration — the v3 window cannot be read"}
+    new, saero, mig = adrs["token"], adrs["voting_escrow"], adrs["migration"]
+    lockers = set(owners) | (set(buyers) if "buyers" in str((fb.get("migration") or {}).get("lockers", "")) else set())
+    ctx = {"aero": {legacy, new}, "owners": set(owners), "buyers": set(buyers), "lockers": lockers,
+           "escrows": {AERO_VE.lower(), saero}, "saero": saero, "migration": mig}
+    out = (legacy_reader or aerodrome_buyback_window)(b0, b1, owners=owners, say=say, parts=("locks", "compounded"),
+                                                      also_aero=(new,))
+    if out.get("error"):
+        out["error"] = f"legacy escrow part: {out['error']}"
+        return out
+    out.update({"migrated_liquid": 0.0, "migrated_locks": 0.0, "burned": 0.0, "basis": "v3"})
+    try:
+        safes = {w: _is_safe(w) for w in fam}
+        sel_bal, sel_nonce = _selx("balanceOf(address)"), _selx("nonce()")
+
+        def sig(b):
+            calls = []
+            for w in fam:
+                calls += [(legacy, sel_bal + _word(int(w, 16))), (new, sel_bal + _word(int(w, 16))),
+                          (AERO_VE, sel_bal + _word(int(w, 16))), (saero, sel_bal + _word(int(w, 16)))]
+                if safes[w]:
+                    calls.append((w, sel_nonce))
+            got = _batch_eth_calls("base", calls, block=hex(b))
+            if any(x is None for x in got):
+                raise ValueError(f"the Foundation wallets' state unread at block {b}")
+            return tuple(int(x, 16) for x in got)
+        span = max((b1 - b0) // V3_SEEDS_A_DAY, 1) if all(safes.values()) else 3600
+        seen_tx = {lk["tx"] for lk in out["locks"]}
+        for blk in _sig_move_blocks(sig, b0, b1, span):
+            for rc in _retry(lambda: _block_receipts("base", blk)):
+                tx = rc.get("transactionHash")
+                got = v3_classify_tx(rc.get("logs") or [], ctx, tx_to=rc.get("to") or "")
+                for lk in got["locks"]:
+                    if lk["escrow"] == "veAERO" and tx in seen_tx:
+                        # counted by the legacy part (its own bisection): take its figures, not both
+                        got["bought_same_tx"] -= lk["bought_same_tx"]
+                        got["lock_from_balance"] -= lk["amount"] - lk["bought_same_tx"]
+                        continue
+                    out["locks"].append({**lk, "block": blk, "tx": tx})
+                for pu in got["purchases"]:
+                    out["purchases"].append({**pu, "block": blk, "tx": tx})
+                for k in ("bought_same_tx", "lock_from_balance", "purchased", "migrated_liquid", "migrated_locks",
+                          "burned"):
+                    out[k] += got[k]
+                for f, v in got["inflows"].items():
+                    out["inflows"][f] = out["inflows"].get(f, 0.0) + v
+        rel = (relay_reader or aerodrome_relay_compounding)(b0, b1, owners, state=st)
+        out["compounded_owner"] += rel["compounded_owner"]
+        for r, v in rel["compounders"].items():
+            out["compounders"][r] = out["compounders"].get(r, 0.0) + v
+        out["relays"] = rel.get("relays", 0)
+    except Exception as e:  # noqa: BLE001
+        out["error"] = f"{type(e).__name__}: {str(e)[:300]}"
+    return out
+
+
+def aerodrome_foundation_locks_v3(owners: list, block: str = "latest", state: dict | None = None, rdr=None,
+                                  legacy_reader=None) -> dict:
+    """THE AERO THE FOUNDATION'S BUYBACK WALLETS HOLD LOCKED AFTER THE MIGRATION, AT `block` (R12): the legacy locks
+    still held (aerodrome_foundation_locks: normal locks + managed weights, and the legacy rebase claimable) + the
+    wallets' sAERO staked amounts + their Relay principal x totalBacking / principal supply + pending Relay deposits
+    — the three v3 legs read by fetch/aero_v3.AeroV3.locked_read, the code behind filing_managed_lock_tokens, at the
+    SAME block. The legacy read is taken whole (it counts normal locks too; locked_read's own legacy leg, managed
+    weights only, is not added). Returns aerodrome_foundation_locks' keys plus "legacy", "direct", "relay",
+    "pending", "block", or {"error": why} — a leg that cannot be read is an error, never 0."""
+    try:
+        if rdr is None:
+            rdr, state = _v3_reader(state)
+        blk = int(block, 16) if isinstance(block, str) and block.startswith("0x") else (
+            int(block) if not isinstance(block, str) else int(rdr.rpc("eth_blockNumber", []), 16))
+        out = (legacy_reader or aerodrome_foundation_locks)(list(owners), block=hex(blk))
+        if out.get("error"):
+            return {"error": f"legacy escrow: {out['error']}"}
+        labels = {o.lower(): o for o in owners}
+        g = rdr.locked_read(labels, AERO_VE.lower(), blk, state, allow_no_factory=True)
+    except Exception as e:  # noqa: BLE001 — unknown, never 0
+        return {"error": f"{type(e).__name__}: {str(e)[:300]}"}
+    out.update({"legacy": out["locked"], "direct": 0.0, "relay": 0.0, "pending": 0.0, "block": blk,
+                "sAERO": len(g["new_ids"]), "relays": len(g["relays"])})
+    for o, v in g["by"].items():
+        d, r, pn = v[1] / 1e18, v[2] / 1e18, v[3] / 1e18
+        out["direct"] += d
+        out["relay"] += r
+        out["pending"] += pn
+        out["by_owner"][labels[o]] = out["by_owner"].get(labels[o], 0.0) + d + r + pn
+    out["locked"] = out["legacy"] + out["direct"] + out["relay"] + out["pending"]
     return out
 
 
