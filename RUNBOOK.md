@@ -544,9 +544,60 @@ on Optimism (about 465 days, 4 rows a day, 25-30 minutes); once stored, Aerodrom
 merged basis. Run the backfill line until the Velodrome line ends "reached 2025-07-14": a part-read history leaves
 one quarter of the token-flow statement straddling the two bases. NEAR. See the Near lines below.
 
-@@NEAR@@
+Near's FEES, REVENUE and HOLDER REVENUE each show their gas and NEAR Intents parts. The NEAR Foundation set is built
+from published and inferred evidence (each wallet tagged) and gives the insider share of stake; House of Stake's
+operator payouts (its own ledger, each transaction read on chain) are supply-side incentives and give SUBSIDY COVER.
+Both are new series: the cells read n/a or NEEDS HISTORY until your next run stores them.
 
-@@BLOCK@@
+```
+cd C:\Users\jake\Crypto-Tracker
+.venv\Scripts\Activate.ps1
+gcloud auth application-default login
+#   expect: a browser sign-in, then "Credentials saved to file"
+gcloud auth application-default set-quota-project near-data-510309
+#   expect: "Credentials saved to file" and a line naming the quota project near-data-510309
+git switch claude/crypto-metrics-supply-demand-ovkg8g
+git pull
+git log --oneline -1
+#   expect: the line ends "R11: RUNBOOK 11ez"
+python -c "import config; print(len(config.VELO_MERGED['Aerodrome']['legs']), config.VELO_MERGED['Aerodrome']['from'], config.R11_MOVES_DECLARED, config.OUTFLOW_CATEGORIES['Near']['b'], config.SUBSIDY_REVENUE_METRIC['Near'])"
+#   expect: 4 2025-07-14 0 ('near_mpc_operator_payouts_tokens',) revenue_total_usd
+python circ_legs.py Aerodrome
+#   expect: total_supply listed; read-only
+python circ_legs.py Near
+#   expect: "circulating_supply_lockup_rule [first-party figure]: built at read time (no stored rows)"
+Get-Content -Raw sql\near\bigquery_supply_flows.sql | bq query --dry_run --use_legacy_sql=false --project_id=near-data-510309 --parameter=d0:DATE:2025-07-15 --parameter=d1:DATE:2025-10-06
+#   expect: one line "Query successfully validated ... will process N bytes" - paste it back (nothing is billed by a dry run)
+python token_metrics.py
+#   expect: the run ends without error; near lines for near_foundation_staked_tokens (about 3.80M NEAR) and near_mpc_operator_payouts_tokens; a near_bigquery line with a dry-run estimate and "not approved" for the burn history
+python near_lockups_weekly.py --force
+#   expect: a line naming the lockup contracts read and near_lockup rows stored (the second reading: lockup releases can then join the unlock leg)
+python archive_backfill.py --run --project Aerodrome --budget-min 30
+#   expect: "Aerodrome supply ..."; "Aerodrome voter epochs Aerodrome: N row(s) written over M epoch(s)"; and a new line "Velodrome VELO history Aerodrome: N row(s) written over D day(s) ... - reached 2025-07-14" (about 1,860 rows over 465 days). If it ends "time budget spent" or "stopped at <day>", run this line again until it says "reached 2025-07-14"; if it stops at the same day twice, paste the line back
+python token_metrics.py --seed aero_buyback
+#   expect: a line ending "row(s) stored" - the Foundation's purchases day by day (needs BASE_RPC_URL)
+python token_metrics.py --no-fetch
+#   expect: no error
+python done_check.py --verbose | Select-String "^(Uniswap|Fluid|Maple|Morpho|Pendle|Sky|Hyperliquid|Aerodrome|Near)" -Context 0,8
+#   expect: the seven frozen projects READY; Aerodrome READY if the epochs and the purchase history landed, else only "S13 ... STALE" and/or "Net absorption"; Near NOT READY with a shorter list than last time - paste Aerodrome's and Near's lists back
+New-Item -ItemType Directory -Force ..\tm-exports | Out-Null
+python store_export.py --project Aerodrome --out-dir ..\tm-exports
+#   expect: a line starting "wrote ../tm-exports/aerodrome-"
+python store_export.py --project Near --out-dir ..\tm-exports
+#   expect: a line starting "wrote ../tm-exports/near-"
+git switch data/store-exports
+git pull
+Copy-Item ..\tm-exports\aerodrome-*.json.gz exports\
+Copy-Item ..\tm-exports\near-*.json.gz exports\
+git add -f exports
+git commit -m "data: Aerodrome and Near store exports (R11)"
+git push
+git switch claude/crypto-metrics-supply-demand-ovkg8g
+git log --oneline -1
+#   expect: the same line as above
+python project_freeze.py --compare all
+#   expect: seven lines, each "0 undeclared move(s)": Fluid 353, Hyperliquid 616, Maple 360, Morpho 285, Pendle 373, Sky 482, Uniswap 309 cells
+```
 
 
 ## 11ey. Round 10 — Aerodrome's migration fixed, Near wired on the rule (2026-11-19)
