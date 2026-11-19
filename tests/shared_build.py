@@ -201,7 +201,13 @@ def _build(d: Path) -> dict:
             "groups": copy.deepcopy(dict(bw._LAST_GROUPS)),
             "headlines": copy.deepcopy(list(bw._HEADLINE_CELLS)),
             "trajectory": copy.deepcopy(list(bw.TRAJECTORY_ROWS)),
-            "locations": copy.deepcopy(dict(reader.HEADLINE_LOCATIONS))}
+            "locations": copy.deepcopy(dict(reader.HEADLINE_LOCATIONS)),
+            # R13: the state this build left on the declared circulating switches (config CIRCULATING_ONCHAIN[...]
+            # ["subtract_when_complete"]["state"]) — a test reads it from HERE, never from the live module, which holds
+            # it only in the process that made the build (the disk copy serves the other workers)
+            "circ_switch_state": {n: (sp.get("subtract_when_complete") or {}).get("state")
+                                  for n, sp in config.CIRCULATING_ONCHAIN.items()
+                                  if (sp.get("subtract_when_complete") or {}).get("state")}}
 
 
 def _stale_build(d: Path) -> None:

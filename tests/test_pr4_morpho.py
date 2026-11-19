@@ -162,7 +162,8 @@ def test_1_unlocks_follow_the_set_circulating_subtracts_and_never_count_claims_t
     assert list(rel.round(6)) == [1.0, 1.0, 0.0]
 
 
-def test_1_on_the_dumps_circulating_is_total_less_the_dao_pending_and_the_float_takes_the_entities(morpho):
+def test_1_on_the_dumps_circulating_is_total_less_the_dao_pending_and_the_float_takes_the_entities(morpho, built,
+                                                                                                    monkeypatch):
     """The dumps hold no morpho_undistributed_tokens rows: the switch is PENDING (said on the cell). R9.2 (the rule):
     the DAO is IN circulating — circulating is total − the relocked MORPHO modelled for 2026-10-13 (PR4C.1: 121.2M) =
     878.8M (was 574.8M with the DAO out); the DAO (304.0M) and the released entities (148.7M) leave the float, which
@@ -174,6 +175,10 @@ def test_1_on_the_dumps_circulating_is_total_less_the_dao_pending_and_the_float_
     assert _cell(morpho, "Tradeable float ÷ circulating") == pytest.approx(flt / circ, rel=1e-9)
     assert morpho["reader|A2 Coordination|Free float (tokens)"] == pytest.approx(426_052_377, abs=1)
     assert morpho["reader|A2 Coordination|Circulating supply"] == pytest.approx(878_800_000, abs=1)
+    # R13: the note is formed on THIS build's switch state, taken from the build's record (was: the live module's,
+    # which holds it only in the process that made the shared build — another worker reads the disk copy)
+    monkeypatch.setitem(config.CIRCULATING_ONCHAIN["Morpho"]["subtract_when_complete"], "state",
+                        built["circ_switch_state"]["Morpho"])
     note = config.circulating_rule_note("Morpho")
     assert "DECLARED HANDOVER" in note and "PENDING" in note and "Arbitrum" in note
 
