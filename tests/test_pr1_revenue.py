@@ -273,7 +273,7 @@ def test_gate_uniswap_three_lines_are_the_routed_series(built):
     assert isinstance(share, float) and share == pytest.approx(pay)
     # R13: the share is UNI burned ÷ UNI released on those days (one basis), not the two $ lines' quotient — and it
     # is not capped: on the dumps it still reads above 1 (was 1.0692 in $ per covered day; 1.0394 in UNI)
-    tok = [X.value("Data", drow[f"Uniswap|{m}"], q0c) for m in ("s13_share_holder_tokens", "s13_share_revenue_tokens")]
+    tok = [X.value("Data", drow[f"Uniswap|{m}"], q0c) for m in ("holder_value_revenue_s13_share_tokens", "revenue_s13_share_tokens")]
     assert share == pytest.approx(tok[0] / tok[1]) and share == pytest.approx(1.0394, abs=5e-4) and share > 1
     note = wb["CP Comparability"].cell(r, heads[bw.CP_HSHARE_HEAD]).comment.text
     assert "HOLDER SHARE" in note and "Can read above 1" in note

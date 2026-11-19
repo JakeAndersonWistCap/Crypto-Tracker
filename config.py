@@ -44182,7 +44182,9 @@ PROJECT_BY_NAME["Hyperliquid"]["notes"] = PROJECT_BY_NAME["Hyperliquid"]["notes"
 def frozen_moves_before_r9(project: str) -> dict:
     """The cells a round BEFORE round 9 declared (each keeps its record; a round-9 step on one is under its "then").
     A cell first moved by the rule in round 9 is not in it — the round-9 record is tests/fixtures/frozen_moves_r9.json."""
-    return {k: d for k, d in FROZEN_MOVES[project].items() if not str(d["why"]).startswith("R9.")}
+    # (a cell first moved by a LATER round — R10 onward, each with its own record file — is not in it either)
+    import re as _re
+    return {k: d for k, d in FROZEN_MOVES[project].items() if not _re.match(r"R(9|1\d)\b", str(d["why"]))}
 FLOW_LEG_LINES["m_rule"] = ("memo: minted straight to issuer-side wallets (insider emission — INSIDE the lines above: "
                             "under the rule those wallets are circulating)")
 # Sky's token-flow statement keeps its lines: the rule un-subtracts no wallet of Sky's (its two legs are ADDED from the
@@ -46160,9 +46162,9 @@ S13_SHARE_BASIS = {"Uniswap": {
            "between release and landing — a price effect, not a share of revenue.",
     "above_one": "A mainnet release lands at 0x…dEaD at once, an L2 release after its bridge (OP-stack ~7 days), so "
                  "the share over a window is 1 only where the UNI in flight is the same at both ends.",
-    "holder_revenue": {"price": "price_usd", "price_day_offset": 0, "view": "s13_share_holder_tokens",
+    "holder_revenue": {"price": "price_usd", "price_day_offset": 0, "view": "holder_value_revenue_s13_share_tokens",
                        "basis": "the day's burn x the 00:00 UTC price of that day"},
-    "revenue": {"price": "price_usd", "price_day_offset": 1, "view": "s13_share_revenue_tokens",
+    "revenue": {"price": "price_usd", "price_day_offset": 1, "view": "revenue_s13_share_tokens",
                 "basis": "DefiLlama's releases x the price at the END of the release day (the next day's 00:00 UTC)"},
     "not_after_handover": True,
     "evidence": {"read_on": "2026-11-19",
@@ -46177,9 +46179,9 @@ S13_SHARE_BASIS = {"Uniswap": {
                                "usd_quotient": 1.0514, "holder_uni": 5_142_001, "revenue_uni": 5_036_153,
                                "share": 1.0210, "in_flight_start_uni": 393_852, "in_flight_end_uni": 288_005}},
     "decided": "Jake 2026-11-19 (R13): same covered days, one basis, never capped"}}
-for _r13u, _r13w in (("s13_share_holder_tokens", "HOLDER REVENUE in UNI — holder revenue ÷ the 00:00 UTC price of its "
+for _r13u, _r13w in (("holder_value_revenue_s13_share_tokens", "HOLDER REVENUE in UNI — holder revenue ÷ the 00:00 UTC price of its "
                                                  "day (the UNI credited), on the S13 lines' same covered days"),
-                     ("s13_share_revenue_tokens", "REVENUE in UNI — DefiLlama's released value ÷ the price at the end "
+                     ("revenue_s13_share_tokens", "REVENUE in UNI — DefiLlama's released value ÷ the price at the end "
                                                   "of its day (the UNI released), on the S13 lines' same covered days")):
     METRICS[_r13u] = {"label": f"{_r13w} (R13: the holder share on one basis, never capped)", "kind": "flow",
                       "unit": "tokens", "archetypes": [1, 2, 3, 4], "tiers": [2], "sanity_min": 0, "sanity_max": 1e12,

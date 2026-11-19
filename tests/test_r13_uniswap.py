@@ -108,14 +108,14 @@ def test_each_line_is_turned_back_into_the_uni_it_valued():
     released = [2000, 4000, 6000, 2000, 4000]
     g = _store(released, released, px)
     st = _views(g)
-    ht, rt = g[(N, "s13_share_holder_tokens")], g[(N, "s13_share_revenue_tokens")]
+    ht, rt = g[(N, "holder_value_revenue_s13_share_tokens")], g[(N, "revenue_s13_share_tokens")]
     assert list(ht["value"]) == pytest.approx(released) and list(rt["value"]) == pytest.approx(released)
     assert "price_usd of the same day" in ht["source"].iloc[0] and "price_usd of day+1" in rt["source"].iloc[0]
     q = st["share_basis"]["q0"]
     assert q["holder_tokens"] == q["revenue_tokens"] == pytest.approx(18000) and q["share"] == pytest.approx(1.0)
     usd = _sum(g, "holder_value_revenue_usd") / _sum(g, "revenue_usd")
     assert usd == pytest.approx(110000 / 128000) and q["holder_usd"] / q["revenue_usd"] == pytest.approx(usd)
-    assert bw.s13_share_metrics(N) == ("s13_share_holder_tokens", "s13_share_revenue_tokens")
+    assert bw.s13_share_metrics(N) == ("holder_value_revenue_s13_share_tokens", "revenue_s13_share_tokens")
 
 
 def test_a_landing_after_a_price_rise_moves_the_dollar_lines_not_the_share():
@@ -150,8 +150,8 @@ def test_a_share_above_one_is_kept_and_said_on_the_number():
     assert "ABOVE 1 — REAL, NOT CAPPED" in note and "8,000 more UNI" in note and "1.8000" in note
     assert "12,000 UNI at the window's start, 4,000 at its end" in note and note.startswith("Q0, THIS BUILD")
     # the whole series is the view: nothing was clipped to the other line
-    assert _sum(g, "s13_share_holder_tokens") == pytest.approx(sum(burned))
-    assert _sum(g, "s13_share_revenue_tokens") == pytest.approx(sum(released))
+    assert _sum(g, "holder_value_revenue_s13_share_tokens") == pytest.approx(sum(burned))
+    assert _sum(g, "revenue_s13_share_tokens") == pytest.approx(sum(released))
 
 
 def test_the_share_formula_reads_the_two_token_views_with_no_cap():
@@ -164,7 +164,7 @@ def test_the_share_formula_reads_the_two_token_views_with_no_cap():
     cols = {c[0]: c for c in bw._revenue_line_cols(R())}
     p = config.PROJECT_BY_NAME[N]
     f = cols[bw.CP_HSHARE_HEAD][1](5, p)
-    assert "D!s13_share_holder_tokens!q0" in f and "D!s13_share_revenue_tokens!q0" in f
+    assert "D!holder_value_revenue_s13_share_tokens!q0" in f and "D!revenue_s13_share_tokens!q0" in f
     assert "holder_value_revenue_usd" not in f and "MIN(" not in f.upper() and "MAX(" not in f.upper()
     # the three lines' own cells keep their $ series (their same-covered-days views)
     assert cols[bw.CP_REV_LINE_HEAD][1](5, p) == bw.pull("D!revenue_usd_s13d!q0")
@@ -183,7 +183,7 @@ def test_a_day_without_its_price_is_left_out_of_both_lines_never_valued_at_anoth
     g[(N, "price_usd")] = g[(N, "price_usd")].iloc[:4]            # the price at the END of the last day is not stored
     st = _views(g)
     assert st["share_basis"]["left_out"] == ["2026-11-04"]
-    for m in ("s13_share_holder_tokens", "s13_share_revenue_tokens"):
+    for m in ("holder_value_revenue_s13_share_tokens", "revenue_s13_share_tokens"):
         assert len(g[(N, m)]) == 3 and _sum(g, m) == pytest.approx(300)      # out of BOTH: the same days on each side
     assert st["share_basis"]["q0"]["share"] == pytest.approx(1.0)
     assert "LEFT OUT OF BOTH LINES" in bw.s13_share_note(N) and "2026-11-04" in bw.s13_share_note(N)
@@ -196,7 +196,7 @@ def test_a_stored_zero_is_zero_uni_whatever_the_price():
     g[(N, "price_usd")] = g[(N, "price_usd")].iloc[1:]            # no price on the first day: its $ are a stored 0
     st = _views(g)
     assert st["share_basis"]["left_out"] == []
-    assert list(g[(N, "s13_share_holder_tokens")]["value"]) == pytest.approx([0, 100, 100])
+    assert list(g[(N, "holder_value_revenue_s13_share_tokens")]["value"]) == pytest.approx([0, 100, 100])
 
 
 def test_no_view_without_both_lines_or_a_price():
@@ -204,11 +204,11 @@ def test_no_view_without_both_lines_or_a_price():
     del g[(N, "price_usd")]
     st = _views(g)
     assert "share_basis" not in st and bw.s13_share_metrics(N) is None
-    assert (N, "s13_share_holder_tokens") not in g
+    assert (N, "holder_value_revenue_s13_share_tokens") not in g
     g = _store([100, 100], [100, 100], [5.0, 5.0, 5.0])
     del g[(N, "revenue_usd")]
     _views(g)
-    assert bw.s13_share_metrics(N) is None and (N, "s13_share_revenue_tokens") not in g
+    assert bw.s13_share_metrics(N) is None and (N, "revenue_s13_share_tokens") not in g
 
 
 # ===================================================================================== after a TokenJar takeover
@@ -218,7 +218,7 @@ def test_not_formed_where_the_jar_inflows_hold_the_revenue_line(monkeypatch):
     bw._s13_views(g)
     monkeypatch.setitem(config.TOKENJAR_NOTE, N, {"handed_over": True, "text": ""})
     bw._s13_share_basis_views(g, ASOF)
-    assert bw.s13_share_metrics(N) is None and (N, "s13_share_holder_tokens") not in g
+    assert bw.s13_share_metrics(N) is None and (N, "holder_value_revenue_s13_share_tokens") not in g
     assert "NOT FORMED" in bw.s13_share_note(N) and "TokenJar" in bw.s13_share_note(N)
 
 
