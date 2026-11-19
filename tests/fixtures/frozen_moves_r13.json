@@ -1,0 +1,76 @@
+{
+"Uniswap": {
+"audit|CP Comparability|HOLDER REVENUE Q0 ($) — S13 line 3: the part of revenue reaching token holders": [
+{
+"date": "2026-11-19",
+"from": 32213646.8,
+"to": 31925180.4,
+"why": "R13 (Jake 2026-11-19): HOLDER REVENUE is read to 2026-10-12, the last day both S13 lines hold (config.S13_SAME_DAYS, as for Hyperliquid) - the 2026-10-13 burn, 288,466, is outside the days revenue holds"
+}
+],
+"audit|CP Comparability|HOLDER SHARE = holder revenue ÷ revenue, per covered day (S13)": [
+{
+"date": "2026-11-19",
+"from": 1.06915161,
+"to": 1.03941117,
+"why": "R13 (Jake 2026-11-19): the holder share (= the net payout ratio) is read on one basis, UNI burned / UNI released on the same covered days (config.S13_SHARE_BASIS): 5,556,001 / 5,345,335, 2026-07-16..10-12; in USD on those days 31,925,180 / 29,795,323 = 1.0715. Still above 1, not capped: 210,666 UNI released before the window landed in it"
+}
+],
+"audit|CP Comparability|Payout ratio — the project's own net basis = credited holder value ÷ revenue (config revenue basis)": [
+{
+"date": "2026-11-19",
+"from": 1.06915161,
+"to": 1.03941117,
+"why": "R13 (Jake 2026-11-19): the holder share (= the net payout ratio) is read on one basis, UNI burned / UNI released on the same covered days (config.S13_SHARE_BASIS): 5,556,001 / 5,345,335, 2026-07-16..10-12; in USD on those days 31,925,180 / 29,795,323 = 1.0715. Still above 1, not capped: 210,666 UNI released before the window landed in it"
+}
+],
+"reader|Business|Holder revenue (S13), 90 days": [
+{
+"date": "2026-11-19",
+"from": 32213646.8,
+"to": 31925180.4,
+"why": "R13 (Jake 2026-11-19): HOLDER REVENUE is read to 2026-10-12, the last day both S13 lines hold (config.S13_SAME_DAYS, as for Hyperliquid) - the 2026-10-13 burn, 288,466, is outside the days revenue holds"
+}
+],
+"reader|Business|Holder share (S13)": [
+{
+"date": "2026-11-19",
+"from": 1.06915161,
+"to": 1.03941117,
+"why": "R13 (Jake 2026-11-19): the holder share (= the net payout ratio) is read on one basis, UNI burned / UNI released on the same covered days (config.S13_SHARE_BASIS): 5,556,001 / 5,345,335, 2026-07-16..10-12; in USD on those days 31,925,180 / 29,795,323 = 1.0715. Still above 1, not capped: 210,666 UNI released before the window landed in it"
+}
+],
+"reader|Comparison|Holder revenue (S13), 90 days": [
+{
+"date": "2026-11-19",
+"from": 32213646.8,
+"to": 31925180.4,
+"why": "R13 (Jake 2026-11-19): HOLDER REVENUE is read to 2026-10-12, the last day both S13 lines hold (config.S13_SAME_DAYS, as for Hyperliquid) - the 2026-10-13 burn, 288,466, is outside the days revenue holds"
+}
+],
+"reader|Comparison|Holder share (S13)": [
+{
+"date": "2026-11-19",
+"from": 1.06915161,
+"to": 1.03941117,
+"why": "R13 (Jake 2026-11-19): the holder share (= the net payout ratio) is read on one basis, UNI burned / UNI released on the same covered days (config.S13_SHARE_BASIS): 5,556,001 / 5,345,335, 2026-07-16..10-12; in USD on those days 31,925,180 / 29,795,323 = 1.0715. Still above 1, not capped: 210,666 UNI released before the window landed in it"
+}
+],
+"reader|Comparison|Payout ratio": [
+{
+"date": "2026-11-19",
+"from": 1.06915161,
+"to": 1.03941117,
+"why": "R13 (Jake 2026-11-19): the holder share (= the net payout ratio) is read on one basis, UNI burned / UNI released on the same covered days (config.S13_SHARE_BASIS): 5,556,001 / 5,345,335, 2026-07-16..10-12; in USD on those days 31,925,180 / 29,795,323 = 1.0715. Still above 1, not capped: 210,666 UNI released before the window landed in it"
+}
+],
+"reader|Summary|Payout ratio": [
+{
+"date": "2026-11-19",
+"from": 1.06915161,
+"to": 1.03941117,
+"why": "R13 (Jake 2026-11-19): the holder share (= the net payout ratio) is read on one basis, UNI burned / UNI released on the same covered days (config.S13_SHARE_BASIS): 5,556,001 / 5,345,335, 2026-07-16..10-12; in USD on those days 31,925,180 / 29,795,323 = 1.0715. Still above 1, not capped: 210,666 UNI released before the window landed in it"
+}
+]
+}
+}

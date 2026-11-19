@@ -1834,6 +1834,12 @@ Jake's workbook of 2026-11-19 (code 00bb8b2): HOLDER REVENUE 34,285,990 above RE
 | R13.U6c | Frozen cells that move (the 15 dumps), to declare | — | Uniswap only, 9 cells: HOLDER REVENUE Q0 (CP) and "Holder revenue (S13), 90 days" (reader Business, Comparison) 32,213,646.8 → 31,925,180.4 [same covered days]; HOLDER SHARE (CP), "Holder share (S13)" (reader Business, Comparison), the net payout ratio (CP) and "Payout ratio" (reader Summary, Comparison) 1.06915161 → 1.03941117 [one basis: 5,556,001 UNI burned ÷ 5,345,335 UNI released, 2026-07-16..10-12; in $ on the same days 31,925,180 ÷ 29,795,323 = 1.0715]. Fluid, Hyperliquid, Maple, Morpho, Pendle, Sky: 0. Test pin moved with it: tests/test_pr1_revenue.py (the lines' cells read the same-covered-days views; the share is the UNI quotient, still above 1). |
 | R13.U7 | Not established | — | DefiLlama's price point is from its code and the stored rows, not a per-day read of the price it used. The releases' split between mainnet (no bridge) and the L2 firepits is not stored, so a burn cannot be matched to its release; whether every chain's release lands at mainnet 0x…dEaD is not read here. |
 
+### Round 13 — Aerodrome frozen (Jake 2026-11-19), old → new
+
+| Item | What | Old | New |
+|---|---|---|---|
+| R13.A | Aerodrome's status | not frozen (seven frozen projects) | FROZEN (`config.FROZEN_PROJECTS["Aerodrome"]`, since 2026-11-19) on Jake's sign-off: done_check READY on his own store at 00bb8b2. Baseline: its 365 cells on the 15-dump build of the freeze commit (tests/fixtures/frozen_aerodrome.json; the dump is as of 2026-10-13, before the migration). The rounds' moves on the dumps are on record beside it (frozen_aerodrome_moves.json: 45 cells from the start of round 8 to the baseline, each attributed to the last round that moved it — R8 29, R9 13, R13 3). From here an Aerodrome cell moves only as a declared move; its dump is never refreshed. ON THIS ROUND'S CODE Jake's 00bb8b2 export reads READY once the rows this round's readers add are stored (built here with those rows read live); until his `--seed aero_buyback` has stored the burn reads, three cells of the rank key wait for them on his store. |
+
 ### Round 13 — Velodrome: VELO v1's certain part, the issuer lock (Jake 2026-11-19), old → new
 
 | Item | What | Old | New |

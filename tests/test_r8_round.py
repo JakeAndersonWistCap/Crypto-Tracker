@@ -95,7 +95,9 @@ def test_5c_circ_legs_names_the_series_hyperliquids_circulating_reads():
 def test_4_every_frozen_project_is_audited_and_the_sums_tie():
     import pytest
     a = config.RULE_AUDIT_R8
-    assert set(a["projects"]) == set(config.FROZEN_PROJECTS) and (ROOT / a["evidence"]).exists()
+    # R13: the R8 audit covers the seven projects frozen then (was: == FROZEN_PROJECTS); Aerodrome, frozen in R13, has
+    # its own rule evidence (docs/r8_aero_evidence.md, config.RULE_IN["Aerodrome"])
+    assert set(a["projects"]) == set(config.FROZEN_BEFORE_R13) and (ROOT / a["evidence"]).exists()
     for name, p in a["projects"].items():
         now, rule = p["circulating"]
         moved = sum(v for _m, v, _w in p["moves_in"])

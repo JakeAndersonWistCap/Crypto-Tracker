@@ -1,0 +1,272 @@
+{
+"audit|A3 Revenue Buyback|Effective float = circulating − ve locked − held reserve (a hold removes supply, a payout returns it)": {
+"date": "2026-11-19",
+"from": 1000197080.0,
+"to": 963637222.0,
+"why": "R8 (Jake 2026-11-17): Aerodrome's circulating under the rule (circulating = total supply; issuer wallets off the float), the supply reads across the migration and the three revenue lines"
+},
+"audit|A3 Revenue Buyback|Lock rate = locked inside circulating ÷ circulating (stake held by wallets outside circulating excluded)": {
+"date": "2026-11-19",
+"from": 0.52964483,
+"to": 0.307244525,
+"why": "R8 (Jake 2026-11-17): Aerodrome's circulating under the rule (circulating = total supply; issuer wallets off the float), the supply reads across the migration and the three revenue lines"
+},
+"audit|A3 Revenue Buyback|Net absorption incl. unlocks Q0 (tokens) = RETIRED buyback − emissions − unlocks": {
+"date": "2026-11-19",
+"from": "<absent>",
+"to": -58087597.1,
+"why": "R8 (Jake 2026-11-17): Aerodrome's circulating under the rule (circulating = total supply; issuer wallets off the float), the supply reads across the migration and the three revenue lines"
+},
+"audit|A3 Revenue Buyback|Notes": {
+"date": "2026-11-19",
+"from": "PARKED — migration: aero_migration.json: verified is not a date on or before today; the filing-wallet gap is traced to the block: at Base block 53,174,900 the filing wallets' 497.7M of locked AERO sits in sAERO they migrated to themselves, in six Aero Relay vaults whose principal they hold, and in the Velodrome airdrop wallet's own sAERO (P2b-1; read by aero_v3 filing_locks). The remaining blocker: no primary source publishes Aerodrome's circulating supply on this file's basis (locked tokens circulating, team and foundation holdings out). Aerodrome's site gives '~1.01B to ~1.07B' with no definition; the nearest reading of that basis here (total less permanent locks) is ~1,150M, which does not tie\nARCHETYPE 3 ONLY. NO BURN EXISTS — confirmed from Aerodrome's own SPECIFICATION.md, which documents the complete supply mechanics and contains no burn of any kind. Archetype 4 must not be added. FEES ARE NOT A BUYBACK: 100% of swap fees go to the veAERO holders who voted for each specific pool, paid in the PAIR'S OWN TOKENS and never converted to AERO, so there is no buy-then-distribute step and no buy pressure on AERO. TWO emission streams, modelled as two lines: pool emissions (10m AERO/epoch decaying 1%/epoch — CORRECTED 2026-09-18 from a previously recorded 15m; Minter.sol's own constant is 10_000_000 * 1e18 — entering tail mode below TAIL_START = 8.97m/epoch, CORRECTED from a previously recorded 6m, then 30 bps of circulating supply +/-1 bp per epoch by EpochGovernor vote, bounded 0.01%-1.00% per minter_constants) and the separate veAERO anti-dilution rebase. Both are epoch-indexed, so neither is declared as a tokens_per_day schedule. MINTER AND REWARDSDISTRIBUTOR ACTUALLY WIRED 2026-09-18, NOT MERELY DOCUMENTED — the prior round's 'added as reference contracts' left both metrics empty (kind burn_executor is reference-only and produces no figure). Both are now read DIRECTLY ON-CHAIN: Minter.weekly() for gross_issuance_tokens (current epoch's planned emission), RewardsDistributor.tokensPerWeek(last complete week) for emissions_tokens (the veAERO rebase, deliberately one week behind real time — see contracts.rewards_distributor). Both use NEW kinds (emission_rate_current, rebase_last_week) added to fetch/chain.py's PRINCIPAL_KINDS, with a new call_arg mechanism for a call needing a run-time-computed argument. The dune_queries.gross_issuance_tokens/.emissions_tokens slots remain query_id None — they are HISTORY backfill only now, not the primary source; the live reads start each series from today forward. veAERO lock rate is read as AERO.balanceOf(escrow). Dune 2986047 is CLOSED PERMANENTLY (Aerodrome forks their Dune queries private) — see OPEN_QUESTIONS and UNAVAILABLE; do not re-attempt it. The reported Velodrome merger has NOT shipped into the public contracts.; 100% of trading fees to veAERO voters, per-pool, PAID IN THE PAIR'S OWN TOKENS and never converted to AERO. There is NO buy-then-distribute step — do not model this as buy pressure on AERO. DISTRIBUTE, not buyback.",
+"to": "PARKED — migration: aero_migration.json: verified is not a date on or before today\nARCHETYPE 3 ONLY. NO FEE BURN EXISTS. The legacy contracts had no burn of any kind (SPECIFICATION.md, confirmed 2026-09-14); since the Aero migration (2026-10-22) the sAERO escrow can burn (burnFees, role-gated) and the Foundation has burned AERO it bought (407,815.83 on 2026-10-28 and 10-30) — a destination of its buyback, measured (R13). Archetype 4 must not be added. FEES ARE NOT A BUYBACK: 100% of swap fees go to the veAERO holders who voted for each specific pool, paid in the PAIR'S OWN TOKENS and never converted to AERO, so there is no buy-then-distribute step and no buy pressure on AERO. TWO emission streams, modelled as two lines: pool emissions (10m AERO/epoch decaying 1%/epoch — CORRECTED 2026-09-18 from a previously recorded 15m; Minter.sol's own constant is 10_000_000 * 1e18 — entering tail mode below TAIL_START = 8.97m/epoch, CORRECTED from a previously recorded 6m, then 30 bps of circulating supply +/-1 bp per epoch by EpochGovernor vote, bounded 0.01%-1.00% per minter_constants) and the separate veAERO anti-dilution rebase. Both are epoch-indexed, so neither is declared as a tokens_per_day schedule. MINTER AND REWARDSDISTRIBUTOR ACTUALLY WIRED 2026-09-18, NOT MERELY DOCUMENTED — the prior round's 'added as reference contracts' left both metrics empty (kind burn_executor is reference-only and produces no figure). Both are now read DIRECTLY ON-CHAIN: Minter.weekly() for gross_issuance_tokens (current epoch's planned emission), RewardsDistributor.tokensPerWeek(last complete week) for emissions_tokens (the veAERO rebase, deliberately one week behind real time — see contracts.rewards_distributor). Both use NEW kinds (emission_rate_current, rebase_last_week) added to fetch/chain.py's PRINCIPAL_KINDS, with a new call_arg mechanism for a call needing a run-time-computed argument. The dune_queries.gross_issuance_tokens/.emissions_tokens slots remain query_id None — they are HISTORY backfill only now, not the primary source; the live reads start each series from today forward. veAERO lock rate is read as AERO.balanceOf(escrow). Dune 2986047 is CLOSED PERMANENTLY (Aerodrome forks their Dune queries private) — see OPEN_QUESTIONS and UNAVAILABLE; do not re-attempt it. The reported Velodrome merger has NOT shipped into the public contracts.; 100% of trading fees to veAERO voters, per-pool, PAID IN THE PAIR'S OWN TOKENS and never converted to AERO. There is NO buy-then-distribute step — do not model this as buy pressure on AERO. DISTRIBUTE, not buyback.",
+"why": "R13 (Jake 2026-11-19): the buyback on the purchase-day basis from 2026-08-25, the measured burn leg, VELO v1's certain part, the buyer Safe's liquid leg"
+},
+"audit|A3 Revenue Buyback|TOTAL DILUTION = emissions + unlocks, annualised % of free float": {
+"date": "2026-11-19",
+"from": "<absent>",
+"to": 0.268470286,
+"why": "R9 (Jake 2026-11-17/18): the rule applied to the frozen set and Aerodrome's revenue lines read on chain (voter epochs)"
+},
+"audit|A3 Revenue Buyback|Trend — a3_burned_vs_new_supply (arrow · QoQ · 4Q growth/yr · quarters improved; Trajectory tab)": {
+"date": "2026-11-19",
+"from": "– · 4Q n/a · QoQ n/a — Q-1 is part-held",
+"to": "– · T12M n/a · growth n/a",
+"why": "R8 (Jake 2026-11-17): Aerodrome's circulating under the rule (circulating = total supply; issuer wallets off the float), the supply reads across the migration and the three revenue lines"
+},
+"audit|A3 Revenue Buyback|Trend — a3_retire_vs_dilution (arrow · QoQ · 4Q growth/yr · quarters improved; Trajectory tab)": {
+"date": "2026-11-19",
+"from": "– · 4Q n/a · QoQ n/a — Q-1 is part-held",
+"to": "– · T12M n/a · growth n/a",
+"why": "R8 (Jake 2026-11-17): Aerodrome's circulating under the rule (circulating = total supply; issuer wallets off the float), the supply reads across the migration and the three revenue lines"
+},
+"audit|A3 Revenue Buyback|UNLOCK DILUTION Q0 (tokens) — released from the non-circulating wallets, NOT emissions": {
+"date": "2026-11-19",
+"from": "<absent>",
+"to": 0.0,
+"why": "R8 (Jake 2026-11-17): Aerodrome's circulating under the rule (circulating = total supply; issuer wallets off the float), the supply reads across the migration and the three revenue lines"
+},
+"audit|A3 Revenue Buyback|Unlock dilution, annualised % of free float": {
+"date": "2026-11-19",
+"from": "<absent>",
+"to": 0.0,
+"why": "R8 (Jake 2026-11-17): Aerodrome's circulating under the rule (circulating = total supply; issuer wallets off the float), the supply reads across the migration and the three revenue lines"
+},
+"audit|CP Comparability|Destination durability (burn / held-timelocked / held-discretionary)": {
+"date": "2026-11-19",
+"from": "distributed (fees) + held-timelocked (Foundation buys) — 100% of exchange revenue paid to voters in pair/incentive tokens (no AERO buy). Foundation (PGF/Buyback-Locked Funds) buys AERO with its voter revenue and max-locks it as veNFT (e.g. 6 USDC->AERO buys 2026-07-15..08-19 locked into veNFT #130786); 'Over 184M AERO acquired and locked'; 'None of the underlying AERO has ever been sold'.",
+"to": "distributed (fees) + held (Foundation buys: max-locked to 2026-08-24, held liquid since) + burned (Foundation buy-and-burns from 2026-10-28) — 100% of exchange revenue paid to voters in pair/incentive tokens (no AERO buy). The Foundation (Public Goods Fund / its buyer Safe) buys AERO with USDC: to 2026-08-24 max-locked as veNFT (6 buys 2026-07-15..08-19 locked into veNFT #130786); from 2026-08-26 forwarded to the Fund and held LIQUID (not locked: 777,724 legacy AERO to 09-23, then 243,612, 294,003 and 503,341 in November); on 2026-10-28 and 10-30 bought, staked and BURNED by the Safe (407,815.83 AERO, VotingEscrow.burnFees). A held-liquid purchase can be moved: the wallets' liquid AERO is read daily against it (R13).",
+"why": "R13 (Jake 2026-11-19): the buyback on the purchase-day basis from 2026-08-25, the measured burn leg, VELO v1's certain part, the buyer Safe's liquid leg"
+},
+"audit|CP Comparability|Dilution (e) unlocks (annualised) ÷ circulating": {
+"date": "2026-11-19",
+"from": "n/a — outflow_e_tokens (q0): BLOCKED — BLOCKED — outflow (e) is not formed: unlock_release_tokens: no rows stored",
+"to": 0.0,
+"why": "R8 (Jake 2026-11-17): Aerodrome's circulating under the rule (circulating = total supply; issuer wallets off the float), the supply reads across the migration and the three revenue lines"
+},
+"audit|CP Comparability|Dilution (e) unlocks (annualised) ÷ tradeable float": {
+"date": "2026-11-19",
+"from": "n/a — outflow_e_tokens (q0): BLOCKED — BLOCKED — outflow (e) is not formed: unlock_release_tokens: no rows stored",
+"to": 0.0,
+"why": "R8 (Jake 2026-11-17): Aerodrome's circulating under the rule (circulating = total supply; issuer wallets off the float), the supply reads across the migration and the three revenue lines"
+},
+"audit|CP Comparability|FEES Q0 ($) — S13 line 1: all fees paid by users of the protocol": {
+"date": "2026-11-19",
+"from": 32229546.0,
+"to": 31600833.7,
+"why": "R9 (Jake 2026-11-17/18): the rule applied to the frozen set and Aerodrome's revenue lines read on chain (voter epochs)"
+},
+"audit|CP Comparability|HOLDER REVENUE Q0 ($) — S13 line 3: the part of revenue reaching token holders": {
+"date": "2026-11-19",
+"from": 24483669.0,
+"to": 24327445.7,
+"why": "R9 (Jake 2026-11-17/18): the rule applied to the frozen set and Aerodrome's revenue lines read on chain (voter epochs)"
+},
+"audit|CP Comparability|Holding demand — lock rate = locked ÷ circulating": {
+"date": "2026-11-19",
+"from": 0.52964483,
+"to": 0.307244525,
+"why": "R8 (Jake 2026-11-17): Aerodrome's circulating under the rule (circulating = total supply; issuer wallets off the float), the supply reads across the migration and the three revenue lines"
+},
+"audit|CP Comparability|Insider share of circulating = insider-held tokens counted inside circulating ÷ circulating": {
+"date": "2026-11-19",
+"from": 0.0,
+"to": 0.240701777,
+"why": "R8 (Jake 2026-11-17): Aerodrome's circulating under the rule (circulating = total supply; issuer wallets off the float), the supply reads across the migration and the three revenue lines"
+},
+"audit|CP Comparability|NET HOLDER YIELD = holder value yield − dilution (outflows a+b+c+d+e at each day's price, annualised) ÷ market cap": {
+"date": "2026-11-19",
+"from": "n/a — outflow (e) = unlock_release_tokens has no value in this window: BLOCKED — outflow (e) is not formed: unlock_release_tokens: no rows stored",
+"to": -0.0106999496,
+"why": "R8 (Jake 2026-11-17): Aerodrome's circulating under the rule (circulating = total supply; issuer wallets off the float), the supply reads across the migration and the three revenue lines"
+},
+"audit|CP Comparability|Outflow (e) unlocks — $ a year (each day's tokens x that day's price, annualised)": {
+"date": "2026-11-19",
+"from": "n/a — outflow_e_usd (q0): BLOCKED — BLOCKED — outflow (e) is not formed: unlock_release_tokens: no rows stored",
+"to": 0.0,
+"why": "R8 (Jake 2026-11-17): Aerodrome's circulating under the rule (circulating = total supply; issuer wallets off the float), the supply reads across the migration and the three revenue lines"
+},
+"audit|CP Comparability|REVENUE Q0 ($) — S13 line 2, THE HEADLINE: fees − the cost of delivering them": {
+"date": "2026-11-19",
+"from": 24483669.0,
+"to": 24327445.7,
+"why": "R9 (Jake 2026-11-17/18): the rule applied to the frozen set and Aerodrome's revenue lines read on chain (voter epochs)"
+},
+"audit|CP Comparability|Spread over the 3-month T-bill: Net holder yield": {
+"date": "2026-11-19",
+"from": "n/a — outflow_e_usd (q0): BLOCKED — BLOCKED — outflow (e) is not formed: unlock_release_tokens: no rows stored",
+"to": "n/a — tbill_3m_yield (now): no rows stored",
+"why": "R8 (Jake 2026-11-17): Aerodrome's circulating under the rule (circulating = total supply; issuer wallets off the float), the supply reads across the migration and the three revenue lines"
+},
+"audit|CP Comparability|Staked / locked inside circulating (tokens)": {
+"date": "2026-11-19",
+"from": 1058042680.0,
+"to": 613765681.0,
+"why": "R8 (Jake 2026-11-17): Aerodrome's circulating under the rule (circulating = total supply; issuer wallets off the float), the supply reads across the migration and the three revenue lines"
+},
+"audit|CP Comparability|TOTAL DILUTION = outflows a+b+c+d+e (annualised) ÷ circulating": {
+"date": "2026-11-19",
+"from": "n/a — outflow_e_tokens (q0): BLOCKED — BLOCKED — outflow (e) is not formed: unlock_release_tokens: no rows stored",
+"to": 0.121362986,
+"why": "R8 (Jake 2026-11-17): Aerodrome's circulating under the rule (circulating = total supply; issuer wallets off the float), the supply reads across the migration and the three revenue lines"
+},
+"audit|CP Comparability|TOTAL DILUTION = outflows a+b+c+d+e (annualised) ÷ tradeable float": {
+"date": "2026-11-19",
+"from": "n/a — outflow_e_tokens (q0): BLOCKED — BLOCKED — outflow (e) is not formed: unlock_release_tokens: no rows stored",
+"to": 0.268470286,
+"why": "R8 (Jake 2026-11-17): Aerodrome's circulating under the rule (circulating = total supply; issuer wallets off the float), the supply reads across the migration and the three revenue lines"
+},
+"audit|CP Comparability|Unlocks Q0 (tokens) — releases from the non-circulating wallets": {
+"date": "2026-11-19",
+"from": "n/a — no non-circulating wallet set on this project (config.unlock_stock_metrics)",
+"to": 0.0,
+"why": "R8 (Jake 2026-11-17): Aerodrome's circulating under the rule (circulating = total supply; issuer wallets off the float), the supply reads across the migration and the three revenue lines"
+},
+"audit|Master|Notes": {
+"date": "2026-11-19",
+"from": "PARKED — migration: aero_migration.json: verified is not a date on or before today; the filing-wallet gap is traced to the block: at Base block 53,174,900 the filing wallets' 497.7M of locked AERO sits in sAERO they migrated to themselves, in six Aero Relay vaults whose principal they hold, and in the Velodrome airdrop wallet's own sAERO (P2b-1; read by aero_v3 filing_locks). The remaining blocker: no primary source publishes Aerodrome's circulating supply on this file's basis (locked tokens circulating, team and foundation holdings out). Aerodrome's site gives '~1.01B to ~1.07B' with no definition; the nearest reading of that basis here (total less permanent locks) is ~1,150M, which does not tie\nARCHETYPE 3 ONLY. NO BURN EXISTS — confirmed from Aerodrome's own SPECIFICATION.md, which documents the complete supply mechanics and contains no burn of any kind. Archetype 4 must not be added. FEES ARE NOT A BUYBACK: 100% of swap fees go to the veAERO holders who voted for each specific pool, paid in the PAIR'S OWN TOKENS and never converted to AERO, so there is no buy-then-distribute step and no buy pressure on AERO. TWO emission streams, modelled as two lines: pool emissions (10m AERO/epoch decaying 1%/epoch — CORRECTED 2026-09-18 from a previously recorded 15m; Minter.sol's own constant is 10_000_000 * 1e18 — entering tail mode below TAIL_START = 8.97m/epoch, CORRECTED from a previously recorded 6m, then 30 bps of circulating supply +/-1 bp per epoch by EpochGovernor vote, bounded 0.01%-1.00% per minter_constants) and the separate veAERO anti-dilution rebase. Both are epoch-indexed, so neither is declared as a tokens_per_day schedule. MINTER AND REWARDSDISTRIBUTOR ACTUALLY WIRED 2026-09-18, NOT MERELY DOCUMENTED — the prior round's 'added as reference contracts' left both metrics empty (kind burn_executor is reference-only and produces no figure). Both are now read DIRECTLY ON-CHAIN: Minter.weekly() for gross_issuance_tokens (current epoch's planned emission), RewardsDistributor.tokensPerWeek(last complete week) for emissions_tokens (the veAERO rebase, deliberately one week behind real time — see contracts.rewards_distributor). Both use NEW kinds (emission_rate_current, rebase_last_week) added to fetch/chain.py's PRINCIPAL_KINDS, with a new call_arg mechanism for a call needing a run-time-computed argument. The dune_queries.gross_issuance_tokens/.emissions_tokens slots remain query_id None — they are HISTORY backfill only now, not the primary source; the live reads start each series from today forward. veAERO lock rate is read as AERO.balanceOf(escrow). Dune 2986047 is CLOSED PERMANENTLY (Aerodrome forks their Dune queries private) — see OPEN_QUESTIONS and UNAVAILABLE; do not re-attempt it. The reported Velodrome merger has NOT shipped into the public contracts.",
+"to": "PARKED — migration: aero_migration.json: verified is not a date on or before today\nARCHETYPE 3 ONLY. NO FEE BURN EXISTS. The legacy contracts had no burn of any kind (SPECIFICATION.md, confirmed 2026-09-14); since the Aero migration (2026-10-22) the sAERO escrow can burn (burnFees, role-gated) and the Foundation has burned AERO it bought (407,815.83 on 2026-10-28 and 10-30) — a destination of its buyback, measured (R13). Archetype 4 must not be added. FEES ARE NOT A BUYBACK: 100% of swap fees go to the veAERO holders who voted for each specific pool, paid in the PAIR'S OWN TOKENS and never converted to AERO, so there is no buy-then-distribute step and no buy pressure on AERO. TWO emission streams, modelled as two lines: pool emissions (10m AERO/epoch decaying 1%/epoch — CORRECTED 2026-09-18 from a previously recorded 15m; Minter.sol's own constant is 10_000_000 * 1e18 — entering tail mode below TAIL_START = 8.97m/epoch, CORRECTED from a previously recorded 6m, then 30 bps of circulating supply +/-1 bp per epoch by EpochGovernor vote, bounded 0.01%-1.00% per minter_constants) and the separate veAERO anti-dilution rebase. Both are epoch-indexed, so neither is declared as a tokens_per_day schedule. MINTER AND REWARDSDISTRIBUTOR ACTUALLY WIRED 2026-09-18, NOT MERELY DOCUMENTED — the prior round's 'added as reference contracts' left both metrics empty (kind burn_executor is reference-only and produces no figure). Both are now read DIRECTLY ON-CHAIN: Minter.weekly() for gross_issuance_tokens (current epoch's planned emission), RewardsDistributor.tokensPerWeek(last complete week) for emissions_tokens (the veAERO rebase, deliberately one week behind real time — see contracts.rewards_distributor). Both use NEW kinds (emission_rate_current, rebase_last_week) added to fetch/chain.py's PRINCIPAL_KINDS, with a new call_arg mechanism for a call needing a run-time-computed argument. The dune_queries.gross_issuance_tokens/.emissions_tokens slots remain query_id None — they are HISTORY backfill only now, not the primary source; the live reads start each series from today forward. veAERO lock rate is read as AERO.balanceOf(escrow). Dune 2986047 is CLOSED PERMANENTLY (Aerodrome forks their Dune queries private) — see OPEN_QUESTIONS and UNAVAILABLE; do not re-attempt it. The reported Velodrome merger has NOT shipped into the public contracts.",
+"why": "R13 (Jake 2026-11-19): the buyback on the purchase-day basis from 2026-08-25, the measured burn leg, VELO v1's certain part, the buyer Safe's liquid leg"
+},
+"reader|A3 Revenue Buyback|Burned ÷ (emis + unlocks), −1 qtr": {
+"date": "2026-11-19",
+"from": "parked",
+"to": 0.0,
+"why": "R9 (Jake 2026-11-17/18): the rule applied to the frozen set and Aerodrome's revenue lines read on chain (voter epochs)"
+},
+"reader|A3 Revenue Buyback|Burned ÷ (emis + unlocks), −2 qtrs": {
+"date": "2026-11-19",
+"from": "parked",
+"to": 0.0,
+"why": "R9 (Jake 2026-11-17/18): the rule applied to the frozen set and Aerodrome's revenue lines read on chain (voter epochs)"
+},
+"reader|A3 Revenue Buyback|Burned ÷ (emis + unlocks), −3 qtrs": {
+"date": "2026-11-19",
+"from": "parked",
+"to": 0.0,
+"why": "R9 (Jake 2026-11-17/18): the rule applied to the frozen set and Aerodrome's revenue lines read on chain (voter epochs)"
+},
+"reader|A3 Revenue Buyback|Effective float (tokens)": {
+"date": "2026-11-19",
+"from": 1000197080.0,
+"to": 963637222.0,
+"why": "R8 (Jake 2026-11-17): Aerodrome's circulating under the rule (circulating = total supply; issuer wallets off the float), the supply reads across the migration and the three revenue lines"
+},
+"reader|A3 Revenue Buyback|Lock rate, % of circulating": {
+"date": "2026-11-19",
+"from": 0.52964483,
+"to": 0.307244525,
+"why": "R8 (Jake 2026-11-17): Aerodrome's circulating under the rule (circulating = total supply; issuer wallets off the float), the supply reads across the migration and the three revenue lines"
+},
+"reader|A3 Revenue Buyback|Net absorption incl. unlocks": {
+"date": "2026-11-19",
+"from": "parked",
+"to": -58087597.1,
+"why": "R8 (Jake 2026-11-17): Aerodrome's circulating under the rule (circulating = total supply; issuer wallets off the float), the supply reads across the migration and the three revenue lines"
+},
+"reader|A3 Revenue Buyback|Total dilution, % of float a year": {
+"date": "2026-11-19",
+"from": "n/a",
+"to": 0.268470286,
+"why": "R9 (Jake 2026-11-17/18): the rule applied to the frozen set and Aerodrome's revenue lines read on chain (voter epochs)"
+},
+"reader|A3 Revenue Buyback|Unlocks, % of free float a year": {
+"date": "2026-11-19",
+"from": "n/a",
+"to": 0.0,
+"why": "R8 (Jake 2026-11-17): Aerodrome's circulating under the rule (circulating = total supply; issuer wallets off the float), the supply reads across the migration and the three revenue lines"
+},
+"reader|A3 Revenue Buyback|Unlocks, last 90 days (tokens)": {
+"date": "2026-11-19",
+"from": "n/a",
+"to": 0.0,
+"why": "R8 (Jake 2026-11-17): Aerodrome's circulating under the rule (circulating = total supply; issuer wallets off the float), the supply reads across the migration and the three revenue lines"
+},
+"reader|Business|Holder revenue (S13), 90 days": {
+"date": "2026-11-19",
+"from": 24483669.0,
+"to": 24327445.7,
+"why": "R9 (Jake 2026-11-17/18): the rule applied to the frozen set and Aerodrome's revenue lines read on chain (voter epochs)"
+},
+"reader|Comparison|Fees (S13), 90 days": {
+"date": "2026-11-19",
+"from": 32229546.0,
+"to": 31600833.7,
+"why": "R9 (Jake 2026-11-17/18): the rule applied to the frozen set and Aerodrome's revenue lines read on chain (voter epochs)"
+},
+"reader|Comparison|Holder revenue (S13), 90 days": {
+"date": "2026-11-19",
+"from": 24483669.0,
+"to": 24327445.7,
+"why": "R9 (Jake 2026-11-17/18): the rule applied to the frozen set and Aerodrome's revenue lines read on chain (voter epochs)"
+},
+"reader|Comparison|Lock rate, % of circulating": {
+"date": "2026-11-19",
+"from": 0.52964483,
+"to": 0.307244525,
+"why": "R8 (Jake 2026-11-17): Aerodrome's circulating under the rule (circulating = total supply; issuer wallets off the float), the supply reads across the migration and the three revenue lines"
+},
+"reader|Comparison|Net holder yield": {
+"date": "2026-11-19",
+"from": "parked",
+"to": -0.0106999496,
+"why": "R8 (Jake 2026-11-17): Aerodrome's circulating under the rule (circulating = total supply; issuer wallets off the float), the supply reads across the migration and the three revenue lines"
+},
+"reader|Comparison|Revenue (S13), 90 days": {
+"date": "2026-11-19",
+"from": 24483669.0,
+"to": 24327445.7,
+"why": "R9 (Jake 2026-11-17/18): the rule applied to the frozen set and Aerodrome's revenue lines read on chain (voter epochs)"
+},
+"reader|Comparison|Total dilution, % of float": {
+"date": "2026-11-19",
+"from": "blocked",
+"to": 0.268470286,
+"why": "R8 (Jake 2026-11-17): Aerodrome's circulating under the rule (circulating = total supply; issuer wallets off the float), the supply reads across the migration and the three revenue lines"
+},
+"reader|Summary|Confidence (share green)": {
+"date": "2026-11-19",
+"from": 0.25,
+"to": 0.272727273,
+"why": "R9 (Jake 2026-11-17/18): the rule applied to the frozen set and Aerodrome's revenue lines read on chain (voter epochs)"
+},
+"reader|Summary|Net holder yield": {
+"date": "2026-11-19",
+"from": "parked",
+"to": -0.0106999496,
+"why": "R8 (Jake 2026-11-17): Aerodrome's circulating under the rule (circulating = total supply; issuer wallets off the float), the supply reads across the migration and the three revenue lines"
+},
+"reader|Summary|Total dilution, % of float": {
+"date": "2026-11-19",
+"from": "blocked",
+"to": 0.268470286,
+"why": "R8 (Jake 2026-11-17): Aerodrome's circulating under the rule (circulating = total supply; issuer wallets off the float), the supply reads across the migration and the three revenue lines"
+},
+"reader|Summary|Total dilution, tokens a year": {
+"date": "2026-11-19",
+"from": "blocked",
+"to": 242440237.0,
+"why": "R8 (Jake 2026-11-17): Aerodrome's circulating under the rule (circulating = total supply; issuer wallets off the float), the supply reads across the migration and the three revenue lines"
+}
+}

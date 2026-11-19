@@ -175,3 +175,27 @@ def test_4_the_default_pace_is_at_or_under_the_free_plans_allowance(monkeypatch)
     assert coi.alchemy_cu_per_second() <= 500
     monkeypatch.setenv("ALCHEMY_CU_PER_SECOND", "not a number")
     assert coi.alchemy_cu_per_second() == 330
+
+
+# ================================================================= A: Aerodrome frozen
+def test_a_aerodrome_is_frozen_with_its_rounds_moves_on_record():
+    import json
+    import project_freeze as pf
+    assert set(config.FROZEN_PROJECTS) == set(config.FROZEN_BEFORE_R13) | {"Aerodrome"} and len(config.FROZEN_BEFORE_R13) == 7
+    base = json.loads(pf.baseline_path("Aerodrome").read_text(encoding="utf-8"))
+    rec = config.FROZEN_MOVES["Aerodrome"]
+    assert len(base) == 365 and len(rec) == 45
+    # the record ends on the baseline: every recorded cell's `to` is the frozen value, so nothing is undeclared today
+    for k, m in rec.items():
+        assert pf._norm(m["to"]) == base.get(k, "<absent>"), k
+        assert m["why"].startswith("R") and m["date"] == "2026-11-19"
+    assert pf.undeclared(base, dict(base), rec) == []
+    # and a later, undeclared change of a frozen Aerodrome cell is caught
+    k = next(iter(base))
+    assert pf.undeclared(base, {**base, k: "changed"}, rec)
+
+
+def test_a_a_frozen_aerodrome_dump_is_never_refreshed(tmp_path, capsys):
+    import dump_fixture
+    assert dump_fixture.main(["--project", "Aerodrome", "--from-export", str(tmp_path / "x.json.gz")]) == 2
+    assert "frozen" in capsys.readouterr().out

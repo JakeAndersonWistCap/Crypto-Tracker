@@ -46209,3 +46209,43 @@ for _r13u, _r13w, _r13n in (
     REVENUE_SPLIT["Uniswap"][_r13u] = {**REVENUE_SPLIT["Uniswap"][_r13u],
                                        "route": REVENUE_SPLIT["Uniswap"][_r13u]["route"].replace(_r13w, _r13n)}
 del _r13u, _r13w, _r13n
+
+
+# =====================================================================================================================
+# ===== R13 — THE ROUND'S DECLARED MOVES OF FROZEN CELLS (tests/fixtures/frozen_moves_r13.json) =====
+def _load_r13_moves() -> int:
+    import json as _json
+    from pathlib import Path as _Path
+    p = _Path(__file__).resolve().parent / "tests" / "fixtures" / "frozen_moves_r13.json"
+    if not p.exists():
+        return 0
+    n = 0
+    for proj, cells in _json.loads(p.read_text(encoding="utf-8")).items():
+        for key, steps in cells.items():
+            for st in steps:
+                declare_later_move(proj, key, st["to"], st["why"], st["date"])
+                n += 1
+    return n
+
+
+R13_MOVES_DECLARED = _load_r13_moves()
+
+
+# =====================================================================================================================
+# ===== R13 — AERODROME FROZEN (Jake 2026-11-19: "Aerodrome is READY on Jake's own store. Sign it off once your gate is
+# green on the freeze commit.") =====
+# done_check read Aerodrome READY on Jake's own store on his machine at 00bb8b2 (his run of 2026-11-19, exports
+# aerodrome-2026-11-19-151748-00bb8b2). On this round's code the same export reads READY once the rows this round's
+# readers add are stored (the burn leg, the wallets' liquid AERO, the buyer Safe's leg, VELO v1: read live here and
+# built, 2026-11-19); until Jake's `--seed aero_buyback` has stored the burn reads, three cells of the rank key
+# (burned / (emissions + unlocks)) wait for them on his store. The baseline is Aerodrome's cells on the 15-dump build of
+# the freeze commit (tests/fixtures/frozen_aerodrome.json, 365 cells; the dump is as of 2026-10-13, before the
+# migration). The rounds' moves on the dumps are the record, kept beside it (frozen_aerodrome_moves.json: 45 cells from
+# the build at the start of round 8 to the baseline, each attributed to the last round that moved it — R8 29, R9 13,
+# R13 3; rounds 10-12 moved none on this dump: their changes act from the migration on, or on stored VELO history).
+FROZEN_BEFORE_R13 = tuple(FROZEN_PROJECTS)
+FROZEN_PROJECTS["Aerodrome"] = {
+    "baseline": "tests/fixtures/frozen_aerodrome.json", "since": "2026-11-19",
+    "why": "rounds 8 to 13 done (Jake 2026-11-19): done_check READY on Jake's own store at 00bb8b2; the full gate green "
+           "on the freeze commit"}
+FROZEN_MOVES["Aerodrome"] = _frozen_moves_record("aerodrome")

@@ -122,7 +122,9 @@ def test_b_store_export_carries_the_macro_rows_and_they_load_under_the_macro_pro
 # ============================================================================ B: Sky and Hyperliquid frozen
 def test_b_sky_and_hyperliquid_are_frozen_with_their_rounds_moves_on_record():
     import json
-    assert set(config.FROZEN_PROJECTS) == set(config.FROZEN_BEFORE_R7D) | {"Sky", "Hyperliquid"}
+    # R13: Aerodrome frozen too (was: == FROZEN_BEFORE_R7D | {"Sky", "Hyperliquid"})
+    assert set(config.FROZEN_BEFORE_R13) == set(config.FROZEN_BEFORE_R7D) | {"Sky", "Hyperliquid"}
+    assert set(config.FROZEN_PROJECTS) == set(config.FROZEN_BEFORE_R13) | {"Aerodrome"}
     assert len(config.FROZEN_BEFORE_R7D) == 5
     for p, n, rounds in (("Sky", 482, {"R6", "R7B", "R7C"}), ("Hyperliquid", 616, {"R7", "R7B", "R7C", "R7D"})):
         base = json.loads(pf.baseline_path(p).read_text(encoding="utf-8"))

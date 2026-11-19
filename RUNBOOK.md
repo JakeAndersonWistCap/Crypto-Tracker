@@ -548,6 +548,17 @@ liquid NEAR leaves the free float: the liquid series is read on 200 accounts, a 
 set. The lockup read's messages state the final rule; no figure moves. ETHER.FI. The research pack is
 docs/r13_etherfi_pack.md; nothing of it is wired yet.
 
+AERODROME IS FROZEN (R13.A, Jake's sign-off). Its cells on the 15 dumps are the baseline; `project_freeze.py --compare
+all` prints eight lines from here. UNISWAP (R13): the holder share and the payout ratio are read on one basis - UNI
+burned / UNI released on the days both lines hold. It can still read above 1 (1.02 on the 11-18 export): UNI released
+before the window landed in it; the cell says so and is never capped. NEAR ON YOUR STORE (R13): the net supply change
+leaves out the step of a declared handover of the circulating figure (10-11: -2,219; 11-19, the first read with the
+staked lockup part: +1,084,483) and its note names each; the token-flow statement has a new line "+ released from the
+lockup contracts, net" (Q-4's +0.90% was 11.18M NEAR leaving the lockups); a quarter with a handover inside reads
+"SERIES BREAK, not a flow". A "Regression guard" row on net holder yield while the payout ledger is unfinished is
+expected and clears on the run that stores the ledger. On the store of your 16:21 export: NET SUPPLY CHANGE 8,458,047
+= 2.616% a year; TOTAL DILUTION 2.291% of circulating / 4.248% of float; NET HOLDER YIELD -2.104%; SUBSIDY COVER 9.10x.
+
 ```
 cd C:\Users\jake\Crypto-Tracker
 .venv\Scripts\Activate.ps1
@@ -570,6 +581,7 @@ python token_metrics.py
 #   near_rpc: "near_foundation_liquid_tokens=1,11x,xxx.xxxx - liquid NEAR (view_account amount) summed over 200 account(s); ..." (if it says "accounts read inside 100 s - NOTHING STORED": python token_metrics.py --project Near)
 #   aero_v3:  "aero_buyer_liquid_tokens at Base block N = 0.0000: the 1 Foundation buyer wallet(s)' liquid AERO, new + legacy ..."
 #   ve_managed: "Foundation buyback <yesterday>: ... burned out of the escrow 0.00; liquid AERO held at the day's end 2,6xx,xxx.xx"
+#   (R13.4: requests to the keyed Alchemy endpoint are now paced - a block-receipt read a second or so on the free plan; to go faster set ALCHEMY_CU_PER_SECOND in .env to your plan's compute units a second. base-rpc.publicnode.com is no longer asked for past blocks.)
 python token_metrics.py --seed aero_buyback
 #   expect: one line a day, e.g. "2026-10-28: buyback window already stored; burn READ, blocks 53,178,127..53,221,327 - burned out of the escrow 174,600.64; liquid AERO at the day's end READ - 1,702,156.66; lock stock already stored" and "2026-10-30: ... burned out of the escrow 233,215.20 ..."
 #   closing line, if the R12 seed already ran: "... 170 row(s) stored; ... beside the windows 28 burn read(s) and 58 liquid balance(s) (0 not read)" (counts grow by one a day after 11-19). About 8 minutes; resumable; a "NOT read" day stores nothing - run the line again. RUN THIS BEFORE THE BUILD
@@ -578,7 +590,7 @@ python archive_backfill.py --run --project Aerodrome --budget-min 45
 python token_metrics.py --no-fetch
 #   expect: no error
 python done_check.py --verbose | Select-String "^(Uniswap|Fluid|Maple|Morpho|Pendle|Sky|Hyperliquid|Aerodrome|Near)" -Context 0,8
-#   expect: the seven frozen projects READY; Aerodrome READY; Near NOT READY with only Rank in archetype, NRR ON SETTLEMENT VOLUME and Archetype key - paste Aerodrome's and Near's lists back
+#   expect: the eight frozen projects READY (Aerodrome among them, once the seed above has stored the burn reads); Near NOT READY with only Rank in archetype, NRR ON SETTLEMENT VOLUME and Archetype key - paste Aerodrome's and Near's lists back
 New-Item -ItemType Directory -Force ..\tm-exports | Out-Null
 python store_export.py --project Aerodrome --out-dir ..\tm-exports
 #   expect: a line starting "wrote ../tm-exports/aerodrome-"
@@ -595,7 +607,7 @@ git switch claude/crypto-metrics-supply-demand-ovkg8g
 git log --oneline -1
 #   expect: the same line as above
 python project_freeze.py --compare all
-#   expect: seven lines, each "0 undeclared move(s)": Fluid 353, Hyperliquid 616, Maple 360, Morpho 285, Pendle 373, Sky 482, Uniswap 309 cells
+#   expect: eight lines, each "0 undeclared move(s)": Aerodrome 365, Fluid 353, Hyperliquid 616, Maple 360, Morpho 285, Pendle 373, Sky 482, Uniswap 309 cells
 ```
 
 STAGE 2 OF NEAR'S WALLET INFLOWS (BigQuery), after stage 1 has been run by hand in December (11fa step 5) and only
