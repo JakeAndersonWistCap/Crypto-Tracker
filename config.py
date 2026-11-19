@@ -45706,3 +45706,298 @@ NEAR_LOCKUP_RULE_TEXT = (
     "earning nothing) is OUT of circulating: LOCKED minus LOCKED and STAKED. Released-not-withdrawn stays in.")
 NEAR_LOCKUP_RULE_READ_2026_11_19 = {       # Jake's weekly read at block 225,245,079 (his export of 2026-11-19)
     "block": 225_245_079, "locked": 1_872_900.53, "locked_staked": 1_084_482.68, "idle_out_of_circulating": 788_417.85}
+
+
+# ===== R13 — AERODROME BUYBACK BASIS AND BURN =====
+# Jake 2026-11-19 (Round 13; SPEC "Round 13 — Aerodrome's buyback: purchase-day basis and the burn leg"). Two decisions:
+#   B1  "held buybacks leave the float the day they're bought": from a DECLARED DATE the Foundation's buyback on a day is
+#       the AERO its wallets PURCHASED that day (+ compounded on accrual), not what they locked that day;
+#   B2  "the 407,816 AERO bought and burned on 10-28/10-30 show as retired, not held": the burned leg is MEASURED from
+#       the migration, and moves the AERO from held to burned.
+# Everything of the round is in this block; tests in tests/test_r13_aero_buyback.py.
+_r13_p = PROJECT_BY_NAME["Aerodrome"]
+_r13_fb = _r13_p["foundation_buyback"]
+_r13_cut = AERODROME_MIGRATION["cutover_utc"][:10]                       # 2026-10-22
+
+# ----- B1. THE DECLARED DATE: 2026-08-25, the day after the last lock that purchases were matched to.
+# THE ARITHMETIC (the stored window rows, 2026-07-15..; every figure a receipt read):
+#   purchases 07-15 214,508.93 + 07-22 336,195.19 + 07-29 312,820.96 + 08-06 373,687.12 + 08-12 343,699.45 + 08-19
+#   325,784.61 = 1,906,696.26 (the trace above, to the wei); the lock of 2026-08-24 (#130786, 2,746,705.44 paid from
+#   the balance) is matched oldest-first to all of it — the pool after the match is EXACTLY 0 (the lock is larger than
+#   the pool: min(lock, pool) = pool). The first purchase never locked is 2026-08-26 (155,056.75).
+# So with the handover on 2026-08-25:
+#   nothing is lost      every purchase up to 08-19 was counted on 08-24 by the matching; every purchase from 08-26 is
+#                        counted on its own day; no purchase is dated 08-20..08-25;
+#   nothing counts twice from the date a lock paid from the balance is not counted (what it locks was counted when it
+#                        was bought): the 10-28 and 10-30 stakes (174,600.64 + 233,215.20 = 407,815.83), which the old
+#                        basis counted as "locked, matched to the pool", are now the purchases of those same days.
+# A REMAINDER WOULD BE NAMED, NOT DROPPED: purchases dated before the declared date that no lock had matched are
+# counted once on the first stored day from it, with the amount in the row's source (build_workbook.
+# foundation_basis_series; 0 on the stored series, asserted below on the trace).
+assert abs(sum(_r["aero"] for _r in _r13_fb["trace"]["rows"]) - _r13_fb["trace"]["lock"]["matched_aero"]) < 0.01
+assert _r13_fb["trace"]["lock"]["aero"] > _r13_fb["trace"]["lock"]["matched_aero"]          # the lock exceeds the pool
+assert max(_r["date"] for _r in _r13_fb["trace"]["rows"]) < _r13_fb["trace"]["lock"]["date"] < "2026-08-25"
+_r13_fb["purchase_day_basis"] = {
+    "from": "2026-08-25",
+    "why": "the day after the last lock that purchases were matched to (2026-08-24, #130786): the pool after that "
+           "match is exactly 0, and the first purchase never locked is 2026-08-26 — nothing lost, nothing counted twice",
+    "counts": "AERO purchased on the day by the Foundation's wallets (owners + buyer wallets; either AERO token, "
+              "received where the wallet paid out a different token; a 1:1 migration is not a purchase): bought and "
+              "locked in one transaction + purchased and not locked in it; + compounded voting rewards on accrual",
+    "not_counted": "a lock or stake paid from the balance (what it locks was counted on its purchase day); the rebase; "
+                   "withdrawManaged realisations",
+    "before": "the basis of 2026-10-11 (bought and locked: lock days, matched oldest-first, + compounded) — unchanged",
+    "decided": "Jake 2026-11-19 (R13 B1: 'held buybacks leave the float the day they are bought')",
+    # "WHILE HELD". A purchase the wallets no longer hold, other than by having locked or burned it, is not a held
+    # buyback. The reader stores the wallets' liquid AERO (both tokens) at the end of every day from the declared date
+    # (foundation_liquid_aero_tokens); the build keeps the purchases since the date that no lock took and sets them
+    # against it: the shortfall is foundation_buyback_not_held_tokens. Measured 0 on every day read (2026-08-25..11-18:
+    # the wallets' liquid AERO was never below the purchases not yet locked — 2,686,172.20 against 1,818,679.81 on
+    # 11-18). From the migration the receipts read also stores what the wallets SENT OUT to third parties
+    # (foundation_aero_sent_out_tokens: 27,277 on 10-23, 20,595 on 10-29, 12,380.14 on 11-09, 23,966 on 11-18, and
+    # 1,164,053 on 11-06 that came back within four minutes from another address — gross, so shown and not netted:
+    # the liquid balance is what the check reads). IF THE SHORTFALL EVER READS ABOVE 0 the buyback
+    # series is NOT reduced silently: the buyback cells carry a FLAG with the amount, and whether to subtract is Jake's
+    # decision (SPEC R13.4; options there).
+    "while_held": "flagged, not subtracted (default until Jake decides)",
+}
+_r13_fb["liquid_from"] = _r13_fb["purchase_day_basis"]["from"]
+_r13_fb["held_check"] = {"liquid_metric": "foundation_liquid_aero_tokens",
+                         "flag_metric": "foundation_buyback_not_held_tokens"}
+_r13_fb["extra_metrics"] = {"burned": "foundation_aero_burned_tokens",
+                            "burned_other": "foundation_aero_burned_other_tokens",
+                            "sent_out": "foundation_aero_sent_out_tokens",
+                            "liquid": "foundation_liquid_aero_tokens"}
+for _m, _lab, _kind in (
+        ("foundation_aero_burned_tokens",
+         "AERO the Foundation's wallets BURNED out of their own stake on the day (their sAERO stake routed to the "
+         "escrow's tokenId-0 accumulator and destroyed by VotingEscrow.burnFees in the same transaction; new AERO "
+         "Transfer escrow -> 0x0) — the burned leg of the buyback, from the migration (R13)", "flow"),
+        ("foundation_aero_burned_other_tokens",
+         "AERO a Foundation wallet destroyed out of the escrow that was NOT its own stake of that transaction (protocol "
+         "fees at the accumulator, or a stake routed earlier) — out of the supply, NOT counted as a burned buyback (R13)",
+         "flow"),
+        ("foundation_aero_sent_out_tokens",
+         "AERO (either token) the Foundation's wallets SENT OUT on the day to an address outside them that is not an "
+         "escrow, the migration contract or 0x0 — AERO that left other than by being locked (from the migration: the "
+         "receipts read; shown, not netted against the buyback) (R13)", "flow"),
+        ("foundation_liquid_aero_tokens",
+         "AERO (legacy + new, 1:1) the Foundation's wallets — owners and buyer wallets — hold LIQUID at the end of the "
+         "UTC day: what a purchase not yet locked must still sit in (R13 'while held')", "stock"),
+        ("foundation_buyback_not_held_tokens",
+         "Purchases counted on their purchase day that the Foundation's wallets NO LONGER HOLD and did not lock or burn "
+         "= max(purchases since 2026-08-25 not locked − the wallets' liquid AERO at the day's end, 0) — a FLAG; the "
+         "buyback is not reduced by it (R13)", "stock"),
+        ("aero_buyer_liquid_tokens",
+         "AERO (new + legacy) held liquid by the Foundation's BUYER wallets (the buyer Safe 0x10b42e92…) at the supply "
+         "read's block — a purchase not yet forwarded: in circulating, off the float from the day it is bought (R13)",
+         "stock")):
+    METRICS[_m] = {"label": _lab, "kind": _kind, "unit": "tokens", "archetypes": [3], "tiers": [2], "sanity_min": 0,
+                   "sanity_max": 2.5e9, "only_projects": ("Aerodrome",), "view_only": True}
+# THE HANDOVER OF THE BUYBACK SERIES, DECLARED: two bases, one after the other, never both on a day.
+for _m, _old, _new in (("actual_buyback_tokens", "derived:foundation_buyback[bought+matched+compounded]",
+                        "derived:foundation_purchases[purchased on the day+compounded]"),
+                       ("actual_buyback_usd", "derived:tokens*price", "derived:purchases*price")):
+    _r13_p.setdefault("series_handover", {})[_m] = {
+        "ordered_points": (_old, _new), "declared": _r13_fb["purchase_day_basis"]["from"],
+        "why": "Jake 2026-11-19 (R13 B1): the Foundation's purchases count on the purchase day while held, from "
+               "2026-08-25; before it the agreed basis of 2026-10-11 stands (bought and locked)",
+        "composition_change": "before 2026-08-25: AERO bought and LOCKED (in one transaction, or locks paid from the "
+                              "balance matched oldest-first to purchases) + compounded, dated the LOCK day; from "
+                              "2026-08-25: AERO PURCHASED, dated the PURCHASE day, + compounded — a later lock or "
+                              "stake of it is not counted again. The pool at the handover is 0 (the 2026-08-24 lock "
+                              "consumed the purchases of 07-15..08-19 exactly)"}
+
+# ----- THE FLOAT. Aerodrome's held buyback leaves the free float through RULE_IN["Aerodrome"]["off_float"]:
+# aero_issuer_held_tokens — the seven issuer wallets' LIQUID AERO (noncirc_* : the Public Goods Fund and the Buyback /
+# Locked Funds wallet among them) — and filing_managed_lock_tokens (their stakes). The Public Goods Fund holds what the
+# buyer Safe forwards, so a purchase is off the float from the block the Fund receives it. THE BUYER SAFE WAS NOT IN
+# THAT SET (checked: contracts noncirc_* list seven wallets, none of them 0x10b42e92…): AERO it held between buying and
+# forwarding (or staking) was inside the free float. It is a Foundation wallet (Jake 2026-10-12), so its liquid AERO
+# joins the off-float stock — read at the SAME block as the issuer wallets (fetch/aero_v3 _supply_terms, stored as
+# aero_buyer_liquid_tokens; history by archive_backfill's supply hook), so nothing is counted twice: a token is in
+# the Safe or in the Fund at one block, never both; staked, it is in the lock, not in a liquid balance.
+# FROM THE MIGRATION CUTOVER (the first day of the v3 supply read): a declared change of the off-float series'
+# composition. Before it the Safe's balance was not read at the supply's block; read on 2026-11-19 at the END of each
+# of the 58 days 2026-08-25..10-21 (check_offline_items.aerodrome_foundation_liquid) it was 0 on every one — each
+# purchase of those days was forwarded to the Fund the same day — so the days before the cutover lose nothing by not
+# carrying the leg. FROM the cutover, read at each day's first block (archive_backfill's supply hook, 2026-11-19): 0 on
+# 2026-10-22..10-30 and 0.00000048 AERO (dust) on 10-31..11-18 — the purchases of 10-28, 10-30, 11-04, 11-11 and
+# 11-18 were staked or forwarded the day they were bought. The leg is in force for the day one is not.
+assert not any(str(_w.get("address", "")).lower() in {b.lower() for b in _r13_fb["buyer_wallets"]}
+               for _k, _w in _r13_p["contracts"].items() if _k.startswith("noncirc_"))
+RULE_IN["Aerodrome"]["off_float"] = RULE_IN["Aerodrome"]["off_float"] + ("aero_buyer_liquid_tokens",)
+# (the handover is at the leg's first stored row on or after this date — build_workbook._rule_in_views: a store the
+# backfill has not reached keeps the series it had, and from the first row on a day missing the leg is no value)
+RULE_IN["Aerodrome"]["off_float_from"] = {"aero_buyer_liquid_tokens": _r13_cut}
+RULE_IN["Aerodrome"]["off_float_r13"] = (
+    "Jake 2026-11-19 (R13 B1): the buyer Safe's liquid AERO joins the off-float stock from 2026-10-22 — a purchase is "
+    "off the float the day it is bought, before it is forwarded or staked. Was: the seven issuer wallets only")
+
+# ----- B2. THE BURN.
+# THE MECHANISM, READ FROM THE VERIFIED SOURCE (Sourcify, chain 8453, read 2026-11-19):
+#   VotingEscrow (sAERO) 0xBF7977E1…, V3/src/core/VotingEscrow.sol
+#     L439-460  burnFees(uint128 _amount) external nonReentrant onlyRole(BURN_FEES_ROLE): takes _amount out of the
+#               stake of tokenId 0 (the protocol-owned ACCUMULATOR), lowers `supply`, calls TOKEN.burn(_amount) — the
+#               new AERO's totalSupply falls — and VOTER.burn(_amount); emits Supply and Burn(amount).
+#     L355-437  rebalanceUnderlying(sources, destinations): VPM_ROLE only; a destination with tokenId 0 adds to the
+#               accumulator ("exempt from the unlock rule because the TOKEN is slated for burn", L409); the accumulator
+#               is never a source (L365-368: "burn-only").
+#   VoterPaymentsModule 0xbe8e5149…, V3/src/vpm/VoterPaymentsModule.sol (the one VPM_ROLE holder)
+#     L129-173  depositIntoNFT(sources, destinationId, recipient): the caller must be authorised for every source
+#               sAERO (L141, _requireSourceAuth); a protocol fee of the moved total goes to the accumulator; routing
+#               the whole amount to tokenId 0 "is the intended burn path" (L148-149).
+# SO THERE ARE TWO STEPS AND TWO GATES. Any staker may route ITS OWN stake to the accumulator (no role); only a
+# BURN_FEES_ROLE holder can destroy what sits there. It is a protocol mechanism — the escrow's fee accumulator and its
+# role-gated burn — and it is the route a staker's own stake is burned by. It is NOT "any staker burning its own
+# stake" (a staker without the role can only give its stake up to the accumulator), and what was burned on 10-28 and
+# 10-30 was NOT protocol fees: the accumulator held 0 before each burn (staked(0).amount = 0 at block 53,215,284 and at
+# the read of 2026-11-19), each DepositedIntoNFT carries fee 0, and each burnFees amount equals the stake the Safe
+# routed in the same transaction to the wei.
+# WHO HOLDS THE ROLE (getRoleMember at the read of 2026-11-19): 0x42255e3c… (a 3-of-7 Safe; also BURN_FEES_ADMIN_ROLE,
+# VPM_ADMIN_ROLE and the VPM's fee manager) and the Foundation's buyer Safe 0x10b42e92…, GRANTED the role at block
+# 53,211,671 (2026-10-28 18:38:09 UTC, tx 0x94466dce…) — two hours before its first burn.
+# THE TWO BUY-AND-BURNS (the buyer Safe; every step on one UTC day, so the burn day is the purchase day):
+AERODROME_BURN_LEG = {
+    "from": _r13_cut,
+    "metric": "foundation_aero_burned_tokens", "other_metric": "foundation_aero_burned_other_tokens",
+    "voter_payments_module": "0xbe8e5149dc0fe28d124de4222b7fb332de99aa79",
+    "escrow": "0xBF7977E1521e9a3032bf7243Ee4712f311f13915",
+    "buyer": "0x10b42e926c2b8ff0200f35ec466d50576c1efa30",
+    "role_granted": {"role": "BURN_FEES_ROLE", "block": 53_211_671, "utc": "2026-10-28 18:38:09",
+                     "tx": "0x94466dceb93ae7b243df326a1d4b304e2f2f4bdff78d80a99fc3d7b953800f4b",
+                     "by": "0x42255e3c2d0b71a0b006243148fdf1a71d054ce0 (BURN_FEES_ADMIN_ROLE; a 3-of-7 Safe)"},
+    "burns": (
+        {"date": "2026-10-28", "aero": 174_600.6362, "usdc": 122_988.0, "stake": "sAERO #19526 (permanent)",
+         "funded_tx": "0x74bd99c41adf50fd80b32136c724c57dc26eff603fc06f1ef8b27b7bc7f840a0",   # PGF -> Safe, 10-26 18:50
+         "buy_tx": "0xcc305e6ce137e418bf52d662e32743dc871bfc03565aa173fce926b544a64cd1",      # block 53,205,321
+         "stake_tx": "0xaaa24d4fabb89b0c2341188557edb8bb3bed4b172865d19958d1a07d3723ae78",    # block 53,208,563
+         "burn_tx": "0xe00ba4ce1a74b3bdbcf3c7210fae5cdf9ebce7a72e0be0d98f4791f09ba86a33",     # block 53,215,285
+         "burn_block": 53_215_285},
+        {"date": "2026-10-30", "aero": 233_215.1975, "usdc": 147_085.0, "stake": "sAERO #20540 (permanent)",
+         "funded_tx": "0xcb5c0748139d6c561b4a435ccd25f7b584fcff2f58c8ef6cb09b630f165a697a",   # PGF -> Safe, 10-30 16:24
+         "buy_tx": "0x4304725f27b6f20403da989ac91f2c839e728446a59e79d66e13d6bacb5caa3a",      # block 53,294,561
+         "stake_tx": "0x24c72656b1ea670f02e66d41e10132962dab8253b438c088e2140116d43f0944",    # block 53,297,637
+         "burn_tx": "0xf800fc3185efe3eca12c908abafc250942660d350bb04a98abf16802f69bcaf8",     # block 53,299,338
+         "burn_block": 53_299_338}),
+    "burn_tx_shape": "one Safe MultiSend: sAERO.approve(VoterPaymentsModule, id); VoterPaymentsModule.depositIntoNFT("
+                     "[(id, amount)], 0, 0x0) — the stake to the accumulator, fee 0; VotingEscrow.burnFees(amount); "
+                     "sAERO.approve(0x0, id)",
+    # WHERE THE USDC CAME FROM (traced 2026-11-19, public Base RPC eth_getLogs on USDC, blocks 52,486,000-53,310,000):
+    "funding": {
+        "established": "BOTH PURCHASES WERE PAID WITH USDC THE PUBLIC GOODS FUND SENT TO THE SAFE: 122,988.00 USDC "
+                       "0x834C… -> the Safe at block 53,125,651 (2026-10-26 18:50 UTC), spent to the cent at block "
+                       "53,205,321; 147,085.00 USDC at block 53,294,047 (2026-10-30 16:24 UTC), spent to the cent at "
+                       "block 53,294,561. The Safe held 0 USDC before the first and between the two, and received "
+                       "USDC from no other sender in that span. The Fund held 3,764,794.56 USDC at block 52,700,000 "
+                       "(2026-10-16) and 3,590,017.41 after the second transfer. So it is a FOUNDATION buyback — the "
+                       "Fund's own USDC, the Foundation's buyer, as before — burned instead of locked; it is not a "
+                       "protocol fee burn the Safe executes (the accumulator held no fees)",
+        "documented": "app.aero.xyz/docs/about/foundation (read 2026-11-19): 'The Momentum Fund is the Foundation's "
+                      "flagship program: a rules-based sAERO stake that uses protocol revenue to support strategic "
+                      "growth and to buyback-and-burn AERO'; aero.xyz/articles/the-aero-economy (2026-10-19): 'AERO "
+                      "the Fund buys back can be burned ... The Fund can also burn sAERO'; aero.xyz/articles/"
+                      "aero-launches-today (2026-10-21): the Momentum Fund's mandate includes 'market-aware token "
+                      "buybacks and burns'. aerodrome-finance/docs@99680a79 about.mdx L210-212: the Public Goods "
+                      "Fund becomes the Momentum Fund",
+        "not_established": "where the Fund's standing USDC balance came from, dollar by dollar: one inflow is seen in "
+                           "the span (177,521.85 USDC on 2026-10-19 from 0x6a941fe8…, a contract named 'Public Goods "
+                           "Funding' that paid AERO and USDC to the Fund in a transaction that also paid the "
+                           "Foundation multisig and the Velodrome Foundation wallet from sibling contracts — consistent "
+                           "with its Relay's converted voting rewards, not verified from that contract's source); the "
+                           "3.76M held before it is not traced. No document names the buyer Safe or these two "
+                           "transactions; the rule by which the Fund chooses burn or hold per purchase is not "
+                           "published (the purchases of 11-04, 11-11 and 11-18 were forwarded and held)"},
+    "source": "sourcify.dev chain 8453: 0xBF7977E1521e9a3032bf7243Ee4712f311f13915 (V3/src/core/VotingEscrow.sol "
+              "L355-460), 0xbe8e5149dc0fe28d124de4222b7fb332de99aa79 (V3/src/vpm/VoterPaymentsModule.sol L129-173); "
+              "role members, the role grant, the accumulator's balance and the four receipts read on Base 2026-11-19",
+    "decided": "Jake 2026-11-19 (R13 B2)",
+}
+_r13_fb["burn_leg"] = AERODROME_BURN_LEG
+assert abs(sum(_b["aero"] for _b in AERODROME_BURN_LEG["burns"]) - AERO_RULE_READ["burned"]) < 0.01     # 407,815.83
+# THE SERIES. buyback_burned_tokens: the declared zero BEFORE the migration (the legacy system had no burn of any kind:
+# aerodrome-finance/contracts SPECIFICATION.md, confirmed 2026-09-14 — unchanged), and FROM it what the reader saw
+# burned out of the wallets' own stake, on the burn day. buyback_held_tokens falls by the same amount on that day —
+# the purchase was counted HELD on its purchase day and the burn MOVES it — so RETIRED (= burned + held) and the
+# buyback itself do not move (build_workbook._foundation_burn_views). Here the burn day is the purchase day, so the
+# two October purchases show as burned on the day they were bought and never as held.
+BURNED_DECLARED_ZERO["Aerodrome"]["until"] = _r13_cut
+BURNED_DECLARED_ZERO["Aerodrome"]["why"] = (
+    "the LEGACY system had no burn of any kind (aerodrome-finance/contracts SPECIFICATION.md, confirmed 2026-09-14): "
+    "a declared 0 before the migration (2026-10-22); from it the burned leg is measured (R13)")
+_r13_p["series_handover"]["buyback_burned_tokens"] = {
+    "ordered_points": _r13_p["series_handover"]["buyback_burned_tokens"]["ordered_points"] + (
+        "derived:foundation_burned[the Foundation wallets' own stake burned; moved from held]",),
+    "declared": _r13_cut,
+    "was_declared": _r13_p["series_handover"]["buyback_burned_tokens"]["declared"],
+    "why": "R10.A1d (Jake 2026-11-18): a declared zero while no burn mechanism existed; R13 (Jake 2026-11-19): from "
+           "the Aero migration the new escrow can burn (burnFees) and the Foundation's bought-and-burned AERO is "
+           "measured",
+    "composition_change": "before 2026-10-22 a declared 0 (the legacy contracts cannot burn); from 2026-10-22 the AERO "
+                          "the Foundation's wallets burned out of their own bought stake, on the burn day"}
+# THE DESTINATION OF A PURCHASE AFTER THE MIGRATION is no longer "held, to be re-checked": it is measured per day.
+BUYBACK_DESTINATION_SHARES["Aerodrome"][-1].update({
+    "verified": True, "recheck": "done 2026-11-19 (R13)",
+    "source": "MEASURED PER DAY from 2026-10-22 (R13): a purchase is HELD (forwarded to the Public Goods Fund, liquid, "
+              "or staked) unless the Foundation's wallet burns it — then it moves to BURNED on the burn day "
+              "(config.AERODROME_BURN_LEG; build_workbook._foundation_burn_views). The split view's hold 1.0 is the "
+              "starting point the measured burn is taken out of. Documented: app.aero.xyz/docs/about/foundation "
+              "('buyback-and-burn AERO'), aero.xyz/articles/the-aero-economy (2026-10-19)"})
+# THE DECLARED MECHANISM, CHANGED WITH THE EVIDENCE (was: no_burn, confirmed 2026-09-14 — true of the legacy contracts,
+# which the token left on 2026-10-22). protocol_level_destruction: TOKEN.burn lowers totalSupply; no address holds the
+# burned AERO. Nothing reads this block to derive a figure for Aerodrome (gross_issuance_tokens is read from the
+# Minter, not derived from the supply change; no burn_read_method is declared).
+_r13_p["burn_mechanism_was"] = dict(_r13_p["burn_mechanism"], until=_r13_cut)
+_r13_p["burn_mechanism"] = {
+    "model": "protocol_level_destruction", "status": "confirmed",
+    "source_url": "https://sourcify.dev/#/lookup/0xBF7977E1521e9a3032bf7243Ee4712f311f13915 (chain 8453)",
+    "source_date": "2026-11-19", "from": _r13_cut, "changed": "2026-11-19 (R13, Jake)",
+    "note": "FROM THE AERO MIGRATION (2026-10-22) A BURN EXISTS: VotingEscrow.burnFees(amount) — BURN_FEES_ROLE only — "
+            "destroys new AERO held at the escrow's tokenId-0 accumulator (TOKEN.burn: totalSupply falls). The "
+            "accumulator is filled by protocol fees on stake moves and by any staker routing its own stake to it "
+            "through the VoterPaymentsModule. Burned so far: 407,815.83 AERO, both by the Foundation's buyer Safe out "
+            "of AERO it had bought (2026-10-28, 10-30). BEFORE the migration: no burn of any kind (the legacy "
+            "SPECIFICATION.md, confirmed 2026-09-14 — burn_mechanism_was). Archetype 4 is NOT added: the burn is a "
+            "destination of the Foundation's buyback (A3), not a fee burn."}
+_r13_p["burn_split"]["note"] += (
+    " AMENDED 2026-11-19 (R13): that is the LEGACY design. Since the Aero migration (2026-10-22) the escrow can burn "
+    "(burnFees) — still no share of FEES is burned (0.0 stands); what is burned is AERO the Foundation bought "
+    "(config.AERODROME_BURN_LEG).")
+_r13_p["notes"] = _r13_p["notes"].replace(
+    "NO BURN EXISTS — confirmed from Aerodrome's own SPECIFICATION.md, which documents the complete supply mechanics "
+    "and contains no burn of any kind. Archetype 4 must not be added.",
+    "NO FEE BURN EXISTS. The legacy contracts had no burn of any kind (SPECIFICATION.md, confirmed 2026-09-14); since "
+    "the Aero migration (2026-10-22) the sAERO escrow can burn (burnFees, role-gated) and the Foundation has burned "
+    "AERO it bought (407,815.83 on 2026-10-28 and 10-30) — a destination of its buyback, measured (R13). Archetype 4 "
+    "must not be added.")
+assert "burnFees" in _r13_p["notes"]
+# ----- THE STATEMENT AND THE SUPPLY. The burned AERO left the token's totalSupply when it was burned (TOKEN.burn), so
+# total_supply and circulating (= total_supply, R8.1) already fell by it: the token-flow statement must show it under
+# "− burned" or the quarter's residual carries it (−383,908 in Q0 before; the burn is 407,815.83). Nothing else
+# subtracts it: Aerodrome has no gross_burn_tokens (not an archetype-4 project), no TOTAL_SUPPLY_NET entry and no
+# burn-address balance, and the burned buyback is not an input of circulating — so it is subtracted exactly once, on
+# the statement, as an explanation of a fall the supply read already holds.
+RULE_IN["Aerodrome"]["flow_burn"] = "buyback_burned_tokens"
+assert "Aerodrome" not in TOTAL_SUPPLY_NET and a1_burn_metric("Aerodrome") == "gross_burn_tokens"
+# ----- THE WORDS ON THE SHEET THAT THE TWO DECISIONS MAKE UNTRUE, corrected (text only; no figure reads them).
+_r13_fb["basis_decided_was"] = _r13_fb["basis_decided"]
+_r13_fb["basis_decided"] = (_r13_fb["basis_decided"] + " — to 2026-08-24; FROM 2026-08-25 the AERO PURCHASED on the day, "
+                            "counted on the purchase day while held, a later lock not counted again (Jake 2026-11-19, "
+                            "R13 B1)")
+CREDIBILITY["Aerodrome"]["in_buyback"]["what"] = (
+    "Buyback Q0 (tokens) — the Foundation's AERO: bought and locked (to 2026-08-24), purchased on the day (from "
+    "2026-08-25, R13) + compounded voting rewards (owners' share); rebase excluded")
+PHASE2_ATTRIBUTES["Aerodrome"]["destination"] = {
+    "value": "distributed (fees) + held (Foundation buys: max-locked to 2026-08-24, held liquid since) + burned "
+             "(Foundation buy-and-burns from 2026-10-28)",
+    "detail": "100% of exchange revenue paid to voters in pair/incentive tokens (no AERO buy). The Foundation (Public "
+              "Goods Fund / its buyer Safe) buys AERO with USDC: to 2026-08-24 max-locked as veNFT (6 buys "
+              "2026-07-15..08-19 locked into veNFT #130786); from 2026-08-26 forwarded to the Fund and held LIQUID "
+              "(not locked: 777,724 legacy AERO to 09-23, then 243,612, 294,003 and 503,341 in November); on "
+              "2026-10-28 and 10-30 bought, staked and BURNED by the Safe (407,815.83 AERO, VotingEscrow.burnFees). "
+              "A held-liquid purchase can be moved: the wallets' liquid AERO is read daily against it (R13).",
+    "source": "config.AERODROME_BURN_LEG (Base txs, read 2026-11-19) ; config PROJECT_BY_NAME['Aerodrome']"
+              "['foundation_buyback'] (trace read 2026-10-11; window rows 2026-07-15..) ; app.aero.xyz/docs/about/"
+              "foundation (Momentum Fund: 'buyback-and-burn AERO') ; aerodrome-finance/docs@99680a79 about.mdx",
+    "was": PHASE2_ATTRIBUTES["Aerodrome"]["destination"]}
+del _m, _lab, _kind, _old, _new

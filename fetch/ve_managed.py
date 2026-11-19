@@ -194,12 +194,39 @@ def _foundation(self, p, spec, out):
         _buyback_window(self, p, spec, out)
 
 
+LIQUID_SOURCE = f"{SOURCE}:foundation_liquid"       # R13: the wallets' liquid AERO at the END of the row's UTC day
+V3_EXTRAS = ("burned", "burned_other", "sent_out")  # R13: what the v3 receipts read returns beside the window parts
+
+
+def extra_rows(name: str, spec: dict, day, got: dict) -> list:
+    """R13 (Jake 2026-11-19): the frames of what the read returned BESIDE the five window parts — the burn leg (the
+    wallets' own stake burned, and what else they destroyed: only on the v3 basis, from the migration) and the
+    wallets' liquid AERO at the day's end (from `liquid_from`). A key the read did not return writes nothing (never 0)."""
+    xm = spec.get("extra_metrics") or {}
+    out = []
+    for k in V3_EXTRAS:
+        if k in xm and on_v3(spec, day) and got.get(k) is not None:
+            out.append(tidy([(day, float(got[k]))], name, xm[k], window_source(spec, day), TIER))
+    if "liquid" in xm and wants_liquid(spec, day) and got.get("liquid") is not None:
+        out.append(tidy([(day, float(got["liquid"]))], name, xm["liquid"], LIQUID_SOURCE, TIER))
+    return out
+
+
+def wants_liquid(spec: dict, day) -> bool:
+    """Whether `day` holds a liquid-balance row: the config declares the metric and `day` is on or after liquid_from."""
+    if "liquid" not in (spec.get("extra_metrics") or {}):
+        return False
+    d = pd.Timestamp(day)
+    d = d.tz_convert(None) if d.tzinfo is not None else d
+    return d.normalize() >= pd.Timestamp(spec.get("liquid_from") or "1970-01-01")
+
+
 def window_rows(name: str, spec: dict, day, got: dict, archive: bool = False) -> tuple[list, str]:
     """[(frame)] for one UTC day's buyback parts (check_offline_items.aerodrome_buyback_window, or from the migration
     cutover aerodrome_buyback_window_v3) and the log line. One source string per basis, seeded or daily."""
     src = window_source(spec, day)
     wm = spec["window_metrics"]
-    frames = [tidy([(day, float(got[k]))], name, m, src, TIER) for k, m in wm.items()]
+    frames = [tidy([(day, float(got[k]))], name, m, src, TIER) for k, m in wm.items()] + extra_rows(name, spec, day, got)
     who = "; ".join(f"{a[:10]}… {v:,.0f}" for a, v in sorted(got.get("compounders", {}).items(), key=lambda kv: -kv[1]))
     ins = "; ".join(f"{a[:10]}… {v:,.0f}" for a, v in sorted(got.get("inflows", {}).items(), key=lambda kv: -kv[1])[:5])
     msg = (f"Foundation buyback {pd.Timestamp(day).date()}: bought+locked in one tx {got['bought_same_tx']:,.2f}; "
@@ -210,7 +237,11 @@ def window_rows(name: str, spec: dict, day, got: dict, archive: bool = False) ->
            + (f"; v3 basis (both AERO tokens, sAERO stakes, Relays): migrated 1:1, not bought "
               f"{got.get('migrated_liquid', 0.0):,.2f}; locks migrated to sAERO, not new locks "
               f"{got.get('migrated_locks', 0.0):,.2f}; burned out of the escrow {got.get('burned', 0.0):,.2f}"
+              + (f"; ALSO destroyed out of the escrow, not the wallets' own stake of that transaction (not counted) "
+                 f"{got['burned_other']:,.2f}" if got.get("burned_other") else "")
+              + (f"; AERO SENT OUT of the Foundation's wallets {got['sent_out']:,.2f}" if got.get("sent_out") else "")
               if on_v3(spec, day) else "")
+           + (f"; liquid AERO held at the day's end {got['liquid']:,.2f}" if got.get("liquid") is not None else "")
            + (" (archive read)" if archive else ""))
     return frames, msg
 
@@ -237,6 +268,17 @@ def _window_reader_v3(b0, b1):
 
 def window_reader_for(spec: dict, day):
     return _window_reader_v3 if on_v3(spec, day) else _window_reader
+
+
+def _burn_reader(b0, b1):
+    """R13: the receipts read of the family's own transactions alone — the burn of a day whose window is stored."""
+    import check_offline_items as coi                      # noqa: PLC0415
+    return coi.aerodrome_buyback_window_v3(b0, b1, parts=("v3",))
+
+
+def _liquid_reader(block):
+    import check_offline_items as coi                      # noqa: PLC0415
+    return coi.aerodrome_foundation_liquid(block)
 
 
 def _buyback_window(self, p, spec, out):
@@ -368,7 +410,7 @@ def seed_span(spec: dict, days: int | None, end) -> list:
 
 
 def seed_foundation(projects: list[dict], days: int | None = None, stored=None, say=print, reader=None,
-                    window_reader=None, stored_src=None, write=None) -> list:
+                    window_reader=None, stored_src=None, write=None, burn_reader=None, liquid_reader=None) -> list:
     """`token_metrics.py --seed aero_buyback`: for every UTC day of the span (seed_span), TWO INDEPENDENT READS —
       the buyback WINDOW of the day (its first block to the next day's first block): bought and locked, locked from
         balance, purchased, compounded, rebase — wherever the day holds no window row;
@@ -377,7 +419,11 @@ def seed_foundation(projects: list[dict], days: int | None = None, stored=None, 
     was missing, so on a store holding every stock day the windows of 2026-08-21..10-15 were never read and Q0 never
     filled. A stored day is never read or written again (_held; the one exception is a legacy-basis row dated after the
     migration cutover). RESUMABLE: `write(frames)` is called per day as it lands, so a run that is stopped keeps what
-    it read and the next run reads only what is missing. One line per day says what was done. Frames out."""
+    it read and the next run reads only what is missing. One line per day says what was done. Frames out.
+    R13 (Jake 2026-11-19): a day whose window is ALREADY STORED but holds no burn row (a v3 day, read before the burn
+    leg was stored) gets the burn from the receipts read of the family's own transactions alone (`burn_reader`), and a
+    day from `liquid_from` with no liquid-balance row gets the wallets' liquid AERO at its end (`liquid_reader`, one
+    Multicall3). Only the missing rows are written: the five stored window parts are never read or written again."""
     import check_offline_items as coi                      # noqa: PLC0415
     import os                                              # noqa: PLC0415
     import pandas as pd                                    # noqa: PLC0415
@@ -388,6 +434,7 @@ def seed_foundation(projects: list[dict], days: int | None = None, stored=None, 
     LAST_SEED.clear()
     LAST_SEED.update({"days": 0, "already_stored": 0, "no_block": 0, "read_error": 0, "window_error": 0,
                       "window_stored": 0, "window_read": 0, "stock_read": 0, "first_error": "",
+                      "burn_read": 0, "liquid_read": 0, "extra_error": 0,
                       "first_window_error": "",
                       # Round G7 item 7: an ALCHEMY_API_KEY alone keys Base too (fetch.chain.rpc_endpoints prepends
                       # alchemy_url("base")); the seed reads eth_call / eth_getBlockByNumber / eth_getBlockReceipts
@@ -413,7 +460,7 @@ def seed_foundation(projects: list[dict], days: int | None = None, stored=None, 
             progress.tick(f"{name} Foundation buyback, days", i + 1, len(span))
             key, post = str(d.date()), on_v3(spec, d)
             LAST_SEED["days"] += 1
-            did, day_frames, all_held = [], [], True
+            did, day_frames, all_held, fresh = [], [], True, {}
             tag = " on the v3 basis" if post else ""
             # ---- THE WINDOW OF DAY d — its own read, whatever the stock holds
             if basis:
@@ -437,11 +484,56 @@ def seed_foundation(projects: list[dict], days: int | None = None, stored=None, 
                             did.append(f"buyback window NOT read — {redact_urls(str(w['error']))[:200]}")
                         else:
                             LAST_SEED["window_read"] += 1
+                            fresh = w
                             fs, msg = window_rows(name, spec, d, w, archive=True)
                             day_frames += fs
                             did.append(f"buyback window READ{tag}, blocks {b0:,}..{b1:,}"
                                        + (" (replaces the legacy-basis row of a day after the migration)"
                                           if legacy_row else "") + f" — {msg}")
+                # ---- R13: THE BURN AND THE LIQUID BALANCE OF A DAY WHOSE WINDOW IS STORED WITHOUT THEM
+                xm = spec.get("extra_metrics") or {}
+                got_x: dict = {}
+
+                def has(metric, key=key):
+                    """Whether the day holds a row of `metric` (either store reader the seed was given)."""
+                    if stored_src is not None:
+                        return stored_src(name, metric, key) is not None
+                    return bool(stored and stored(name, metric, key))
+                if held and post and any(k in xm and not has(xm[k]) for k in V3_EXTRAS):
+                    all_held = False
+                    b0, b1 = first_block(d), first_block(d + pd.Timedelta(days=1))
+                    w = ({"error": "no block for the day's start or end"} if not (b0 and b1)
+                         else (burn_reader or _burn_reader)(b0, b1))
+                    if w.get("error"):
+                        LAST_SEED["extra_error"] += 1
+                        did.append(f"burn NOT read — {redact_urls(str(w['error']))[:200]}")
+                    else:
+                        LAST_SEED["burn_read"] += 1
+                        got_x.update({k: w[k] for k in V3_EXTRAS + ("liquid",) if w.get(k) is not None})
+                        did.append(f"burn READ, blocks {b0:,}..{b1:,} — burned out of the escrow "
+                                   f"{w['burned']:,.2f}"
+                                   + (f"; ALSO destroyed, not the wallets' own stake (not counted) "
+                                      f"{w['burned_other']:,.2f}" if w.get("burned_other") else "")
+                                   + (f"; AERO SENT OUT of the Foundation's wallets {w['sent_out']:,.2f}"
+                                      if w.get("sent_out") else ""))
+                # (only beside a window that is held or was just read: a day whose window could not be read stores
+                # nothing, and is read whole on the next run)
+                if (held or fresh) and wants_liquid(spec, d) and "liquid" not in got_x \
+                        and fresh.get("liquid") is None and not has(xm["liquid"]):
+                    all_held = False
+                    b1 = first_block(d + pd.Timedelta(days=1))
+                    w = ({"error": "no block for the day's end"} if not b1 else (liquid_reader or _liquid_reader)(b1))
+                    if w.get("error"):
+                        LAST_SEED["extra_error"] += 1
+                        did.append(f"liquid balance NOT read — {redact_urls(str(w['error']))[:200]}")
+                    else:
+                        LAST_SEED["liquid_read"] += 1
+                        got_x["liquid"] = w["liquid"]
+                if got_x:
+                    if got_x.get("liquid") is not None:
+                        did.append(f"liquid AERO at the day's end READ — {got_x['liquid']:,.2f}")
+                    # only the rows the day lacks: a stored metric of the day is never written again
+                    day_frames += [f for f in extra_rows(name, spec, d, got_x) if not has(str(f["metric"].iloc[0]))]
             # ---- THE LOCK STOCK AT d's FIRST BLOCK
             held, legacy_row = _held(stored, stored_src, name, spec["stock_metric"], key, stock_source(spec, d), post)
             if held:

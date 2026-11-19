@@ -7099,8 +7099,19 @@ def v3_classify_tx(logs: list, ctx: dict, tx_to: str = "") -> dict:
         reviveStake) whose provider is a locker and whose value is positive. A veNFT migrated to sAERO is a Deposit
         by the MIGRATION contract — not a locker — so an existing lock that merely migrates is not a new lock; a
         stake moved into a Relay (rebalanceUnderlying) emits no Deposit at all.
+      * A BURN (R13, Jake 2026-11-19) is new AERO destroyed out of the sAERO escrow (Transfer escrow -> 0x0:
+        VotingEscrow.burnFees -> TOKEN.burn) in a transaction a family wallet executed. "burned" is the part that was
+        THE WALLET'S OWN STAKE: what a family wallet routed into the escrow's tokenId-0 accumulator in the SAME
+        transaction (VoterPaymentsModule DepositedIntoNFT, caller a family wallet, destinationId 0 — ctx["vpm"]),
+        capped at what was destroyed. "burned_other" is the rest — AERO at the accumulator that was not that
+        wallet's stake (protocol fees of stake moves, or a stake routed in an earlier transaction): destroyed, but
+        not shown to be a purchase, so it is stored apart and never counted as a burned buyback. Without ctx["vpm"]
+        nothing can be shown to be the wallet's own stake: all of it reads burned_other.
+      * SENT OUT: AERO of either token a family wallet sent to an address outside the family that is neither an
+        escrow, the migration contract nor 0x0 — AERO that left the Foundation's wallets other than by being locked.
     Returns {"bought_same_tx", "lock_from_balance", "purchased", "locks": [...], "purchases": [...], "inflows":
-    {sender: AERO}, "migrated_liquid", "migrated_locks", "burned"} — AERO, token units."""
+    {sender: AERO}, "migrated_liquid", "migrated_locks", "burned", "burned_other", "routed_to_accumulator",
+    "sent_out"} — AERO, token units."""
     from eth_utils import keccak                           # noqa: PLC0415
     top = lambda x: "0x" + keccak(text=x).hex().removeprefix("0x")  # noqa: E731
     adr = lambda h: "0x" + h[-40:].lower()  # noqa: E731
@@ -7109,10 +7120,12 @@ def v3_classify_tx(logs: list, ctx: dict, tx_to: str = "") -> dict:
     T_DEP_NEW = top("Deposit(address,uint256,uint8,uint128,uint256,uint256)")
     T_LIQ = top("LiquidMigrated(address,address,uint256,uint256)")
     T_NFT = top("VeNFTMigrated(address,address,uint256,uint256,uint256,bool,bool)")
+    T_VPM_IN = top("DepositedIntoNFT(address,(uint256,uint128)[],uint256,uint256,uint256)")
     aero, fam = ctx["aero"], ctx["owners"] | ctx["buyers"]
     not_a_seller = fam | ctx["escrows"] | {ctx["migration"], "0x" + "0" * 40}
     out = {"bought_same_tx": 0.0, "lock_from_balance": 0.0, "purchased": 0.0, "locks": [], "purchases": [],
-           "inflows": {}, "migrated_liquid": 0.0, "migrated_locks": 0.0, "burned": 0.0}
+           "inflows": {}, "migrated_liquid": 0.0, "migrated_locks": 0.0, "burned": 0.0, "burned_other": 0.0,
+           "routed_to_accumulator": 0.0, "sent_out": 0.0}
     xf = [(lg["address"].lower(), adr(lg["topics"][1]), adr(lg["topics"][2]), int(lg["data"], 16))
           for lg in logs if len(lg.get("topics") or []) == 3 and lg["topics"][0] == T_XFER
           and lg.get("data") not in (None, "0x")]
@@ -7123,9 +7136,19 @@ def v3_classify_tx(logs: list, ctx: dict, tx_to: str = "") -> dict:
             out["migrated_liquid"] += _words(lg["data"])[1] / 1e18
         elif a == ctx["migration"] and tp and tp[0] == T_NFT and adr(tp[2]) in fam:
             out["migrated_locks"] += _words(lg["data"])[1] / 1e18
-    # AERO destroyed out of the escrow in a transaction a family wallet executed (the tokenId-0 accumulator's burn)
+    # AERO destroyed out of the escrow in a transaction a family wallet executed (the tokenId-0 accumulator's burn):
+    # the wallet's own stake routed to the accumulator in this transaction, and the rest apart (R13)
+    vpm = str(ctx.get("vpm") or "").lower()
+    for lg in logs:
+        tp = lg.get("topics") or []
+        if (vpm and lg["address"].lower() == vpm and len(tp) == 3 and tp[0] == T_VPM_IN and adr(tp[1]) in fam
+                and int(tp[2], 16) == 0):
+            out["routed_to_accumulator"] += _words(lg["data"])[1] / 1e18      # totalIn: the net leg and the fee leg
     if str(tx_to or "").lower() in fam:
-        out["burned"] = sum(v for t, f, to, v in xf if t in aero and f == ctx["saero"] and to == "0x" + "0" * 40) / 1e18
+        destroyed = sum(v for t, f, to, v in xf if t in aero and f == ctx["saero"] and to == "0x" + "0" * 40) / 1e18
+        out["burned"] = min(destroyed, out["routed_to_accumulator"])
+        out["burned_other"] = destroyed - out["burned"]
+    out["sent_out"] = sum(v for t, f, to, v in xf if t in aero and f in fam and to not in not_a_seller) / 1e18
     for w in sorted(fam):
         ins = [(f, v / 1e18) for t, f, to, v in xf if t in aero and to == w and f not in not_a_seller]
         paid: dict = {}
@@ -7238,8 +7261,44 @@ def aerodrome_relay_compounding(b0: int, b1: int, owners: list, rdr=None, state:
     return out
 
 
+def aerodrome_foundation_liquid(block, owners: list | None = None, state: dict | None = None) -> dict:
+    """THE AERO THE FOUNDATION'S WALLETS HOLD LIQUID AT `block` (R13, Jake 2026-11-19: a purchase counts "while
+    held") — balanceOf on the legacy AERO token and, where the migration state names one, the new token (1:1), for the
+    owners and the declared buyer wallets, in one Multicall3. {"liquid": AERO, "buyer_liquid": AERO (the buyer
+    wallets' part), "by": {wallet: AERO}, "block": n} or {"error": why} — an unread balance is an error, never 0."""
+    import config                                          # noqa: PLC0415
+    fb = config.PROJECT_BY_NAME["Aerodrome"]["foundation_buyback"]
+    st = state if state is not None else config.aerodrome_migration_state()
+    owners = [o.lower() for o in (owners or list(fb["owners"]))]
+    buyers = [b.lower() for b in (fb.get("buyer_wallets") or {})]
+    fam = owners + [b for b in buyers if b not in owners]
+    legacy = config.PROJECT_BY_NAME["Aerodrome"]["contracts"]["token"]
+    legacy = (legacy["address"] if isinstance(legacy, dict) else legacy).lower()
+    new = str((st.get("addresses") or {}).get("token") or "").lower()
+    blk = block if isinstance(block, str) else hex(int(block))
+    # THE NEW TOKEN IS ASKED ONLY WHERE IT EXISTS: before its deploy block (aero_migration.json deploy_block) there is
+    # no contract to hold a balance in — a call there returns nothing, which would read as "unread"
+    born = st.get("deploy_block")
+    if new and born and blk.startswith("0x") and int(blk, 16) < int(born):
+        new = ""
+    toks = [legacy] + ([new] if new else [])
+    try:
+        got = _retry(lambda: _batch_eth_calls(
+            "base", [(t, _selx("balanceOf(address)") + _word(int(w, 16))) for w in fam for t in toks], block=blk))
+    except Exception as e:  # noqa: BLE001
+        return {"error": f"{type(e).__name__}: {str(e)[:300]}"}
+    if any(x is None for x in got):
+        return {"error": f"the Foundation wallets' AERO balances unread at block {block}"}
+    # a token with no code yet (the new token before its deploy) answers "0x": no balance exists there, a measured 0
+    vals = [int(x, 16) if x not in ("0x", "") else 0 for x in got]
+    by = {w: sum(vals[i * len(toks):(i + 1) * len(toks)]) / 1e18 for i, w in enumerate(fam)}
+    return {"liquid": sum(by.values()), "buyer_liquid": sum(v for w, v in by.items() if w in set(buyers)), "by": by,
+            "block": int(blk, 16) if blk.startswith("0x") else blk}
+
+
 def aerodrome_buyback_window_v3(b0: int, b1: int, owners: list | None = None, say=print, state: dict | None = None,
-                                legacy_reader=None, relay_reader=None) -> dict:
+                                legacy_reader=None, relay_reader=None, parts=("legacy", "v3", "relay"),
+                                liquid_reader=None) -> dict:
     """THE FOUNDATION'S BUYBACK OVER BLOCKS (b0, b1] AFTER THE AERO MIGRATION — the agreed basis (Jake 2026-10-11, B)
     read across both systems (R12, Jake 2026-11-19; the declared handover of the window metrics at 2026-10-22):
       legacy escrow   locks by the owners and the managed veNFTs' compounding / rebase, from aerodrome_buyback_window
@@ -7250,7 +7309,13 @@ def aerodrome_buyback_window_v3(b0: int, b1: int, owners: list | None = None, sa
       Relays          compounding, owners' share, from the principal's price (aerodrome_relay_compounding).
     The lockers are the owners AND the declared buyer wallets (config foundation_buyback.migration.lockers): the
     buyer Safe staked what it bought itself (2026-10-28, 10-30) before the stake was burned.
-    Returns the legacy reader's keys plus "migrated_liquid", "migrated_locks", "burned"; "error" set = nothing usable."""
+    R13 (Jake 2026-11-19): "burned" is the wallets' own stake burned (v3_classify_tx), "burned_other" what else a
+    family wallet destroyed out of the escrow, "sent_out" AERO that left the family, and "liquid" / "buyer_liquid" the
+    wallets' liquid AERO at b1 (aerodrome_foundation_liquid). `parts` names which reads run: ("v3",) alone is the
+    receipts read of the family's own transactions — what the seed uses to add the burn to a day whose window is
+    already stored (the legacy escrow and the Relays are not asked again, and their keys are then absent).
+    Returns the legacy reader's keys plus "migrated_liquid", "migrated_locks", "burned", "burned_other", "sent_out",
+    "liquid", "buyer_liquid"; "error" set = nothing usable."""
     import config                                          # noqa: PLC0415
     fb = config.PROJECT_BY_NAME["Aerodrome"]["foundation_buyback"]
     st = state if state is not None else config.aerodrome_migration_state()
@@ -7265,13 +7330,19 @@ def aerodrome_buyback_window_v3(b0: int, b1: int, owners: list | None = None, sa
     new, saero, mig = adrs["token"], adrs["voting_escrow"], adrs["migration"]
     lockers = set(owners) | (set(buyers) if "buyers" in str((fb.get("migration") or {}).get("lockers", "")) else set())
     ctx = {"aero": {legacy, new}, "owners": set(owners), "buyers": set(buyers), "lockers": lockers,
-           "escrows": {AERO_VE.lower(), saero}, "saero": saero, "migration": mig}
-    out = (legacy_reader or aerodrome_buyback_window)(b0, b1, owners=owners, say=say, parts=("locks", "compounded"),
-                                                      also_aero=(new,))
-    if out.get("error"):
-        out["error"] = f"legacy escrow part: {out['error']}"
-        return out
-    out.update({"migrated_liquid": 0.0, "migrated_locks": 0.0, "burned": 0.0, "basis": "v3"})
+           "escrows": {AERO_VE.lower(), saero}, "saero": saero, "migration": mig,
+           "vpm": str(((fb.get("burn_leg") or {}).get("voter_payments_module")) or "").lower()}
+    if "legacy" in parts:
+        out = (legacy_reader or aerodrome_buyback_window)(b0, b1, owners=owners, say=say,
+                                                          parts=("locks", "compounded"), also_aero=(new,))
+        if out.get("error"):
+            out["error"] = f"legacy escrow part: {out['error']}"
+            return out
+    else:
+        out = {"bought_same_tx": 0.0, "lock_from_balance": 0.0, "purchased": 0.0, "locks": [], "purchases": [],
+               "inflows": {}, "compounders": {}, "error": None}
+    out.update({"migrated_liquid": 0.0, "migrated_locks": 0.0, "burned": 0.0, "burned_other": 0.0, "sent_out": 0.0,
+                "basis": "v3", "parts": tuple(parts)})
     try:
         safes = {w: _is_safe(w) for w in fam}
         sel_bal, sel_nonce = _selx("balanceOf(address)"), _selx("nonce()")
@@ -7303,15 +7374,23 @@ def aerodrome_buyback_window_v3(b0: int, b1: int, owners: list | None = None, sa
                 for pu in got["purchases"]:
                     out["purchases"].append({**pu, "block": blk, "tx": tx})
                 for k in ("bought_same_tx", "lock_from_balance", "purchased", "migrated_liquid", "migrated_locks",
-                          "burned"):
+                          "burned", "burned_other", "sent_out"):
                     out[k] += got[k]
+                if got["burned"] or got["burned_other"]:
+                    out.setdefault("burns", []).append({"block": blk, "tx": tx, "burned": got["burned"],
+                                                        "burned_other": got["burned_other"]})
                 for f, v in got["inflows"].items():
                     out["inflows"][f] = out["inflows"].get(f, 0.0) + v
-        rel = (relay_reader or aerodrome_relay_compounding)(b0, b1, owners, state=st)
-        out["compounded_owner"] += rel["compounded_owner"]
-        for r, v in rel["compounders"].items():
-            out["compounders"][r] = out["compounders"].get(r, 0.0) + v
-        out["relays"] = rel.get("relays", 0)
+        if "relay" in parts:
+            rel = (relay_reader or aerodrome_relay_compounding)(b0, b1, owners, state=st)
+            out["compounded_owner"] += rel["compounded_owner"]
+            for r, v in rel["compounders"].items():
+                out["compounders"][r] = out["compounders"].get(r, 0.0) + v
+            out["relays"] = rel.get("relays", 0)
+        liq = (liquid_reader or aerodrome_foundation_liquid)(b1, owners=owners, state=st)
+        if liq.get("error"):
+            raise ValueError(f"liquid balances at the window's end: {liq['error']}")
+        out["liquid"], out["buyer_liquid"] = liq["liquid"], liq["buyer_liquid"]
     except Exception as e:  # noqa: BLE001
         out["error"] = f"{type(e).__name__}: {str(e)[:300]}"
     return out

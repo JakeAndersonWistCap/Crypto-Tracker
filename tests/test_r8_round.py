@@ -141,7 +141,11 @@ def test_1_aerodrome_circulating_subtracts_nothing_issuer_side():
                       {"date": d, "project": "Aerodrome", "metric": "filing_managed_lock_tokens", "value": 503.1e6}])
     assert list(C.series(h, "Aerodrome")) == [2_141.5e6]
     assert list(C.series(h[h.metric == "total_supply"], "Aerodrome")) == [2_141.5e6]     # the legs are not needed for it
-    assert config.RULE_IN["Aerodrome"]["off_float"] == ("aero_issuer_held_tokens", "filing_managed_lock_tokens")
+    # R13 (Jake 2026-11-19): the buyer Safe's liquid AERO joins the off-float stock from 2026-10-22 — a purchase is off
+    # the float the day it is bought. Was: ("aero_issuer_held_tokens", "filing_managed_lock_tokens")
+    assert config.RULE_IN["Aerodrome"]["off_float"] == ("aero_issuer_held_tokens", "filing_managed_lock_tokens",
+                                                        "aero_buyer_liquid_tokens")
+    assert config.RULE_IN["Aerodrome"]["off_float_from"] == {"aero_buyer_liquid_tokens": "2026-10-22"}
     assert config.unlock_stock_metrics("Aerodrome") == () and "Aerodrome" in config.UNLOCK_DECLARED_ZERO
 
 

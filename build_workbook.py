@@ -2342,6 +2342,7 @@ def confidence_for(project: str, metric: str, row: dict, asof: pd.Timestamp) -> 
         why.append(RESTATEMENT_STATUS[(project, metric)])     # P2b-2: days still on the superseded set, or holes
     if (project, metric) in HANDOVER_CUT:
         why.append(HANDOVER_CUT[(project, metric)])
+    why += foundation_flags(project, metric)                  # R13: a purchase no longer held, a burn not counted
     if (project, metric) in SERIES_BREAK_NOTED:
         why.append(SERIES_BREAK_NOTED[(project, metric)])    # P2c-2: a named day off its series' basis, not smoothed
     if (MONTHLY_FLOW_FORMED.get((project, metric)) or {}).get("holes"):
@@ -4180,20 +4181,65 @@ def _foundation_agreed_basis(groups: dict, p: dict, fb: dict, ser, cols) -> None
     if days.empty:
         _foundation_with_trace(groups, p, fb, None, cols)
         return
-    pool, tok = 0.0, []
+    vals, src, info = foundation_basis_series(fb, parts, days)
+    FOUNDATION_HANDOVER[p["name"]] = info
+    _foundation_with_trace(groups, p, fb, vals, cols, src_by_day=src)
+
+
+FOUNDATION_HANDOVER: dict = {}       # project -> what the handover of the buyback basis did (pool at the handover)
+LOCKED_BASIS_SOURCE = "derived:foundation_buyback[bought+matched+compounded]"
+PURCHASE_BASIS_SOURCE = "derived:foundation_purchases[purchased on the day+compounded]"
+FOUNDATION_DUST = 1e-6               # AERO: below this a pool remainder is float rounding, not tokens
+
+
+def foundation_basis_series(fb: dict, parts: dict, days) -> tuple:
+    """(tokens per day, source per day, info) of the Foundation's buyback over the stored window days (pure; R13).
+    BEFORE the declared date (config foundation_buyback.purchase_day_basis.from; none declared = every day) the basis
+    of 2026-10-11 stands: bought and locked in one transaction + locks paid from the balance MATCHED OLDEST-FIRST to the
+    wallets' purchases (a running pool) + compounded.
+    FROM the declared date (Jake 2026-11-19, R13 B1: "held buybacks leave the float the day they're bought") a day's
+    figure is the AERO PURCHASED THAT DAY — bought and locked in one transaction + purchased and not locked in it —
+    + compounded. A lock paid from the balance is NOT counted from that date: what it locks was counted on its
+    purchase day (or, bought before the date, by the matching), so a purchase counts ONCE whether or not it is later
+    locked or staked.
+    THE POOL AT THE HANDOVER: purchases of days before the date that no lock had matched would be counted by neither
+    basis. They are held purchases, so they are counted ONCE, on the first stored day from the date, and named
+    (info["remainder"]; 0 on the stored series: the 2026-08-24 lock consumed the pool exactly)."""
+    pdb = fb.get("purchase_day_basis") or {}
+    start = pd.Timestamp(pdb["from"]) if pdb.get("from") else None
+    pool, tok, src = 0.0, {}, {}
+    info = {"from": start, "pool_at_handover": None, "remainder": 0.0, "remainder_day": None}
     purchased = parts["purchased"].sort_index()
-    for d in days.sort_values():
-        pool += float(purchased[(purchased.index <= d) & (purchased.index > (tok[-1][0] if tok else pd.Timestamp.min))]
-                      .sum())
-        matched = min(float(parts["lock_from_balance"].get(d, 0.0)), pool)
-        pool -= matched
-        tok.append((d, float(parts["bought_same_tx"].get(d, 0.0)) + matched + float(parts["compounded_owner"].get(d, 0.0))))
-    idx = pd.DatetimeIndex([d for d, _v in tok])
-    vals = pd.Series([v for _d, v in tok], index=idx)
-    _foundation_with_trace(groups, p, fb, vals, cols)
+    prev = pd.Timestamp.min
+    for d in pd.DatetimeIndex(days).sort_values():
+        comp = float(parts["compounded_owner"].get(d, 0.0))
+        same = float(parts["bought_same_tx"].get(d, 0.0))
+        if start is None or d < start:
+            pool += float(purchased[(purchased.index <= d) & (purchased.index > prev)].sum())
+            matched = min(float(parts["lock_from_balance"].get(d, 0.0)), pool)
+            pool -= matched
+            tok[d], src[d] = same + matched + comp, LOCKED_BASIS_SOURCE
+        else:
+            if info["pool_at_handover"] is None:
+                # purchases stored on days before the date (window days or not) that no lock matched
+                pool += float(purchased[(purchased.index < start) & (purchased.index > prev)].sum())
+                info["pool_at_handover"] = pool
+                carry = pool if pool > FOUNDATION_DUST else 0.0
+                info["remainder"], info["remainder_day"] = carry, (d if carry else None)
+                pool = 0.0
+            else:
+                carry = 0.0
+            tok[d] = same + float(purchased.get(d, 0.0)) + comp + carry
+            src[d] = PURCHASE_BASIS_SOURCE if not carry else (
+                PURCHASE_BASIS_SOURCE[:-1] + f"+{carry:,.2f} bought before {start.date()} and never locked: the "
+                                             f"handover's remainder, counted once]")
+        prev = d
+    idx = pd.DatetimeIndex(sorted(tok))
+    return pd.Series([tok[d] for d in idx], index=idx), src, info
 
 
-def _foundation_with_trace(groups: dict, p: dict, fb: dict, scan: pd.Series | None, cols) -> None:
+def _foundation_with_trace(groups: dict, p: dict, fb: dict, scan: pd.Series | None, cols,
+                           src_by_day: dict | None = None) -> None:
     """actual_buyback_tokens / _usd from the chain scan, with the trace standing in for its lock until the scan holds
     the lock's day (trace_in_use). Trace days carry the USDC actually paid; scan days tokens x the same-day price. One
     measuring point: every source is derived:foundation_buyback[...] (the bracket is an annotation)."""
@@ -4201,7 +4247,7 @@ def _foundation_with_trace(groups: dict, p: dict, fb: dict, scan: pd.Series | No
     tok, usd, src = {}, {}, {}
     if scan is not None:
         for d, v in scan.items():
-            tok[d], src[d] = float(v), "derived:foundation_buyback[bought+matched+compounded]"
+            tok[d], src[d] = float(v), (src_by_day or {}).get(d, LOCKED_BASIS_SOURCE)
     tr = fb.get("trace")
     if tr and trace_in_use(p, scan):
         for r in tr["rows"]:
@@ -4226,8 +4272,10 @@ def _foundation_with_trace(groups: dict, p: dict, fb: dict, scan: pd.Series | No
         {"date": days, "project": name, "metric": "actual_buyback_usd",
          "value": [usd[d] if d in usd else tok[d] * float(pmap[d]) for d in days],
          "tier": [3 if d in usd else 2 for d in days],
-         "source": ["derived:tokens*price[trace: USDC actually paid]" if d in usd else "derived:tokens*price"
-                    for d in days]}), cols)
+         # R13: a day on the purchase-day basis says so in its dollars too (the declared handover of the $ series)
+         "source": ["derived:tokens*price[trace: USDC actually paid]" if d in usd else
+                    "derived:purchases*price" if src[d].startswith("derived:foundation_purchases") else
+                    "derived:tokens*price" for d in days]}), cols)
 
 
 # ===== EVERY VIEW EMITS A STORED ROW'S COLUMNS. Fixed 2026-09-28 after a build crash. =====
@@ -6755,9 +6803,151 @@ def _burned_declared_zero_views(groups: dict) -> None:
         if tot is None or tot.empty:
             continue
         days = pd.to_datetime(tot["date"]).dt.normalize().drop_duplicates().sort_values()
+        if z.get("until"):
+            # R13: the zero is declared for the system that had no burn — only BEFORE `until`; from it the burned leg
+            # is measured (_foundation_burn_views) and a day not measured holds no value
+            days = days[days < pd.Timestamp(z["until"])]
+            if days.empty:
+                groups.pop((name, "buyback_burned_tokens"), None)
+                continue
         groups[(name, "buyback_burned_tokens")] = _as_stored(pd.DataFrame(
             {"date": days.values, "project": name, "metric": "buyback_burned_tokens", "value": 0.0, "tier": 2,
              "source": "derived:declared_zero[no burn mechanism exists]"}), tot.columns)
+
+
+FOUNDATION_BURN: dict = {}           # project -> what the burn leg and the held check found (said on the cells)
+BURNED_MEASURED_SOURCE = "derived:foundation_burned[the Foundation wallets' own stake burned; moved from held]"
+HELD_MOVED_NOTE = "[less foundation_burned: moved from held to burned on the burn day]"
+
+
+def foundation_burn_split(bought: pd.Series, burned: pd.Series) -> tuple:
+    """(burned counted per day, not counted per day) — pure (R13 B2). A burn is a BURNED BUYBACK only up to what the
+    series has counted as bought and not yet burned (every actual_buyback_tokens day up to and including the burn's
+    day, less the burns already counted): AERO destroyed beyond that was never counted as a buyback, so it is not
+    moved out of HELD — it is returned apart and flagged, never dropped silently."""
+    cum_b = bought.sort_index().cumsum() if bought is not None and not bought.empty else pd.Series(dtype=float)
+    taken, ok, extra = 0.0, {}, {}
+    for d, v in burned.sort_index().items():
+        room = max((float(cum_b[cum_b.index <= d].iloc[-1]) if (cum_b.index <= d).any() else 0.0) - taken, 0.0)
+        ok[d] = min(float(v), room)
+        extra[d] = float(v) - ok[d]
+        taken += ok[d]
+    return pd.Series(ok, dtype=float), pd.Series(extra, dtype=float)
+
+
+def foundation_not_held(fb: dict, parts: dict, liquid: pd.Series) -> pd.Series:
+    """PURCHASES COUNTED ON THEIR PURCHASE DAY THAT THE WALLETS NO LONGER HOLD (pure; R13 B1 "while held"). From the
+    declared date a running stock of AERO bought and NOT locked in that transaction, less what later locks and stakes
+    took (a lock keeps it held, as a lock; a burn is taken out of a stake) — the purchases that should still sit
+    LIQUID in the Foundation's wallets. Against the wallets' liquid AERO at the day's end: the SHORTFALL
+    max(expected liquid − liquid, 0) is purchased AERO that left the wallets other than by being locked — sold or paid
+    out: not retired. AERO is fungible, so the wallets' other liquid AERO stands in first: the shortfall is the least
+    that must have left. One value per day the liquid balance is stored; no row where it is not (unknown, never 0)."""
+    pdb = fb.get("purchase_day_basis") or {}
+    if not pdb.get("from") or liquid is None or liquid.empty or parts.get("purchased") is None:
+        return pd.Series(dtype=float)
+    start = pd.Timestamp(pdb["from"])
+    pur = parts["purchased"][parts["purchased"].index >= start].sort_index()
+    lock = parts.get("lock_from_balance")
+    lock = lock[lock.index >= start].sort_index() if lock is not None else pd.Series(dtype=float)
+    out, stock = {}, 0.0
+    for d in sorted(set(pur.index) | set(lock.index) | set(liquid.index[liquid.index >= start])):
+        stock += float(pur.get(d, 0.0))
+        stock -= min(float(lock.get(d, 0.0)), stock)
+        if d in liquid.index:
+            out[d] = max(stock - float(liquid[d]), 0.0)
+    return pd.Series(out, dtype=float)
+
+
+FOUNDATION_FLAG_METRICS = ("actual_buyback_tokens", "actual_buyback_usd", "buyback_held_tokens", "buyback_burned_tokens",
+                           "retired_buyback_tokens", "retired_buyback_usd")
+
+
+def foundation_flags(project: str, metric: str) -> list:
+    """R13: what the Foundation's buyback cells must say beside their figure — never a silent adjustment.
+      NOT HELD   purchased AERO counted on its purchase day that is no longer in the Foundation's wallets and was not
+                 locked or burned by them (foundation_not_held > 0 on the latest day read): it is not retired. The
+                 series is NOT reduced — whether it should be is Jake's decision (SPEC R13.4).
+      NOT COUNTED  AERO a Foundation wallet destroyed that is not shown to be a purchase (not its own stake of that
+                 transaction, or beyond what the series counted as bought): out of the supply, not a burned buyback."""
+    f = FOUNDATION_BURN.get(project)
+    if not f or metric not in FOUNDATION_FLAG_METRICS:
+        return []
+    out = []
+    if (f.get("not_held_now") or 0.0) > FOUNDATION_DUST:
+        out.append(f"FLAG — PURCHASES NO LONGER HELD: {f['not_held_now']:,.2f} AERO counted on its purchase day is not "
+                   f"in the Foundation's wallets on {pd.Timestamp(f['not_held_day']).date()} and was not locked or "
+                   f"burned by them — sold or paid out, so not retired. NOT subtracted from this figure (a decision "
+                   f"for Jake, SPEC R13.4)")
+    extra = (f.get("not_bought") or 0.0) + (f.get("other") or 0.0)
+    if extra > FOUNDATION_DUST:
+        out.append(f"FLAG — {extra:,.2f} AERO destroyed by a Foundation wallet is NOT counted as a burned buyback: it "
+                   f"is not shown to be a purchase (not the wallet's own stake of that transaction, or beyond what "
+                   f"was counted as bought)")
+    return out
+
+
+def _foundation_burn_views(groups: dict) -> None:
+    """R13 B2 (Jake 2026-11-19: "the AERO bought and burned show as retired, not held"): THE MEASURED BURN LEG. From the
+    declared date (config foundation_buyback.burn_leg.from — the Aero migration; before it BURNED_DECLARED_ZERO holds)
+    buyback_burned_tokens on a day = the AERO the Foundation's wallets burned that day out of what they bought (their
+    own stake routed to the escrow's accumulator and destroyed: foundation_aero_burned_tokens, capped by
+    foundation_burn_split), and buyback_held_tokens falls by the same amount on the same day — the purchase was
+    counted HELD on its purchase day and the burn MOVES it from held to burned. retired_buyback_tokens (= burned +
+    held), retired_buyback_usd and actual_buyback_tokens do not move: nothing is counted twice. A day from the declared
+    date with no burn read holds no burned row (unknown, never the declared 0).
+    Also the held check (foundation_not_held -> foundation_buyback_not_held_tokens)."""
+    FOUNDATION_BURN.clear()
+    for p in scoped_projects():
+        fb, name = p.get("foundation_buyback") or {}, p["name"]
+        bl = fb.get("burn_leg")
+        if not bl:
+            continue
+        cols = _view_cols(groups, name)
+        info = FOUNDATION_BURN.setdefault(name, {})
+        start = pd.Timestamp(bl["from"])
+        raw = _ser_of(groups, name, bl["metric"])
+        raw = raw[raw.index >= start] if raw is not None else None
+        if raw is not None and not raw.empty:
+            ok, extra = foundation_burn_split(_daily(groups.get((name, fb["flow"]))), raw)
+            other = _ser_of(groups, name, bl.get("other_metric") or "")
+            info.update({"burned": float(ok.sum()), "not_bought": float(extra.sum()),
+                         "other": float(other[other.index >= start].sum()) if other is not None else None,
+                         "days": int(len(ok)), "burn_days": [d for d, v in ok.items() if v > 0]})
+            z = groups.get((name, "buyback_burned_tokens"))
+            z = z[pd.to_datetime(z["date"]) < start] if z is not None and not z.empty else None
+            m = _as_stored(pd.DataFrame({"date": ok.index, "project": name, "metric": "buyback_burned_tokens",
+                                         "value": ok.values, "tier": 2, "source": BURNED_MEASURED_SOURCE}), cols)
+            groups[(name, "buyback_burned_tokens")] = m if z is None or z.empty else pd.concat(
+                [z, m], ignore_index=True).sort_values("date")
+            moved = ok[ok > 0]
+            if not moved.empty:
+                h = groups.get((name, "buyback_held_tokens"))
+                hs = _daily(h)
+                new = hs.reindex(hs.index.union(moved.index)).fillna(0.0)
+                new[moved.index] = new[moved.index] - moved
+                keep = h[~pd.to_datetime(h["date"]).dt.normalize().isin(moved.index)] if h is not None and not h.empty \
+                    else None
+                # ONE MEASURING POINT: the split's own source, the burn said in a bracket (an annotation)
+                base = (str(h["source"].iloc[-1]) if h is not None and not h.empty
+                        else "derived:actual_buyback_tokens x hold share")
+                mv = _as_stored(pd.DataFrame({"date": moved.index, "project": name, "metric": "buyback_held_tokens",
+                                              "value": new[moved.index].values, "tier": 2,
+                                              "source": base + HELD_MOVED_NOTE}), cols)
+                groups[(name, "buyback_held_tokens")] = mv if keep is None or keep.empty else pd.concat(
+                    [keep, mv], ignore_index=True).sort_values("date")
+        hc = fb.get("held_check")
+        if hc:
+            parts = {k: _ser_of(groups, name, m) for k, m in fb["window_metrics"].items()}
+            liquid = _ser_of(groups, name, hc["liquid_metric"])
+            nh = foundation_not_held(fb, parts, liquid)
+            if not nh.empty:
+                groups[(name, hc["flag_metric"])] = _as_stored(pd.DataFrame(
+                    {"date": nh.index, "project": name, "metric": hc["flag_metric"], "value": nh.values, "tier": 2,
+                     "source": "derived:foundation_not_held[purchases since the handover not locked − the wallets' "
+                               "liquid AERO at the day's end, floored at 0]"}), cols)
+                info.update({"not_held_now": float(nh.iloc[-1]), "not_held_max": float(nh.max()),
+                             "not_held_day": nh.index[-1]})
 
 
 def _unlock_declared_zero_view(groups: dict, name: str) -> None:
@@ -7364,6 +7554,7 @@ def aggregate(long: pd.DataFrame, fetch_status: pd.DataFrame, asof: pd.Timestamp
     _measured_buyback_views(groups)   # G11 B9: Pendle's buyback = its own per-epoch distribution; derived = cross-check
     _buyback_split_views(groups)  # AFTER every view that builds actual_buyback_* (retirement = burned + held)
     _burned_declared_zero_views(groups)   # R10.A1d: no burn exists (confirmed) -> the burned buyback is a declared 0
+    _foundation_burn_views(groups)        # R13 B2: from the migration the burned leg is MEASURED and moved out of held
     _emissions_from_metric_views(groups)
     # EACH QUARTER END, NOT ONLY ASOF (Round G7 item 2c): the shifted quarters read these stocks at asof − k x period
     _quarterly_views(lambda g, a: _trailing_yield_views(g), groups, asof)
@@ -13050,12 +13241,26 @@ def _rule_in_views(groups: dict) -> None:
         swc = config.circulating_swc(name)
         if spec.get("swc_leg") and swc.get("in_force") and swc.get("sign") != 1:
             names.append(spec["swc_leg"])              # the switched leg leaves the float while it is added back
+        # R13: a leg that JOINS the set from a declared date (config RULE_IN[...]["off_float_from"]: {leg: date} — a
+        # declared change of the series' composition). THE HANDOVER IS AT THE LEG'S FIRST STORED ROW on or after that
+        # date (as a declared cut hands over at the later point's first row): before it the leg is no part of the sum
+        # — the series is what it was — and from it a day missing the leg is no value, as for every other leg. So a
+        # store the leg's history has not reached yet (the backfill not run) keeps its float; it never reads the last
+        # day before the declared date as "now".
+        frm = {m: pd.Timestamp(d) for m, d in (spec.get("off_float_from") or {}).items() if m in names}
         legs = [_daily(groups.get((name, m))) for m in names]
-        if not legs or any(s.empty for s in legs):
+        if not legs or any(s.empty for m, s in zip(names, legs) if m not in frm):
             continue
-        idx = legs[0].index
-        for s in legs[1:]:
-            idx = idx.intersection(s.index)
+        for m, s in zip(names, legs):
+            if m in frm:
+                held = s.index[s.index >= frm[m]]
+                frm[m] = held.min() if len(held) else pd.Timestamp.max
+        idx = next(s.index for m, s in zip(names, legs) if m not in frm)
+        for m, s in zip(names, legs):
+            idx = idx.intersection(s.index) if m not in frm else idx[(idx < frm[m]) | idx.isin(s.index)]
+        legs = [s if m not in frm else s.reindex(idx).where(idx >= frm[m], 0.0) for m, s in zip(names, legs)]
+        names = [m if m not in frm else (f"{m} from {frm[m].date()}" if frm[m] != pd.Timestamp.max
+                                         else f"{m} not read yet") for m in names]
         less = None
         if _rule_addback_inside(name, swc):
             # the added-back wallets are inside the legs above and already leave the float through the project's own
@@ -15559,7 +15764,9 @@ def flow_statements(groups: dict, asof) -> list[dict]:
             legs = [("+ minted", mint_m, 1),
                     *[(x[0], x[1], 1) for x in rs.get("flow_in") or ()],
                     *[(x[0], x[1], 1) for x in rs.get("flow_outside") or ()],
-                    ("− burned", burn_m, -1)]
+                    # R13: a project whose supply burn is a declared series of its own (Aerodrome from the migration:
+                    # the Foundation's burned buyback — the only burn of the new token so far) reads it here
+                    ("− burned", rs["flow_burn"] if (name, rs.get("flow_burn")) in groups else burn_m, -1)]
             # (R10.A1d: a leg declared a one-off EVENT — config RULE_IN[...]["_flow_events"] — reads 0 on a day with no row)
         note_tok = {"Sky": "MKR -> SKY conversions (converter 0xA1Ea1bA1…) enter circulating with NO series — NOT WIRED "
                            "(149.6M SKY in the 90 days to 2026-10-12, research of 2026-10-13); they are not dilution "

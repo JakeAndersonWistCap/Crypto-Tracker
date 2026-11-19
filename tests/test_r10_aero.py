@@ -235,7 +235,11 @@ def test_a1d_with_no_burn_mechanism_the_burned_buyback_is_zero_on_every_day_the_
          ("Aerodrome", "buyback_held_tokens"): _g("buyback_held_tokens", [("2026-11-04", 243_612.0, "derived:x")])}
     bw._burned_declared_zero_views(g)
     b = g[("Aerodrome", "buyback_burned_tokens")]
-    assert len(b) == len(days) and (b["value"] == 0.0).all() and "declared_zero" in b["source"].iloc[0]
+    # R13 (Jake 2026-11-19): the zero is declared for the LEGACY system only — the days before the migration; from
+    # 2026-10-22 the burned leg is measured (tests/test_r13_aero_buyback.py). Was: len(b) == len(days) (all 91 days)
+    before = days[days < pd.Timestamp("2026-10-22")]
+    assert len(b) == len(before) == 63 and b["date"].max() == pd.Timestamp("2026-10-21")
+    assert (b["value"] == 0.0).all() and "declared_zero" in b["source"].iloc[0]
     assert g[("Aerodrome", "buyback_held_tokens")]["value"].sum() == 243_612.0          # what is held is untouched
     assert config.PROJECT_BY_NAME["Aerodrome"]["burn_mechanism"]["status"] == "confirmed"
     assert set(config.BURNED_DECLARED_ZERO) == {"Aerodrome"}                             # no other project's burn moves

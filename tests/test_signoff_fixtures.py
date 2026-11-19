@@ -1224,7 +1224,10 @@ def test_foundation_buy_and_lock_is_the_lock_stock_change_net_of_rebase_claims(m
     # (Aerodrome's docs name buybacks, grants and partnerships for the Momentum Fund — no burn), re-checked then
     assert config.buyback_destination_shares("Aerodrome", "2026-09-02")["hold"] == 1.0
     after = config.buyback_destination_shares("Aerodrome", "2026-10-23")
-    assert after["hold"] == 1.0 and after["burn"] == 0.0 and not after["verified"]
+    # R13 (Jake 2026-11-19): the re-check at the Aero launch is done — after the migration the destination is MEASURED
+    # per day (held unless the Foundation burns it: the burn moves AERO from held to burned, build_workbook.
+    # _foundation_burn_views), so the share stays hold 1.0 and is verified. Was: `not after["verified"]`
+    assert after["hold"] == 1.0 and after["burn"] == 0.0 and after["verified"]
 
 
 def test_foundation_lock_read_stores_both_series_once_a_day_and_the_seed_marks_archive(monkeypatch):
@@ -1274,8 +1277,13 @@ def test_foundation_lock_read_stores_both_series_once_a_day_and_the_seed_marks_a
 
     monkeypatch.setattr(coi, "rpc_block_at", lambda chain, ts, say=print: 1_000 + ts // 86400)
     stored = lambda name, metric, day: day.endswith("-01")  # noqa: E731
+    # R13 (2026-11-19): beside a window the seed reads the wallets' liquid AERO at the day's end (and the burn of a
+    # stored v3 window) — injected like the other readers (was: reader and window_reader only)
     frames = vm.seed_foundation([p], days=5, stored=stored, say=lambda *_: None,
-                                reader=lambda o, block="latest": got, window_reader=lambda b0, b1: win)
+                                reader=lambda o, block="latest": got, window_reader=lambda b0, b1: win,
+                                liquid_reader=lambda b: {"liquid": 7.0},
+                                burn_reader=lambda b0, b1: {"burned": 0.0, "burned_other": 0.0, "sent_out": 0.0,
+                                                            "liquid": 7.0})
     seeded = pd.concat(frames)
     # R12 (2026-11-19): rows dated on/after the migration cutover (2026-10-22) carry the declared v3 points
     # (old pins, every day: "ve_managed:buyback_window" and "ve_managed:foundation_locks")

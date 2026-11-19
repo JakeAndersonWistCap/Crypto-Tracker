@@ -131,8 +131,11 @@ PENDING_GETTERS = ("pendingDeposits", "deposits")       # tried in this order, p
 MULTICALL3 = "0xca11bde05977b3631167028862be2a173976ca11"
 # R8 item 2: THE SUPPLY SERIES (what circulating_supply_onchain is built from), written by the live read and by the
 # archive backfill (supply_history). The two aero_* legs are stored only once config.METRICS declares them.
+# R13 (Jake 2026-11-19): aero_buyer_liquid_tokens — the Foundation's BUYER wallets' liquid AERO (both tokens) at the
+# SAME block: a purchase is off the float from the day it is bought, also while the buyer Safe still holds it. It is
+# not an input of supply_once (the buyer wallets are not in the non-circulating set: total and circulating unchanged).
 SUPPLY_LEGS = ("total_supply", "noncirculating_holding_tokens", "filing_managed_lock_tokens",
-               "aero_issuer_liquid_tokens", "aero_velo_reserve_tokens")
+               "aero_issuer_liquid_tokens", "aero_velo_reserve_tokens", "aero_buyer_liquid_tokens")
 EPOCH_METRICS = ("voter_rewards_onchain_fees_usd", "voter_rewards_onchain_bribes_usd", "voter_rewards_onchain_usd",
                  "voter_rewards_unpriced_count", "voter_rewards_onchain_apr")
 EPOCH_SOURCE = "aero_v3_epoch"   # the tier name of the weekly epoch read (fetch/__init__.py); rows keep SOURCE's prefix
@@ -594,10 +597,16 @@ class AeroV3:
         new_nc = sum(c(tok, "balanceOf", w)[0] for w in wallets) / WAD
         old_nc = sum(c(LEGACY_TOKEN, "balanceOf", w)[0] for w in wallets) / WAD
         r = supply_once(new_total, reserve, velo_held, new_nc, old_total, old_nc, held_old, ratio)
+        # R13: THE FOUNDATION'S BUYER WALLETS (config foundation_buyback.buyer_wallets) — not in the set above, so a
+        # purchase the buyer Safe still held at this block was inside the free float. Their liquid AERO of BOTH tokens
+        # (1:1), at the same block as every other term: a wallet that is also in the set above is left out (once).
+        buyers = [b.lower() for b in ((config.PROJECT_BY_NAME[name].get("foundation_buyback") or {})
+                                      .get("buyer_wallets") or {}) if b.lower() not in wallets]
+        buyer_liq = sum(c(t, "balanceOf", w)[0] for w in buyers for t in (tok, LEGACY_TOKEN)) / WAD
         return {"blk": blk, "r": r, "mig": mig, "velo": velo, "ratio": ratio, "ratio_src": ratio_src, "reserve": reserve,
                 "held_old": held_old, "new_total": new_total, "old_total": old_total, "velo_held": velo_held,
-                "wallets": len(wallets), "new_nc": new_nc, "old_nc": old_nc,
-                "src": f"{SOURCE}:supply_once[ratio {ratio:g}]"}
+                "wallets": len(wallets), "new_nc": new_nc, "old_nc": old_nc, "buyers": len(buyers),
+                "buyer_liq": buyer_liq, "src": f"{SOURCE}:supply_once[ratio {ratio:g}]"}
 
     @staticmethod
     def _supply_msg(t: dict) -> str:
@@ -619,6 +628,10 @@ class AeroV3:
                  f"the {t['wallets']} non-circulating wallets' liquid NEW AERO (supply_once new_noncirc)"),
                 ("aero_velo_reserve_tokens", t["velo_held"], f"{SOURCE}:token.balanceOf(velodrome_migration)",
                  f"new AERO still held by the token's VELODROME_MIGRATION() {t['velo']} (supply_once velo_held)"))
+        if t.get("buyer_liq") is not None:
+            legs += (("aero_buyer_liquid_tokens", t["buyer_liq"], f"{SOURCE}:balanceOf(foundation buyer wallets)",
+                      f"the {t['buyers']} Foundation buyer wallet(s)' liquid AERO, new + legacy (R13: off the float "
+                      f"from the day it is bought; not in supply_once)"),)
         out = [(point(name, "total_supply", r["total"], src, TIER, when), f"total_supply: {self._supply_msg(t)}"),
                (point(name, "noncirculating_holding_tokens", r["noncirculating"], src, TIER, when),
                 f"noncirculating_holding_tokens = total − circulating = {r['noncirculating']:,.4f}")]

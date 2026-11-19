@@ -669,9 +669,11 @@ def seed_aero_buyback(st, log) -> int:
     written = done["rows"]
     log.info("--seed aero_buyback: AFTER (%.0fs) — %d row(s) stored; of %d day(s): %d already held, %d buyback "
              "window(s) read (%d already stored, %d not read), %d lock stock(s) read (%d not read), %d day(s) with no "
-             "block", time.monotonic() - t0, written, LAST_SEED.get("days", 0), LAST_SEED.get("already_stored", 0),
+             "block; beside the windows %d burn read(s) and %d liquid balance(s) (%d not read)",
+             time.monotonic() - t0, written, LAST_SEED.get("days", 0), LAST_SEED.get("already_stored", 0),
              LAST_SEED.get("window_read", 0), LAST_SEED.get("window_stored", 0), LAST_SEED.get("window_error", 0),
-             LAST_SEED.get("stock_read", 0), LAST_SEED.get("read_error", 0), LAST_SEED.get("no_block", 0))
+             LAST_SEED.get("stock_read", 0), LAST_SEED.get("read_error", 0), LAST_SEED.get("no_block", 0),
+             LAST_SEED.get("burn_read", 0), LAST_SEED.get("liquid_read", 0), LAST_SEED.get("extra_error", 0))
     if not written:
         n = sum(len(f) for f in frames if f is not None)
         log.warning("--seed aero_buyback: WHY 0 STORED — %s", why_nothing_stored(LAST_SEED, n))

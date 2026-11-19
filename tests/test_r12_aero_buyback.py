@@ -58,11 +58,24 @@ def legacy_lock(provider, token_id, kind, value):
                                       _pad(token_id), _pad(kind)], "data": "0x" + _w(value) + _w(0, 0) + _w(0, 0)}
 
 
+VPM = "0xbe8e5149dc0fe28d124de4222b7fb332de99aa79"
+
+
+def burn_logs(wallet, token_id, amount, fee=0.0):
+    """The burn transaction as traced (R13; tx 0xe00ba4ce…): the wallet's stake routed to the escrow's tokenId-0
+    accumulator through the VoterPaymentsModule (DepositedIntoNFT, destinationId 0), then burnFees: Transfer
+    escrow -> 0x0."""
+    return [{"address": VPM, "topics": [_top("DepositedIntoNFT(address,(uint256,uint128)[],uint256,uint256,uint256)"),
+                                        _pad(wallet), _pad(0)],
+             "data": "0x" + _w(0x60, 0) + _w(amount) + _w(fee) + _w(1, 0) + _w(token_id, 0) + _w(amount)},
+            xfer(NEW, SAERO, ZERO, amount)]
+
+
 def ctx(lockers=("owners", "buyers")):
     own, buy = {PGF, BLF}, {SAFE}
     return {"aero": {LEGACY, NEW}, "owners": own, "buyers": buy,
             "lockers": own | (buy if "buyers" in lockers else set()), "escrows": {VE, SAERO}, "saero": SAERO,
-            "migration": MIG}
+            "migration": MIG, "vpm": VPM}
 
 
 # ------------------------------------------------------------------------------------------- the declared handover
@@ -168,9 +181,16 @@ def test_an_saero_stake_by_a_locker_is_a_lock_and_a_migrated_lock_is_not():
     one = coi.v3_classify_tx([xfer(USDC, PGF, POOL, 70.0, 6), xfer(NEW, POOL, PGF, 100.0), xfer(NEW, PGF, SAERO, 100.0),
                               stake(PGF, 9, 0, 100.0)], ctx())
     assert one["bought_same_tx"] == pytest.approx(100.0) and one["lock_from_balance"] == 0 and one["purchased"] == 0
-    # the accumulator's burn in a transaction the wallet executed is reported, and is neither bought nor locked
+    # the accumulator's burn in a transaction the wallet executed is reported, and is neither bought nor locked.
+    # R13 (Jake 2026-11-19): "burned" is the wallet's OWN stake — what it routed to the accumulator in the same
+    # transaction; a burn with no such routing is destroyed AERO not shown to be a purchase: "burned_other".
+    # Was: burn["burned"] == 174_600.6362 for the bare Transfer escrow -> 0x0
     burn = coi.v3_classify_tx([xfer(NEW, SAERO, ZERO, 174_600.6362)], ctx(), tx_to=SAFE)
-    assert burn["burned"] == pytest.approx(174_600.6362) and burn["locks"] == [] and burn["purchased"] == 0
+    assert burn["burned"] == 0 and burn["burned_other"] == pytest.approx(174_600.6362)
+    assert burn["locks"] == [] and burn["purchased"] == 0
+    burn = coi.v3_classify_tx(burn_logs(SAFE, 19526, 174_600.6362), ctx(), tx_to=SAFE)
+    assert burn["burned"] == pytest.approx(174_600.6362) and burn["burned_other"] == 0
+    assert burn["locks"] == [] and burn["purchased"] == 0
     assert coi.v3_classify_tx([xfer(NEW, SAERO, ZERO, 5.0)], ctx(), tx_to=POOL)["burned"] == 0
 
 
@@ -192,7 +212,9 @@ def _window(monkeypatch, receipts: dict, legacy: dict | None = None, relay: dict
         return {k: (list(v) if isinstance(v, list) else dict(v) if isinstance(v, dict) else v) for k, v in base.items()}
     got = coi.aerodrome_buyback_window_v3(
         100, 200, state=STATE, legacy_reader=legacy_reader,
-        relay_reader=lambda b0, b1, owners, state=None: relay or {"compounded_owner": 0.0, "compounders": {}, "relays": 4})
+        relay_reader=lambda b0, b1, owners, state=None: relay or {"compounded_owner": 0.0, "compounders": {}, "relays": 4},
+        # R13: the wallets' liquid AERO at the window's end is part of the read (no chain here)
+        liquid_reader=lambda block, owners=None, state=None: {"liquid": 1_000.0, "buyer_liquid": 0.0, "by": {}})
     return got, seen
 
 
@@ -202,7 +224,9 @@ def test_the_v3_window_reads_the_safes_week_as_it_happened(monkeypatch):
                  "logs": [xfer(USDC, SAFE, POOL, 122_988.0, 6), xfer(NEW, POOL, SAFE, 174_600.6362)]}],
           120: [{"transactionHash": "0xstake", "to": SAFE,
                  "logs": [xfer(NEW, SAFE, SAERO, 174_600.6362), stake(SAFE, 19526, 0, 174_600.6362)]}],
-          130: [{"transactionHash": "0xburn", "to": SAFE, "logs": [xfer(NEW, SAERO, ZERO, 174_600.6362)]}]}
+          # R13: the burn as traced — the stake routed to the accumulator and destroyed in one transaction
+          # (was: the bare Transfer escrow -> 0x0, which is now "burned_other": not shown to be the wallet's stake)
+          130: [{"transactionHash": "0xburn", "to": SAFE, "logs": burn_logs(SAFE, 19526, 174_600.6362)}]}
     got, seen = _window(monkeypatch, rc)
     assert got["error"] is None and got["basis"] == "v3"
     assert got["purchased"] == pytest.approx(174_600.6362) and got["lock_from_balance"] == pytest.approx(174_600.6362)
@@ -389,7 +413,7 @@ def _seed(monkeypatch, store: dict, today="2026-11-19", days=5, seed_from=None, 
     monkeypatch.setattr(vm, "today", lambda: pd.Timestamp(today))
     monkeypatch.setattr(coi, "rpc_block_at", lambda chain, ts, say=print: 1_000 + ts // 86400)
     monkeypatch.setitem(FB, "seed_from", seed_from)
-    calls = {"stock": [], "window": [], "lines": [], "writes": []}
+    calls = {"stock": [], "window": [], "lines": [], "writes": [], "burn": [], "liquid": []}
     stock = {"locked": 5.0, "claimable": 0.0, "nfts": 1, "owned_managed": 0, "by_owner": {}}
     win = {"bought_same_tx": 0.0, "lock_from_balance": 0.0, "purchased": 7.0, "compounded_owner": 0.0,
            "rebase_owner": 0.0, "locks": [], "purchases": [1], "inflows": {}, "compounders": {}, "error": None}
@@ -405,6 +429,10 @@ def _seed(monkeypatch, store: dict, today="2026-11-19", days=5, seed_from=None, 
     p = {"name": "Aerodrome", "foundation_buyback": FB}
     frames = vm.seed_foundation([p], days=days, stored_src=lambda n, m, d: store.get((m, d)), write=write,
                                 say=calls["lines"].append, window_reader=window_reader,
+                                # R13: the burn of a stored v3 window and the liquid balance at the day's end
+                                burn_reader=lambda b0, b1: (calls["burn"].append((b0, b1)), {
+                                    "burned": 0.0, "burned_other": 0.0, "sent_out": 0.0, "liquid": 9.0})[1],
+                                liquid_reader=lambda b: (calls["liquid"].append(b), {"liquid": 9.0})[1],
                                 reader=lambda o, block="latest": (calls["stock"].append(block), stock)[1])
     return frames, calls, vm
 
@@ -419,8 +447,12 @@ def test_the_seed_reads_the_window_of_a_day_whose_stock_is_already_stored(monkey
     assert calls["window"] == [(1_000 + pd.Timestamp(d).value // 86_400_000_000_000,
                                 1_001 + pd.Timestamp(d).value // 86_400_000_000_000) for d in days]
     got = pd.concat(frames)
-    assert set(got["metric"]) == set(WM.values()) and len(got) == 5 * len(WM)
-    assert set(got["source"]) == {"ve_managed:buyback_window"}                  # days before the cutover: legacy point
+    # R13: from 2026-08-25 a day also holds the wallets' liquid AERO at its end (one more row a day, its own point).
+    # Was: set(got["metric"]) == set(WM.values()) and len(got) == 5 * len(WM), one source
+    LIQ = FB["extra_metrics"]["liquid"]
+    assert set(got["metric"]) == set(WM.values()) | {LIQ} and len(got) == 5 * (len(WM) + 1)
+    assert set(got[got["metric"] != LIQ]["source"]) == {"ve_managed:buyback_window"}   # before the cutover: legacy point
+    assert set(got[got["metric"] == LIQ]["source"]) == {"ve_managed:foundation_liquid"} and len(calls["liquid"]) == 5
     assert sorted({str(pd.Timestamp(d).date()) for d in got["date"]}) == days
     # one line a day says what was done
     assert len(calls["lines"]) == 5
@@ -434,9 +466,14 @@ def test_the_seed_is_resumable_and_never_rewrites_a_stored_window_day(monkeypatc
     store = {(FB["stock_metric"], d): "ve_managed:foundation_locks" for d in days}
     store.update({(m, "2026-09-03"): "ve_managed:buyback_window" for m in WM.values()})     # one window day is held
     frames, calls, vm = _seed(monkeypatch, store, today="2026-09-06")
-    assert len(calls["window"]) == 4 and calls["writes"] == [len(WM)] * 4, "stored day by day, as each lands"
-    assert "2026-09-03" not in {str(pd.Timestamp(d).date()) for d in pd.concat(frames)["date"]}
-    assert "2026-09-03: buyback window already stored; lock stock already stored" in calls["lines"][2]
+    # R13: each day also lands its liquid-balance row — the day whose window is held gets that row alone.
+    # Was: calls["writes"] == [len(WM)] * 4; 2026-09-03 in no frame; "…already stored; lock stock already stored"
+    assert len(calls["window"]) == 4 and calls["writes"] == [len(WM) + 1] * 2 + [1] + [len(WM) + 1] * 2, \
+        "stored day by day, as each lands"
+    got = pd.concat(frames)
+    assert set(got[pd.to_datetime(got["date"]) == pd.Timestamp("2026-09-03")]["metric"]) == {FB["extra_metrics"]["liquid"]}
+    assert "2026-09-03: buyback window already stored; liquid AERO at the day's end READ — 9.00; lock stock already " \
+           "stored" in calls["lines"][2]
     # the next run finds everything it wrote and reads nothing
     frames2, calls2, vm = _seed(monkeypatch, store, today="2026-09-06")
     assert frames2 == [] and calls2["window"] == [] and calls2["stock"] == [] and calls2["writes"] == []
@@ -457,6 +494,12 @@ def test_after_the_cutover_the_seed_reads_on_the_v3_basis_and_replaces_only_lega
                   for d in days})
     frames, calls, vm = _seed(monkeypatch, store, today="2026-10-25")
     got = pd.concat(frames)
+    # R13: every day from 2026-08-25 also gets the wallets' liquid AERO at its end — a NEW row beside the stored
+    # ones (10-20 and 10-21 included); the five window parts and the stock of those two days are still never rewritten.
+    # Was: `read` taken over every frame
+    liq = got[got["metric"] == FB["extra_metrics"]["liquid"]]
+    assert sorted({str(pd.Timestamp(d).date()) for d in liq["date"]}) == days
+    got = got[got["metric"] != FB["extra_metrics"]["liquid"]]
     read = sorted({str(pd.Timestamp(d).date()) for d in got["date"]})
     assert read == ["2026-10-22", "2026-10-23", "2026-10-24"], "10-20 and 10-21 are before the cutover: never rewritten"
     assert set(got[got["metric"].isin(WM.values())]["source"]) == {"ve_managed:buyback_window_v3"}
@@ -464,8 +507,13 @@ def test_after_the_cutover_the_seed_reads_on_the_v3_basis_and_replaces_only_lega
     assert "replaces the legacy-basis row of a day after the migration" in calls["lines"][2]
     assert "on the v3 basis" in calls["lines"][2] and "already stored" in calls["lines"][0]
     # once on the v3 basis a day is held like any other
+    # (R13: the fake window of the first run returned no burn, so the second run asks the burn of the three v3 days —
+    # the receipts read alone — and nothing else; a third run reads nothing. Was: frames2 == [])
     frames2, calls2, _ = _seed(monkeypatch, store, today="2026-10-25")
-    assert frames2 == [] and calls2["window"] == []
+    assert calls2["window"] == [] and calls2["stock"] == [] and len(calls2["burn"]) == 3
+    assert {f["metric"].iloc[0] for f in frames2} == {FB["extra_metrics"][k] for k in ("burned", "burned_other", "sent_out")}
+    frames3, calls3, _ = _seed(monkeypatch, store, today="2026-10-25")
+    assert frames3 == [] and calls3["window"] == [] and calls3["burn"] == [] and calls3["liquid"] == []
 
 
 def test_the_seed_reaches_back_to_the_pool_of_the_first_lock_in_q0(monkeypatch):
@@ -516,13 +564,19 @@ def test_the_series_forms_over_a_q0_that_straddles_the_cutover_and_nothing_is_co
     s = groups[("Aerodrome", "actual_buyback_tokens")].set_index("date")["value"]
     assert len(s) == 90 and s.index.min() == pd.Timestamp("2026-08-21") and s.index.max() == pd.Timestamp("2026-11-18")
     assert s[pd.Timestamp("2026-10-22")] == 0
-    assert s[pd.Timestamp("2026-10-25")] == pytest.approx(1_000.0), "matched to the purchase made before the cutover, once"
-    assert s[pd.Timestamp("2026-10-28")] == pytest.approx(174_600.0)
-    assert s[pd.Timestamp("2026-11-04")] == 0, "bought and held, not locked: in the pool, not yet in the series"
+    # R13 B1 (Jake 2026-11-19): from 2026-08-25 a purchase counts on its PURCHASE day and a later lock or stake of it
+    # is not counted again. Was (bought and locked, every day): 09-02 0, 10-25 1,000 (the stake matched to the 09-02
+    # purchase), 10-28 174,600 (as a lock), 11-04 0 ("in the pool, not yet in the series"), sum 175,612.5, one source
+    assert s[pd.Timestamp("2026-09-02")] == pytest.approx(1_000.0), "counted the day it was bought"
+    assert s[pd.Timestamp("2026-10-25")] == 0, "the stake of AERO already counted on its purchase day: not again"
+    assert s[pd.Timestamp("2026-10-28")] == pytest.approx(174_600.0), "once: the purchase, not the purchase and its stake"
+    assert s[pd.Timestamp("2026-11-04")] == pytest.approx(243_612.0), "bought and held, not locked: counted while held"
     assert s[pd.Timestamp("2026-11-06")] == pytest.approx(12.5), "the rebase is never in it"
-    assert s.sum() == pytest.approx(1_000.0 + 174_600.0 + 12.5)
-    assert set(groups[("Aerodrome", "actual_buyback_tokens")]["source"]) == {
-        "derived:foundation_buyback[bought+matched+compounded]"}
+    assert s.sum() == pytest.approx(1_000.0 + 174_600.0 + 243_612.0 + 12.5)
+    src = groups[("Aerodrome", "actual_buyback_tokens")].set_index("date")["source"]
+    assert set(src[src.index < pd.Timestamp("2026-08-25")]) == {"derived:foundation_buyback[bought+matched+compounded]"}
+    assert set(src[src.index >= pd.Timestamp("2026-08-25")]) == {
+        "derived:foundation_purchases[purchased on the day+compounded]"}
 
 
 def test_a_legacy_row_dated_after_the_cutover_holds_no_value_until_the_v3_read_stores_the_day(monkeypatch):
@@ -584,12 +638,20 @@ def test_the_seed_command_goes_through_the_store_and_says_what_it_did(monkeypatc
              "legacy": 816_485.12, "direct": 0.0, "relay": 193_780_936.11, "pending": 0.0}
     asked = []
     monkeypatch.setattr(vm, "_window_reader", lambda b0, b1: (asked.append("legacy window"), win)[1])
-    monkeypatch.setattr(vm, "_window_reader_v3", lambda b0, b1: (asked.append("v3 window"), win)[1])
+    # R13: the v3 window returns the burn, what was sent out and the liquid balance with its five parts
+    win_v3 = {**win, "burned": 0.0, "burned_other": 0.0, "sent_out": 0.0, "liquid": 1.0}
+    monkeypatch.setattr(vm, "_window_reader_v3", lambda b0, b1: (asked.append("v3 window"), win_v3)[1])
     monkeypatch.setattr(vm, "_foundation_reader", lambda o, block="latest": (asked.append("legacy stock"), stock)[1])
     monkeypatch.setattr(vm, "_foundation_reader_v3", lambda o, block="latest": (asked.append("v3 stock"), stock)[1])
+    # R13: the two reads beside the window — the burn of a v3 day whose window holds none, the liquid AERO at a day's end
+    monkeypatch.setattr(vm, "_burn_reader", lambda b0, b1: (asked.append("burn"), {
+        "burned": 0.0, "burned_other": 0.0, "sent_out": 0.0, "liquid": 1.0})[1])
+    monkeypatch.setattr(vm, "_liquid_reader", lambda b: (asked.append("liquid"), {"liquid": 1.0})[1])
     with caplog.at_level(logging.INFO):
         token_metrics.seed_aero_buyback(st, logging.getLogger("r12"))
-    assert sorted(asked) == ["legacy window"] * 2 + ["v3 stock"] * 2 + ["v3 window"] * 2
+    # R13: + the liquid balance at the end of the three legacy days (the v3 windows carry theirs).
+    # Was: ["legacy window"] * 2 + ["v3 stock"] * 2 + ["v3 window"] * 2
+    assert sorted(asked) == ["legacy window"] * 2 + ["liquid"] * 3 + ["v3 stock"] * 2 + ["v3 window"] * 2
     lg = st.load_long()
     lg = lg[lg.project == "Aerodrome"]
     src = {(str(r.date)[:10], r.metric): (r.source, float(r.value)) for r in lg.itertuples(index=False)}
@@ -601,8 +663,12 @@ def test_the_seed_command_goes_through_the_store_and_says_what_it_did(monkeypatc
     assert src[("2026-10-23", FB["stock_metric"])] == ("ve_managed:foundation_locks_v3", 194_597_421.24)
     text = caplog.text
     assert text.count("--seed aero_buyback:  2026-") == 5
-    assert ("24 row(s) stored; of 5 day(s): 1 already held, 4 buyback window(s) read (1 already stored, 0 not read), "
-            "2 lock stock(s) read (0 not read), 0 day(s) with no block") in text
+    # R13: 35 rows = the 24 of before + 3 liquid rows (10-19..10-21) + 2 v3 days x (burned, burned other, sent out,
+    # liquid). Was: "24 row(s) stored; of 5 day(s): 1 already held, …"; 10-19 is no longer "already held" (its liquid
+    # balance was read)
+    assert ("35 row(s) stored; of 5 day(s): 0 already held, 4 buyback window(s) read (1 already stored, 0 not read), "
+            "2 lock stock(s) read (0 not read), 0 day(s) with no block; beside the windows 0 burn read(s) and 3 liquid "
+            "balance(s) (0 not read)") in text
     # a second run reads nothing and says why
     asked.clear()
     with caplog.at_level(logging.INFO):
