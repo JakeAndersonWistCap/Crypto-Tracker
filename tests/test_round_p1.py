@@ -521,13 +521,18 @@ def test_p2a_b_charts_read_data_and_leave_out_the_parked(built):
     assert all(all(f"{x} (parked)" in n for x in parked) for n in notes)
 
 
-def test_p2a_c_about_describes_the_file_as_it_is(built):
+def test_p2a_c_about_describes_the_file_as_it_is(built, monkeypatch):
     r = openpyxl.load_workbook(built["reader"])
     text = "\n".join(str(c.value) for c in r["About"]["A"] if c.value)
     assert "Coming next" not in text and "Stage" not in text
     for k in ("A1 Infrastructure", "A2 Coordination", "A3 Revenue buyback", "A4 Permanent burn", "Summary!B2",
               "custom", "parked", "token_metrics_audit.xlsx", "Data as of"):
         assert k in text, k
+    # R13: the count is taken ON THE BUILD'S AS-OF DAY. reader.parked_reason caches Aerodrome's park reason for the build
+    # made in this process; when the shared build is loaded from its disk copy (another worker built it) no build ran
+    # here, and the reason was computed for today instead — "2 == 1" once Aerodrome is parked on the dump's as-of day
+    # and not today (was: no as-of set before the count)
+    monkeypatch.setattr(reader, "_AERO_PARK", {"day": built["asof"]})
     assert sum(1 for line in text.splitlines() if line.startswith("Parked: ")) == sum(
         1 for p in config.PROJECTS if reader.parked_reason(p["name"]))
 
