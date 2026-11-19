@@ -534,6 +534,137 @@ A Plume seed started on code older than 2026-10-01 saved its state only at the e
 or stop it and start again on the new code. Don't run both at once: they write the same state file.
 
 
+## 11fa. Round 12 — Aerodrome's buyback across the migration, Velodrome in dilution, Near's float and payouts (2026-11-19)
+
+HOW A BLOCK IS WRITTEN (R12.A, Jake 2026-11-19). Both `gcloud auth application-default` lines open every block.
+`bq` does not use that login: any block holding a `bq` line has `gcloud auth login` before the first one. The weekly
+NEAR lockup read is never in a routine block: windows\daily_run.ps1 runs near_lockups_weekly.py when the last read is
+7 or more days old. Read-only checks first, long steps last.
+
+HYPERLIQUID. Net supply change is declared n/a until 2027-01-11; when a window's opening day is a stored hole the
+window opens on the last reading before it and the rate is annualised over the real length (shown on the number).
+AERODROME. The Foundation's buyback is read across the migration (both AERO tokens, sAERO stakes, Relays): run the seed
+below BEFORE the build. Velodrome's gauge emissions before the merger count in dilution once the backfill has stored
+VELO's history with the Minter's terms. NEAR. The operator payouts count in total dilution and net holder yield as
+published (the cells end "- AS PUBLISHED: (b) to <date>, revisable for 45 days"); the Foundation's liquid NEAR (196
+published and same-key accounts) leaves the free float; the header-burn history read is approved (289,127,592 bytes,
+capped at 1 GB) and runs once on the next run.
+
+```
+cd C:\Users\jake\Crypto-Tracker
+.venv\Scripts\Activate.ps1
+gcloud auth application-default login
+#   expect: a browser sign-in, then "Credentials saved to file"
+gcloud auth application-default set-quota-project near-data-510309
+#   expect: "Credentials saved to file" and a line naming the quota project near-data-510309
+git switch claude/crypto-metrics-supply-demand-ovkg8g
+git pull
+git log --oneline -1
+#   expect: the line contains "R12"
+python -c "import config; h=config.PROJECT_BY_NAME['Near']['near_bigquery']['supply_flows']['history']; print(h['approved'], h['dry_run_bytes'], h['max_bytes'], config.RULE_IN['Near']['off_float'][-1], len(config.NEAR_FOUNDATION_LIQUID_ACCOUNTS), ('Near','b') in config.OUTFLOW_AS_PUBLISHED)"
+#   expect: True 289127592 1000000000 near_foundation_liquid_tokens 196 True
+python -c "import config; v=config.VELO_MERGED['Aerodrome']; print(len(v['legs']), len(v['issuer_wallets']), config.CIRC_CHANGE_DECLARED_GAP['Hyperliquid']['clear_by'], config.R12_MOVES_DECLARED, config.PROJECT_BY_NAME['Aerodrome']['foundation_buyback']['seed_from'])"
+#   expect: 7 2 2027-01-11 2 2026-07-15
+python circ_legs.py Aerodrome
+#   expect: total_supply listed; read-only
+python circ_legs.py Near
+#   expect: "circulating_supply_lockup_rule [first-party figure]: built at read time (no stored rows)"
+python token_metrics.py
+#   expect: the run ends without error, and these Run Log lines:
+#   near_rpc:      "near_foundation_staked_tokens=3,80..." and "near_foundation_liquid_tokens=1,04x,xxx.xxxx - liquid NEAR (view_account amount) summed over 196 account(s); ..."
+#   near_rpc:      the payout ledger, either "338,430.08 NEAR in 85 payout(s) 2026-04-23..2026-10-21" or "... not read on chain yet (resumes next run)"
+#   near_bigquery: "supply flows HISTORY 2025-07-15..2025-10-06: 84 row(s); 0.29 GB billed (dry run 0.29 GB); ..." (or "BACKFILL HELD": it then runs on a later run by itself; "over the 1,000,000,000-byte condition" or "dry run failed": paste the line back)
+#   any "Multicall3 aggregate3 via ... failed" line now ends with its cause ("HTTP 429 ...", "HTTP 400: ...") - paste one back if it still appears
+python token_metrics.py --project Near
+#   expect: only needed if the near_rpc line said "accounts read inside 100 s - NOTHING STORED" or the ledger line said "resumes next run" - repeat until it reads "338,430.08 NEAR in 85 payout(s)"
+python token_metrics.py --seed aero_buyback
+#   expect: one line a day from 2026-07-15, then "--seed aero_buyback: AFTER (...s) - 661 row(s) stored; of 127 day(s): 6 already held, 121 buyback window(s) read ..., 28 lock stock(s) read ..." (the counts grow by one a day after 11-19). 40-50 minutes; it can be stopped and run again. A day saying "NOT read" stores nothing: run the line again. RUN THIS BEFORE THE BUILD: until it has run, Aerodrome reads worse than before (its buyback series ends 2026-10-21)
+python archive_backfill.py --run --project Aerodrome --budget-min 45
+#   expect: "Aerodrome supply ..."; "Aerodrome voter epochs Aerodrome: N row(s) written over 1 epoch(s)" (the epoch of 2026-10-22: the scan continues from block 52,968,926; a few minutes); "Velodrome VELO history Aerodrome: N row(s) written over D day(s) (9 per day ...) - reached 2025-07-14" (about 4,185 rows over 465 days). If it ends "time budget spent" or "stopped at <day>", run this line again; if it stops at the same day twice, paste the line back
+python token_metrics.py --no-fetch
+#   expect: no error
+python done_check.py --verbose | Select-String "^(Uniswap|Fluid|Maple|Morpho|Pendle|Sky|Hyperliquid|Aerodrome|Near)" -Context 0,8
+#   expect: the seven frozen projects READY; Aerodrome READY; Near NOT READY with only Rank in archetype, NRR ON SETTLEMENT VOLUME and Archetype key (they wait for the December P2P chunk) - paste Aerodrome's and Near's lists back
+New-Item -ItemType Directory -Force ..\tm-exports | Out-Null
+python store_export.py --project Aerodrome --out-dir ..\tm-exports
+#   expect: a line starting "wrote ../tm-exports/aerodrome-"
+python store_export.py --project Near --out-dir ..\tm-exports
+#   expect: a line starting "wrote ../tm-exports/near-"
+git switch data/store-exports
+git pull
+Copy-Item ..\tm-exports\aerodrome-*.json.gz exports\
+Copy-Item ..\tm-exports\near-*.json.gz exports\
+git add -f exports
+git commit -m "data: Aerodrome and Near store exports (R12)"
+git push
+git switch claude/crypto-metrics-supply-demand-ovkg8g
+git log --oneline -1
+#   expect: the same line as above
+python project_freeze.py --compare all
+#   expect: seven lines, each "0 undeclared move(s)": Fluid 353, Hyperliquid 616, Maple 360, Morpho 285, Pendle 373, Sky 482, Uniswap 309 cells
+```
+
+THE AERODROME SEED IN DETAIL.
+
+One command, on the machine with the keyed Base RPC (ALCHEMY_API_KEY or BASE_RPC_URL in .env):
+
+    python token_metrics.py --seed aero_buyback
+
+What it does now. For every UTC day from 2026-07-15 (the first purchase of the pool the 2026-08-24 lock is matched
+to) to yesterday it makes two independent reads: the day's buyback window (bought and locked, locked from balance,
+purchased, compounded, rebase) and the lock stock at the day's first block. A day the store already holds is not read
+and not written. The one exception: a row the old reader wrote for a day on or after 2026-10-22 (the Aero migration)
+is read again on the v3 basis and replaced — the old reader knew only the legacy token and escrow. Rows are stored day
+by day, so the seed can be stopped (Ctrl-C) and run again: it continues where it stopped. It uses eth_call,
+eth_getBlockByNumber and eth_getBlockReceipts only (no eth_getLogs — the free plan's 10-block limit does not apply).
+
+Expected log (one line a day, then the count):
+
+    --seed aero_buyback:  2026-07-15: buyback window READ, blocks 48,642,127..48,685,327 — Foundation buyback 2026-07-15: bought+locked in one tx 0.00; locked from balance 0.00 (0 lock(s)); purchased 214,508.93 (1 purchase(s)); compounded (owners' share) 0.00; rebase (excluded) 0.00 (archive read); lock stock already stored
+    --seed aero_buyback:  2026-08-24: buyback window READ, blocks 50,370,127..50,413,327 — Foundation buyback 2026-08-24: bought+locked in one tx 0.00; locked from balance 2,746,705.44 (1 lock(s)); purchased 0.00 (0 purchase(s)); ... ; lock stock already stored
+    --seed aero_buyback:  2026-10-16: buyback window already stored; lock stock already stored
+    --seed aero_buyback:  2026-10-22: buyback window READ on the v3 basis, blocks 52,918,927..52,962,127 (replaces the legacy-basis row of a day after the migration) — ... rebase (excluded) 17,447.37; v3 basis (both AERO tokens, sAERO stakes, Relays): migrated 1:1, not bought 1,728,692.45; locks migrated to sAERO, not new locks 193,780,936.11; burned out of the escrow 0.00 (archive read); lock stock READ on the v3 basis at block 52,918,927 (replaces the legacy-basis row of a day after the migration) — foundation_locked_aero_tokens = 193,984,689 AERO locked ...
+    --seed aero_buyback:  2026-10-28: buyback window READ on the v3 basis, ... locked from balance 174,600.64 (1 lock(s)); purchased 174,600.64 (1 purchase(s)); ... burned out of the escrow 174,600.64 ...
+    --seed aero_buyback: AFTER (…s) — … row(s) stored; of 127 day(s): 6 already held, 121 buyback window(s) read (6 already stored, 0 not read), 28 lock stock(s) read (0 not read), 0 day(s) with no block
+
+(2026-10-16..10-21 are the six days held: their windows and stock are before the migration and already stored.)
+A day that could not be read says "buyback window NOT read — <why>" and stores nothing for that day: run the command
+again. A second run after a complete one ends "… 0 row(s) stored; of 127 day(s): 127 already held …" and
+"WHY 0 STORED — all 127 days already stored (lock stock and buyback window)".
+
+Time: about 19 s a window day on the public RPCs (measured 2026-11-19, 119 days), 4 minutes for 2026-10-22 alone (the
+day 26 veNFTs migrated) and 2-5 s a stock day: 40-50 minutes for the first run. A keyed endpoint is not slower.
+
+Then run and build as usual. The Aerodrome line "Net absorption Q0 (tokens) — MISSING — [D — ROUTE NOT FILLED]" goes.
+
+BIGQUERY ON 2026-12-01 (the free month resets; budget 900 GB of the free 1 TB). Order: the P2P chunk first; the
+wallets' stage 1 only if the QUOTA line then leaves room. Nothing here is run before 12-01.
+
+```
+cd C:\Users\jake\Crypto-Tracker
+.venv\Scripts\Activate.ps1
+python adc_check.py
+#   expect: the BigQuery check passes (else: gcloud auth application-default login, then gcloud auth application-default set-quota-project near-data-510309)
+# 1. P2P chunk - DRY RUN (free)
+python -c "import pandas as pd, config; from fetch.near_bigquery import NearBigQuery, _sql; s=config.PROJECT_BY_NAME['Near']['near_bigquery']; nb=NearBigQuery(); c,why=nb._client(s); st=nb._load(); y=pd.Timestamp.now(tz='UTC').tz_localize(None).normalize()-pd.Timedelta(days=1); f=y-pd.Timedelta(days=int(s['days'])-1); new=pd.Timestamp(max(st['days'])); m=[d for d in pd.date_range(f,y) if str(d.date()) not in st['days'] and d<new][-int(s['chunk_days']):]; print(why or ('no day missing' if not m else ('p2p backfill', str(m[0].date()), str(m[-1].date()), len(m), 'day(s)', 'dry-run bytes', nb._dry(c,_sql('bigquery_p2p_daily.sql'),{'d0':m[0].date(),'d1':m[-1].date(),'tokens':st['tokens']['list']},s))))"
+#   expect on 12-01: ('p2p backfill', '2025-12-01', '2025-12-28', 28, 'day(s)', 'dry-run bytes', N) - N not measured yet; the last measured chunk was 233.7 GB for 31 days (2025-11-28..12-28, 2026-11-17)
+# 2. P2P chunk - REAL RUN: the daily run does it (config Near.near_bigquery.approved.p2p, already True; one backfill chunk a run)
+python token_metrics.py
+#   expect: near_bigquery "p2p backfill 2025-12-01..2025-12-28: N row(s); X GB billed (dry run X GB); 2026-12 so far Y GB of 900 GB" and a "QUOTA 2026-12: ..." line ending "left for backfill Z GB"
+# 3. what is left
+python -c "import config; from fetch.near_bigquery import NearBigQuery; nb=NearBigQuery(); print(nb._quota_line(config.PROJECT_BY_NAME['Near']['near_bigquery'], nb._load()))"
+#   expect: "QUOTA 2026-12: ... left for backfill Z GB"
+# 4. stage 1 - DRY RUN (free); put yesterday's date in d1
+gcloud auth login
+#   expect: a browser sign-in, then "You are now logged in as" - bq uses this login, not the application-default one (R12.A)
+Get-Content -Raw sql\near\bigquery_wallet_inflow_days.sql | bq query --dry_run --use_legacy_sql=false --project_id=near-data-510309 --parameter=d0:DATE:2025-09-22 --parameter=d1:DATE:2026-11-30
+#   expect: "Query successfully validated ... will process N bytes" - last measured 242.37 GB (2026-10-18, to 2026-10-17); this range has not been measured
+# 5. stage 1 - REAL RUN, ONLY IF Z (step 3) is at least N (step 4), and N is under 400 GB
+python -c "import config, check_offline_items as c; config.NEAR_STAGE1_WINDOW.update({'from':'2026-12-01','to':'2026-12-31'}); c.near_wallet_inflow_days()"
+#   expect: "SKIPPED: NEAR stage 1 wallet_inflow_days: N row(s); X GB billed (dry run X GB); 2026-12 so far Y GB of 900 GB", a "QUOTA 2026-12" line, then "RUN: N day(s) with a native TRANSFER in to the three wallets; saved wallet_inflow_days.json". If it says "BACKFILL HELD" or "NOT RUN", nothing was billed
+```
+
+
 ## 11ez. Round 11 — net supply change across holes, Aerodrome on the merged basis, Near evidence (2026-11-19)
 
 HYPERLIQUID. A change of circulating across a hole is now one multi-day change when both sides are on the same basis.
