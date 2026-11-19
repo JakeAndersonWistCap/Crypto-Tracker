@@ -952,6 +952,27 @@ VELO_FLIPS: dict = {}
 WEEK_S = 7 * 86_400
 
 
+def _velo_primary_less(groups: dict) -> None:
+    """R12: what each merged weekly row of gross_issuance_tokens holds beyond Aerodrome's own (the merged row less the
+    Aerodrome-alone copy of the same date, both re-dated to the paying flip) — handed to the trajectory's primary check
+    (coverage_audit.PRIMARY_LESS), whose events are Aerodrome's Minter's alone."""
+    import coverage_audit as ca                           # noqa: PLC0415
+    for name, spec in (getattr(config, "VELO_MERGED", {}) or {}).items():
+        key = spec.get("primary_less")
+        if not key:
+            continue
+        ca.PRIMARY_LESS.pop((name,) + tuple(key), None)
+        g = groups.get((name, "gross_issuance_tokens"))
+        own = _daily(groups.get((name, "gross_issuance_tokens" + spec["aero_only_suffix"])))
+        if g is None or g.empty or own.empty:
+            continue
+        m = g[g["source"].astype(str).str.startswith(config.VELO_MERGED_POINT.format(point=""))]
+        md = _daily(m)
+        both = md.index.intersection(own.index)
+        if len(both):
+            ca.PRIMARY_LESS[(name,) + tuple(key)] = [(d, float(md[d] - own[d])) for d in both]
+
+
 def _velo_gauge_views(groups: dict, name: str, spec: dict, until) -> None:
     """R12 (Jake 2026-11-19: Velodrome's pre-merger emissions count in dilution). Each weekly flip's GAUGE EMISSION in
     VELO, from the stored daily reads: between two consecutive stored readings whose Minter.activePeriod differs by
@@ -7199,6 +7220,7 @@ def aggregate(long: pd.DataFrame, fetch_status: pd.DataFrame, asof: pd.Timestamp
     _epoch_primary_views(groups, asof)   # D4-5: Pendle's own epoch figures, spread; DefiLlama only where none
     _same_basis_views(groups)     # one basis read by several routes is one measuring point (config.SAME_BASIS)
     _epoch_paid_views(groups, asof)  # round 3 B4: a weekly row dated by the flip that paid it (config.EPOCH_PAID_AT)
+    _velo_primary_less(groups)       # R12: the Velodrome part of the merged issuance, for the Aerodrome-only primary check
     _history_prepend_views(groups)  # fix round 3: a series' history from another route on the same basis
     _declared_zero_views(groups, asof)   # an ENDED programme reads 0 after its end (config.DECLARED_ZERO)
     _price_tier_views(groups)     # G2 A1: the price_history tier's rows are the declared older leg, never interleaved

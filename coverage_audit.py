@@ -792,12 +792,23 @@ def trajectory_primary_checks(trajectory_rows, asof, period_days: int = 90, quar
             if not isinstance(ours, (int, float)):
                 parts.append(f"{lab}: primary {prim:,.2f} ({len(ev)} event(s)); ours blank — not judged")
                 continue
+            # R12: LIKE FOR LIKE — a part of the row the primary events do not cover (Velodrome's gauge emission inside
+            # Aerodrome's merged issuance before the merger; the events are Aerodrome's own Minter's) is taken off ours
+            # before the comparison, and said (PRIMARY_LESS, filled by the build)
+            less = [(d, v) for d, v in PRIMARY_LESS.get((c["project"], c["tab"], c["hid"]), ())
+                    if lo < pd.Timestamp(d) <= hi]
+            note = ""
+            if less:
+                off = float(sum(v for _d, v in less))
+                note = f" [ours {ours:,.2f} less {off:,.2f} outside the primary events' scope ({len(less)} row(s))]"
+                ours = ours - off
             judged += 1
             gap = (ours / prim - 1) * 100 if prim else (0.0 if ours == 0 else float("inf"))
             ok = abs(gap) <= float(c["tolerance_pct"])
             ok_all &= ok
             parts.append(f"{lab}: ours {ours:,.2f} vs primary {prim:,.2f} ({len(ev)} event(s)) {gap:+.4f}% — "
                          + ("within" if ok else "OUTSIDE") + f" {c['tolerance_pct']}%")
+            parts[-1] += note
         if judged:
             out[(c["project"], c["tab"], c["hid"])] = (
                 "VERIFIED" if ok_all else "BROKEN",
@@ -806,6 +817,9 @@ def trajectory_primary_checks(trajectory_rows, asof, period_days: int = 90, quar
 
 
 QUARTER_LABELS = ("Q0", "Q-1", "Q-2", "Q-3", "Q-4")
+# R12: {(project, tab, hid): [(date, value)]} — the part of a trajectory row a primary check's events do not cover, set by
+# build_workbook._velo_primary_less on each build (empty on a store with no merged rows)
+PRIMARY_LESS: dict = {}
 
 
 # AN N/A THAT IS A MISSING ROUTE (Round G5 item 5g, Jake 2026-10-19: na_reasons flagged 230 N/A cells whose reason is

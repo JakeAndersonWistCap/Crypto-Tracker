@@ -302,3 +302,33 @@ def test_w_the_issuer_liquid_leg_joins_the_holding_before_the_merger_only(_aero)
     h = g[("Aerodrome", "noncirculating_holding_tokens")].set_index("date")
     assert h.loc[pd.Timestamp("2026-10-21"), "value"] == pytest.approx(40_000_000.0 + 9_100_720.40 * 0.044, abs=1e-3)
     assert h.loc[pd.Timestamp("2026-10-22"), "value"] == 37_000_000.0
+
+
+def test_v_the_primary_check_of_aerodromes_emission_stays_like_for_like(monkeypatch):
+    """The Mint events are Aerodrome's Minter's: Velodrome's part of a merged row is taken off ours first. Without
+    that, a merged quarter reads BROKEN against events that never covered Velodrome."""
+    import coverage_audit as ca
+    c = next(x for x in config.TRAJECTORY_PRIMARY_CHECKS if x["project"] == "Aerodrome")
+    asof = pd.Timestamp("2026-10-13")
+    hi, lo = asof, asof - pd.Timedelta(days=90)
+    prim = sum(e[1] for e in c["events"] if lo < pd.Timestamp(e[0]) <= hi)
+    key = ("Aerodrome", c["tab"], c["hid"])
+    rows = [{"project": "Aerodrome", "tab": c["tab"], "hid": c["hid"], "Q0": prim + 4_300_000.0}]
+    monkeypatch.setattr(ca, "PRIMARY_LESS", {})
+    assert ca.trajectory_primary_checks(rows, asof, quarters=("Q0",))[key][0] == "BROKEN"
+    monkeypatch.setattr(ca, "PRIMARY_LESS", {key: [(asof - pd.Timedelta(days=7), 4_300_000.0),
+                                                    (asof - pd.Timedelta(days=200), 9e9)]})   # outside the window
+    status, detail = ca.trajectory_primary_checks(rows, asof, quarters=("Q0",))[key]
+    assert status == "VERIFIED" and "4,300,000.00 outside the primary events' scope" in detail
+
+
+def test_v_the_velodrome_part_handed_to_the_check_is_merged_less_aerodrome_alone(_aero):
+    import coverage_audit as ca
+    g, tot = _velo_groups()
+    bw._velo_merged_views(g)
+    bw._epoch_paid_views(g, pd.Timestamp("2026-11-19"))
+    bw._velo_primary_less(g)
+    less = dict(ca.PRIMARY_LESS[("Aerodrome", "Master", "master_gross_issuance_q0_tokens")])
+    em = tot[pd.Timestamp("2026-10-15")] * 30 / 10_000 * 0.044
+    assert less[pd.Timestamp("2026-10-22")] == pytest.approx(em, abs=1e-3)      # the 10-15 flip, re-dated to its week
+    assert len(less) == 2

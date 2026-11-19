@@ -45188,3 +45188,6 @@ _r12n = PROJECT_BY_NAME["Aerodrome"]["series_handover"]["noncirculating_holding_
 _r12n["ordered_points"] = (tuple(_r12n["ordered_points"])[:-1]
                            + tuple(VELO_MERGED_POINT.format(point=_x) for _x in tuple(_r12n["ordered_points"])[:-1])
                            + tuple(_r12n["ordered_points"])[-1:])
+# the trajectory's primary check of Aerodrome's emission reads Aerodrome's own Minter events: Velodrome's part of the
+# merged row is taken off before it is compared (coverage_audit.PRIMARY_LESS), and said on the check
+VELO_MERGED["Aerodrome"]["primary_less"] = ("Master", "master_gross_issuance_q0_tokens")

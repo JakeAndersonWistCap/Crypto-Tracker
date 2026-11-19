@@ -1,0 +1,20 @@
+{
+"Hyperliquid": {
+"audit|Master|NET SUPPLY CHANGE Q0 (tokens) = closing − opening circulating supply": [
+{
+"date": "2026-11-19",
+"from": "n/a — closing − opening circulating is not measured on one basis over the window (2026-07-16: no circulating reading on 2026-07-15 (the opening)) — DECLARED (Jake 2026-11-16): history too short — our circulating is stored from 2026-09-30, and no public source holds the Assistance Fund's history before our first stored day (Hyperliquid's API keeps about 9 days of its fills). A full quarter of our own data exists on 2026-12-29; the cell forms on its own then",
+"to": "n/a — closing − opening circulating is not measured on one basis over the window (2026-07-16: no circulating reading on 2026-07-15 (the opening)) — DECLARED (Jake 2026-11-19): history too short — our circulating on the rule's basis is stored from 2026-10-13, and no public source holds the Assistance Fund's history before our first stored day (Hyperliquid's API keeps about 9 days of its fills). A full quarter of our own data exists on 2027-01-11; the cell forms on its own then",
+"why": "R12 (Jake 2026-11-19): the declared n/a of the net supply change names its new clear-by date, 2027-01-11 (was 2026-12-29) - the series on the rule's basis starts 2026-10-13; the cell's value (n/a, declared) is unchanged"
+}
+],
+"audit|Master|Net supply change, annualised % of circulating": [
+{
+"date": "2026-11-19",
+"from": "n/a — closing − opening circulating is not measured on one basis over the window (2026-07-16: no circulating reading on 2026-07-15 (the opening)) — DECLARED (Jake 2026-11-16): history too short — our circulating is stored from 2026-09-30, and no public source holds the Assistance Fund's history before our first stored day (Hyperliquid's API keeps about 9 days of its fills). A full quarter of our own data exists on 2026-12-29; the cell forms on its own then",
+"to": "n/a — closing − opening circulating is not measured on one basis over the window (2026-07-16: no circulating reading on 2026-07-15 (the opening)) — DECLARED (Jake 2026-11-19): history too short — our circulating on the rule's basis is stored from 2026-10-13, and no public source holds the Assistance Fund's history before our first stored day (Hyperliquid's API keeps about 9 days of its fills). A full quarter of our own data exists on 2027-01-11; the cell forms on its own then",
+"why": "R12 (Jake 2026-11-19): the declared n/a of the net supply change names its new clear-by date, 2027-01-11 (was 2026-12-29) - the series on the rule's basis starts 2026-10-13; the cell's value (n/a, declared) is unchanged"
+}
+]
+}
+}
