@@ -1710,6 +1710,64 @@ def _subsidy_common_views(groups: dict, asof) -> None:
 
 
 LAG_MATCH: dict = {}     # project -> {"ok", "last", "first", "days", "lag"} (R5.3), last build
+AS_PUBLISHED: dict = {}  # (project, category) -> {"ok", "last", "lag", "days", "max_lag", "revisable_days"} (R12.1)
+
+
+def _as_published_views(groups: dict, asof) -> None:
+    """R12.1 (config.OUTFLOW_AS_PUBLISHED; Jake 2026-11-19): an outflow category published in arrears COUNTS AS
+    PUBLISHED in total dilution and net holder yield. Its series stops at the last published report; the days after it
+    inside the window are not yet published — never 0, never filled. Records, per declared category, the last
+    published day, how many days before the as-of that is, and whether that lag is within the series' own cadence
+    (config.stale_after_days — the bound PROGRAM_CADENCE_BY_METRIC declares): only then is the category exempt from the
+    same-span test (_coverage_guard as_published) and flagged on the cells; beyond it the cells keep their own guard."""
+    AS_PUBLISHED.clear()
+    hi = pd.Timestamp(asof).normalize()
+    lo = hi - pd.Timedelta(days=int(GLOBALS["period_days"]))
+    for (name, cat), spec in config.OUTFLOW_AS_PUBLISHED.items():
+        s = _daily(groups.get((name, f"outflow_{cat}_tokens")))
+        s = s[s.index <= hi]
+        if s.empty:
+            continue
+        last = pd.Timestamp(s.index.max()).normalize()
+        lag = int((hi - last).days)
+        max_lag = int(config.stale_after_days(name, f"outflow_{cat}_usd", 7))
+        AS_PUBLISHED[(name, cat)] = {"ok": 0 <= lag <= max_lag, "last": str(last.date()), "lag": lag,
+                                     "max_lag": max_lag, "days": int(((s.index > lo) & (s.index <= hi)).sum()),
+                                     "revisable_days": int(spec["revisable_days"])}
+
+
+def as_published_cats(p: dict) -> list[str]:
+    """R12.1: the project's outflow categories that count as published on this build (their lag within the cadence)."""
+    return [c for (n, c), st in AS_PUBLISHED.items() if n == p["name"] and st["ok"]]
+
+
+def as_published_flag(name: str, fmt: str = FMT_PCT):
+    """The visible flag on a number that holds an as-published category: its last published day and how long the
+    figure stays revisable — a number format, on every section (the cell stays a number). None where nothing is as
+    published."""
+    got = sorted((c, st) for (n, c), st in AS_PUBLISHED.items() if n == name and st["ok"])
+    if not got:
+        return None
+    lit = "; ".join(f"({c}) to {st['last']}, revisable for {st['revisable_days']} days" for c, st in got)
+    return ";".join(f'{sec}"{config.AS_PUBLISHED_FLAG_PREFIX}{lit}"' for sec in fmt.split(";"))
+
+
+def as_published_note(p: dict) -> str:
+    out = []
+    for (n, c), st in sorted(AS_PUBLISHED.items()):
+        if n != p["name"]:
+            continue
+        spec = config.OUTFLOW_AS_PUBLISHED[(n, c)]
+        if st["ok"]:
+            out.append(f"AS PUBLISHED ({spec['decided']}): outflow ({c}) counts as published — {st['days']} day(s) of "
+                       f"the window, to its last published day {st['last']} ({st['lag']} day(s) before the as-of), "
+                       f"annualised per covered day; the days after it are not yet published (never 0, never filled). "
+                       f"REVISABLE FOR {st['revisable_days']} DAYS: {spec['why']}")
+        else:
+            out.append(f"NOT COUNTED AS PUBLISHED: outflow ({c})'s last published day {st['last']} is {st['lag']} days "
+                       f"before the as-of — beyond its cadence ({st['max_lag']} days), so the cell keeps its own "
+                       f"coverage guard")
+    return "\n\n".join(out)
 
 
 def _whole_set_views(groups: dict) -> None:
@@ -7355,6 +7413,7 @@ def aggregate(long: pd.DataFrame, fetch_status: pd.DataFrame, asof: pd.Timestamp
     _s13_views(groups)                    # R9.4 / R9.5: the three revenue lines on the same covered days
     _s13_component_views(groups, asof)    # R11.3a: each line's gas / Intents parts on the line's own days (Near)
     _lag_matched_views(groups, asof)      # R5.3: a declared publish lag — the follow series cut at the lead's last day
+    _as_published_views(groups, asof)     # R12.1: an outflow published in arrears counts as published (Near's (b))
     _LAST_GROUPS.update(groups)       # the views, for Credibility rows that read them (credibility.VIEWS_LONG)
     _market_share_mean_views(groups)  # PR1.U4: market share's 30- / 60-day means (config.MARKET_SHARE_MEAN)
     _one_off_shares(groups, asof)     # P5-1C.B1: the share of each window that is a declared one-off (cell notes)
@@ -9467,7 +9526,8 @@ def _fee_per_tx(R: Refs, r: int, p: dict, avg_price: str) -> str:
 
 
 def _coverage_guard(R: Refs, r: int, legs: list[tuple[str, str, str]], expr: str,
-                    same_span: bool | None = None, bare: bool = False, p: dict | None = None) -> str:
+                    same_span: bool | None = None, bare: bool = False, p: dict | None = None,
+                    as_published: tuple = ()) -> str:
     """=IF(a side covers < RATE_MIN_DAYS, "BLOCKED — ... each side's coverage", expr).
 
     legs: (label, metric, window). same_span: also block where the two sides' covered days differ
@@ -9478,7 +9538,10 @@ def _coverage_guard(R: Refs, r: int, legs: list[tuple[str, str, str]], expr: str
     A DECLARED ZERO IS FULL COVERAGE (Jake's review of 97b29ae, item 2: Sky's net supply read "issuance covers 5
     days" on Master while A4 passed): with `p` given, the issuance leg of a project declaring zero issuance
     (config.issuance_declared_zero) covers the whole window — the declaration's own check (_zero_issuance) still
-    blocks a positive measured issuance."""
+    blocks a positive measured issuance.
+    R12.1 (config.OUTFLOW_AS_PUBLISHED): a leg named in `as_published` is a figure PUBLISHED IN ARREARS that counts as
+    published — it must still cover RATE_MIN_DAYS, but its covered days are not set against the other legs' (the days
+    after its last report are not yet published; the caller passes it only while that lag is within its cadence)."""
     z = config.issuance_declared_zero(p["name"]) if p else None
     if z:
         legs = [(lab, m, w) for lab, m, w in legs if m != z.get("check_metric", "gross_issuance_tokens")] \
@@ -9500,6 +9563,8 @@ def _coverage_guard(R: Refs, r: int, legs: list[tuple[str, str, str]], expr: str
     if same_span and len(legs) >= 2:
         (_, ma, wa) = legs[0]
         for (_, mb, wb) in legs[1:]:
+            if mb in as_published:
+                continue
             ca, cb, na, nb = R.D(r, ma, _COV[wa]), R.D(r, mb, _COV[wb]), _nominal(wa), _nominal(wb)
             conds.append(f"IFERROR(ABS(IF(ISNUMBER({ca}),{ca},{na})-IF(ISNUMBER({cb}),{cb},{nb}))>{na}/10,FALSE)")
     msg = '"BLOCKED — unequal coverage: "&' + '&"; "&'.join(parts)
@@ -13162,10 +13227,12 @@ def _cp_cols(R: Refs, data_by_key: dict) -> list[tuple]:
                       lambda p, c=c: [(f"outflow {c}", f"outflow_{c}_tokens", "q0")],
                       lambda r, p, c=c: ann(r, p, f"outflow_{c}_tokens"),
                       blank_fn=lambda p, c=c: not config.outflow_metrics(p["name"], c))
-    rates += both("TOTAL DILUTION = outflows a+b+c+d+e (annualised)",
-                  lambda p: [(f"outflow {c}", f"outflow_{c}_tokens", "q0") for c in _cp_cats(p)],
-                  lambda r, p: "+".join(ann(r, p, f"outflow_{c}_tokens") for c in _cp_cats(p)),
-                  blank_fn=lambda p: not _cp_cats(p))
+    # R12.1: the two cells carry the as-published flag (a number format) and its note where a category is declared
+    rates += [(*col, False, {"fmt_fn": as_published_flag, "note_fn": as_published_note}) for col in both(
+        "TOTAL DILUTION = outflows a+b+c+d+e (annualised)",
+        lambda p: [(f"outflow {c}", f"outflow_{c}_tokens", "q0") for c in _cp_cats(p)],
+        lambda r, p: "+".join(ann(r, p, f"outflow_{c}_tokens") for c in _cp_cats(p)),
+        blank_fn=lambda p: not _cp_cats(p))]
 
     outflow_usd = []
     for c in ("a", "b", "c", "d", "e"):
@@ -13277,7 +13344,8 @@ def _cp_cols(R: Refs, data_by_key: dict) -> list[tuple]:
         dil = "+".join(ann(r, p, om(c)) for c in cats) or "0"
         legs = [("holder value", "holder_value_revenue_usd", "q0")] + \
             [(f"outflow {c}", om(c), "q0") for c in cats]
-        out = _coverage_guard(R, r, legs, f"({hvy_expr(r, p)})-({dil})/{mc(r)}")[1:]
+        out = _coverage_guard(R, r, legs, f"({hvy_expr(r, p)})-({dil})/{mc(r)}",
+                              as_published=tuple(om(c) for c in as_published_cats(p) if c in cats))[1:]
         # NAME THE STARVED LEG (item 24, Jake's run on 3500042): an outflow with no value in the window says which
         # and why (its Data note), never a bare n/a
         for c in reversed(cats):
@@ -13604,7 +13672,8 @@ def _cp_cols(R: Refs, data_by_key: dict) -> list[tuple]:
         ("Holder value RECORDED, NOT CREDITED (treasury / emissions-funded) ÷ market cap", hv_other, FMT_PCT, "calc"),
         ("Holder value funding by period (config HOLDER_VALUE)", lambda r, p: funding_text(p), FMT_TEXT, "text"),
         (CP_NHY_HEAD, nhy, FMT_PCT, "calc", True, {"metric": "holder_value_revenue_usd", "note_fn": lambda p: "\n\n".join(
-            x for x in (_holder_value_note(p), one_off_dilution_note(p), lag_matched_note(p)) if x)}),
+            x for x in (_holder_value_note(p), one_off_dilution_note(p), lag_matched_note(p), as_published_note(p))
+            if x), "fmt_fn": as_published_flag}),
         *_tbill_cols(R, [("Holder value yield", hvy), ("Net holder yield", nhy),
                          ("Staker yield — validator", lambda r, p: vyield(r, p)),
                          ("Staker yield — protocol, tokens", lambda r, p: tyield(r, p))]),

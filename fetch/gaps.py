@@ -1216,6 +1216,13 @@ def _tier_note(project: dict, metric: str, scrape_entries: dict) -> tuple[str, s
         "the staking-pool read (fetch/near.py _pool_stake: get_account on each pool of "
         "config.NEAR_FOUNDATION_STAKE_PAIRS) stored nothing: a pair did not answer — a sum missing one is not stored",
         "Check the Run Log's near_rpc line for {name} (near_foundation_staked_tokens).")
+    # R12.2: the Foundation set's liquid NEAR (fetch/near.py _liquid_set)
+    r3["near_foundation_liquid_tokens"] = (
+        "the Foundation set's balance read (fetch/near.py _liquid_set: view_account on every account of "
+        "config.NEAR_FOUNDATION_LIQUID_ACCOUNTS) stored nothing: an account did not answer or the read ran past its "
+        "budget — a sum missing one account is not stored",
+        "Check the Run Log's near_rpc line for {name} (near_foundation_liquid_tokens); run "
+        "`python token_metrics.py --project Near` again.")
     r3["near_mpc_operator_payouts_tokens"] = (
         "the payout-ledger read (fetch/near.py _payout_ledger: gov.near.org/t/42147, each published transaction read on "
         "the archival RPC) stored nothing: the thread did not read, or some of its transactions are not read on chain "

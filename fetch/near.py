@@ -209,6 +209,8 @@ class NearNode:
             supply = self.prior.get((p["name"], "total_supply")) or self.prior.get((p["name"], "circulating_supply"))
             if api.get("pool_stake"):          # the Foundation set's stake, pair by pair
                 self._pool_stake(p, api, api["pool_stake"], supply, out, when)
+            if api.get("liquid_set"):          # R12.2: the Foundation set's liquid NEAR, account by account
+                self._liquid_set(p, api, api["liquid_set"], supply, out, when)
             if api.get("payout_ledger"):       # the HSP-007 payouts, from House of Stake's published ledger
                 self._payout_ledger(p, api["payout_ledger"], out)
 
@@ -313,6 +315,74 @@ class NearNode:
                 + "; ".join(f"{w[:28]} @ {pl} {v / scale:,.2f}" for v, w, pl in top[:3])
                 + f"; {idle / scale:,.2f} NEAR unstaked in the pools, not counted. The set holds INFERRED wallets "
                   f"({read.get('set', 'config')}).", TIER)
+
+    def _liquid_set(self, p: dict, api: dict, read: dict, supply, out, when) -> None:
+        """R12.2 (Jake 2026-11-19): the LIQUID NEAR of a declared account set — `view_account` on every account, its
+        `amount` (yoctoNEAR, a decimal string; `locked` is validator stake and is not liquid) summed in whole yocto.
+        ALL ACCOUNTS OR NOTHING: an account that does not answer with a number, or a read that runs past its own
+        budget, stores nothing and says how far it got — unknown is never 0, and a sum missing one account is a wrong
+        figure. The set is ~190 accounts: the client's pacing is shortened for this read only (min_interval_s), and
+        the read's own endpoint list is taken in turn, one call each (a public node answers a burst with HTTP 429)."""
+        name, metric, accounts = p["name"], read.get("metric"), list(read.get("accounts") or ())
+        exp = api.get("yocto_exponent")
+        if not metric or not accounts or exp is None:
+            out.unconfigured(SOURCE, name, f"liquid set: metric, accounts or yocto_exponent missing ({metric!r})", TIER)
+            return
+        if len(set(accounts)) != len(accounts):
+            out.fail(SOURCE, name, f"{metric}: the account list names an account twice — nothing read", TIER)
+            return
+        pace = getattr(self.http, "min_interval", None)
+        if pace is not None:
+            self.http.min_interval = min(float(pace), float(read.get("min_interval_s", 0.15)))
+        try:
+            self._liquid_set_read(p, api, read, supply, out, when, accounts, int(exp))
+        finally:
+            if pace is not None:
+                self.http.min_interval = pace
+
+    def _liquid_set_read(self, p, api, read, supply, out, when, accounts, exp) -> None:
+        name, metric = p["name"], read["metric"]
+        stop = time.monotonic() + float(read.get("budget_s", 75))
+        raw, top = 0, []
+        for i, acct in enumerate(accounts):
+            if time.monotonic() > stop:
+                out.fail(SOURCE, name, f"{metric}: {i} of {len(accounts)} accounts read inside "
+                                       f"{read.get('budget_s', 75)} s — NOTHING STORED (all accounts or nothing; the "
+                                       f"next run reads again)", TIER)
+                out.gap(name, metric, reason=f"the set's balances were not all read inside the read's budget "
+                                             f"({i} of {len(accounts)})", tiers_attempted="2",
+                        suggestion="Run `python token_metrics.py --project Near` again; the node rate-limits bursts.")
+                return
+            body = {"jsonrpc": "2.0", "id": "token-metrics", "method": "query",
+                    "params": {"request_type": "view_account", "finality": "final", "account_id": acct}}
+            eps = list(read.get("endpoints") or api.get("endpoints") or ())
+            k = i % len(eps) if eps else 0
+            payload, detail = self._call(dict(api, endpoints=eps[k:] + eps[:k]), body)
+            try:
+                v = int(str(json_path_get(payload, "result.amount")))
+            except (TypeError, ValueError):
+                out.fail(SOURCE, name, f"{metric}: view_account {acct} gave no numeric result.amount — {detail}. "
+                                       f"NOTHING STORED: a sum missing one account is a wrong figure.", TIER)
+                out.gap(name, metric, reason=f"the NEAR view_account call for {acct} failed: {detail}",
+                        tiers_attempted="2",
+                        suggestion="Check the account in config.NEAR_FOUNDATION_LIQUID_ACCOUNTS and the endpoints.")
+                return
+            if v < 0:
+                out.fail(SOURCE, name, f"{metric}: view_account {acct} gave a negative amount — nothing stored", TIER)
+                return
+            raw += v
+            top.append((v, acct))
+        scale = 10 ** int(exp)
+        value = raw / scale
+        if supply is None or supply <= 0 or not (0 <= value <= supply):
+            out.fail(SOURCE, name, f"{metric}: {value:,.4f} is not inside [0, total_supply={supply}] — nothing stored",
+                     TIER)
+            return
+        top.sort(reverse=True)
+        out.add(point(name, metric, value, f"{SOURCE}:liquid_set", TIER, when), SOURCE, name,
+                f"{metric}={value:,.4f} — liquid NEAR (view_account amount) summed over {len(accounts)} account(s); "
+                f"largest: " + "; ".join(f"{a} {v / scale:,.2f}" for v, a in top[:3])
+                + f". {read.get('set', '')}", TIER)
 
     _TX = re.compile(r"(?<![1-9A-HJ-NP-Za-km-z])[1-9A-HJ-NP-Za-km-z]{43,44}(?![1-9A-HJ-NP-Za-km-z])")
 

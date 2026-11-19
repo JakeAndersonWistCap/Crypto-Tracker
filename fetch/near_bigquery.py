@@ -226,9 +226,11 @@ class NearBigQuery:
         return int(client.query(sql, job_config=cfg).total_bytes_processed or 0)
 
     def _run(self, client, what: str, sql: str, params: dict, spec: dict, st: dict, out, name: str,
-             backfill: bool = False, topup_days: int = 0):
+             backfill: bool = False, topup_days: int = 0, hard_cap: int | None = None):
         """Rows, or None with the reason logged. Dry run, budget, then the job capped at its dry run.
-        A BACKFILL query may only spend what the month's top-up reserve leaves (_reserve)."""
+        A BACKFILL query may only spend what the month's top-up reserve leaves (_reserve).
+        R12.5: `hard_cap` is the condition a one-off read was approved under (bytes): a dry run over it is NOT RUN,
+        and the job's maximum_bytes_billed never exceeds it — BigQuery itself refuses anything larger."""
         try:
             est = self._dry(client, sql, params, spec)
         except Exception as e:  # noqa: BLE001
@@ -244,6 +246,10 @@ class NearBigQuery:
         if est > int(spec["max_bytes_per_query"]):
             out.skipped(SOURCE, name, f"{what}: dry run {est / 1e9:,.1f} GB is over the per-query cap "
                                       f"{int(spec['max_bytes_per_query']) / 1e9:,.0f} GB — NOT RUN", TIER)
+            return None
+        if hard_cap is not None and est > int(hard_cap):
+            out.skipped(SOURCE, name, f"{what}: dry run {est:,} bytes is over the {int(hard_cap):,}-byte condition it "
+                                      f"was approved under — NOT RUN (a new decision for Jake)", TIER)
             return None
         if backfill:
             reserve, why = self._reserve(spec, st)
@@ -262,8 +268,9 @@ class NearBigQuery:
                                       f"{int(spec['monthly_budget_bytes']) / 1e9:,.0f} GB — NOT RUN; resumes "
                                       f"next month", TIER)
             return None
+        cap = self.billing_cap(est) if hard_cap is None else min(self.billing_cap(est), int(hard_cap))
         cfg = self._bq.QueryJobConfig(use_query_cache=True, query_parameters=self._params(params),
-                                      maximum_bytes_billed=self.billing_cap(est))
+                                      maximum_bytes_billed=cap)
         try:
             job = client.query(sql, job_config=cfg)
             rows = [dict(r.items()) if hasattr(r, "items") else dict(r) for r in job.result()]
@@ -524,7 +531,13 @@ class NearBigQuery:
                                       f"near_bigquery.supply_flows.history.approved; Jake's decision on this "
                                       f"estimate)", TIER)
             return
-        rows = self._run(client, what, sql, params, spec, st, out, name, backfill=True)
+        # R12.5 (Jake 2026-11-19): approved on a dry run under a byte condition — never unbounded. An approval that
+        # carries no condition is not run.
+        if not h.get("max_bytes"):
+            out.skipped(SOURCE, name, f"{what}: approved without a byte condition (config Near.near_bigquery."
+                                      f"supply_flows.history.max_bytes) — NOT RUN", TIER)
+            return
+        rows = self._run(client, what, sql, params, spec, st, out, name, backfill=True, hard_cap=int(h["max_bytes"]))
         if rows is None:
             return
         burn, iss = [], []

@@ -416,11 +416,13 @@ def test_5_subsidy_cover_is_revenue_over_b_on_the_days_both_hold(scope):
 
 
 def test_5_b_is_not_summed_into_dilution_while_it_is_published_with_a_lag(scope):
-    assert ("Near", "b") in config.DILUTION_LEAVES_OUT and ("Near", "b") in config.OUTFLOW_INCOMPLETE
-    assert "b" not in bw._cp_cats(NEAR) and bw._cp_cats(NEAR) == ["a", "e"]   # dilution and net holder yield: as R10
+    # R12.1 (Jake 2026-11-19): the operator payouts ARE dilution, counted as published (tests/test_r12_near.py).
+    # Was: ("Near", "b") in config.DILUTION_LEAVES_OUT, _cp_cats(NEAR) == ["a", "e"] and
+    # set(config.DILUTION_LEAVES_OUT) == {("Near", "b")}
+    assert ("Near", "b") not in config.DILUTION_LEAVES_OUT and ("Near", "b") in config.OUTFLOW_INCOMPLETE
+    assert bw._cp_cats(NEAR) == ["a", "b", "e"]
     assert bw._cp_cats(NEAR, ("b", "c")) == ["b"]                             # its own cells still see it
-    # only Near declares it: Aethir's (b) stays in its dilution
-    assert set(config.DILUTION_LEAVES_OUT) == {("Near", "b")}
+    assert set(config.DILUTION_LEAVES_OUT) == set()
     assert "b" in bw._cp_cats(config.PROJECT_BY_NAME["Aethir"])
     # the ledger is monthly: stale by that cadence, the daily series beside it by the default
     assert config.stale_after_days("Near", "outflow_b_usd", 7) == 64
@@ -433,8 +435,9 @@ def test_5_the_house_of_stake_wallets_are_recorded_and_are_not_the_payers():
     assert set(h["payers_of_hsp_007"]) == set(NEAR["node_api"]["payout_ledger"]["payers"])
     assert not set(h["wallets"]) & set(h["payers_of_hsp_007"])
     assert sum(h["payers_of_hsp_007"].values()) == pytest.approx(h["ledger"]["near"], abs=0.01)
-    # the header-burn history read is still NOT approved here (Jake pastes the dry run back)
-    assert NEAR["near_bigquery"]["supply_flows"]["history"]["approved"] is False
+    # R12.5 (Jake 2026-11-19): approved on his dry run of 289,127,592 bytes, under the 1 GB condition
+    # (was: ["approved"] is False — "Jake pastes the dry run back")
+    assert NEAR["near_bigquery"]["supply_flows"]["history"]["approved"] is True
 
 
 def test_5_the_cover_cell_reads_the_common_day_views_and_a_store_without_the_series_says_so(scope, monkeypatch):

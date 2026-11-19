@@ -278,11 +278,17 @@ def test_b3a_every_basis_the_circulating_view_writes_is_a_declared_handover_poin
 
 def test_b3a_treasury_and_foundation_accounts_leave_the_float_and_a_missing_leg_is_no_float(scope):
     spec = config.RULE_IN["Near"]
-    assert spec["off_float"] == ("near_foundation_accounts_tokens", "near_treasury_tokens")
+    # R12.2 (Jake 2026-11-19): + the Foundation set's liquid NEAR (near_foundation_liquid_tokens), a third leg
+    # (was: ("near_foundation_accounts_tokens", "near_treasury_tokens"), and the sum 171,059 + 1,687,281)
+    assert spec["off_float"] == ("near_foundation_accounts_tokens", "near_treasury_tokens",
+                                 "near_foundation_liquid_tokens")
     g = _circ_groups(treasury=1_687_281.0)
+    g[("Near", "near_foundation_liquid_tokens")] = _g("near_foundation_liquid_tokens",
+                                                      pd.date_range("2026-11-01", "2026-11-17"), 1_000_000.0,
+                                                      "near_rpc:liquid_set")
     bw._rule_in_views(g)
     off = _day(g, "rule_in_off_float_tokens")
-    assert off[pd.Timestamp("2026-11-17")] == pytest.approx(171_059.0 + 1_687_281.0)
+    assert off[pd.Timestamp("2026-11-17")] == pytest.approx(171_059.0 + 1_687_281.0 + 1_000_000.0)
     # treasury.near not stored: no off-float series at all (the float is then n/a — never the float without it)
     g = _circ_groups(treasury=None)
     bw._rule_in_views(g)
@@ -551,7 +557,12 @@ def test_b4_the_header_burn_history_is_dry_run_only_until_approved_then_read_onc
             rows = [{"day": d, "burn_near": 800.0, "issuance_near": 100_000.0} for d in pd.date_range(*win)]
             return SimpleNamespace(result=lambda: rows, total_bytes_billed=250_000_000)
     spec = copy.deepcopy(config.PROJECT_BY_NAME["Near"]["near_bigquery"])
-    assert spec["supply_flows"]["history"] == {"from": "2025-07-15", "approved": False}
+    # R12.5 (Jake 2026-11-19): approved on his dry run (289,127,592 bytes) under the 1 GB condition — the read itself
+    # is tested from the not-approved state here, the approval in tests/test_r12_near.py
+    # (was: spec["supply_flows"]["history"] == {"from": "2025-07-15", "approved": False})
+    assert spec["supply_flows"]["history"]["from"] == "2025-07-15"
+    assert spec["supply_flows"]["history"]["approved"] is True
+    spec["supply_flows"]["history"]["approved"] = False
     stored = _g("gross_burn_tokens_bigquery", pd.date_range("2025-10-07", "2026-11-18"), 900.0,
                 "near_bigquery:blocks.total_supply")
     st = {"ledger": {}, "topup_bytes": {"bytes": 3e6, "on": "2026-11-19", "source": "t"}}

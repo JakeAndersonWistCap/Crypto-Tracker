@@ -13668,7 +13668,9 @@ def test_near_buyback_fund_balance_is_the_three_wallets_summed_as_a_stock():
         if r.get("metric") not in ("near_foundation_accounts_tokens", "near_treasury_tokens", "near_max_inflation_rate")])
     # R11.4 / R11.5 (2026-11-19): the Foundation set's stake and the HSP-007 payout ledger are reads of their own keys
     # on the node_api block (tests/test_r11_near.py) — not part of this read (was: no such keys)
-    for _k in ("pool_stake", "payout_ledger"):
+    # R12.2 (2026-11-19): + the Foundation set's liquid NEAR, a read of its own key (tests/test_r12_near.py)
+    # (was: ("pool_stake", "payout_ledger"))
+    for _k in ("pool_stake", "payout_ledger", "liquid_set"):
         p["node_api"].pop(_k, None)
     assert read["kind"] == "near_view_account" and read["field"] == "amount"
     assert set(read["accounts"]) == set(p["intents_revenue_wallets"]["wallets"])

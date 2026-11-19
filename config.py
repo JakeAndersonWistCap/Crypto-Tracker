@@ -45283,3 +45283,204 @@ for _r12m, _r12old, _r12new, _r12what in (
                "systems (R12, Jake 2026-11-19)",
         "composition_change": _r12what, "declared": AERODROME_MIGRATION["cutover_utc"]}
 del _r12m, _r12old, _r12new, _r12what
+
+
+# ===== R12 — NEAR =====
+# Round 12, Near items (Jake's decisions of 2026-11-19). SPEC.md "Round 12 — Near". Near is not frozen; everything of
+# the round is in this one block. 1 the operator payouts are dilution, counted as published; 2 the Foundation set's
+# liquid NEAR leaves the free float; 3 every inferred account's signer keys re-read; 4 the R11 Near readings confirmed;
+# 5 the header-burn history read approved on Jake's dry run. No BigQuery query was run by Claude Code.
+# =====================================================================================================================
+_R12N = PROJECT_BY_NAME["Near"]
+
+# ----- R12.1 THE OPERATOR PAYOUTS ARE DILUTION, COUNTED AS PUBLISHED (reverses R11.5's DILUTION_LEAVES_OUT).
+# Near's (b) is House of Stake's ledger, published monthly in arrears: the series stops at the last payout report. It
+# is summed into TOTAL DILUTION and NET HOLDER YIELD as it stands — annualised over the days it holds; the days after
+# the last report are not yet published (never 0, never filled) and are not set against the other legs' coverage
+# (build_workbook._as_published_views / _coverage_guard as_published). Only while the last published day is within the
+# series' own cadence (stale_after_days: PROGRAM_CADENCE_BY_METRIC, 64 days) — beyond it the cells keep their guard.
+# The cells carry the flag on the number: which category, its last published day, "revisable for 45 days".
+DILUTION_LEAVES_OUT.pop(("Near", "b"), None)      # was: "published monthly in arrears … about 2% of the outflows" (R11.5)
+AS_PUBLISHED_FLAG_PREFIX = " — AS PUBLISHED: "
+OUTFLOW_AS_PUBLISHED = {
+    ("Near", "b"): {
+        "metric": "near_mpc_operator_payouts_tokens", "revisable_days": 45, "decided": "Jake 2026-11-19, R12.1",
+        "why": "House of Stake publishes each month's payouts in the next Payout Execution Report (up to about 45 days "
+               "behind), so a later report can add payments to days this figure already covers"}}
+OUTFLOW_CATEGORIES["Near"] = {
+    **OUTFLOW_CATEGORIES["Near"],
+    "basis": OUTFLOW_CATEGORIES["Near"]["basis"].split("; (b) = the HSP-007 payouts")[0]
+    + "; (b) = the HSP-007 payouts to the MPC node operators (House of Stake's published ledger, each transaction read "
+      "on chain; paid by NF Finance's nf-payments accounts, monthly in arrears) — float dilution, summed into total "
+      "dilution and net holder yield AS PUBLISHED (Jake 2026-11-19, config.OUTFLOW_AS_PUBLISHED): over the days it "
+      "holds, the days after the last payout report not yet published; revisable for 45 days"}
+OUTFLOW_INCOMPLETE[("Near", "b")] = (
+    "the HSP-007 payouts are published monthly in arrears: no row after the last Payout Execution Report (the next "
+    "report publishes the transactions of the days since) — counted as published, revisable for 45 days (R12.1)")
+
+# ----- R12.3 EVERY INFERRED ACCOUNT'S SIGNER KEYS, RE-READ (R11 re-read a sample of 18).
+# view_access_key_list on each account at ONE block (view_access_key for each of the five keys where an account holds
+# more than 100 keys), and each multisig contract's own get_num_confirmations. Per group: how many accounts, how many
+# of the five signer keys each carries (count -> accounts), the fewest that can `confirm`, and the confirmations the
+# contract asks for. An account is SAME-KEY when it carries at least `threshold` of the five keys.
+NEAR_FOUNDATION_KEYS_READ = {
+    "read_on": "2026-11-19", "block": 225_253_770,
+    "method": "RPC query view_access_key_list on every account at this one block (view_access_key for each of "
+              "the five keys where an account holds more than 100), and get_num_confirmations on each multisig "
+              "contract; rpc.mainnet.fastnear.com, rpc.mainnet.near.org, free.rpc.fastnear.com, near.drpc.org, "
+              "archival-rpc.mainnet.fastnear.com in turn",
+    "signer_keys": NEAR_FOUNDATION_SET["signer_keys"], "threshold": 3, "sample_r11": 18,
+    # group: accounts read; signer keys carried -> accounts; the fewest signer keys on an account that can
+    # `confirm`; the most confirmations any of its contracts asks for (0: a plain-key account, not a contract)
+    "groups": {
+        "foundation.near": {"accounts": 1, "by_count": {4: 1}, "min_confirm_keys": 4, "max_confirmations": 2},
+        "treasury.near": {"accounts": 1, "by_count": {4: 1}, "min_confirm_keys": 4, "max_confirmations": 2},
+        "contributors.near": {"accounts": 1, "by_count": {4: 1}, "min_confirm_keys": 4, "max_confirmations": 2},
+        "nfvalidator1-4.near": {"accounts": 4, "by_count": {0: 4}, "min_confirm_keys": 0, "max_confirmations": 0},
+        "buybacks.multisignature.near": {"accounts": 1, "by_count": {4: 1}, "min_confirm_keys": 4,
+                                         "max_confirmations": 2},
+        "nfendowment00-55.near": {"accounts": 56, "by_count": {4: 56}, "min_confirm_keys": 3, "max_confirmations": 2},
+        "cgran01-60.near": {"accounts": 60, "by_count": {4: 6, 3: 54}, "min_confirm_keys": 3, "max_confirmations": 2},
+        "opgran01-60.near": {"accounts": 60, "by_count": {4: 8, 3: 52}, "min_confirm_keys": 3, "max_confirmations": 2},
+        "nfeco01-08.near": {"accounts": 8, "by_count": {4: 1, 3: 7}, "min_confirm_keys": 3, "max_confirmations": 2},
+        "ecotreasury / ecotreasury1-5.multisignature.near": {"accounts": 6, "by_count": {4: 6}, "min_confirm_keys": 4,
+                                                             "max_confirmations": 2},
+        "mpcacc.multisignature.near": {"accounts": 1, "by_count": {3: 1}, "min_confirm_keys": 3, "max_confirmations": 2},
+    },
+    "accounts_read": 199,
+    # tied by PAYER evidence, not by keys (R11.4 / R11.5): the count is recorded as read
+    "payer_accounts": {
+        "nf-payments1.near": {"signer_keys": 0, "keys": "30", "contract": False},
+        "nf-payments2.near": {"signer_keys": 0, "keys": ">100", "contract": False},
+        "nf-payments8.near": {"signer_keys": 0, "keys": "4", "contract": False},
+        "nf-payments.near": {"signer_keys": 0, "keys": ">100", "contract": False},
+    },
+    # left out of the set in R11 (too thin): re-read too, unchanged
+    "left_out": {"nf-finance.near": 0, "near": 0, "multisigtest.near": 1, "multisigtest2.near": 1, "test03.near": 0,
+                 "dangeris.near": 1, "swnfn.multisignature.near": 2, "swnfs.multisignature.near": 2, "registrar": 2},
+    "removed": {},
+    "lockup_owners_read": 16,      # get_owner_account_id on each lockup of the stake pairs = its owner
+    "result": "every INFERRED same-key account carries at least 3 of the five signer keys, at least 3 of them able "
+              "to `confirm`, on a contract that asks for at most 2 confirmations: the signer keys alone move its "
+              "funds. None removed. The nf-payments accounts carry none of the keys (payer evidence only)"}
+
+# ----- R12.2 THE FOUNDATION SET'S LIQUID NEAR LEAVES THE FREE FLOAT (Jake 2026-11-19: "published and same-key
+# wallets"). It stays IN circulating. One stored series, read every run: view_account `amount` on every account below,
+# all accounts or nothing (fetch/near.NearNode._liquid_set). NOT in it, because they already leave the float through
+# their own series: treasury.near (near_treasury_tokens), buybacks.multisignature.near (buyback_fund_balance),
+# contributors.near (near_foundation_accounts_tokens). NOT in it and LEFT IN THE FLOAT, named: the accounts tied by
+# payer evidence or a name, which do not carry the signer keys (NEAR_FOUNDATION_FLOAT["left_in_float"]).
+def _r12_range(stem: str, lo: int, hi: int) -> tuple:
+    return tuple(f"{stem}{i:02d}.near" for i in range(lo, hi + 1))
+
+
+NEAR_FOUNDATION_LIQUID_GROUPS = {
+    # PUBLISHED
+    "foundation.near": ("foundation.near",),
+    "nfvalidator1-4.near": tuple(f"nfvalidator{i}.near" for i in range(1, 5)),
+    # INFERRED — the same multisig signer keys (R12.3: every account re-read)
+    "nfendowment00-55.near": _r12_range("nfendowment", 0, 55),
+    "cgran01-60.near": _r12_range("cgran", 1, 60),
+    "opgran01-60.near": _r12_range("opgran", 1, 60),
+    "nfeco01-08.near": _r12_range("nfeco", 1, 8),
+    "ecotreasury / ecotreasury1-5.multisignature.near": ("ecotreasury.multisignature.near",) + tuple(
+        f"ecotreasury{i}.multisignature.near" for i in range(1, 6)),
+    "mpcacc.multisignature.near": ("mpcacc.multisignature.near",)}
+NEAR_FOUNDATION_LIQUID_ACCOUNTS = tuple(
+    a for _g, _accs in NEAR_FOUNDATION_LIQUID_GROUPS.items() for a in _accs
+    if a not in NEAR_FOUNDATION_KEYS_READ["removed"])
+NEAR_FOUNDATION_FLOAT = {
+    "read_on": "2026-11-19", "block": 225_253_770,
+    # liquid NEAR (view_account amount) per group of the series, read at that block
+    "liquid_by_group": {
+        "foundation.near": 869.32,
+        "nfvalidator1-4.near": 39.99,
+        "nfendowment00-55.near": 930_291.26,
+        "cgran01-60.near": 2_330.49,
+        "opgran01-60.near": 33_668.63,
+        "nfeco01-08.near": 81_102.52,
+        "ecotreasury / ecotreasury1-5.multisignature.near": 259.99,
+        "mpcacc.multisignature.near": 10.00,
+    },
+    "off_float_liquid": 1_048_572.20, "accounts": 196,
+    # NOT same-key and not published: tied to the Foundation by payer evidence or a name only — LEFT IN THE
+    # FLOAT (Jake 2026-11-19: "published and same-key wallets"), named
+    "left_in_float": {
+        "nf-payments1.near": {
+            "liquid": 26_952.69,
+            "why": "signs HSP-007 payouts ('NF Finance' in House of Stake's ledger); carries none of the signer keys "
+                   "(a plain account, one full-access key among 30 keys)"},
+        "nf-payments2.near": {
+            "liquid": 21.42,
+            "why": "signs HSP-007 payouts, funded by nfendowment03.near; carries none of the signer keys"},
+        "nf-payments8.near": {
+            "liquid": 26_311.89,
+            "why": "signs HSP-007 payouts, funded by nfendowment03.near; carries none of the signer keys (a plain "
+                   "account, one full-access key among 4 keys)"},
+        "nf-payments.near": {
+            "liquid": 14_246.83,
+            "why": "the name and payees in common with nf-payments2.near — the weakest tag; carries none of the "
+                   "signer keys"},
+    },
+    "left_in_float_liquid": 67_532.83,
+    # THE LOCKUP CONTRACTS THE ENDOWMENT ACCOUNTS OWN (50: nfendowment06-55, get_owner_account_id read on each):
+    # nothing in them is LOCKED any more (get_locked_amount = 0 on all); 16 have staked (in the stake pairs, off
+    # the float as stake). What is left on the contracts themselves is their storage reserve and dust — NOT in the
+    # series (a different method on 50 more contracts for under 0.0001% of supply), LEFT IN THE FLOAT, named
+    "lockups": {"contracts": 50, "owner_read_matches": 50, "locked": 0.00,
+                "account_balance": 2_731.87, "liquid_owners_balance": 981.87,
+                "known_deposited_to_pools": 2_097_169.00, "with_a_deposit": 16},
+}
+METRICS["near_foundation_liquid_tokens"] = {
+    "label": "Liquid NEAR held by the NEAR Foundation account set — the published accounts and the INFERRED ones that "
+             "carry the Foundation's multisig signer keys (config.NEAR_FOUNDATION_LIQUID_ACCOUNTS; view_account amount "
+             "on each, summed, all accounts or nothing) — in circulating, OFF the free float (the rule, R12.2). "
+             "treasury.near, the buyback wallets, lockup.near and contributors.near have their own series",
+    "kind": "stock", "unit": "tokens", "archetypes": [1, 3, 4], "tiers": [2, 3], "sanity_min": 0, "sanity_max": 2e9,
+    "only_projects": ("Near",)}
+# its own key on the node_api block (not an extra_read): fetch/near.NearNode._liquid_set
+_R12N["node_api"]["liquid_set"] = {
+    "metric": "near_foundation_liquid_tokens", "accounts": NEAR_FOUNDATION_LIQUID_ACCOUNTS, "field": "amount",
+    "min_interval_s": 0.15, "budget_s": 100,
+    # taken in turn, one call each: 196 calls in 31 s with no HTTP 429 (2026-11-19); on one node alone the same read
+    # drew 33 429s and took 100 s, and rpc.mainnet.near.org answers in 3 s a call (10 minutes for the set)
+    "endpoints": ("https://rpc.mainnet.fastnear.com", "https://near.drpc.org", "https://free.rpc.fastnear.com"),
+    "spec_url": "https://raw.githubusercontent.com/near/docs/master/api/rpc/contracts.mdx", "spec_date": "2026-11-18",
+    "set": "The set holds INFERRED wallets (config.NEAR_FOUNDATION_SET; signer keys re-read, "
+           "config.NEAR_FOUNDATION_KEYS_READ)."}
+RULE_IN["Near"]["off_float"] = (*RULE_IN["Near"]["off_float"], "near_foundation_liquid_tokens")
+RULE_IN["Near"]["evidence"] += (
+    "; R12.2 (Jake 2026-11-19): the Foundation set's liquid NEAR — the published accounts and the inferred ones that "
+    "carry the multisig signer keys — is foundation-held: in circulating, off the float (near_foundation_liquid_tokens)")
+NEAR_FOUNDATION_SET["float"] = (
+    "R12.2 (Jake 2026-11-19): the liquid NEAR of the published and same-signer-key wallets is OFF the free float "
+    "(near_foundation_liquid_tokens, read every run), in circulating; the payer-evidence accounts stay in the float, "
+    "named (config.NEAR_FOUNDATION_FLOAT). Was: NOT taken off the float (R11.4)")
+NEAR_FOUNDATION_SET["confirmed"] = (
+    "Jake 2026-11-19 (R12.4): the set as built — nf-payments.near stays flagged the weakest tag; the genesis accounts "
+    "are 'published'")
+
+# ----- R12.4 CONFIRMED AS BUILT (Jake 2026-11-19) — no figure changes: nf-payments.near stays flagged weakest;
+# SUBSIDY COVER's numerator = revenue from every stream; the payout ledger is stale after 64 days; HSP-003's veNEAR
+# rewards stay out of (b); the genesis accounts are tagged PUBLISHED.
+NEAR_R11_CONFIRMED = {
+    "by": "Jake", "on": "2026-11-19",
+    "items": ("nf-payments.near stays in the set, flagged the weakest tag",
+              "SUBSIDY COVER's numerator is revenue from every stream (SUBSIDY_REVENUE_METRIC)",
+              "the payout ledger and the views on it are stale after 64 days (PROGRAM_CADENCE_BY_METRIC)",
+              "HSP-003's veNEAR rewards are not a supply-side incentive (NEAR_HOUSE_OF_STAKE not_in_b)",
+              "the genesis accounts are tagged PUBLISHED")}
+
+# ----- R12.5 THE HEADER-BURN HISTORY READ IS APPROVED (Jake 2026-11-19). His dry run of the supply-flows SQL over
+# 2025-07-15..2025-10-06: 289,127,592 bytes — under the 1 GB condition of 2026-11-18. The next run executes it once,
+# as a backfill under the standing rules (the month's budget and top-up reserve), and only while the run's own dry run
+# stays at or under max_bytes: the job's maximum_bytes_billed never exceeds it (fetch/near_bigquery._run hard_cap).
+_R12N["near_bigquery"]["supply_flows"]["history"] = {
+    "from": "2025-07-15", "approved": True,                                   # was: "approved": False (R10.B4)
+    "approved_by": "Jake", "approved_on": "2026-11-19",
+    "dry_run_bytes": 289_127_592, "dry_run_window": ("2025-07-15", "2025-10-06"),
+    "max_bytes": 10 ** 9,
+    "condition": "Jake 2026-11-18: the history read runs only if its dry run is under 1 GB"}
+NEAR_BIGQUERY_R10["proposed_this_round"] = (
+    "supply_flows history 2025-07-15..2025-10-06 — APPROVED by Jake 2026-11-19 on a dry run of 289,127,592 bytes "
+    "(R12.5); runs once on the next run",)

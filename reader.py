@@ -794,6 +794,11 @@ def carried_suffix(src: Src | None) -> str:
     if src is None or wb is None or src.sheet not in wb.sheetnames:
         return ""
     fmt = str(wb[src.sheet][src.coord].number_format or "").split(";")[0]
+    # R12.1: the as-published flag (which category, its last published day, how long it stays revisable) is built per
+    # build — carried whole, by its declared prefix
+    ap = fmt.rfind('"' + config.AS_PUBLISHED_FLAG_PREFIX)
+    if ap >= 0 and fmt.endswith('"'):
+        return fmt[ap + 1:-1]
     for suf in CARRIED_SUFFIXES + tuple(config.REVENUE_TIER_SUFFIX.values()):
         if fmt.endswith('"' + suf.replace('"', "'") + '"'):
             return suf

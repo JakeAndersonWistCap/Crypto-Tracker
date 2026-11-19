@@ -2105,7 +2105,9 @@ def stored_fresh(last_dates: dict | None, asof=None) -> set:
 TIER_BUDGET_S = {
     "schedule:config": 15, "defillama": 150, "defillama_tvl": 150, "defillama_rwa_share": 150, "morpho_api": 60, "growthepie": 60,
     "nearblocks": 180, "coingecko": 240, "price_history": 120, "hypercore_info": 60, "chainlink_fees": 180, "xref": 90, "validatorqueue": 30, "beacon_api": 180, "treasury_bills": 60, "sky_ssr": 120, "sky_msc": 60, "fluid_buybacks": 60, "geodnet_feed": 60, "pendle_latent": 60, "wm_supply": 60, "near_issuance": 120, "business": 900, "share_vault": 60,
-    "chain": 240, "tron_node": 60, "near_rpc": 90, "explorer": 300, "balance_flow": 150, "maple_page": 60,
+    # NEAR_RPC 90 -> 240 (R12.2, 2026-11-19): + the Foundation set's liquid NEAR, ~190 view_account calls (it stops
+    # itself at its own budget_s and stores nothing short of every account), before the payout ledger (45 s)
+    "chain": 240, "tron_node": 60, "near_rpc": 240, "explorer": 300, "balance_flow": 150, "maple_page": 60,
     "explorer_gauge": 300,
     # the L2 chain tiers (explorer_l2:<chain>, G3 item 1) take config.L2_TIER_BUDGET_S, set below
     # one epoch a week: ~10 Multicall3 batches + one DefiLlama price call; the daily totalWeight is one eth_call
