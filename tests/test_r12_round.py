@@ -250,3 +250,55 @@ def test_v_reference_checks_of_the_emission_stay_on_aerodrome_alone(_aero):
     bw._velo_merged_views(g)
     s = sorted(references._series(g, "Aerodrome", "gross_issuance_tokens")["value"])
     assert s == [332_205, 4_184_974, 4_195_056, 4_204_997]                    # no row carries Velodrome's emission
+
+
+# ================================================================= Velodrome's issuer-linked wallets
+def test_w_the_issuer_set_is_tagged_and_adds_up_to_the_merger_read():
+    w = config.VELO_ISSUER_WALLETS
+    assert len(w) == 2 and all(v["tag"] == "INFERRED" and v["evidence"] for v in w.values())
+    m = config.VELO_ISSUER_AT_MERGER
+    assert sum(v["liquid_at_merger"] for v in w.values()) == pytest.approx(m["liquid"], abs=0.01)
+    assert sum(v["locked_at_merger"] for v in w.values()) == pytest.approx(m["locked"], abs=0.02)
+    r = config.VELO_MERGED["Aerodrome"]["ratio"]
+    assert m["liquid"] * r == pytest.approx(m["liquid_x_ratio"], abs=0.01)
+    assert m["locked"] * r == pytest.approx(m["locked_x_ratio"], abs=0.01)
+    e = config.VELO_MERGED["Aerodrome"]["entrypoint"]
+    assert e["paid"] + e["remaining"] == pytest.approx(config.VELO_MERGED["Aerodrome"]["allocation"], abs=0.01)
+
+
+def test_w_the_liquid_read_is_every_wallet_at_one_block_or_no_row():
+    from fetch import velo_history as vh
+    spec = dict(config.VELO_MERGED["Aerodrome"])
+    wallets = [x.lower() for x in spec["issuer_wallets"]]
+    stamp = lambda b: vh.BEDROCK_TS + (b - vh.BEDROCK_BLOCK) * 2               # noqa: E731
+    blocks = set()
+
+    def call(to, sig, arg, block, fail=None):
+        blocks.add(block)
+        if sig == "balanceOf(address)" and arg and arg.lower() in wallets:
+            if fail and arg.lower() == fail:
+                raise RuntimeError("no archive state")
+            return int((4_000_000 if arg.lower() == wallets[0] else 5_000_000) * 1e18)
+        return int({"tailEmissionRate()": 30, "activePeriod()": 1_792_022_400}.get(sig, 2.6e27))
+    rows, _why = vh.history("Aerodrome", spec, {}, first_day="2026-10-21", call=call, block_ts=stamp)
+    got = {r["metric"]: r["value"] for r in rows}
+    assert got["velo_issuer_liquid_tokens"] == pytest.approx(9_000_000.0) and len(blocks) == 1
+    assert got["velo_tail_emission_rate_bps"] == 30 and got["velo_minter_active_period"] == 1_792_022_400
+    rows, why = vh.history("Aerodrome", spec, {}, first_day="2026-10-21", block_ts=stamp,
+                           call=lambda to, sig, arg, block: call(to, sig, arg, block, fail=wallets[1]))
+    assert rows == [] and "not readable" in why                               # one wallet unread: the day keeps no row
+
+
+def test_w_the_issuer_liquid_leg_joins_the_holding_before_the_merger_only(_aero):
+    days = list(pd.date_range("2026-10-19", "2026-10-21"))
+    g = {("Aerodrome", "noncirculating_holding_tokens"): pd.concat([
+            _rows("noncirculating_holding_tokens", days, [40_000_000.0] * 3,
+                  "chain:sum(base:noncirc_foundation_multisig+base:noncirc_public_goods_fund)"),
+            _rows("noncirculating_holding_tokens", ["2026-10-22"], [37_000_000.0], "aero_v3:supply_once")],
+            ignore_index=True),
+         ("Aerodrome", "velo_issuer_liquid_tokens"): _rows("velo_issuer_liquid_tokens", days, [9_100_720.40] * 3,
+                                                           "velo_history:VELO.balanceOf(2 issuer-linked wallets):archive")}
+    bw._velo_merged_views(g)
+    h = g[("Aerodrome", "noncirculating_holding_tokens")].set_index("date")
+    assert h.loc[pd.Timestamp("2026-10-21"), "value"] == pytest.approx(40_000_000.0 + 9_100_720.40 * 0.044, abs=1e-3)
+    assert h.loc[pd.Timestamp("2026-10-22"), "value"] == 37_000_000.0

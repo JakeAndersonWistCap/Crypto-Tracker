@@ -44,7 +44,10 @@ READS = (("velo_total_supply_tokens", "token", "totalSupply()", False, "VELO.tot
          ("velo_tail_emission_rate_bps", "minter", "tailEmissionRate()", False, "Minter.tailEmissionRate", 1.0),
          ("velo_minter_active_period", "minter", "activePeriod()", False, "Minter.activePeriod", 1.0),
          ("velo_minter_weekly_tokens", "minter", "weekly()", False, "Minter.weekly", 1e18))
-METRICS = tuple(r[0] for r in READS)
+# R12: the liquid VELO of Velodrome's issuer-linked wallets (spec["issuer_wallets"]: VELO.balanceOf each, summed — every
+# wallet at the same block or no row)
+ISSUER_LIQUID = "velo_issuer_liquid_tokens"
+METRICS = tuple(r[0] for r in READS) + (ISSUER_LIQUID,)
 
 
 def block_at(ts: int) -> int:
@@ -76,6 +79,11 @@ def _chain_reader():
     return call, block_ts
 
 
+def _balance_of(call, token: str, wallet: str, blk: int) -> int:
+    # `call` appends ONE address argument (spec['escrow'] for READS); a wallet's balance goes through the same shape
+    return call(token, "balanceOf(address)", wallet, blk)
+
+
 def history(project: str, spec: dict, have: dict, first_day=None, deadline: float | None = None, call=None,
             block_ts=None, write=None, clock=time.monotonic) -> tuple[list, str]:
     """The VELO reads (READS) on each day from the day before `spec['until']` back to `first_day` (default: spec['from']),
@@ -105,6 +113,10 @@ def history(project: str, spec: dict, have: dict, first_day=None, deadline: floa
                     break
                 vals = [(m, call(spec[where], sig, spec["escrow"] if arg else None, blk) / scale, label)
                         for m, where, sig, arg, label, scale in READS]
+                wallets = sorted(spec.get("issuer_wallets") or ())
+                if wallets:
+                    held = sum(_balance_of(call, spec["token"], w, blk) for w in wallets) / 1e18
+                    vals.append((ISSUER_LIQUID, held, f"VELO.balanceOf({len(wallets)} issuer-linked wallets)"))
             except Exception as e:  # noqa: BLE001 — unknown, never 0: the day keeps no row
                 from .chain import redact_urls             # noqa: PLC0415
                 why = f"stopped at {key}: VELO is not readable there ({str(redact_urls(e))[:200]})"

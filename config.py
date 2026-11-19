@@ -45096,3 +45096,95 @@ RULE_IN["Aerodrome"]["flow_in"] = tuple(
 EPOCH_PAID_AT["Aerodrome"]["metrics"] = tuple(EPOCH_PAID_AT["Aerodrome"]["metrics"]) + ("gross_issuance_tokens_aero_only",)
 EPOCH_PAID_AT["Aerodrome"]["span_metrics"] = tuple(EPOCH_PAID_AT["Aerodrome"]["span_metrics"]) + (
     "gross_issuance_tokens_aero_only",)
+
+
+# =====================================================================================================================
+# ===== R12 — VELODROME: THE ALLOCATION, THE ISSUER-LINKED WALLETS, VELO v1 (read on chain 2026-11-19) =====
+# (1) THE UNCLAIMED ALLOCATION. Holder: VelodromeMigrationEntrypoint on Base 0x6daE95FE833f190640dB1176F8C8a2e50C6a66c0
+#     (token.VELODROME_MIGRATION(); Sourcify exact match, not a proxy; identical to V3/src/migration/
+#     VelodromeMigrationEntrypoint.sol, Dromos-Labs/metadex-public). It can pay AERO only against a bridged VELO deposit
+#     (handle(): msg.sender == MAILBOX, origin Optimism, sender itself; reverts BudgetExhausted past its balance). There
+#     is NO sweep / withdraw / rescue / setter / pause / deadline. The owner (Safe 0x42255e3c…, 3-of-7, the signer set of
+#     Velodrome's `team` Safe) can only burnRemaining() — burn the WHOLE remaining balance. It earns nothing.
+#     paid() 106,288,636.97 + remaining() 10,711,363.03 = 117,000,000.00: nothing burned.
+# (2) THERE IS NO HEADROOM ANY MORE. At the merger block VELO v2's supply x 0.044 was 486,832.31 below the allocation;
+#     Velodrome's Minter is immutable and has kept minting (tail rate nudged 30 -> 26 bps): VELO v2 supply is now
+#     2,667,488,365.37 -> x 0.044 = 117,369,488.08, 369,488 ABOVE the allocation (about 46,930 above once the rebase that
+#     can only be claimed into the migration's own lock is netted out). Payouts are first come, first served, so the
+#     whole 117.0M is claimable by existing VELO: it all stays in circulating (Jake 2026-11-19), and VELO minted after
+#     the merger is NOT dilution of AERO — the allocation is a cap (the merged series caps the Velodrome leg at it).
+# (3) THE ISSUER-LINKED WALLETS (Jake's 11-04 rule: built from on-chain and docs evidence, inferred ones tagged). No
+#     first-party document names a Velodrome wallet holding VELO; the published roles (team / feeManager Safe
+#     0xBA4BB89f…, Emergency Council 0x838352F4…) held 0 VELO and no veNFT at the merger. Every lock owner of 300K VELO
+#     or more and about 300 top liquid holders (619 addresses; all 34,482 veNFTs enumerated at the merger block) were
+#     tested for Safe signers shared with the published Aerodrome and Velodrome multisigs: two matched. Both INFERRED.
+#     The R11 figure (537.0M VELO -> 23.63M AERO) is WITHDRAWN: 245,961,350 VELO of it was Binance and OKX customer VELO
+#     routed through the second Safe after the merger and passed on. A lower bound: an issuer wallet sharing no signer
+#     would not be found.
+# (4) VELO v1 (0x3c8B6502…) CAN STILL CONVERT: v1 -> v2 through the SinkManager 0x5aeE5F0E… (convertVELO has no access
+#     control, the manager has no owner and no off switch, its lock ends 2030-11-14; ConvertVELO events continue after
+#     the merger) and v2 -> AERO through the migration. Converting MINTS NEW v2 — v1 was not inside the 2,648,026,538.
+#     Outstanding v1 at the merger: 288,641,550.31 (x 0.044 = 12.70M at most), of which 239.56M sits in the v1
+#     RewardsDistributor (how much of it live v1 veNFTs can claim is NOT ESTABLISHED), 31.61M in v1 veNFTs, 15.97M
+#     liquid. From the merger on it changes nothing in our series: the allocation cap already binds. Before the merger
+#     the merged series reads VELO v2 only — v1's convertible part (2.09M AERO-equivalent certain, 12.70M at most:
+#     0.1%-0.6% of the merged supply) is NOT in it yet (no v1 read is built): named, a decision for Jake.
+VELO_MERGED["Aerodrome"]["entrypoint"] = {
+    "base": "0x6daE95FE833f190640dB1176F8C8a2e50C6a66c0", "owner": "0x42255e3c2d0b71a0b006243148fdf1a71d054ce0",
+    "owner_can": ("burnRemaining() — burn the whole remaining balance", "transferOwnership"),
+    "nobody_can": "withdraw, sweep or redirect the AERO; it leaves only against a bridged VELO deposit",
+    "earns": "nothing", "paid": 106_288_636.97, "remaining": 10_711_363.03, "read_on": "2026-11-19",
+    "source": "Sourcify (Base, exact match, not a proxy) = V3/src/migration/VelodromeMigrationEntrypoint.sol"}
+VELO_MERGED["Aerodrome"]["at_merger"]["headroom_now"] = {
+    "velo_total": 2_667_488_365.37, "x_ratio": 117_369_488.08, "above_allocation": 369_488.08, "read_on": "2026-11-19",
+    "what": "VELO kept being minted after the merger: the allocation is a cap, fully claimable by existing VELO"}
+VELO_MERGED["Aerodrome"]["verdict"] = ("existing supply converted (not new supply): out of every dilution rate; the "
+                                       "allocation is a cap VELO's supply has since passed")
+VELO_ISSUER_WALLETS = {
+    "0x2A8951eFCD40529Dd6eDb3149CCbE4E3cE7d053d": {
+        "tag": "INFERRED", "what": "Safe 4-of-8 on Optimism",
+        "evidence": "7 of its 8 signers are the 7 signers of the Base Safe 0xBDE0c70B… (Aerodrome Foundation and "
+                    "Incentives; the Team wallet of the Blockworks filing); every migration it made names 0xBDE0… as "
+                    "the recipient",
+        "liquid_at_merger": 4_238_903.65, "locked_at_merger": 232_922_426.24,
+        "after": "fully converted to 0xBDE0… on Base (233.84M VELO of locks -> 10,289,118 AERO as stakes; 4.24M liquid)"},
+    "0x78415b05Ecbd63b68C277387aA5683Bbe2bD1BD8": {
+        "tag": "INFERRED", "what": "Safe 3-of-8 on Optimism",
+        "evidence": "its signer set is identical (8 of 8) to the Base Safes 0x834C0DA0… (Public Goods Fund) and "
+                    "0x5b1892b5… (Velodrome Foundation airdrop); its migrations name those two as recipients",
+        "liquid_at_merger": 4_861_816.75, "locked_at_merger": 47_956_785.44,
+        "after": "fully converted to 0x5b18… on Base; later carried 245.96M VELO of Binance / OKX customer conversions "
+                 "(passed on: not issuer holdings)"}}
+VELO_ISSUER_AT_MERGER = {"optimism_block": 158_514_211, "liquid": 9_100_720.40, "locked": 280_879_211.69,
+                         "liquid_x_ratio": 400_431.70, "locked_x_ratio": 12_358_685.31, "read_on": "2026-11-19",
+                         "withdrawn": "R11's 537.0M VELO -> 23.63M AERO (it held 245,961,350 VELO of exchange pass-through)",
+                         "lower_bound": "a wallet sharing no Safe signer with a published multisig would not be found"}
+VELO_V1 = {"token": "0x3c8B650257cFb5f272f799F5e2b4e65093a11a05", "sink_manager": "0x5aeE5F0E6C2055EbD776DB25F48f6c9A68ABcdaE",
+           "can_convert": True, "path": "v1 -> v2 (SinkManager.convertVELO / convertVe, mints new v2) -> AERO (migration)",
+           "outstanding_at_merger": 288_641_550.31, "certain_at_merger": 47_579_763.0,
+           "x_ratio": {"certain": 2_093_509.6, "at_most": 12_700_228.21},
+           "in_merged_series": False,
+           "why_not": "no v1 read is built, and the claimable share of the v1 RewardsDistributor's 239.56M is not "
+                      "established; from the merger on the allocation cap binds, so it changes nothing there",
+           "read_on": "2026-11-19"}
+# THE LIQUID LEG, WIRED: the two wallets' VELO.balanceOf, read each day with the other VELO terms (all wallets at one
+# block or no row) — x 0.044 it joins the issuer wallets' liquid holding before the merger (off the float, in
+# circulating). Their LOCKED VELO is inside the merged lock series already (veVELO supply); as an issuer-side share of
+# the lock it is recorded at the merger block only (280.88M VELO = 12.36M AERO) — its daily history needs every veNFT
+# and managed deposit of both wallets at each day's block (about 30 calls a day) and is not read.
+VELO_MERGED["Aerodrome"]["issuer_wallets"] = tuple(VELO_ISSUER_WALLETS)
+VELO_MERGED["Aerodrome"]["legs"]["noncirculating_holding_tokens"] = {"velo": "velo_issuer_liquid_tokens"}
+METRICS["velo_issuer_liquid_tokens"] = {
+    "label": "VELO held liquid by Velodrome's two issuer-linked wallets (INFERRED: Safe signers shared with Aerodrome's "
+             "published multisigs) — in VELO, before the merger; x 0.044 joins the issuer wallets' liquid holding (R12)",
+    "kind": "stock", "unit": "tokens", "archetypes": [3], "tiers": [2], "sanity_min": 0, "sanity_max": 1e10,
+    "only_projects": ("Aerodrome",)}
+METRICS["noncirculating_holding_tokens_aero_only"] = {
+    "label": "noncirculating_holding_tokens before the merger as stored — Aerodrome alone, for the reference checks of "
+             "figures published before 2026-10-22 (R12)",
+    "kind": "stock", "unit": "tokens", "archetypes": [3], "tiers": [2], "sanity_min": 0, "sanity_max": 1e10,
+    "only_projects": ("Aerodrome",), "view_only": True}
+_r12n = PROJECT_BY_NAME["Aerodrome"]["series_handover"]["noncirculating_holding_tokens"]
+_r12n["ordered_points"] = (tuple(_r12n["ordered_points"])[:-1]
+                           + tuple(VELO_MERGED_POINT.format(point=_x) for _x in tuple(_r12n["ordered_points"])[:-1])
+                           + tuple(_r12n["ordered_points"])[-1:])
