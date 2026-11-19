@@ -534,6 +534,21 @@ A Plume seed started on code older than 2026-10-01 saved its state only at the e
 or stop it and start again on the new code. Don't run both at once: they write the same state file.
 
 
+## 11ez. Round 11 — net supply change across holes, Aerodrome on the merged basis, Near evidence (2026-11-19)
+
+HYPERLIQUID. A change of circulating across a hole is now one multi-day change when both sides are on the same basis.
+No frozen cell moved on the 15 dumps. On your store the cell first forms on 2027-01-11 (the rule-basis series starts
+2026-10-13), not 12-29. AERODROME. The 117.0M AERO for VELO holders is Velodrome's existing supply converted (VELO's
+supply at the merger x 0.044 = 116.51M), so it stays out of dilution. The backfill below now also reads VELO's history
+on Optimism (about 465 days, 4 rows a day, 25-30 minutes); once stored, Aerodrome's supply before 10-22 reads on the
+merged basis. Run the backfill line until the Velodrome line ends "reached 2025-07-14": a part-read history leaves
+one quarter of the token-flow statement straddling the two bases. NEAR. See the Near lines below.
+
+@@NEAR@@
+
+@@BLOCK@@
+
+
 ## 11ey. Round 10 — Aerodrome's migration fixed, Near wired on the rule (2026-11-19)
 
 AERODROME. The 10-22 handover of its supply legs is now a cut (the old reader's rows after the cutover are dropped, and
