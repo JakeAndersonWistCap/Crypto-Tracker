@@ -44695,3 +44695,290 @@ def _load_r11_moves() -> int:
 
 
 R11_MOVES_DECLARED = _load_r11_moves()
+
+
+# ===== R11 — NEAR =====
+# Round 11, Near items (Jake 2026-11-19). SPEC.md "Round 11 — Near". Near is not frozen; everything of the round is in
+# this one block. Jake's rule (final) and decisions of 2026-11-18 are unchanged from R10: the gas burn stays in holder
+# value yield; staked locked NEAR in lockups counts as circulating; the header-burn history read stays NOT approved
+# here (Jake pastes its dry run back); supply-side incentives were n/a "unless the wallets are found" — found, R11.5.
+# =====================================================================================================================
+_R11N = PROJECT_BY_NAME["Near"]
+
+# ----- R11.3a EACH S13 LINE SPLIT INTO GAS AND NEAR INTENTS, AS NUMBERS (build_workbook._s13_component_views).
+# Per line: (label, the source series, the component view). A source of None is the line less its other part(s) — the
+# buyback inside HOLDER REVENUE is the wallets' intake x price, credited only by the holder-value view. A component
+# holds the days the LINE holds (config.S13_SAME_DAYS), so the parts of a line always sum to its cell.
+S13_COMPONENTS = {
+    "Near": {
+        "lines": {
+            "fees": (("gas", "fees_usd", "s13c_fees_gas_usd"),
+                     ("NEAR Intents", "intents_fees_usd", "s13c_fees_intents_usd")),
+            "revenue": (("gas", "near_gas_revenue_usd", "s13c_revenue_gas_usd"),
+                        ("NEAR Intents", "intents_revenue_usd", "s13c_revenue_intents_usd")),
+            "holder_revenue": (("gas", "near_gas_revenue_usd", "s13c_holder_gas_usd"),
+                               ("NEAR Intents", None, "s13c_holder_intents_usd"))},
+        # the cross-check of a component on that component's own days: (view, the component, source series, x price?)
+        "crosschecks": (("s13x_fees_gas_nearblocks_usd", "s13c_fees_gas_usd", "fees_native_tokens", True),
+                        ("s13x_revenue_gas_defillama_usd", "s13c_revenue_gas_usd", "revenue_usd", False),
+                        ("s13x_holder_gas_defillama_usd", "s13c_holder_gas_usd", "holders_revenue_usd", False))}}
+_R11_S13_LABELS = {
+    "s13c_fees_gas_usd": "S13 FEES — of which GAS fees (DefiLlama 'near' dailyFees), on the FEES line's covered days",
+    "s13c_fees_intents_usd": "S13 FEES — of which NEAR INTENTS gross fees (DefiLlama 'near-intents' dailyFees: the "
+                             "protocol fee + every front end's affiliate fee), on the FEES line's covered days",
+    "s13c_revenue_gas_usd": "S13 REVENUE — of which GAS: the chain's own burn x that day's price (near_gas_revenue_usd), "
+                            "on the REVENUE line's covered days",
+    "s13c_revenue_intents_usd": "S13 REVENUE — of which NEAR INTENTS: the captured share swept into the three revenue "
+                                "wallets (DefiLlama 'near-intents' dailyRevenue), on the REVENUE line's covered days",
+    "s13c_holder_gas_usd": "S13 HOLDER REVENUE — of which the GAS burn x that day's price (destroyed), on the HOLDER "
+                           "REVENUE line's covered days",
+    "s13c_holder_intents_usd": "S13 HOLDER REVENUE — of which the NEAR INTENTS buyback (held, not burned): the three "
+                               "wallets' intake x the day's price = the line less its gas part",
+    "s13x_fees_gas_nearblocks_usd": "CROSS-CHECK of S13 gas fees: NearBlocks' fee total (NEAR) x that day's price, on "
+                                    "the same days",
+    "s13x_revenue_gas_defillama_usd": "CROSS-CHECK of S13 gas revenue: DefiLlama 'near' dailyRevenue on the same days "
+                                      "(0.70 x fees through 2026-11-13 — the named difference, R10.B1c)",
+    "s13x_holder_gas_defillama_usd": "CROSS-CHECK of S13 gas holder revenue: DefiLlama 'near' dailyHoldersRevenue on the "
+                                     "same days"}
+for _m, _l in _R11_S13_LABELS.items():
+    METRICS[_m] = {"label": _l, "kind": "flow", "unit": "usd", "archetypes": [1, 3], "tiers": [2], "sanity_min": 0,
+                   "sanity_max": 1e10, "only_projects": ("Near",), "view_only": True}
+# THE FLOWS LINES THAT SHOW THEM (Value flow, this project only): (line, series, note). Read by
+# build_workbook.flow_statements over each quarter, like the memo lines.
+VALUE_FLOW_COMPONENTS = {
+    "Near": (
+        ("S13 FEES — of which gas", "s13c_fees_gas_usd", "DefiLlama 'near' dailyFees (Allium transaction fees)"),
+        ("S13 FEES — of which NEAR Intents", "s13c_fees_intents_usd",
+         "DefiLlama 'near-intents' dailyFees: the protocol fee plus the affiliate fee each front end collects"),
+        ("cross-check, gas fees: NearBlocks fee total x price, same days", "s13x_fees_gas_nearblocks_usd",
+         "a second indexer; stored from 2026-06-29"),
+        ("S13 REVENUE — of which gas (the chain's burn x price)", "s13c_revenue_gas_usd",
+         "the block headers' burn x that day's price (R10.B1b)"),
+        ("S13 REVENUE — of which NEAR Intents (captured)", "s13c_revenue_intents_usd",
+         "DefiLlama 'near-intents' dailyRevenue: NEAR swept into the three revenue wallets — about a quarter of the "
+         "Intents gross fees; the rest stays with front-end partners and solvers"),
+        ("cross-check, gas revenue: DefiLlama, same days", "s13x_revenue_gas_defillama_usd",
+         "0.70 x fees through 2026-11-13, = fees from 2026-11-14 (the named difference, R10.B1c)"),
+        ("S13 HOLDER REVENUE — of which gas burn", "s13c_holder_gas_usd", "destroyed: it reaches every holder"),
+        ("S13 HOLDER REVENUE — of which NEAR Intents buyback (held)", "s13c_holder_intents_usd",
+         "the three wallets' intake x the day's price; its cross-check is the Intents revenue line above (the same "
+         "sweep, measured by DefiLlama)"),
+        ("cross-check, gas holder revenue: DefiLlama, same days", "s13x_holder_gas_defillama_usd",
+         "DefiLlama 'near' dailyHoldersRevenue"))}
+# R11.3b WHY FEES IS 3.7x REVENUE — measured on Jake's export of 2026-11-17 (88 covered days, 2026-08-20..2026-11-15);
+# DefiLlama re-read on the same days 2026-11-19 (api.llama.fi/summary/fees/near, /near-intents). Evidence, read by no
+# figure.
+NEAR_S13_EXPLAINED = {
+    "days": ("2026-08-20", "2026-11-15", 88),
+    "fees": {"total": 20_301_740, "gas": 381_690, "intents": 19_920_050},
+    "revenue": {"total": 5_534_631, "gas": 308_595, "intents": 5_226_036},
+    "holder_revenue": {"total": 5_477_078, "gas": 308_595, "intents": 5_168_483},
+    "intents_capture": 0.2624,             # 5,226,036 / 19,920,050: the share of Intents gross fees NEAR captures
+    "gas_burn_share": 0.8085,              # 308,595 / 381,690: the 30% contract reward on function calls, to 2026-11-04
+    "never_revenue": {"intents_partners_and_solvers": 14_694_014, "gas_contract_rewards": 73_095},
+    "defillama_same_days_read_2026_11_19": {
+        "near": {"fees": 381_690, "revenue": 268_981, "holders_revenue": 268_981, "supply_side": 112_703},
+        "near-intents": {"fees": 19_918_744, "revenue": 5_227_076, "holders_revenue": 5_227_076,
+                         "supply_side": 14_691_662}},
+    "nearblocks_gas_fees_x_price": 376_945,
+    "text": "FEES is 3.7x REVENUE because 98% of FEES is NEAR Intents gross fees (the protocol fee plus every front "
+            "end's affiliate fee) and NEAR captures about 26% of them — the NEAR swept into its three revenue wallets; "
+            "the other 74% stays with front-end / distribution partners and solvers and never becomes NEAR revenue. "
+            "Gas is 2% of FEES; about 81% of it was burned (100% since protocol v87, 2026-11-04)"}
+REVENUE_SPLIT["Near"]["composition"] = NEAR_S13_EXPLAINED["text"]
+
+# ----- R11.3c THE TWO STALE REFERENCES. (1) revenue.near.org's 30-day NET REVENUE tile: the page as served animates
+# the tile from 0, but its own embedded data carries the value ("value":"$1.90M" beside "Net revenue" / "Last 30
+# days"; "Updated · Nov 19, 2026") — read 2026-11-19, three significant figures. Ours is the wallets' intake x price
+# over the 30 days to the day before the read. (2) The pool APR is in manual_references.csv (a1_validator_yield): the
+# near.com page answers 404 and its pool was never named — replaced by a measurement of a named pool on chain.
+CREDIBILITY["Near"]["in_buyback"] = _c_in_py(
+    "NEAR buyback, 30 days to 2026-11-18 ($): the change in the three revenue wallets' combined balance x same-day "
+    "price", "window_sum",
+    {"metric": "actual_buyback_tokens", "end": "2026-11-18", "days": 30, "times_price": True, "use_views": True},
+    {"manual": {"value": 1_900_000, "read_on": "2026-11-19", "read_by": "Claude Code",      # was 2_080_000, 2026-10-07
+                "source": "revenue.near.org — net revenue, last 30 days (the page's embedded data: '$1.90M', "
+                          "'Updated · Nov 19, 2026')"},
+     "tol": 15.0,
+     "note": "Revenue swept into the wallets vs what the wallets added: a price move between a sweep and the day's "
+             "close, and the wNEAR legs (not counted), move them apart. The page gives three significant figures; "
+             "DefiLlama's near-intents revenue over the 30 days to 2026-11-18 reads 1,693,910."}, fmt=_C_USD)
+NEAR_POOL_APR_READ = {
+    "pool": "figment.poolv1.near", "fee": (10, 100), "total_staked": 28_982_389,
+    "blocks": (220_753_000, 225_235_601), "days": 30.192, "delegators_agreeing": 5, "growth": 1.00366328,
+    "net_apr": 0.0443, "also": {"bitwise_1.poolv1.near": {"fee": (5, 100), "growth": 1.00399108, "net_apr": 0.0483}},
+    "method": "get_account(delegator).staked_balance at the two archival blocks; only delegators whose growth agrees "
+              "to 2e-6 (no deposit or withdrawal between them); (growth − 1) x 365 / days",
+    "was": {"value": 0.0456, "read_on": "2026-10-07", "source": "near.com staking, one unnamed pool's page — 404 on "
+                                                                 "2026-11-19"}}
+
+# ----- R11.4 THE NEAR FOUNDATION ACCOUNT SET AND THE INSIDER SHARE OF STAKE. Read 2026-11-19: balances at block
+# 225,235,754, the stake pairs re-read at block 225,236,524 (rpc.mainnet.fastnear.com; archival for pinned heights).
+# PUBLISHED = named by a first-party publication; INFERRED = tied by on-chain evidence, the inference given.
+NEAR_FOUNDATION_SET = {
+    "read_on": "2026-11-19", "block": 225_236_524, "balances_block": 225_235_754,
+    "signer_keys": ("ed25519:4BGbi2xFEp7hBsfGGLsrzB2DY2VTaADxh4KdpqdCsgSf",
+                    "ed25519:BFVZgNSbUf3rVcwFww7vbXXfWy38VLgpv3PdPFbHotkP",
+                    "ed25519:6ss8i9d8nG8vsiAw5DYrKbdrokmP9KCjSj6N3RhgjgrE",
+                    "ed25519:DdYxqpmkMVodLEDrWpQmyYbwfEGnVGYuWCPWerrnCErb",
+                    "ed25519:52QSJjJv7Ra4NgpajbYLgX5nr9goszbZvkNTX72SjJtU"),
+    "groups": {
+        # group: (tag, accounts, liquid NEAR, staked NEAR, evidence)
+        "foundation.near": ("PUBLISHED", 1, 869.32, 0.0,
+                            "NEAR mainnet genesis records (near/nearcore utils/mainnet-res/res/mainnet_genesis.json)"),
+        "treasury.near": ("PUBLISHED", 1, 1_692_527.72, 0.0,
+                          "genesis protocol_treasury_account; House of Stake's reports call it NF Finance's — already "
+                          "off the float (R10.B3a)"),
+        "contributors.near": ("PUBLISHED", 1, 4.70, 0.0, "genesis records; NEAR's own circulating method"),
+        "nfvalidator1-4.near": ("PUBLISHED", 4, 40.0, 0.0, "genesis records"),
+        "buybacks.multisignature.near": ("PUBLISHED", 1, 2_339_073.85, 0.0,
+                                         "revenue.near.org names it — already off the float (HELD_BUYBACK_FLOAT)"),
+        "nfendowment00-55.near": ("INFERRED", 56, 950_291.27, 3_742_125.83,
+                                  "each carries >= 3 of the signer keys on foundation.near / treasury.near / "
+                                  "buybacks.multisignature.near; the name is the 'Foundation Endowment' line of "
+                                  "near.org/blog/near-token-supply-and-distribution. Staked: 2 directly (717,719.13) "
+                                  "and 16 through lockup contracts they own (3,024,406.70)"),
+        "cgran01-60.near": ("INFERRED", 60, 2_330.52, 0.0, "the same signer keys; 'Community Grants'"),
+        "opgran01-60.near": ("INFERRED", 60, 33_668.67, 0.0, "the same signer keys; 'Operations Grants'"),
+        "nfeco01-08.near": ("INFERRED", 8, 81_102.51, 0.0, "the same signer keys; 'Early Ecosystem'"),
+        "ecotreasury / ecotreasury1-5.multisignature.near": (
+            "INFERRED", 6, 260.0, 0.0, "the same signer keys; received 9.8M of the 30.17M that left treasury.near in "
+                                       "2026 and passed it on"),
+        "mpcacc.multisignature.near": ("INFERRED", 1, 10.0, 0.0, "the same signer keys"),
+        "nf-payments1 / 2 / 8.near": ("INFERRED", 3, 47_086.00, 0.0,
+                                      "they sign the HSP-007 payouts in House of Stake's ledger ('NF Finance'); 2 and "
+                                      "8 are funded by nfendowment03.near; nf-payments1 holds 30,000 UNSTAKED in a pool"),
+        "nf-payments.near": ("INFERRED", 1, 14_246.83, 62_603.95,
+                             "the name and payees in common with nf-payments2.near — the weakest tag in the set")},
+    "left_out": {
+        "nf-finance.near": "name only (417.26 NEAR, nothing staked) — too thin",
+        "near": "the registrar account (69,276.44 NEAR, nothing staked): a protocol account, no Foundation evidence",
+        "dcc79d2c… / 5c5e57de… / 574b7748… (implicit)": "pass-through wallets of the 30.17M that left treasury.near "
+                                                        "(2026-04-15 / 05-13): empty now; where it went on is not "
+                                                        "established",
+        "multisigtest.near, multisigtest2.near, test03.near, dangeris.near, swnfn / swnfs.multisignature.near, "
+        "registrar": "carry one or two of the keys, under 50 NEAR each, nothing staked — immaterial, not classified"},
+    "totals": {"staked": 3_804_729.78, "unstaked_in_pool": 30_000.0, "validators_stake": 593_249_093.67,
+               "share_of_stake": 0.0064134,
+               "liquid_outside_treasury_and_buyback_wallets": 1_129_910.0},
+    "float": "NOT taken off the float this round: the set's liquid NEAR outside treasury.near and the buyback wallets "
+             "(about 1.13M, 0.09% of supply) — a decision for Jake (the rule says foundation-held is off the float; "
+             "most of these wallets are INFERRED)"}
+# THE STAKE PAIRS (owner, the delegating account, pool) — a lockup contract delegates for its owner
+# (get_owner_account_id read for each). Staked NEAR at block 225,236,524 beside each.
+NEAR_FOUNDATION_STAKE_PAIRS = (
+    ("nf-payments.near", "nf-payments.near", "trust-nodes.poolv1.near"),                                    # 62,603.95
+    ("nf-payments1.near", "nf-payments1.near", "shitzuapes-nf.pool.near"),                    # 0 (30,000 unstaked)
+    ("nfendowment02.near", "nfendowment02.near", "shitzuapes-nf.pool.near"),                               # 317,719.13
+    ("nfendowment03.near", "nfendowment03.near", "npro.poolv1.near"),                                      # 400,000.00
+    ("nfendowment07.near", "ad04b619b7d268287d35f2d12074802e4b5093bb.lockup.near", "ni.poolv1.near"),      # 149,098.84
+    ("nfendowment10.near", "0b4f77ca26e1fa477f77c890e957d9b45bd9f0a1.lockup.near", "cryptogarik.poolv1.near"),
+    ("nfendowment13.near", "4951c4e4b0086c131310c99cf7decd8929c23085.lockup.near", "lavenderfive.poolv1.near"),
+    ("nfendowment17.near", "27a785666e02481e2908ec9079407a91d0ea9c1f.lockup.near", "infiniteloop.poolv1.near"),
+    ("nfendowment19.near", "a433d21c4dfe2d4d077044ba88236f67a448af41.lockup.near", "staking-power.poolv1.near"),
+    ("nfendowment20.near", "7ea66beab1d7cc00322ad7c244b9efe912ff9bab.lockup.near", "pathrocknetwork.poolv1.near"),
+    ("nfendowment22.near", "3ecfcd129290b2d9feae9e21ede288dfe1f68620.lockup.near", "stakecito.poolv1.near"),
+    ("nfendowment25.near", "9d7c52538efe0f4c892e25f48e0c618e3d6ebaaf.lockup.near", "dexagon.poolv1.near"),
+    ("nfendowment26.near", "06feb93f6be741a0654b859440a1d32e0e5b9377.lockup.near", "cryptoblossom.poolv1.near"),
+    ("nfendowment27.near", "5d5dcb163971b87ce8a55dd01ff81e0bd132cb6c.lockup.near", "stakely_io.poolv1.near"),
+    ("nfendowment28.near", "672d4c9120193bb7dc8140bc9d2d761d9cf0abdb.lockup.near",
+     "optimusvalidatornetwork.poolv1.near"),
+    ("nfendowment30.near", "a0837027702b333045d3daf55560503fa3a7199f.lockup.near", "pandateam.poolv1.near"),
+    ("nfendowment31.near", "ddae91be482dfcb0e8666249271ceb42e75812c5.lockup.near", "grassets.poolv1.near"),
+    ("nfendowment32.near", "8853b08054fe516cb251d124212fa774e9753972.lockup.near", "avado.poolv1.near"),
+    ("nfendowment33.near", "133c47fb9e37adc8c9aa2c24b10726ccdce8df5e.lockup.near", "lionstake.poolv1.near"),
+    ("nfendowment34.near", "35678188e56d79602c26e72d8be7afbbfeaa3731.lockup.near", "avado.poolv1.near"),   # 803,710.31
+)
+METRICS["near_foundation_staked_tokens"] = {
+    "label": "NEAR staked by the NEAR Foundation account set (config.NEAR_FOUNDATION_SET: published accounts and "
+             "INFERRED ones — same multisig signer keys, payer accounts) — each (delegator, pool) pair's staked_balance "
+             "on the pool contract, summed; the insider share's numerator (R11.4)",
+    "kind": "stock", "unit": "tokens", "archetypes": [1, 3, 4], "tiers": [2, 3], "sanity_min": 0, "sanity_max": 2e9,
+    "only_projects": ("Near",)}
+# its own key on the node_api block (not an extra_read): fetch/near.NearNode._pool_stake, all pairs or nothing
+_R11N["node_api"]["pool_stake"] = {
+    "metric": "near_foundation_staked_tokens", "pairs": NEAR_FOUNDATION_STAKE_PAIRS, "method": "get_account",
+    "field": "staked_balance",
+    "spec_url": "https://github.com/near/core-contracts/blob/master/staking-pool/src/lib.rs (get_account -> "
+                "HumanReadableAccount.staked_balance)", "spec_date": "2026-11-19",
+    "set": "config.NEAR_FOUNDATION_SET — INFERRED wallets included, tagged there"}
+INSIDER_LOCK["Near"] = (
+    "near_foundation_staked_tokens", "locked_tokens",
+    "NEAR staked by the NEAR Foundation account set ÷ all NEAR staked with validators. The set (read 2026-11-19): "
+    "PUBLISHED foundation.near / treasury.near / contributors.near (genesis) and buybacks.multisignature.near "
+    "(revenue.near.org) stake nothing; the stake is in INFERRED wallets — nfendowment02 / 03.near and 16 lockups owned "
+    "by nfendowment accounts (same multisig signer keys as the published accounts), and nf-payments.near (name + common "
+    "payees). 3,804,730 ÷ 593,249,094 = 0.64% at block 225,236,524")
+INSIDER_SHARE_ROUTES.pop("Near", None)            # was "MISSING E — … no NEAR Foundation account list on file"
+
+# ----- R11.5 SUPPLY-SIDE INCENTIVES (b): THE HSP-007 PAYOUTS TO THE MPC NODE OPERATORS, FROM HOUSE OF STAKE'S LEDGER.
+NEAR_HOUSE_OF_STAKE = {
+    "read_on": "2026-11-19", "block": 225_235_546,
+    "wallets": {     # PUBLISHED: House of Stake Q3 2026 report, "Managed Wallet Register" (gov.near.org/t/42199)
+        "houseofstake.sputnik-dao.near": ("main treasury", 3_225_945.37),
+        "houseofstake-ops.sputnik-dao.near": ("operations", 25_574.77),
+        "hos-deposits.sputnik-dao.near": ("Fast Track proposal bonds", 200.57),
+        "rewards.hos-dao.near": ("HSP-003 veNEAR rewards contract (gov.near.org/t/41688)", 49_418.36)},
+    "funding": "3.286M NEAR from the NEAR Community Purpose Trust, March 2026 (the same report)",
+    "payers_of_hsp_007": {   # every payout in the ledger is signed by one of these — none by a House of Stake wallet
+        "nf-payments8.near": 145_587.52, "nf-payments2.near": 125_429.74, "nf-payments1.near": 35_218.82,
+        "70d6b5c7307f794c799370bc495ce5f7c9dfc1f27f59f411a9c135076d4e74be": 32_194.00},
+    "ledger": {"txs": 85, "payees": 19, "near": 338_430.08, "first": "2026-04-23", "last": "2026-10-21",
+               "reported_march_to_september_service": 346_872.48, "pending_in_reports": 6_136.40},
+    "not_in_b": {
+        "HSP-002 Validator Support Program": "one payment: 4,800 NEAR to 32 small validators on 2026-01-23 "
+                                             "(gov.near.org/t/41687) — before Q0, no transaction published",
+        "HSP-003 veNEAR Holder Rewards": "15,557 NEAR claimed by 2026-03 from rewards.hos-dao.near — a governance-lock "
+                                         "reward to holders, not a supplier incentive"}}
+METRICS["near_mpc_operator_payouts_tokens"] = {
+    "label": "NEAR paid to the MPC node operators under HSP-007 — every transaction in House of Stake's published "
+             "payout ledger (gov.near.org/t/42147), each read on chain (archival RPC): the NEAR that lands on the payee, "
+             "by UTC day; 0 on a day inside the ledger's span without a payment, no row after the last payout report "
+             "(R11.5)",
+    "kind": "flow", "unit": "tokens", "archetypes": [1], "tiers": [2], "sanity_min": 0, "sanity_max": 1e7,
+    "only_projects": ("Near",)}
+_R11N["node_api"]["payout_ledger"] = {
+    "metric": "near_mpc_operator_payouts_tokens",
+    "thread_raw": "https://gov.near.org/raw/42147", "thread": "https://gov.near.org/t/42147", "max_pages": 30,
+    "rpc": "https://archival-rpc.mainnet.fastnear.com", "from": "2026-04-23",
+    "payers": tuple(NEAR_HOUSE_OF_STAKE["payers_of_hsp_007"]),
+    "forwarders": ("requestnetwork.near",),          # a payment routed through it lands on the payee in a receipt
+    "report_marker": "Date of Issuance", "yocto_exponent": 24, "budget_s": 45,
+    "source": "House of Stake, 'HSP-007 Execution: MPC Node Infrastructure Financing Program' — the monthly Payout "
+              "Execution Reports' transaction ledgers (read 2026-11-19)"}
+OUTFLOW_CATEGORIES["Near"] = {
+    **OUTFLOW_CATEGORIES["Near"], "b": ("near_mpc_operator_payouts_tokens",),          # was: no (b)
+    "basis": OUTFLOW_CATEGORIES["Near"]["basis"] + "; (b) = the HSP-007 payouts to the MPC node operators (House of "
+             "Stake's published ledger, each transaction read on chain; paid by NF Finance's nf-payments accounts, "
+             "monthly in arrears) — published monthly, so NOT summed into total dilution or net holder yield while it "
+             "lags (config.DILUTION_LEAVES_OUT); SUBSIDY COVER reads it over the days it holds"}
+# the denominator stops at the last payout report: SUBSIDY COVER is computed over the days every leg covers (G13 6)
+OUTFLOW_INCOMPLETE[("Near", "b")] = (
+    "the HSP-007 payouts are published monthly in arrears: no row after the last Payout Execution Report (the next "
+    "report publishes the transactions of the days since)")
+SUBSIDY_COMPLETE_FROM[("Near", "b")] = {"metric": "near_mpc_operator_payouts_tokens",
+                                        "measured_point": "near_rpc:payout_ledger", "declared": "2026-04-23",
+                                        "say_not_stored": True}
+for _m in ("subsidy_cover_num_usd", "subsidy_cover_den_usd"):
+    METRICS[_m]["only_projects"] = tuple(sorted({*METRICS[_m]["only_projects"], "Near"}))
+# SUBSIDY COVER'S NUMERATOR for Near: revenue from every stream (the gas burn + the Intents captured share) — the MPC
+# operators serve NEAR Intents and Chain Signatures, so gas fees alone (the generic fallback) would not be its revenue
+SUBSIDY_REVENUE_METRIC = {"Near": "revenue_total_usd"}
+# A (b) THAT IS PUBLISHED WITH A LAG IS NOT SUMMED INTO DILUTION (it would block net holder yield on "unequal coverage"
+# for 2% of the outflows): said on the outflow basis. A decision for Jake (SPEC R11.5).
+DILUTION_LEAVES_OUT = {
+    ("Near", "b"): "published monthly in arrears (up to about 45 days behind): 135,376 NEAR in the 90 days to "
+                   "2026-11-17, about 2% of the outflows; it is on Flows and in SUBSIDY COVER"}
+FLOW_LINE_EVIDENCE.pop(("Near", "Incentives paid beside: supply side (b)"), None)      # was class_e (D2-4f)
+NOT_SHOWN[("Near", "near_mpc_operator_payments_tokens")] = (
+    "D2-4f / R11.5: treasury.near has paid no MPC operator (this series reads 0) — the payouts are made by NF Finance's "
+    "nf-payments accounts and are measured by near_mpc_operator_payouts_tokens, Near's (b); kept so a payment from "
+    "treasury.near itself shows the day it lands")
+# THE LEDGER IS PUBLISHED MONTHLY (a Payout Execution Report on about the 5th, for the payments since the one before):
+# the series, and the views built on it, are stale by that cadence — two months + two days (stale_after_days, the
+# mechanism of G9 H2) — not by the 7 days of a daily read.
+for _m in ("near_mpc_operator_payouts_tokens", "outflow_b_tokens", "outflow_b_usd", "subsidy_cover_num_usd",
+           "subsidy_cover_den_usd"):
+    PROGRAM_CADENCE_BY_METRIC[("Near", _m)] = {
+        "metric": _m, "cadences": (("monthly", 31),), "stale_by_cadence": True, "declared_by": "R11.5 (2026-11-19)",
+        "source": "gov.near.org/t/42147: 'Monthly Payout Reports' — one per service month, issued on about the 5th"}

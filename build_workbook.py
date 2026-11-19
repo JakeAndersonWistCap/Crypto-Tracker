@@ -1791,6 +1791,60 @@ def _s13_views(groups: dict) -> None:
         S13_STATE[name] = {"same_days": tuple(ms), "last": str(last.date())}
 
 
+def _s13_component_views(groups: dict, asof=None) -> None:
+    """R11.3a (config.S13_COMPONENTS — Near): each S13 line's PARTS as series of their own, on the line's own covered
+    days — the days of the line's cell (its same-covered-days view, R9.5) — so the parts of a line sum to the line.
+    A part with a source series is that series on those days; a part without one is the line less the parts before it
+    (the buyback inside HOLDER REVENUE exists only inside the credited holder value). `crosschecks`: a second source
+    of a part, on that part's days (x that day's price where it is in tokens). With `asof`, the Q0 totals are kept in
+    S13_STATE for the cells' note. No other project has an entry; no existing series is changed."""
+    for name, spec in config.S13_COMPONENTS.items():
+        st = S13_STATE.setdefault(name, {})
+        st.pop("components", None)
+        px = _daily(groups.get((name, "price_usd")))
+        q0 = {}
+        inq = None
+        if asof is not None:
+            hi = pd.Timestamp(asof).normalize()
+            lo = hi - pd.Timedelta(days=int(GLOBALS["period_days"]))
+            inq = lambda s_, lo=lo, hi=hi: float(s_[(s_.index > lo) & (s_.index <= hi)].sum())  # noqa: E731
+        for role, parts in spec["lines"].items():
+            gt = groups.get((name, s13_metric(name, role)))
+            if gt is None or gt.empty:
+                continue
+            line = _daily(gt)
+            done = pd.Series(0.0, index=line.index)
+            for label, src, view in parts:
+                if src is None:
+                    part, how = line - done, "the line less its other part(s)"
+                else:
+                    part = _daily(groups.get((name, src))).reindex(line.index).dropna()
+                    how = src
+                    done = done.add(part, fill_value=0.0)
+                if part.empty:
+                    continue
+                groups[(name, view)] = _as_stored(pd.DataFrame(
+                    {"date": part.index, "project": name, "metric": view, "value": part.values, "tier": 2,
+                     "source": f"derived:s13_component[{role}: {label} = {how}, on the line's covered days]"}),
+                    gt.columns)
+                if inq is not None:
+                    q0.setdefault(role, {"line": inq(line), "parts": []})["parts"].append((label, inq(part)))
+        for view, of, src, priced in spec.get("crosschecks", ()):
+            base, gs = groups.get((name, of)), _daily(groups.get((name, src)))
+            if base is None or base.empty or gs.empty:
+                continue
+            days = _daily(base).index
+            x = ((gs * px.reindex(gs.index)).dropna() if priced else gs).reindex(days).dropna()
+            if x.empty:
+                continue
+            groups[(name, view)] = _as_stored(pd.DataFrame(
+                {"date": x.index, "project": name, "metric": view, "value": x.values, "tier": 2,
+                 "source": f"derived:s13_crosscheck[{src}{' x price_usd' if priced else ''} on the days of {of}]"}),
+                base.columns)
+        if q0:
+            st["components"] = q0
+
+
 def s13_metric(name: str, role: str) -> str | None:
     """The series an S13 line's cell reads: the line's metric, or its same-covered-days view where this build made one."""
     m = (config.revenue_split(name) or {}).get(role, {}).get("metric")
@@ -1812,8 +1866,22 @@ def s13_note(p: dict) -> str:
                 + ". DefiLlama's figures on the same days are stored beside it (the cross-check)")
     if st.get("same_days"):
         return (f"SAME COVERED DAYS (R9.5): {' and '.join(st['same_days'])} are each read to {st['last']}, the last "
-                f"day both hold (a read lag at the end is not a difference) — compared like with like, never capped")
+                f"day both hold (a read lag at the end is not a difference) — compared like with like, never capped"
+                + _s13_components_note(name))
     return ""
+
+
+def _s13_components_note(name: str) -> str:
+    """R11.3a: the Q0 composition of each S13 line, as built this run (config.S13_COMPONENTS); '' elsewhere."""
+    comp = (S13_STATE.get(name) or {}).get("components")
+    if not comp:
+        return ""
+    heads = {"fees": "FEES", "revenue": "REVENUE", "holder_revenue": "HOLDER REVENUE"}
+    rows = [f"{heads.get(role, role)} {c['line']:,.0f} = " + " + ".join(f"{lab} {v:,.0f}" for lab, v in c["parts"])
+            for role, c in comp.items()]
+    why = (config.revenue_split(name) or {}).get("composition", "")
+    return ("\n\nCOMPOSITION, Q0 (R11.3): " + "; ".join(rows) + ". Each part is a line on Flows (Value flow), with its "
+            "cross-check on the same days." + (f" {why}." if why else ""))
 
 
 def lag_matched(p: dict, m: str) -> str:
@@ -7163,6 +7231,7 @@ def aggregate(long: pd.DataFrame, fetch_status: pd.DataFrame, asof: pd.Timestamp
     _LAST_GROUPS.clear()
     _subsidy_common_views(groups, asof)   # G13 6: subsidy cover over the days every leg covers once (b) is complete
     _s13_views(groups)                    # R9.4 / R9.5: the three revenue lines on the same covered days
+    _s13_component_views(groups, asof)    # R11.3a: each line's gas / Intents parts on the line's own days (Near)
     _lag_matched_views(groups, asof)      # R5.3: a declared publish lag — the follow series cut at the lead's last day
     _LAST_GROUPS.update(groups)       # the views, for Credibility rows that read them (credibility.VIEWS_LONG)
     _market_share_mean_views(groups)  # PR1.U4: market share's 30- / 60-day means (config.MARKET_SHARE_MEAN)
@@ -12634,6 +12703,8 @@ def _subsidy_dates_fmt(name: str):
 
 def _cp_revenue_metric(p: dict) -> str:
     """Subsidy cover's numerator: customer revenue where the project has the series (archetype 2's demand), else fees."""
+    if p["name"] in config.SUBSIDY_REVENUE_METRIC:        # R11.5 (Near): revenue from every stream, declared
+        return config.SUBSIDY_REVENUE_METRIC[p["name"]]
     return "customer_revenue_usd" if "customer_revenue_usd" in config.metrics_for_project(p) else "fees_usd"
 
 
@@ -12644,7 +12715,12 @@ def _master_tvl_metric(p: dict) -> str:
 
 
 def _cp_cats(p: dict, cats=CP_DILUTION_CATS) -> list[str]:
-    return [c for c in cats if config.outflow_metrics(p["name"], c)]
+    out = [c for c in cats if config.outflow_metrics(p["name"], c)]
+    if cats is CP_DILUTION_CATS:
+        # R11.5: a category published with a lag is not summed into dilution / net holder yield (declared, said on
+        # the outflow basis) — it keeps its own cells (SUBSIDY COVER, Flows)
+        out = [c for c in out if (p["name"], c) not in config.DILUTION_LEAVES_OUT]
+    return out
 
 
 def _cp_lock(R: Refs, r, p: dict) -> str:
@@ -12994,6 +13070,11 @@ def _cp_cols(R: Refs, data_by_key: dict) -> list[tuple]:
                 info = SUBSIDY_COMMON.get(p["name"]) or {}
                 if int(info.get("days") or 0) >= RATE_MIN_DAYS:
                     return calc(f"{R.D(r, 'subsidy_cover_num_usd', 'q0')}/{R.D(r, 'subsidy_cover_den_usd', 'q0')}")
+                scf = config.SUBSIDY_COMPLETE_FROM[(p["name"], "b")]
+                if not info and scf.get("say_not_stored"):
+                    # R11.5 (Near): the (b) series itself is not in the store yet — said as that, not as short history
+                    return (f"n/a — {scf['metric']} (the supply-side incentive (b) series): no rows stored — its "
+                            f"reader stores the whole published history on its first run")
                 frm = info.get("from") or config.SUBSIDY_COMPLETE_FROM[(p["name"], "b")]["declared"]
                 valid = (pd.Timestamp(frm) + pd.Timedelta(days=RATE_MIN_DAYS - 1)).date()
                 return (f"n/a — NEEDS HISTORY: the (b) denominator is complete from {frm} — "
@@ -13257,6 +13338,13 @@ def _cp_cols(R: Refs, data_by_key: dict) -> list[tuple]:
             return (f'=IF(NOT(ISNUMBER({cr})),{NA},IF({cr}<=0,"n/a — no credited holder value in Q0",'
                     f'IF({cr}-{num(rt)}<=0,0,'
                     + (f'"{lapsed}"' if lapsed else f"{share}*({cr}-{num(rt)})/{cr}") + ")))")
+        if bcb.get("with_buyback") and bcb.get("usd_metric"):
+            # R11.4 (Near): the share is wired, and the credited fee burn stays RETIRED (R10.B2b) — nothing distributed
+            # is 0 whatever the share (as before the share was wired); a distributing quarter takes the share
+            bu = R.D(r, bcb["usd_metric"], "q0")
+            dist = f"ROUND({cr}-{num(rt)}-{num(bu)},2)"
+            return (f'=IF(NOT(ISNUMBER({cr})),{NA},IF({cr}<=0,"n/a — no credited holder value in Q0",'
+                    f'IF({dist}<=0,0,IF(AND(ISNUMBER({n}),ISNUMBER({d}),{d}>0),({n}/{d})*{dist}/{cr},{NA}))))')
         return (f'=IF(AND(ISNUMBER({n}),ISNUMBER({d}),{d}>0,ISNUMBER({cr})),IF({cr}>0,({n}/{d})*MAX(0,{cr}-{num(rt)})/'
                 f'{cr},"n/a — no credited holder value in Q0"),{NA})')
 
@@ -15451,6 +15539,9 @@ def flow_statements(groups: dict, asof) -> list[dict]:
                   # declared memo (config.VALUE_FLOW_MEMO) shows the $ of a minted leg and says which line it is not
                   *[(lab, [_flow_sum(_usd_daily(d(m), d("price_usd")), *_flow_window(asof, k))[0] for k in range(5)],
                      "usd", f"{m} x price_usd", why) for lab, m, why in config.VALUE_FLOW_MEMO.get(name, ())],
+                  # R11.3a: the parts of each S13 line and their cross-checks, where the project declares them (Near)
+                  *[(lab, [_flow_sum(d(m), *_flow_window(asof, k))[0] for k in range(5)], "usd", m, why)
+                    for lab, m, why in config.VALUE_FLOW_COMPONENTS.get(name, ()) if (name, m) in groups],
                   ("Status", stat, "text", "", "")]
         out[:] = [_no_such_flow(r) for r in out]
         for line, vals, unit, series_, note in vlines:

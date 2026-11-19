@@ -1211,6 +1211,17 @@ def _tier_note(project: dict, metric: str, scrape_entries: dict) -> tuple[str, s
         "the treasury.near payer scan (fetch/nearblocks.py, NearBlocks v3 receipts + v1.signer's participants) stored "
         "nothing: no NEARBLOCKS_API_KEY, the operator list did not read, or the receipts did not reach 2026-01-29",
         "Check the Run Log's nearblocks line for {name} (near_mpc_operator_payments_tokens).")
+    # R11.4 / R11.5: the Foundation set's stake and the HSP-007 payout ledger (fetch/near.py)
+    r3["near_foundation_staked_tokens"] = (
+        "the staking-pool read (fetch/near.py _pool_stake: get_account on each pool of "
+        "config.NEAR_FOUNDATION_STAKE_PAIRS) stored nothing: a pair did not answer — a sum missing one is not stored",
+        "Check the Run Log's near_rpc line for {name} (near_foundation_staked_tokens).")
+    r3["near_mpc_operator_payouts_tokens"] = (
+        "the payout-ledger read (fetch/near.py _payout_ledger: gov.near.org/t/42147, each published transaction read on "
+        "the archival RPC) stored nothing: the thread did not read, or some of its transactions are not read on chain "
+        "yet — the read resumes from its cache on the next run",
+        "Check the Run Log's near_rpc line for {name} (near_mpc_operator_payouts_tokens); a first read can take two or "
+        "three runs.")
     for c in getattr(config, "PENDLE_RATE_CHECK", {}).get("chains", ()):
         r3[f"emissions_tokens_gauge_rate_{c}"] = (
             f"the subsidy-targeting reader (fetch/subsidy_targeting.py) has no complete UTC day with a rewardData sample "

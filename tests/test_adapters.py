@@ -13666,6 +13666,10 @@ def test_near_buyback_fund_balance_is_the_three_wallets_summed_as_a_stock():
     p["node_api"] = dict(p["node_api"], extra_reads=[
         r for r in p["node_api"]["extra_reads"]
         if r.get("metric") not in ("near_foundation_accounts_tokens", "near_treasury_tokens", "near_max_inflation_rate")])
+    # R11.4 / R11.5 (2026-11-19): the Foundation set's stake and the HSP-007 payout ledger are reads of their own keys
+    # on the node_api block (tests/test_r11_near.py) — not part of this read (was: no such keys)
+    for _k in ("pool_stake", "payout_ledger"):
+        p["node_api"].pop(_k, None)
     assert read["kind"] == "near_view_account" and read["field"] == "amount"
     assert set(read["accounts"]) == set(p["intents_revenue_wallets"]["wallets"])
     assert "AGGREGATOR-SOURCED" in read["address_source"] and "wrap.near" in read["partial"]
@@ -27406,9 +27410,11 @@ def test_near_buyback_rows_use_the_three_wallet_method_and_jakes_revenue_reading
     import credibility as cred
     spec = config.CREDIBILITY["Near"]["in_buyback"]
     # use_views (Jake's run 2026-10-08, "no figure"): NEAR's buyback is a read-time view, not a raw stored series
-    assert spec["ours"] == {"py": "window_sum", "args": {"metric": "actual_buyback_tokens", "end": "2026-10-07",
+    # R11.3c (2026-11-19): the reading was refreshed from the page's embedded data — the 30 days to 2026-11-18 against
+    # $1.90M read 2026-11-19 (was: end 2026-10-07 against 2_080_000 read by Jake on 2026-10-07)
+    assert spec["ours"] == {"py": "window_sum", "args": {"metric": "actual_buyback_tokens", "end": "2026-11-18",
                                                          "days": 30, "times_price": True, "use_views": True}}
-    assert spec["ref"]["manual"]["value"] == 2_080_000 and spec["ref"]["manual"]["read_by"] == "Jake"
+    assert spec["ref"]["manual"]["value"] == 1_900_000 and spec["ref"]["manual"]["read_on"] == "2026-11-19"
     days = pd.date_range("2026-09-01", "2026-10-07")
     long = pd.concat([pd.DataFrame({"date": days, "project": "Near", "metric": "actual_buyback_tokens", "value": 10.0}),
                       pd.DataFrame({"date": days[:-1], "project": "Near", "metric": "price_usd", "value": 2.0})],

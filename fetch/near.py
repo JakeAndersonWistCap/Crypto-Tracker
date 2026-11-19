@@ -19,11 +19,18 @@ node_api block, so a node API change is a config edit rather than a code change.
 """
 from __future__ import annotations
 
+import base64
+import json
 import logging
+import re
+import time
+
+import pandas as pd
 
 import config
 
-from .base import Http, json_path_get, parse_number, point, today
+from .base import Http, json_path_get, parse_number, point, tidy, today
+from .logcache import LogCache, atomic_write_text
 
 log = logging.getLogger("token_metrics.fetch.near")
 
@@ -194,6 +201,17 @@ class NearNode:
                            f"bound only catches one too small — so check "
                            f"{api.get('exponent_source_url')} before accepting it."))
 
+        # R11.4 / R11.5: AFTER every validators read (a slow first ledger read must not starve the stake read)
+        for p in projects:
+            api = p.get("node_api") or {}
+            if api.get("kind") != KIND:
+                continue
+            supply = self.prior.get((p["name"], "total_supply")) or self.prior.get((p["name"], "circulating_supply"))
+            if api.get("pool_stake"):          # the Foundation set's stake, pair by pair
+                self._pool_stake(p, api, api["pool_stake"], supply, out, when)
+            if api.get("payout_ledger"):       # the HSP-007 payouts, from House of Stake's published ledger
+                self._payout_ledger(p, api["payout_ledger"], out)
+
     def _block_supply(self, p: dict, api: dict, read: dict, out, when) -> None:
         """NEAR's total supply as the protocol keeps it: `block` header.total_supply. 2026-09-28.
 
@@ -252,6 +270,166 @@ class NearNode:
         ver = json_path_get(payload, "result.protocol_version")
         out.add(point(name, metric, value, f"{SOURCE}:protocol_config.{read['path'].split('.')[-1]}", TIER, when),
                 SOURCE, name, f"{metric}={value:.6f} ({int(num)}/{int(den)}) at protocol {ver}", TIER)
+
+    def _pool_stake(self, p: dict, api: dict, read: dict, supply, out, when) -> None:
+        """R11.4: NEAR staked by a declared set of delegators — for each (owner, delegator, pool) pair the staking
+        pool's own `get_account(delegator)` (a view call, `query` / call_function), its `staked_balance` summed. The
+        unstaked balance left in a pool is not staked and is not counted. ALL PAIRS OR NOTHING: a pair that does not
+        answer with a number stores nothing (a sum missing one pair is a wrong figure, not a smaller one)."""
+        name, metric, pairs = p["name"], read.get("metric"), read.get("pairs") or ()
+        exp = api.get("yocto_exponent")
+        if not metric or not pairs or exp is None:
+            out.unconfigured(SOURCE, name, f"pool stake: metric, pairs or yocto_exponent missing ({metric!r})", TIER)
+            return
+        field, raw, idle, top = read.get("field", "staked_balance"), 0, 0, []
+        for _owner, who, pool in pairs:
+            args = base64.b64encode(json.dumps({"account_id": who}).encode()).decode()
+            body = {"jsonrpc": "2.0", "id": "token-metrics", "method": "query",
+                    "params": {"request_type": "call_function", "finality": "final", "account_id": pool,
+                               "method_name": read.get("method", "get_account"), "args_base64": args}}
+            payload, detail = self._call(api, body)
+            try:
+                acct = json.loads(bytes(json_path_get(payload, "result.result")).decode())
+                v = int(acct[field])
+                idle += int(acct.get("unstaked_balance") or 0)
+            except (TypeError, ValueError, KeyError):
+                out.fail(SOURCE, name, f"{metric}: {pool} get_account({who}) gave no numeric {field} — {detail}. "
+                                       f"NOTHING STORED: a sum missing one pair is a wrong figure.", TIER)
+                out.gap(name, metric, reason=f"the staking pool {pool} did not answer get_account for {who}: {detail}",
+                        tiers_attempted="2",
+                        suggestion="Check the pair in config.NEAR_FOUNDATION_STAKE_PAIRS and the node_api endpoints.")
+                return
+            raw += v
+            top.append((v, who, pool))
+        scale = 10 ** int(exp)
+        value = raw / scale
+        if supply is None or supply <= 0 or not (0 <= value <= supply):
+            out.fail(SOURCE, name, f"{metric}: {value:,.4f} is not inside [0, total_supply={supply}] — nothing stored",
+                     TIER)
+            return
+        top.sort(reverse=True)
+        out.add(point(name, metric, value, f"{SOURCE}:pool_stake", TIER, when), SOURCE, name,
+                f"{metric}={value:,.4f} — staked_balance summed over {len(pairs)} (delegator, pool) pair(s); largest: "
+                + "; ".join(f"{w[:28]} @ {pl} {v / scale:,.2f}" for v, w, pl in top[:3])
+                + f"; {idle / scale:,.2f} NEAR unstaked in the pools, not counted. The set holds INFERRED wallets "
+                  f"({read.get('set', 'config')}).", TIER)
+
+    _TX = re.compile(r"(?<![1-9A-HJ-NP-Za-km-z])[1-9A-HJ-NP-Za-km-z]{43,44}(?![1-9A-HJ-NP-Za-km-z])")
+
+    @classmethod
+    def ledger_hashes(cls, text: str) -> list:
+        """The MAINNET transaction hashes a payout ledger publishes: an explorer link (…/txns/<hash>) or a bare hash in
+        a table cell. A hash linked on a testnet explorer is not a mainnet payment and is left out."""
+        testnet = set(re.findall(r"testnet\.[a-z.]*/txns/([1-9A-HJ-NP-Za-km-z]{43,44})", text))
+        out = []
+        for m in re.finditer(r"/txns/([1-9A-HJ-NP-Za-km-z]{43,44})|\|\s*`?([1-9A-HJ-NP-Za-km-z]{43,44})`?\s*(?=\|)", text):
+            h = m.group(1) or m.group(2)
+            if h and cls._TX.fullmatch(h) and h not in testnet and h not in out:
+                out.append(h)
+        return out
+
+    def _ledger_tx(self, spec: dict, h: str) -> dict | None:
+        """One published hash, read on chain: {day, payer, to, near} — or {"refused": why} for a transaction that is
+        not a successful payment by a declared payer. None when the node did not answer (retried next run)."""
+        rpc = spec["rpc"]
+        body = {"jsonrpc": "2.0", "id": "token-metrics", "method": "EXPERIMENTAL_tx_status",
+                "params": {"tx_hash": h, "sender_account_id": spec["payers"][0], "wait_until": "NONE"}}
+        try:
+            res = (self.http.post(rpc, json_body=body) or {}).get("result")
+        except Exception:  # noqa: BLE001 — a failed read is retried on the next run
+            return None
+        if not isinstance(res, dict) or "transaction" not in res:
+            return None
+        tx = res["transaction"]
+        if not isinstance(res.get("status"), dict) or "SuccessValue" not in res["status"]:
+            return {"refused": "the transaction did not succeed"}
+        if tx.get("signer_id") not in spec["payers"]:
+            return {"refused": f"signed by {tx.get('signer_id')}, not a declared payer"}
+        skip, best = set(spec.get("forwarders") or ()), (0, None)
+        for rc in res.get("receipts") or []:
+            for a in ((rc.get("receipt") or {}).get("Action") or {}).get("actions") or []:
+                dep = int((a.get("Transfer") or {}).get("deposit") or 0) if isinstance(a, dict) else 0
+                if dep > best[0] and rc.get("receiver_id") not in skip and rc.get("receiver_id") != tx["signer_id"]:
+                    best = (dep, rc.get("receiver_id"))
+        if not best[0]:
+            return {"refused": "no NEAR transfer lands on a payee"}
+        try:
+            blk = self.http.post(rpc, json_body={"jsonrpc": "2.0", "id": "token-metrics", "method": "block", "params": {
+                "block_id": res["transaction_outcome"]["block_hash"]}})
+            ts = int(blk["result"]["header"]["timestamp"])
+        except Exception:  # noqa: BLE001
+            return None
+        return {"day": str(pd.Timestamp(ts, unit="ns").date()), "payer": tx["signer_id"], "to": best[1],
+                "near": best[0] / 10 ** int(spec.get("yocto_exponent", 24))}
+
+    def _payout_ledger(self, p: dict, spec: dict, out) -> None:
+        """R11.5: the HSP-007 payouts to the MPC node operators = every transaction House of Stake's monthly Payout
+        Execution Reports publish (the forum thread's raw text), each READ ON CHAIN: it succeeded, a declared payer
+        signed it, and the NEAR that lands on the payee is the amount, on its block's UTC day. A resolved hash is
+        cached (a final transaction does not change). A day inside the ledger's span without a payment is 0 — the
+        ledger lists every payment made; a day after the last report's date holds no row (unknown until the next
+        report). Nothing is stored while a published hash is still unread (a partial ledger reads low)."""
+        name, metric = p["name"], spec["metric"]
+        pages = []
+        try:
+            for page in range(1, int(spec.get("max_pages", 30)) + 1):
+                t = self.http.get_text(spec["thread_raw"], params={"page": page})
+                if not (t or "").strip():
+                    break
+                pages.append(t)
+        except Exception as e:  # noqa: BLE001 — a failed source must not kill the run
+            out.fail(SOURCE, name, f"{metric}: the payout ledger ({spec['thread']}) did not read: {e} — nothing stored",
+                     TIER)
+            return
+        text = "\n".join(pages)
+        hashes = self.ledger_hashes(text)
+        marks = re.findall(rf"{re.escape(spec['report_marker'])}\W+([A-Z][a-z]+ \d{{1,2}}, \d{{4}})", text)
+        dated = pd.to_datetime(pd.Series(marks, dtype=str), errors="coerce").dropna()
+        if not hashes or dated.empty:
+            out.fail(SOURCE, name, f"{metric}: {spec['thread']} answered {len(text):,} characters with {len(hashes)} "
+                                   f"transaction hash(es) and {len(dated)} report date(s) — nothing stored", TIER)
+            return
+        cache_f = LogCache().root / f"near-payout-ledger-{metric}.json"
+        try:
+            cache = json.loads(cache_f.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            cache = {}
+        deadline, todo = time.monotonic() + float(spec.get("budget_s", 60)), [h for h in hashes if h not in cache]
+        for i, h in enumerate(todo, 1):
+            if time.monotonic() > deadline:
+                break
+            got = self._ledger_tx(spec, h)
+            if got is not None:
+                cache[h] = got
+            if i % 10 == 0 or i == len(todo):          # kept as it goes: a run cut short resumes where it stopped
+                atomic_write_text(cache_f, json.dumps(cache, indent=0, sort_keys=True))
+        if todo:
+            atomic_write_text(cache_f, json.dumps(cache, indent=0, sort_keys=True))
+        left = [h for h in hashes if h not in cache]
+        if left:
+            out.fail(SOURCE, name, f"{metric}: {len(left)} of the ledger's {len(hashes)} transaction(s) are not read on "
+                                   f"chain yet (resumes next run) — NOTHING STORED: a partial ledger reads low", TIER)
+            return
+        paid, refused = {}, []
+        for h in hashes:
+            r = cache[h]
+            if "refused" in r:
+                refused.append(f"{h[:10]}… {r['refused']}")
+                continue
+            d = pd.Timestamp(r["day"])
+            paid[d] = paid.get(d, 0.0) + float(r["near"])
+        since = pd.Timestamp(spec["from"])
+        last = min(dated.max().normalize(), today() - pd.Timedelta(days=1))
+        if not paid or last < since:
+            out.fail(SOURCE, name, f"{metric}: no payment of the ledger was read as a payment — nothing stored; "
+                                   f"refused: {'; '.join(refused) or 'none'}", TIER)
+            return
+        pts = [(d, paid.get(d, 0.0)) for d in pd.date_range(min(since, min(paid)), max(last, max(paid)))]
+        out.add(tidy(pts, name, metric, f"{SOURCE}:payout_ledger", TIER), SOURCE, name,
+                f"{metric}: {sum(paid.values()):,.2f} NEAR in {len(hashes) - len(refused)} payout(s) "
+                f"{min(paid).date()}..{max(paid).date()}, each read on chain; the ledger's last payout report is dated "
+                f"{dated.max().date()} — no row after {last.date()}"
+                + (f"; NOT COUNTED (named): {'; '.join(refused)}" if refused else ""), TIER)
 
     def _view_accounts(self, p: dict, api: dict, read: dict, supply, out, when) -> None:
         """Sum native NEAR held by a list of accounts, via `query` / request_type view_account.

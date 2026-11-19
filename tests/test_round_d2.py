@@ -336,9 +336,12 @@ def test_4f_near_payer_scan_counts_operators_and_names_every_other_receiver(monk
 
 
 def test_4f_near_b_stays_e_with_the_trace_and_the_route_is_declared_not_shown():
-    ev = config.FLOW_LINE_EVIDENCE[("Near", "Incentives paid beside: supply side (b)")]
-    assert ev["verdict"] == "class_e" and "treasury.near" in ev["evidence"] and "House of Stake" in ev["evidence"]
-    assert "b" not in config.OUTFLOW_CATEGORIES["Near"]
+    # R11.5 (Jake 2026-11-19, "n/a unless the wallets are found"): the payers were found in House of Stake's own payout
+    # ledger, so (b) is measured (near_mpc_operator_payouts_tokens) and the line carries no class-E evidence any more.
+    # Was: FLOW_LINE_EVIDENCE[...]["verdict"] == "class_e" naming treasury.near and House of Stake, and no "b" at all.
+    assert ("Near", "Incentives paid beside: supply side (b)") not in config.FLOW_LINE_EVIDENCE
+    assert config.OUTFLOW_CATEGORIES["Near"]["b"] == ("near_mpc_operator_payouts_tokens",)
+    # the treasury.near -> signer-participants scan stays stored and declared not shown (it reads 0: not the payer)
     assert ("Near", "near_mpc_operator_payments_tokens") in config.NOT_SHOWN
 
 

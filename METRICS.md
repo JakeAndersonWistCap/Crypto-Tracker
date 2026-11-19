@@ -1034,14 +1034,14 @@ Funding: revenue (the default: the programme documented base)
 | Flow | Category | Series |
 |---|---|---|
 | into circulating | (a) security emissions | `near_validator_rewards_tokens` |
-| into circulating | (b) supply-side incentives | **NO SERIES** |
+| into circulating | (b) supply-side incentives | `near_mpc_operator_payouts_tokens` |
 | into circulating | (c) demand-side incentives | **NO SERIES** |
 | into circulating | (d) ecosystem / grant spend | **NO SERIES** |
 | into circulating | (e) unlocks | `unlock_release_tokens` |
 | out of circulating | retirement (bought, burned + held) | `retired_buyback_tokens` |
 | out of circulating | burn (every burn) | `gross_burn_tokens_bigquery` |
 
-Basis: minted rewards to validators (the epoch mint less the protocol treasury's 1/10, G9 L3) are (a); the treasury's 1/10 is line m (near_treasury_mint_tokens); (e) = releases from lockup.near + contributors.near (the accounts NEAR's own circulating method subtracts)
+Basis: minted rewards to validators (the epoch mint less the protocol treasury's 1/10, G9 L3) are (a); the treasury's 1/10 is line m (near_treasury_mint_tokens); (e) = releases from lockup.near + contributors.near (the accounts NEAR's own circulating method subtracts); (b) = the HSP-007 payouts to the MPC node operators (House of Stake's published ledger, each transaction read on chain; paid by NF Finance's nf-payments accounts, monthly in arrears) — published monthly, so NOT summed into total dilution or net holder yield while it lags (config.DILUTION_LEAVES_OUT); SUBSIDY COVER reads it over the days it holds
 
 PENDING: PARTIAL (e): the lockup CONTRACTS' releases (near_lockup_release_tokens) join (e) once the weekly lockup read has two readings — one so far (2026-10-11)
 
