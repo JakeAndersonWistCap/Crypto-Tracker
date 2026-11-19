@@ -51,17 +51,19 @@ def test_a1_option_c_issuance_is_what_the_reader_shows_beside_the_key():
 def test_a2_hyperliquid_net_supply_gap_is_declared_dated_and_expires(monkeypatch):
     import done_check as dc
     spec = config.CIRC_CHANGE_DECLARED_GAP["Hyperliquid"]
-    assert spec["clear_by"] == "2026-12-29" and spec["first_stored"] == "2026-09-30"
-    assert (pd.Timestamp(spec["first_stored"]) + pd.Timedelta(days=90)).date() == date(2026, 12, 29)
+    # R12 (Jake 2026-11-19): clear-by 2027-01-11, the rule-basis series starting 2026-10-13
+    # (was clear_by 2026-12-29, first_stored 2026-09-30 — Jake 2026-11-16)
+    assert spec["clear_by"] == "2027-01-11" and spec["first_stored"] == "2026-10-13"
+    assert (pd.Timestamp(spec["first_stored"]) + pd.Timedelta(days=90)).date() == date(2027, 1, 11)
     gaps = [(pd.Timestamp("2026-08-19"), "no circulating reading on 2026-08-18 (the opening)")]
     monkeypatch.setitem(bw.CIRC_CHANGE_GAPS, "Hyperliquid", gaps)
     monkeypatch.setitem(bw.CIRC_CHANGE_GAPS, "Sky", gaps)
     hl = "n/a — " + bw._circ_change_gap_text({"name": "Hyperliquid"})
-    assert "Assistance Fund" in hl and "2026-12-29" in hl
+    assert "Assistance Fund" in hl and "2027-01-11" in hl                     # was "2026-12-29"
     ok, cls, why = dc.classify("n/a", hl, date(2026, 11, 16))
-    assert ok and cls == "history" and "2026-12-29" in why
-    assert dc.classify("n/a", hl, date(2026, 12, 29))[0] is True
-    assert dc.classify("n/a", hl, date(2026, 12, 30))[0] is False             # past the date it is open work again
+    assert ok and cls == "history" and "2027-01-11" in why
+    assert dc.classify("n/a", hl, date(2027, 1, 11))[0] is True               # was date(2026, 12, 29)
+    assert dc.classify("n/a", hl, date(2027, 1, 12))[0] is False              # past the date it is open work again
     sky = "n/a — " + bw._circ_change_gap_text({"name": "Sky"})
     assert "DECLARED" not in sky and dc.classify("n/a", sky, date(2026, 11, 16))[0] is False   # no other project
 
@@ -77,7 +79,7 @@ def test_a2_a_long_reason_is_joined_from_pieces_of_at_most_255_characters(monkey
     monkeypatch.setitem(bw._SHIFT, "k", 0)
     f = bw._net_supply_circ(R(), 5, config.PROJECT_BY_NAME["Hyperliquid"])
     lits = re.findall(r'"([^"]*)"', f)
-    assert lits and max(len(x) for x in lits) <= 255 and "2026-12-29" in "".join(lits)
+    assert lits and max(len(x) for x in lits) <= 255 and "2027-01-11" in "".join(lits)   # was "2026-12-29" (R12)
     assert len(f) < 8000
 
 

@@ -11377,6 +11377,50 @@ def etherfi_withdrawal_fees(days: int = 365):
 MULTICALL3 = "0xcA11bde05977b3631167028862bE2a173976CA11"
 
 
+class _Mc3Refused(Exception):
+    """An HTTP refusal of one Multicall3 eth_call: its status, the provider's own words, and whether it is about the
+    request's SIZE (413, or a 400 / 5xx whose text says so) — the one refusal a smaller batch can answer."""
+
+    def __init__(self, status, text: str):
+        self.status, self.text = status, " ".join(str(text or "").split())[:160]
+        low = self.text.lower()
+        self.too_large = status == 413 or (status in (400, 500, 502, 503) and any(
+            w in low for w in ("too large", "payload", "request entity", "size limit", "exceeds", "out of gas",
+                               "gas limit", "response size")))
+        super().__init__(f"HTTP {status}" + (f": {self.text}" if self.text else ""))
+
+
+MC3_RATE_TRIES = 4           # R12.4: an HTTP 429 is waited out on the SAME endpoint this many times before moving on
+
+
+def _mc3_post(url: str, data: str, block: str) -> dict:
+    """One Multicall3 eth_call. R12.4 (Jake's 11-19 run: 'Multicall3 aggregate3 via base-mainnet.g.alchemy.com failed —
+    HTTPError', repeated): the seed's bisection sends eth_calls back to back and a keyed free plan answers HTTP 429
+    when its per-second allowance is spent — the read then fell to the public endpoints for every such call. A 429 is
+    now waited out here (the endpoint's Retry-After where it gives one, else 1, 2, 4 s); any other HTTP refusal is
+    raised WITH its status and the provider's message (keys redacted), so the log says the cause."""
+    for k in range(MC3_RATE_TRIES):
+        try:
+            return rpc(url, "eth_call", [{"to": MULTICALL3, "data": data}, block])
+        except requests.HTTPError as e:
+            resp = getattr(e, "response", None)
+            status = getattr(resp, "status_code", None)
+            if status == 429 and k < MC3_RATE_TRIES - 1:
+                try:
+                    wait = float((getattr(resp, "headers", None) or {}).get("Retry-After", ""))
+                except (TypeError, ValueError):
+                    wait = float(2 ** k)
+                _nap(min(max(wait, 0.5), 8.0), f"Multicall3 via {_rpc_host(url)} (HTTP 429)")
+                continue
+            try:
+                from fetch.chain import redact_urls      # noqa: PLC0415
+                text = str(redact_urls(getattr(resp, "text", "") or ""))
+            except Exception:  # noqa: BLE001
+                text = ""
+            raise _Mc3Refused(status, text) from None
+    raise _Mc3Refused(429, "still rate-limited")          # not reached: the last 429 raises above
+
+
 def _batch_eth_calls(chain: str, calls: list, chunk: int = 200, block: str = "latest") -> list:
     """[(to, data)] -> [hex result or None], through Multicall3.aggregate3 — ONE eth_call per `chunk` calls, with each
     call allowed to fail on its own. Not JSON-RPC batches: Alchemy refused those on Jake's run 2026-10-08, and the
@@ -11394,11 +11438,20 @@ def _batch_eth_calls(chain: str, calls: list, chunk: int = 200, block: str = "la
                     print(f"    Multicall3 has no code on {chain} (via {host}) — nothing read")
                     return out
                 code_seen = True
-            for i in range(0, len(calls), chunk):
-                part = calls[i:i + chunk]
+            def one(i, part):
                 data = "0x82ad56cb" + encode(["(address,bool,bytes)[]"],
                                              [[(to, True, bytes.fromhex(d[2:])) for to, d in part]]).hex()
-                j = rpc(url, "eth_call", [{"to": MULTICALL3, "data": data}, block])
+                try:
+                    j = _mc3_post(url, data, block)
+                except _Mc3Refused as e:
+                    # R12.4: A BATCH THE ENDPOINT REFUSES FOR ITS SIZE is read in two halves (down to one call) —
+                    # the same calls at the same block, so nothing about the read changes
+                    if e.too_large and len(part) > 1:
+                        h = len(part) // 2
+                        one(i, part[:h])
+                        one(i + h, part[h:])
+                        return
+                    raise
                 if "result" not in j:
                     raise ValueError(f"aggregate3 error: {j.get('error')}")
                 (res,) = decode(["(bool,bytes)[]"], bytes.fromhex(j["result"][2:]))
@@ -11406,12 +11459,17 @@ def _batch_eth_calls(chain: str, calls: list, chunk: int = 200, block: str = "la
                     raise ValueError(f"aggregate3 returned {len(res)} results for {len(part)} calls")
                 for k, (ok, ret) in enumerate(res):
                     out[i + k] = ("0x" + ret.hex()) if ok and ret else None
+            for i in range(0, len(calls), chunk):
+                one(i, calls[i:i + chunk])
             failed = sum(1 for v in out if v is None)
             if failed:
                 print(f"    Multicall3 via {host}: {failed} of {len(calls)} call(s) returned nothing (reverted or empty)")
             return out
         except Exception as e:  # noqa: BLE001
-            print(f"    Multicall3 aggregate3 via {host} failed — {type(e).__name__}; trying the next endpoint")
+            # R12.4: THE CAUSE IS SAID (Jake's 11-19 run printed "failed — HTTPError" over and over, with no status)
+            why = str(e) if isinstance(e, _Mc3Refused) else f"{type(e).__name__}: {str(e)[:120]}"
+            print(f"    Multicall3 aggregate3 via {host} failed — {why}; trying the next endpoint")
+            out = [None] * len(calls)                     # never a mix of two endpoints' answers
     return out
 
 

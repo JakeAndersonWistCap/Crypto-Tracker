@@ -40,18 +40,25 @@ def test_1_the_changes_telescope_to_closing_minus_opening_across_holes(monkeypat
     assert len([d for d in cov if asof - pd.Timedelta(days=90) < d <= asof]) == 90   # every day of the window is held
 
 
-def test_1_a_hole_on_the_opening_day_is_not_bridged(monkeypatch):
-    """An as-of whose opening day (as-of − 90) falls in a hole: the change that straddles it began before the window —
-    it is left out, its days are not covered, and the reason names the two readings either side."""
+def test_1_a_hole_on_the_opening_day_opens_the_window_on_the_reading_before_it(monkeypatch):
+    """R12 (Jake 2026-11-19; was R11.1: the straddling change was left out and the as-of read n/a, its gap naming the
+    two readings either side). An as-of whose opening day (as-of − 90) falls in a hole: the window opens on the last
+    stored reading before it — the change that straddles the opening is kept whole, the sum is closing − that reading,
+    and the window's real length is recorded for the annual rate."""
     monkeypatch.setattr(bw, "scoped_projects", lambda: [config.PROJECT_BY_NAME["Hyperliquid"]])
     asof = pd.Timestamp("2026-12-31")                       # opening 2026-10-02: a hole (10-02..10-04)
     days = [d for d in pd.date_range("2026-09-30", asof) if str(d.date()) not in {"2026-10-02", "2026-10-03", "2026-10-04"}]
-    g = {("Hyperliquid", "circulating_supply_used"): _circ("Hyperliquid", days, [5e8 + 1000.0 * i for i in range(len(days))])}
+    vals = [5e8 + 1000.0 * i + (i % 3) * 7.0 for i in range(len(days))]
+    g = {("Hyperliquid", "circulating_supply_used"): _circ("Hyperliquid", days, vals)}
     bw._circulating_change_views(g, asof)
     ch = g[("Hyperliquid", "circulating_change_tokens")]
-    assert pd.Timestamp("2026-10-05") not in set(ch["date"])
-    gaps = bw.CIRC_CHANGE_GAPS["Hyperliquid"]
-    assert len(gaps) == 1 and "2026-10-01" in gaps[0][1] and "2026-10-05" in gaps[0][1]
+    assert pd.Timestamp("2026-10-05") in set(ch["date"])
+    assert bw.CIRC_CHANGE_GAPS["Hyperliquid"] == []
+    o = bw.CIRC_CHANGE_OPENING["Hyperliquid"]
+    assert o["used"] == pd.Timestamp("2026-10-01") and o["next"] == pd.Timestamp("2026-10-05") and o["days"] == 91
+    q0 = ch[(ch["date"] > asof - pd.Timedelta(days=90)) & (ch["date"] <= asof)]["value"].sum()
+    by_day = dict(zip(days, vals))
+    assert q0 == pytest.approx(by_day[asof] - by_day[pd.Timestamp("2026-10-01")], abs=1e-6)
 
 
 def test_1_a_change_across_a_hole_on_two_bases_is_still_no_change(monkeypatch):

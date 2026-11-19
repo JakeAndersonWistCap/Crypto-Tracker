@@ -894,6 +894,7 @@ def _velo_merged_views(groups: dict) -> None:
         if name not in names:
             continue
         until, ratio = pd.Timestamp(spec["until"]), float(spec["ratio"])
+        _velo_gauge_views(groups, name, spec, until)      # R12: the flips' gauge emissions, before the legs read them
         for metric, leg in spec["legs"].items():
             v = _daily(groups.get((name, leg["velo"])))
             v = v[v.index < until]
@@ -912,28 +913,77 @@ def _velo_merged_views(groups: dict) -> None:
             out = g[~(span & ~has)].copy()
             hit = has[out.index]
             out.loc[hit, "value"] = out.loc[hit, "value"].astype(float) + day[out.index][hit].map(add).values
-            out.loc[hit, "source"] = [config.VELO_MERGED_POINT.format(point=_measuring_point(str(x)))
-                                      for x in out.loc[hit, "source"]]
+            # a flow leg keeps its own source text (its annotations — the tail rate, a span — are read downstream)
+            out.loc[hit, "source"] = [config.VELO_MERGED_POINT.format(
+                point=str(x) if leg.get("keep_source") else _measuring_point(str(x))) for x in out.loc[hit, "source"]]
             groups[(name, metric)] = out
             VELO_MERGED_NOTE[(name, metric)] = (
                 f"{int(has.sum())} day(s) {v.index.min().date()}..{(until - pd.Timedelta(days=1)).date()} restated on the "
                 f"merged basis (+ {leg['velo']} x {ratio:g})"
                 + (f"; {int((span & ~has).sum())} day(s) in the span without a VELO reading hold no value"
                    if (span & ~has).any() else ""))
+        # the statement's line for VELO minted OUTSIDE the gauge emissions (the lockers' rebase, the team share, other
+        # mints): the rise of VELO's total between stored readings less the gauge emission of a flip between them
         tot = _daily(groups.get((name, spec["legs"]["total_supply"]["velo"])))
         tot = tot[tot.index < until]
         if len(tot) < 2:
             continue
-        step = tot.diff().dropna() * ratio
-        gap = pd.Series(tot.index, index=tot.index).diff().dropna().dt.days
-        step = step[step > 0]
-        if step.empty:
-            continue
-        groups[(name, spec["issuance"])] = _as_stored(pd.DataFrame({
-            "date": step.index, "project": name, "metric": spec["issuance"], "value": step.values, "tier": 2,
-            "source": ["derived:velo_total_supply_tokens:delta x0.044" + (f"[span={int(gap[d])}d]" if gap[d] > 1 else "")
-                       for d in step.index]}), _view_cols(groups, name))
+        # (a store holding no Minter terms at all cannot tell the two apart and merges no emission: the line is then
+        # the whole rise, as in R11.2c)
+        flips = VELO_FLIPS.get(name)
+        rows = []
+        for prev, d in zip(tot.index[:-1], tot.index[1:]):
+            f = 0.0 if flips is None else flips.get(d)
+            if f is None:
+                continue                                    # more than one flip in the hole: not attributable
+            other = (float(tot[d]) - float(tot[prev]) - f) * ratio
+            if other > 0:
+                n = int((d - prev).days)
+                rows.append((d, other, ("derived:velo_total_supply_tokens:delta x0.044" if flips is None else
+                                        "derived:velo_total_supply_tokens:delta - gauge emission x0.044")
+                             + (f"[span={n}d]" if n > 1 else "")))
+        if rows:
+            groups[(name, spec["issuance"])] = _as_stored(pd.DataFrame({
+                "date": [r[0] for r in rows], "project": name, "metric": spec["issuance"],
+                "value": [r[1] for r in rows], "tier": 2, "source": [r[2] for r in rows]}), _view_cols(groups, name))
 
+
+VELO_FLIPS: dict = {}
+WEEK_S = 7 * 86_400
+
+
+def _velo_gauge_views(groups: dict, name: str, spec: dict, until) -> None:
+    """R12 (Jake 2026-11-19: Velodrome's pre-merger emissions count in dilution). Each weekly flip's GAUGE EMISSION in
+    VELO, from the stored daily reads: between two consecutive stored readings whose Minter.activePeriod differs by
+    exactly one week, the flip minted totalSupply x tailEmissionRate / 10,000 to the gauges (Minter.updatePeriod, tail
+    phase: weekly() below `tail_start`), both read at the earlier reading — dated the flip's own day (activePeriod),
+    as Aerodrome's legacy Minter rows are. More than one flip between two readings, a reading without the three terms,
+    or a Minter not in its tail phase: no row (unknown, never a guess). VELO_FLIPS keeps, per later reading, the gauge
+    emission of the flip before it (0.0 where no flip happened) for the statement's other-mints line."""
+    g = spec.get("gauge") or {}
+    VELO_FLIPS.pop(name, None)
+    tot, rate, per, wk = (_daily(groups.get((name, g.get(k)))) for k in ("total", "rate_bps", "active_period", "weekly"))
+    days = tot.index.intersection(rate.index).intersection(per.index).intersection(wk.index)
+    days = days[days < until].sort_values()
+    if len(days) < 2:
+        return
+    rows, by_reading = [], {}
+    for prev, d in zip(days[:-1], days[1:]):
+        n = (float(per[d]) - float(per[prev])) / WEEK_S
+        if n == 0:
+            by_reading[d] = 0.0
+        elif n == 1 and float(wk[prev]) < float(g["tail_start"]):
+            em = float(tot[prev]) * float(rate[prev]) / 10_000.0
+            by_reading[d] = em
+            lag = int((pd.Timestamp(int(per[d]), unit="s").normalize() - prev).days)
+            rows.append((pd.Timestamp(int(per[d]), unit="s").normalize(), em,
+                         f"derived:velo_total_supply_tokens x tailEmissionRate[{float(rate[prev]):g}bps]"
+                         + (f"[supply read {lag}d before the flip]" if lag > 1 else "")))
+    VELO_FLIPS[name] = by_reading
+    if rows:
+        groups[(name, g["metric"])] = _as_stored(pd.DataFrame({
+            "date": [r[0] for r in rows], "project": name, "metric": g["metric"], "value": [r[1] for r in rows],
+            "tier": 2, "source": [r[2] for r in rows]}), _view_cols(groups, name))
 
 def tokenjar_takeover(groups: dict, name: str, asof) -> tuple[bool, list[str]]:
     """PR1C.2 (Jake 2026-11-10): whether the TokenJar inflows may TAKE OVER the revenue line on this build — every test
@@ -4926,6 +4976,9 @@ def _market_cap_views(groups: dict) -> None:
 
 # PR1.S8: the days a project's circulating change is NOT dated (a hole or a basis change), for the cells' reasons
 CIRC_CHANGE_GAPS: dict = {}
+# R12: project -> {opening, used, next, days} where the Q0 window's opening day is a stored hole and the window opens on
+# the last stored reading before it (`used`); `days` is the window's real length
+CIRC_CHANGE_OPENING: dict = {}
 
 
 def _circulating_change_views(groups: dict, asof=None) -> None:
@@ -4934,6 +4987,7 @@ def _circulating_change_views(groups: dict, asof=None) -> None:
     closing − opening circulating. A day after a hole, or the day the basis changes, gets no row (a hole, never 0):
     a change across two different measures is not a change in supply. The undated days are kept in CIRC_CHANGE_GAPS."""
     CIRC_CHANGE_GAPS.clear()
+    CIRC_CHANGE_OPENING.clear()
     for p in scoped_projects():
         name = p["name"]
         g = groups.get((name, "circulating_supply_used"))
@@ -4963,11 +5017,16 @@ def _circulating_change_views(groups: dict, asof=None) -> None:
             else:
                 # a multi-day change that STRADDLES the opening holds days before the window: it cannot be split, so
                 # closing − opening is not measured (never a change that began before the opening)
+                # R12 (Jake 2026-11-19): WHEN THE OPENING DAY IS A STORED HOLE, THE WINDOW OPENS ON THE LAST STORED
+                # READING BEFORE IT — the multi-day change that straddles the opening is kept whole (it cannot be
+                # split), so the cell is closing − that reading over the window's REAL length (the 90 days + the days
+                # back to that reading), and the annual rate divides by the real length (CIRC_CHANGE_OPENING). Was
+                # (R11.1): the straddling change was dropped and the cell read n/a on that as-of.
                 for before, after in spans:
                     if before < opening < after:
-                        gaps.insert(0, (after, f"no circulating reading on {opening.date()} (the opening): the "
-                                               f"readings either side are {before.date()} and {after.date()}"))
-                        rows = [r for r in rows if r[0] != after]      # its days are then not covered: the cell is n/a
+                        n_win = int(config.NET_SUPPLY_CIRC["window_days"])
+                        CIRC_CHANGE_OPENING[name] = {"opening": opening, "used": before, "next": after,
+                                                     "days": n_win + int((opening - before).days)}
         CIRC_CHANGE_GAPS[name] = gaps
         if rows:
             view = pd.DataFrame({"date": [r[0] for r in rows], "project": name, "metric": "circulating_change_tokens",
@@ -9963,12 +10022,26 @@ def _net_supply_circ(R: Refs, r: int, p: dict, pct: bool = False) -> str:
     q, cov = R.D(r, m, "q0"), R.D(r, m, "q0_covered_days")
     why = ("the circulating change does not cover every day of that quarter on one basis" if _SHIFT["k"]
            else _circ_change_gap_text(p))
-    val = f"{q}*365/{n}/({_circ(R, r, p)})" if pct else q
+    # R12: a window opened on the last reading before a hole is annualised over its real length
+    n_real = n if _SHIFT["k"] else int((CIRC_CHANGE_OPENING.get(p["name"]) or {}).get("days", n))
+    val = f"{q}*365/{n_real}/({_circ(R, r, p)})" if pct else q
     # R7D.A2: a string constant in a formula is at most 255 characters — a longer reason (a declared, dated gap) is
     # joined from pieces
     full = f"n/a — {why}"
     lit = "&".join(f'"{full[i:i + 200]}"' for i in range(0, len(full), 200))
     return f'=IFERROR(IF(AND(ISNUMBER({cov}),{cov}={n}),{val},{lit}),{lit})'
+
+
+def _net_supply_circ_opening_flag(p: dict) -> tuple[str, str] | None:
+    """R12: the window's real length on the number where it opened on the last reading before a hole."""
+    o = CIRC_CHANGE_OPENING.get(p["name"])
+    if not o or _SHIFT["k"]:
+        return None
+    return (f" over {o['days']} days",
+            f"THE WINDOW OPENS ON {o['used'].date()} (R12, Jake 2026-11-19): no circulating reading is stored on "
+            f"{o['opening'].date()}, the opening day, so the change is closing − the last stored reading before it "
+            f"({o['used'].date()}; the next is {o['next'].date()}) — {o['days']} days, and the annual rate divides by "
+            f"{o['days']}, not 90.")
 
 
 def _net_supply_circ_note(p: dict) -> str:
@@ -12539,9 +12612,11 @@ def write_master(ws, R: Refs, data_by_key: dict):
          FMT_NUM, "pull", False, {"metric": "gross_issuance_tokens"}),
         # PR1.S8 (Jake 2026-11-05): THE NET SUPPLY CHANGE IS THE CHANGE IN CIRCULATING SUPPLY (config.NET_SUPPLY_CIRC)
         (MASTER_NSC_HEAD, lambda r, p: _net_supply_circ(R, r, p), FMT_NUM, "calc", True,
-         {"metric": "circulating_change_tokens", "note_fn": _net_supply_circ_note}),
+         {"metric": "circulating_change_tokens", "note_fn": _net_supply_circ_note,
+          "flag_fn": _net_supply_circ_opening_flag}),
         (MASTER_NSC_PCT_HEAD, lambda r, p: _net_supply_circ(R, r, p, pct=True), FMT_PCT, "calc", True,
-         {"metric": "circulating_change_tokens", "note_fn": _net_supply_circ_note}),
+         {"metric": "circulating_change_tokens", "note_fn": _net_supply_circ_note,
+          "flag_fn": _net_supply_circ_opening_flag}),
         (MASTER_MINT_BURN_HEAD,
          lambda r, p: _zero_issuance(R, r, p, f"-{R.D(r, config.a1_burn_metric(p['name']), 'q0')}")
          or _net_guarded(R, r, p, _basis_iss(R, p), lambda r_, p_, w="q0": R.D(r_, config.a1_burn_metric(p_["name"]), w)),

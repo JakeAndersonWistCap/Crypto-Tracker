@@ -12,6 +12,9 @@ merged entity's supply BEFORE the merger is Aerodrome's AERO + Velodrome's VELO 
     velo_ve_locked_supply_tokens   VotingEscrow.supply()
     velo_permanent_locked_tokens   VotingEscrow.permanentLockBalance()
     velo_ve_voting_power_tokens    VotingEscrow.totalSupply()        (veVELO voting power at that block)
+    velo_tail_emission_rate_bps    Minter.tailEmissionRate()         (basis points of the supply minted to gauges a week)
+    velo_minter_active_period      Minter.activePeriod()             (unix time of the latest flip)
+    velo_minter_weekly_tokens      Minter.weekly()                   (below TAIL_START the tail rate applies)
 
 all in VELO (the 0.044 is applied by the view, never stored). Each day is read at its FIRST block; Optimism has produced
 one block every 2 s since Bedrock, so the block follows from the timestamp, and its timestamp is checked before any value
@@ -29,11 +32,18 @@ from .base import point
 SOURCE = "velo_history"
 TIER = 2
 BEDROCK_BLOCK, BEDROCK_TS, BLOCK_S = 105_235_063, 1_686_068_903, 2
-READS = (("velo_total_supply_tokens", "token", "totalSupply()", False, "VELO.totalSupply"),
-         ("velo_locked_tokens", "token", "balanceOf(address)", True, "VELO.balanceOf(VotingEscrow)"),
-         ("velo_ve_locked_supply_tokens", "escrow", "supply()", False, "VotingEscrow.supply"),
-         ("velo_permanent_locked_tokens", "escrow", "permanentLockBalance()", False, "VotingEscrow.permanentLockBalance"),
-         ("velo_ve_voting_power_tokens", "escrow", "totalSupply()", False, "VotingEscrow.totalSupply"))
+READS = (("velo_total_supply_tokens", "token", "totalSupply()", False, "VELO.totalSupply", 1e18),
+         ("velo_locked_tokens", "token", "balanceOf(address)", True, "VELO.balanceOf(VotingEscrow)", 1e18),
+         ("velo_ve_locked_supply_tokens", "escrow", "supply()", False, "VotingEscrow.supply", 1e18),
+         ("velo_permanent_locked_tokens", "escrow", "permanentLockBalance()", False, "VotingEscrow.permanentLockBalance",
+          1e18),
+         ("velo_ve_voting_power_tokens", "escrow", "totalSupply()", False, "VotingEscrow.totalSupply", 1e18),
+         # R12: the Minter's own terms — the weekly gauge emission of the tail phase is totalSupply x tailEmissionRate
+         # / 10,000 (Minter.updatePeriod; checked against the Mint event of the 2026-10-15 flip: 7,919,782.725 VELO =
+         # 2,639,927,575.04 x 30 bps), and activePeriod says which flips have happened by this block
+         ("velo_tail_emission_rate_bps", "minter", "tailEmissionRate()", False, "Minter.tailEmissionRate", 1.0),
+         ("velo_minter_active_period", "minter", "activePeriod()", False, "Minter.activePeriod", 1.0),
+         ("velo_minter_weekly_tokens", "minter", "weekly()", False, "Minter.weekly", 1e18))
 METRICS = tuple(r[0] for r in READS)
 
 
@@ -93,8 +103,8 @@ def history(project: str, spec: dict, have: dict, first_day=None, deadline: floa
                     why = (f"stopped at {key}: block {blk:,} is stamped {got}, not the day's first 2 s ({ts}) — the "
                            f"block rule does not hold there")
                     break
-                vals = [(m, call(spec[where], sig, spec["escrow"] if arg else None, blk) / 1e18, label)
-                        for m, where, sig, arg, label in READS]
+                vals = [(m, call(spec[where], sig, spec["escrow"] if arg else None, blk) / scale, label)
+                        for m, where, sig, arg, label, scale in READS]
             except Exception as e:  # noqa: BLE001 — unknown, never 0: the day keeps no row
                 from .chain import redact_urls             # noqa: PLC0415
                 why = f"stopped at {key}: VELO is not readable there ({str(redact_urls(e))[:200]})"

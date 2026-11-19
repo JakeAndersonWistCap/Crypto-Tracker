@@ -44993,3 +44993,106 @@ for _m in ("near_mpc_operator_payouts_tokens", "outflow_b_tokens", "outflow_b_us
     PROGRAM_CADENCE_BY_METRIC[("Near", _m)] = {
         "metric": _m, "cadences": (("monthly", 31),), "stale_by_cadence": True, "declared_by": "R11.5 (2026-11-19)",
         "source": "gov.near.org/t/42147: 'Monthly Payout Reports' — one per service month, issued on about the 5th"}
+
+
+# =====================================================================================================================
+# ===== R12 — HYPERLIQUID'S NET SUPPLY CHANGE (Jake 2026-11-19) =====
+# (1) CLEAR-BY 2027-01-11 (was 2026-12-29). The series on the rule's basis (team + Foundation + Grants in: R9.2) starts
+#     2026-10-13 on Jake's store — the days 2026-09-30..10-12 hold tokenDetails but not the team-wallet and stake reads
+#     the restatement needs, and those reads serve the current value only. So the first opening day is 2026-10-13 and
+#     the first full quarter of our own data is 2026-10-13 + 90 days = 2027-01-11.
+# (2) AN OPENING DAY THAT IS A STORED HOLE: the window opens on the last stored reading before it and the rate is
+#     annualised over the window's real length (build_workbook.CIRC_CHANGE_OPENING) — was n/a on that as-of (R11.1).
+# The n/a text on Hyperliquid's two frozen cells names the new date: a declared move (tests/fixtures/frozen_moves_r12.json).
+CIRC_CHANGE_DECLARED_GAP["Hyperliquid"].update({
+    "first_stored": "2026-10-13", "clear_by": "2027-01-11",
+    "decided": "Jake 2026-11-19 (R12; was 2026-12-29, Jake 2026-11-16, R7D decision 1c)",
+    "text": "DECLARED (Jake 2026-11-19): history too short — our circulating on the rule's basis is stored from "
+            "2026-10-13, and no public source holds the Assistance Fund's history before our first stored day "
+            "(Hyperliquid's API keeps about 9 days of its fills). A full quarter of our own data exists on 2027-01-11; "
+            "the cell forms on its own then"})
+
+
+def _load_r12_moves() -> int:
+    import json as _json
+    from pathlib import Path as _Path
+    p = _Path(__file__).resolve().parent / "tests" / "fixtures" / "frozen_moves_r12.json"
+    if not p.exists():
+        return 0
+    n = 0
+    for proj, cells in _json.loads(p.read_text(encoding="utf-8")).items():
+        for key, steps in cells.items():
+            for st in steps:
+                declare_later_move(proj, key, st["to"], st["why"], st["date"])
+                n += 1
+    return n
+
+
+R12_MOVES_DECLARED = _load_r12_moves()
+
+
+# =====================================================================================================================
+# ===== R12 — VELODROME'S PRE-MERGER EMISSIONS COUNT IN DILUTION (Jake 2026-11-19) =====
+# Before 2026-10-22 the merged entity emitted from two Minters. Aerodrome's weekly gauge emission is
+# gross_issuance_tokens (supply-side incentives, b). Velodrome's is its own Minter's, in VELO:
+#     each weekly flip mints totalSupply x tailEmissionRate / 10,000 to the gauges (Minter.updatePeriod, tail phase —
+#     weekly() 5,950,167 is below TAIL_START 6,000,000, read on chain 2026-11-19; tailEmissionRate 30 bps)
+#     CHECKED against the Minter's own Mint event of the 2026-10-15 flip (Optimism block 158,211,8xx):
+#     7,919,782.725 VELO = 2,639,927,575.04 x 30 / 10,000, to the token.
+# So on every flip day whose terms are stored (fetch/velo_history.py: total supply, tail rate, activePeriod, weekly),
+# gross_issuance_tokens = Aerodrome's row + Velodrome's gauge emission x 0.044, under the declared point
+# velo_merged:<the row's own source> — the same restatement as the supply series (R11.2c), so the merged emission is
+# in (b), in total dilution and in subsidy cover, and the "+ minted" line of the token-flow statement.
+# NOT IN A DILUTION RATE, on the statement only (velo_merged_issuance_tokens): VELO minted outside the gauge emission —
+# the lockers' rebase, the team share and any other mint, about 0.11M VELO a flip (1.4% of the weekly mint; 114,319 on
+# 2026-10-15) plus about 18K VELO a day between flips. Velodrome's Minter does not answer teamRate() / team(), so the
+# three are not split; they are named as one line, never spread into (c).
+VELO_MERGED["Aerodrome"]["minter"] = "0x6dc9E1C04eE59ed3531d73a72256C0da46D10982"
+VELO_MERGED["Aerodrome"]["gauge"] = {
+    "metric": "velo_gauge_emissions_tokens", "total": "velo_total_supply_tokens",
+    "rate_bps": "velo_tail_emission_rate_bps", "active_period": "velo_minter_active_period",
+    "weekly": "velo_minter_weekly_tokens", "tail_start": 6_000_000.0,
+    "checked": {"flip": "2026-10-15", "mint_event_weekly": 7_919_782.725115488, "supply_before": 2_639_927_575.038496,
+                "rate_bps": 30, "read_on": "2026-11-19"}}
+VELO_MERGED["Aerodrome"]["legs"]["gross_issuance_tokens"] = {"velo": "velo_gauge_emissions_tokens", "keep_source": True}
+METRICS["velo_tail_emission_rate_bps"] = {
+    "label": "Velodrome Minter.tailEmissionRate() — basis points of VELO's supply minted to the gauges at each weekly "
+             "flip (R12)", "kind": "stock", "unit": "bps", "archetypes": [3], "tiers": [2], "sanity_min": 1,
+    "sanity_max": 100, "only_projects": ("Aerodrome",)}
+METRICS["velo_minter_active_period"] = {
+    "label": "Velodrome Minter.activePeriod() — unix time of its latest weekly flip (R12)", "kind": "stock",
+    "unit": "unix seconds", "archetypes": [3], "tiers": [2], "sanity_min": 1.6e9, "sanity_max": 2.2e9,
+    "only_projects": ("Aerodrome",)}
+METRICS["velo_minter_weekly_tokens"] = {
+    "label": "Velodrome Minter.weekly() — below TAIL_START (6,000,000) the tail rate sets the emission (R12)",
+    "kind": "stock", "unit": "tokens", "archetypes": [3], "tiers": [2], "sanity_min": 0, "sanity_max": 2e7,
+    "only_projects": ("Aerodrome",)}
+METRICS["velo_gauge_emissions_tokens"] = {
+    "label": "Velodrome's weekly gauge emission, in VELO = totalSupply x tailEmissionRate / 10,000 at each flip — x 0.044 "
+             "it joins Aerodrome's gross issuance before the merger (R12)",
+    "kind": "flow", "unit": "tokens", "archetypes": [3], "tiers": [2], "sanity_min": 0, "sanity_max": 1e8,
+    "only_projects": ("Aerodrome",), "view_only": True}
+METRICS["gross_issuance_tokens_aero_only"] = {
+    "label": "gross_issuance_tokens before the merger as stored — Aerodrome alone, for the reference checks of figures "
+             "published before 2026-10-22 (R12)",
+    "kind": "flow", "unit": "tokens", "archetypes": [3], "tiers": [2], "sanity_min": 0, "sanity_max": 1e9,
+    "only_projects": ("Aerodrome",), "view_only": True}
+METRICS["velo_merged_issuance_tokens"]["label"] = (
+    "VELO minted outside the gauge emission before the merger (the lockers' rebase, the team share, other mints), at "
+    "0.044 = the rise of VELO's total supply between stored readings less the flip's gauge emission — on the token-flow "
+    "statement only (R12; was the whole rise, R11.2c)")
+_r12h = PROJECT_BY_NAME["Aerodrome"]["series_handover"]["gross_issuance_tokens"]
+_r12h["ordered_points"] = (tuple(_r12h["ordered_points"])[:-1]
+                           + tuple(VELO_MERGED_POINT.format(point=_x) for _x in tuple(_r12h["ordered_points"])[:-1])
+                           + tuple(_r12h["ordered_points"])[-1:])
+_r12h["velo_merged"] = ("R12 (Jake 2026-11-19): before 2026-10-22 the weekly row is Aerodrome's gauge emission + "
+                        "Velodrome's x 0.044 on every flip whose Velodrome terms are stored")
+EPOCH_PAID_AT["Aerodrome"]["sources"] = tuple(EPOCH_PAID_AT["Aerodrome"]["sources"]) + (
+    VELO_MERGED_POINT.format(point="chain:base:minter"),)
+RULE_IN["Aerodrome"]["flow_in"] = tuple(
+    (("+ VELO minted outside the gauge emission before the merger (rebase, team, other), at 0.044",) + tuple(_x[1:]))
+    if _x[1] == "velo_merged_issuance_tokens" else _x for _x in RULE_IN["Aerodrome"]["flow_in"])
+# the Aerodrome-alone copy kept for the reference checks is re-dated like the series itself (one weekly row per flip)
+EPOCH_PAID_AT["Aerodrome"]["metrics"] = tuple(EPOCH_PAID_AT["Aerodrome"]["metrics"]) + ("gross_issuance_tokens_aero_only",)
+EPOCH_PAID_AT["Aerodrome"]["span_metrics"] = tuple(EPOCH_PAID_AT["Aerodrome"]["span_metrics"]) + (
+    "gross_issuance_tokens_aero_only",)
