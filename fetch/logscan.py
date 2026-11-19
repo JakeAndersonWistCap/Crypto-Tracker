@@ -1408,7 +1408,12 @@ class LogScan:
                     if str(e.get("transactionHash") or "").lower() in not_bought:
                         uncounted[f"(excluded tx: {not_bought[str(e['transactionHash']).lower()][:60]})"] += _amount(e)
                         continue
-                    bought = (not swap) or frm in venues or str(e["transactionHash"]).lower() in paid_txs.get(h, ())
+                    paid = str(e["transactionHash"]).lower() in paid_txs.get(h, ())
+                    # R14 (Jake 2026-11-19, config purchase_requires_payment): A PURCHASE PAYS A DIFFERENT TOKEN OUT. A
+                    # fill from a declared venue is not enough — an LP withdrawal through the Uniswap v4 PoolManager also
+                    # arrives from the venue (Ether.fi's four Arrakis withdrawals of 2026-09-02): counted only when the
+                    # holder paid another token out in the same transaction
+                    bought = (not swap) or paid or (frm in venues and not spec.get("purchase_requires_payment"))
                     if (frm in excluded or (frm in MINT_SENDERS and not spec.get("count_mints")) or not bought
                             or (count_from is not None and frm not in count_from)):
                         uncounted[frm] += _amount(e)
@@ -1547,8 +1552,10 @@ class LogScan:
                        f"{hh} {v[0] / scale:,.2f}" + (f" (last {pd.Timestamp(v[1], unit='s').date()})" if v[1] else "")
                        + (f" [{labels[hh]}]" if hh in labels else "") for hh, v in per_holder.items()) + "."
                       if len(holders) > 1 and per_holder else "")
-                   + (f" Bought = a fill from a swap venue ({len(venues)}) or a transaction in which the holder paid "
-                      f"another token out." if swap else "")
+                   + ((" Bought = a transaction in which the holder paid ANOTHER token out (a fill from a venue alone "
+                       "is not a purchase: R14, purchase_requires_payment)." if spec.get("purchase_requires_payment")
+                       else f" Bought = a fill from a swap venue ({len(venues)}) or a transaction in which the holder "
+                            f"paid another token out.") if swap else "")
                    + (f" {poisoned} zero-value lookalike (address-poisoning) transfer(s) ignored." if poisoned else "")
                    + (f" {empty} log(s) carried EMPTY data ('0x') — read as no value." if empty else "")
                    + rq_note + self._since_note(spec, counted, labels, scale)

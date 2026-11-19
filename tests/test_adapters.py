@@ -15582,6 +15582,15 @@ def test_ether_fi_counts_cow_settlements_only_and_labels_the_other_inflow(monkey
                                (300, safe, 60_000_000 * E, t0 - 86_400 * 5),
                                (400, cow, 0 * E + 1, t0)])
     total = 1_798_452_010 * E + 39_651_067 * E + 60_000_000 * E + 1
+    # R14 (purchase_requires_payment): each CoW fill pays WETH out in its own transaction — the shape every one of the
+    # old wallet's 1,099 fills has on chain (Blockscout, read 2026-11-19); before R14 the venue alone counted
+    from fetch.explorer import TRANSFER_TOPIC, pad_address
+    pays = []
+    for b, tx in ((100, "0x640"), (400, "0x1900")):
+        w = _elog(b, 1, [TRANSFER_TOPIC, pad_address(wallet), pad_address(cow)], E, ts=t0, tx=tx)
+        w["address"] = "0xweth"
+        pays.append(w)
+    logs[("", pad_address(wallet), None)] = pays
     probe = dict(spec, token="0xtoken")
     out = _run_scan(monkeypatch, probe, logs, {wallet: total}, name="Ether.fi")
     got = out.frame()
@@ -24387,6 +24396,12 @@ def test_logscan_names_not_counted_inflow_after_the_last_counted_transfer(monkey
     E = 10 ** 18
     logs = _flow_logs(wallet, [(100, cow, 5 * E, t0), (200, other, 7 * E, t0 - 86_400),
                                (300, other, 3 * E, t0 + 86_400 * 30)])
+    # R14 (purchase_requires_payment): the CoW fill counts because the wallet paid USDC out in the same transaction —
+    # before R14 the venue alone made it a purchase and this log needed no payment leg
+    from fetch.explorer import TRANSFER_TOPIC, pad_address
+    pay = _elog(100, 1, [TRANSFER_TOPIC, pad_address(wallet), pad_address(cow)], 1_000 * 10 ** 6, ts=t0, tx="0x640")
+    pay["address"] = "0xusdc"
+    logs[("", pad_address(wallet), None)] = [pay]
     out = _run_scan(monkeypatch, dict(spec, token="0xtoken"), logs, {wallet: 15 * E}, name="Ether.fi")
     line = next(e.message for e in out.log if "RECONCILED" in e.message)
     assert f"Not-counted inflow AFTER the last counted transfer: {other} 3.00 (last 2026-05-01)" in line, line
@@ -25169,6 +25184,10 @@ def test_ether_fi_buyback_counts_any_dex_fill_into_both_wallets_and_not_transfer
     ho, hs = pad_address(old), pad_address(safe)
     usdc_out = _elog(400, 0, [TRANSFER_TOPIC, hs, pad_address(router)], 1_000 * 10 ** 6, ts=t_new, tx="0xsw1")
     usdc_out["address"] = "0xusdc"
+    # R14 (Jake 2026-11-19, purchase_requires_payment): the CoW fill pays WETH out in its own transaction — a purchase;
+    # the v4 inflow pays nothing out (the shape of the 2026-09-02 Arrakis LP withdrawals) — NOT a purchase any more
+    weth_out = _elog(100, 1, [TRANSFER_TOPIC, ho, pad_address(cow)], 2 * E, ts=t_old, tx="0xcow")
+    weth_out["address"] = "0xweth"
     topup = _elog(500, 0, [TRANSFER_TOPIC, hs, pad_address(vault)], 3 * E, ts=t_new + 86_400, tx="0xtop")
     logs = {("0xtoken", None, ho): [_elog(100, 0, [TRANSFER_TOPIC, pad_address(cow), ho], 5 * E, ts=t_old, tx="0xcow"),
                                     _elog(110, 0, [TRANSFER_TOPIC, pad_address(dep), ho], 1 * E, ts=t_old, tx="0xdep")],
@@ -25180,25 +25199,29 @@ def test_ether_fi_buyback_counts_any_dex_fill_into_both_wallets_and_not_transfer
                                     _elog(410, 0, [TRANSFER_TOPIC, pad_address("0x0000000000000000000000000000000000000a90"), hs],
                                           0, ts=t_new, tx="0xspam")],
             ("0xtoken", hs, None): [topup],
-            ("", ho, None): [],
+            ("", ho, None): [weth_out],
             ("", hs, None): [usdc_out, topup]}
     out = _run_scan(monkeypatch, spec, logs, {old: 6 * E, safe: 5 * E}, name="Ether.fi")
     f = out.frame()
     got = f[f.metric == "actual_buyback_tokens"].set_index("date")["value"]
-    assert got.sum() == 8.0, got[got > 0]                          # 5 (CoW) + 2 (v4) + 1 (router swap)
-    assert got[pd.Timestamp("2026-09-10")] == 3.0 and got[pd.Timestamp("2026-03-20")] == 5.0
+    # R14: 5 (CoW, WETH paid) + 1 (router swap) — was 8.0 with the v4 inflow (2, nothing paid) counted as bought
+    assert got.sum() == 6.0, got[got > 0]
+    # was 3.0 on 2026-09-10 (2 v4 + 1 router)
+    assert got[pd.Timestamp("2026-09-10")] == 1.0 and got[pd.Timestamp("2026-03-20")] == 5.0
     line = next(e.message for e in out.log if "RECONCILED" in e.message)
     assert f"BY HOLDER: {old} 5.00 (last 2026-03-20) [OLD-programme buyback Safe" in line, line
-    assert f"{safe} 3.00 (last 2026-09-10) [NEW top-up Safe" in line
+    assert f"{safe} 1.00 (last 2026-09-10) [NEW top-up Safe" in line          # was 3.00
     # G2-D3 (Jake 2026-10-18): the 5M is signed off as a transfer
     assert f"{five_m} 5.00 [transfer (signed off, Jake 2026-10-18) — EOA relaying a Binance withdrawal" in line
     assert "1 zero-value lookalike (address-poisoning) transfer(s) ignored." in line
     assert "0x0000000000000000000000000000000000000a90" not in line
-    # ALL-TIME BOUGHT SHARE of the top-up Safe: 3 of 8 received (2 v4 + 1 router; 5 transferred)
+    # ALL-TIME BOUGHT SHARE of the top-up Safe: 1 of 8 received (the router swap; 2 v4 not bought, 5 transferred) —
+    # was 3 / 8 ("3.00 of it bought on-chain") before R14
     sh = f[f.metric == "buyback_bought_share_alltime"]
-    assert list(sh.value) == [3 / 8] and "received 8.00 in all, 3.00 of it bought on-chain" in \
+    assert list(sh.value) == [1 / 8] and "received 8.00 in all, 1.00 of it bought on-chain" in \
         " ".join(e.message for e in out.log)
-    assert "Bought = a fill from a swap venue (2) or a transaction in which the holder paid another token out." in line
+    # was "Bought = a fill from a swap venue (2) or a transaction in which the holder paid another token out."
+    assert "Bought = a transaction in which the holder paid ANOTHER token out" in line
     last = f[f.metric == "buyback_last_inflow_date"]
     assert float(last.value.iloc[0]) == float((pd.Timestamp("2026-09-10") - pd.Timestamp("1899-12-30")).days)
 

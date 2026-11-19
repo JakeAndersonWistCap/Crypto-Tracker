@@ -6154,9 +6154,14 @@ def _revenue_total_views(groups: dict) -> None:
     for p in scoped_projects():
         name = p["name"]
         for metric, legs in (("revenue_total_usd", config.REVENUE_TOTAL.get(name)),
-                             ("fees_total_usd", config.FEES_TOTAL.get(name))):
+                             ("fees_total_usd", config.FEES_TOTAL.get(name)),
+                             # R14 (Jake 2026-11-19, config.FEES_NET): a fee line LESS a leg that is not a fee — "-m"
+                             # subtracts (Ether.fi: DefiLlama's parent fees less the Cash cashback it books as fees)
+                             ("fees_net_cashback_usd", getattr(config, "FEES_NET", {}).get(name))):
             if not legs:
                 continue
+            sign = [-1.0 if m.startswith("-") else 1.0 for m in legs]
+            legs = tuple(m.lstrip("-") for m in legs)
             ss = [_daily(groups.get((name, m))) for m in legs]
             # R7B.C2: a leg another leg counts from a date is 0 from that date whether or not it has a row there
             for i, m in enumerate(legs):
@@ -6183,13 +6188,14 @@ def _revenue_total_views(groups: dict) -> None:
                     s_ = ss[i].copy()
                     s_[s_.index >= pd.Timestamp(cut["from"])] = 0.0
                     ss[i] = s_
-            tot = pd.concat(ss, axis=1).dropna().sum(axis=1)
+            tot = pd.concat([s_ * k for s_, k in zip(ss, sign)], axis=1).dropna().sum(axis=1)
             if tot.empty:
                 continue
             cols = next(g for g in (groups.get((name, m)) for m in legs) if g is not None).columns
+            how = "".join(("-" if k < 0 else ("+" if i else "")) + m for i, (m, k) in enumerate(zip(legs, sign)))
             groups[(name, metric)] = _as_stored(pd.DataFrame(
                 {"date": tot.index, "project": name, "metric": metric, "value": tot.values, "tier": 1,
-                 "source": f"derived:{metric.removesuffix('_usd')}[{'+'.join(legs)}]"}), cols)
+                 "source": f"derived:{metric.removesuffix('_usd')}[{how}]"}), cols)
 
 
 def _stake_prorata_views(groups: dict) -> None:
@@ -6602,8 +6608,11 @@ def _holder_value_views(groups: dict) -> None:
         # A BUYBACK ROUTE OF 'none' IS NEVER CREDITED, WHATEVER IS STORED (P3-1c): Ethereum's EIP-1559 burn re-labelled
         # as a buyback (:as-buyback rows, last 2026-09-27) kept feeding holder value — stale — after its route became
         # 'none' on 2026-09-28; the buyback columns already read n/a for it (_data_rows)
+        # R14 (config.BUYBACK_LEGS): a declared purchase leg paid on to customers is never holder value — holder value
+        # reads the buyback WITHOUT it (the wallet scan alone), so the leg's gaps never become holder value's gaps
         act = (pd.Series(dtype=float) if config.buyback_route(name)["route"] == "none"
-               else _daily(groups.get((name, "actual_buyback_usd"))))
+               else _daily(groups.get((name, "actual_buyback_usd_wallet" if (name, "actual_buyback_usd_wallet") in groups
+                                      else "actual_buyback_usd"))))
         extra = [_daily(groups.get((name, m))) for m in spec.get("distributed_extra", ())]
         # P3-1c (R2): a protocol whose revenue IS its fee burn credits the burn a day x that day's price (Ethereum)
         bc = spec.get("burn_credited") or {}
@@ -7360,6 +7369,33 @@ def _unlock_release_view(groups: dict, name: str, metric: str, legs: tuple) -> N
                         taken = UNLOCK_LESS_TAKEN.setdefault((name, metric), pd.Series(0.0, index=total.index))
                         taken.loc[day] += t
         split_src += f"-{m}"
+    # R14 (config.RELEASE_GROSS_UP — Ether.fi's sETHFI top-ups): a payout out of the set that its NET fall hides (the
+    # set received more the same day — 2026-08-13: 273,069 paid while 5M arrived) is added back IN FULL: that day's
+    # release holds at least the payout (on its day or the next), and the hidden inflow it was netted against is a return
+    # (the same amount on the returned line), so the token-flow statement still balances. A day with no release figure
+    # (a hole in the stock reads) is not given one.
+    for m in ((getattr(config, "RELEASE_GROSS_UP", {}) or {}).get(name, ()) if metric == "unlock_release_tokens" else ()):
+        pay = _daily(groups.get((name, m)))
+        if pay.empty:
+            continue
+        # the stock is read at each day's FIRST block, so a payout on day D shows as the fall dated D or D + 1: a
+        # payout is matched to the release on its day, then the next (each release counted once); what no release
+        # holds was hidden by an inflow and is added on its own day
+        left = total.copy()
+        hid = pd.Series(0.0, index=total.index)
+        for d, t in pay[pay > 0].items():
+            t = float(t)
+            for day in (d, d + pd.Timedelta(days=1)):
+                if t > 1e-9 and day in left.index:
+                    take = min(t, float(left.loc[day]))
+                    left.loc[day] -= take
+                    t -= take
+            if t > 1e-9 and d in hid.index:
+                hid.loc[d] += t
+        if (hid > 0).any():
+            total = total + hid
+            returned = returned.reindex(total.index).fillna(0.0) + hid
+        split_src += f"[release holds {m}: its day or the next]"
     groups[(name, metric)] = _as_stored(pd.DataFrame(
         {"date": total.index, "project": name, "metric": metric, "value": total.values,
          "tier": 1, "source": f"derived:unlock_release[{'+'.join(legs)}]{split_src}{cut_note}"
@@ -7803,6 +7839,7 @@ def aggregate(long: pd.DataFrame, fetch_status: pd.DataFrame, asof: pd.Timestamp
     _restatement_views(groups)
     _buyback_tokens_from_usd_views(groups)
     _measured_buyback_views(groups)   # G11 B9: Pendle's buyback = its own per-epoch distribution; derived = cross-check
+    _buyback_leg_views(groups)    # R14: a declared purchase leg joins the buyback (Ether.fi's programme, to customers)
     _buyback_split_views(groups)  # AFTER every view that builds actual_buyback_* (retirement = burned + held)
     _burned_declared_zero_views(groups)   # R10.A1d: no burn exists (confirmed) -> the burned buyback is a declared 0
     _foundation_burn_views(groups)        # R13 B2: from the migration the burned leg is MEASURED and moved out of held
@@ -11608,6 +11645,67 @@ def _measured_buyback_views(groups: dict) -> None:
                 groups[(name, am)] = _as_stored(ag, ag.columns)
 
 
+BUYBACK_LEG_STATE: dict = {}   # project -> what _buyback_leg_views did this build (days joined, days left out)
+
+
+def _buyback_leg_views(groups: dict) -> None:
+    """R14 (Jake 2026-11-19, config.BUYBACK_LEGS — Ether.fi): A MARKET PURCHASE WHOSE TOKENS GO TO CUSTOMERS IS A BUYBACK
+    BY THE A3 DEFINITION ("all market buybacks — burned + held + distributed"), and is never holder value. From the leg's
+    declared date, actual_buyback_tokens / _usd = the wallet scan + the leg (the Programmatic Buybacks Safe's CoW
+    purchases), on the days BOTH hold a row — a missing leg is a gap, never a smaller buyback; before it, the wallet scan
+    alone. The leg's part is also its own view (buyback_to_customers_tokens / _usd: DISTRIBUTED to card users, not
+    holders). $ = the leg's tokens x THAT day's price; a day with leg tokens and no price is left out (a gap, never
+    valued at another day's price; the days left out are kept in BUYBACK_LEG_STATE)."""
+    BUYBACK_LEG_STATE.clear()
+    for name, spec in (getattr(config, "BUYBACK_LEGS", {}) or {}).items():
+        tok, usd = groups.get((name, "actual_buyback_tokens")), groups.get((name, "actual_buyback_usd"))
+        if tok is None or tok.empty:
+            continue
+        cut = pd.Timestamp(spec["from"])
+        w, wu = _daily(tok), _daily(usd)
+        x, px = _daily(groups.get((name, spec["metric"]))), _daily(groups.get((name, "price_usd")))
+        if not x.empty:
+            # BEFORE THE LEG'S FIRST ROW THE PROGRAMME HAD NOT STARTED: its scan zero-fills from the buyer's first
+            # transfer (it covers every block), so a day from `from` to that first row is a measured 0, never a gap.
+            # A leg with no row at all is unknown: every day from `from` is left out.
+            pre = w.index[(w.index >= cut) & (w.index < x.index.min())]
+            x = pd.concat([pd.Series(0.0, index=pre), x]).sort_index()
+        after = w.index[w.index >= cut]
+        both = after.intersection(x.index)
+        no_px = [d for d in both if float(x[d]) != 0.0 and (d not in px.index or not px[d] > 0)]
+        keep = pd.DatetimeIndex([d for d in both if d not in set(no_px)])
+        gone = [d for d in after if d not in set(keep)]
+        BUYBACK_LEG_STATE[name] = {"joined": len(keep), "left_out": len(gone),
+                                   "first_left_out": str(min(gone).date()) if gone else "",
+                                   "last_left_out": str(max(gone).date()) if gone else "",
+                                   "leg_rows": int(len(x)), "no_price": [str(d.date()) for d in no_px]}
+        if usd is not None and not usd.empty:            # the wallet scan alone: what holder value reads
+            groups[(name, "actual_buyback_usd_wallet")] = _as_stored(usd.assign(metric="actual_buyback_usd_wallet"),
+                                                                     usd.columns)
+        lx = x.reindex(keep).astype(float)
+        lu = (lx * px.reindex(keep)).fillna(0.0)          # a 0-token day is $0 whatever the price
+        pt, pu = spec["points"]
+        for metric, base, leg, point, orig in (("actual_buyback_tokens", w, lx, pt, tok),
+                                                ("actual_buyback_usd", wu, lu, pu, usd)):
+            if orig is None or orig.empty:
+                continue
+            o = orig.assign(date=pd.to_datetime(orig["date"]).dt.normalize()).drop_duplicates("date", keep="last")
+            before = o[o["date"] < cut]
+            ok = keep.intersection(base.index)
+            add = _as_stored(pd.DataFrame({"date": ok, "project": name, "metric": metric,
+                                           "value": (base.reindex(ok) + leg.reindex(ok)).astype(float).values,
+                                           "tier": 2, "source": f"{point}[wallet scan + {spec['metric']}, from "
+                                                                f"{spec['from']}: R14]"}), orig.columns)
+            # the view's own stored columns (is_manual False, …) before the concat — never NaN read as "manual"
+            groups[(name, metric)] = _as_stored(pd.concat([before, add[list(before.columns)]] if len(before) else
+                                                          [add], ignore_index=True), orig.columns)
+        cols = tok.columns
+        for metric, vals in (("buyback_to_customers_tokens", lx), ("buyback_to_customers_usd", lu)):
+            groups[(name, metric)] = _as_stored(pd.DataFrame(
+                {"date": vals.index, "project": name, "metric": metric, "value": vals.values, "tier": 2,
+                 "source": f"derived:buyback_to_customers[{spec['metric']} from {spec['from']}: {spec['to']}]"}), cols)
+
+
 def _buyback_split_views(groups: dict) -> None:
     """THE BUYBACK BY DESTINATION (Jake's decision 2026-10-10): each day's actual_buyback_tokens x that day's shares
     (config.buyback_destination_shares — dated, sourced) -> buyback_burned_tokens / _held_ / _distributed_, and
@@ -11627,6 +11725,12 @@ def _buyback_split_views(groups: dict) -> None:
         base = tok[keep].copy()
         sh = [x for x in shares if x is not None]
         v = base["value"].astype(float).values
+        # R14 (config.BUYBACK_LEGS): the part paid on to CUSTOMERS is carved out before the shares — it is distributed,
+        # but not to stakers (its own view, buyback_to_customers_tokens); the shares split the wallet scan's part
+        cust = _daily(groups.get((name, "buyback_to_customers_tokens")))
+        cust_usd = _daily(groups.get((name, "buyback_to_customers_usd")))
+        if not cust.empty:
+            v = v - cust.reindex(pd.to_datetime(base["date"]).dt.normalize()).fillna(0.0).values
         tags = sorted({(x["from"] or "start", round(x["burn"], 4), round(x["hold"], 4), round(x["distribute"], 4))
                        for x in sh})
         how = "; ".join(f"from {f}: burn {b:.0%} / hold {h:.0%} / distribute {d:.0%}" for f, b, h, d in tags)
@@ -11644,7 +11748,10 @@ def _buyback_split_views(groups: dict) -> None:
             uk = [x is not None for x in ush]
             if any(uk):
                 f = usd[uk].copy()
-                f["value"] = f["value"].astype(float).values * [x["burn"] + x["hold"] for x in ush if x is not None]
+                uv = f["value"].astype(float).values
+                if not cust_usd.empty:
+                    uv = uv - cust_usd.reindex(pd.to_datetime(f["date"]).dt.normalize()).fillna(0.0).values
+                f["value"] = uv * [x["burn"] + x["hold"] for x in ush if x is not None]
                 f["metric"], f["source"] = "retired_buyback_usd", f"derived:actual_buyback_usd x burn+hold share ({how})"
                 groups[(name, "retired_buyback_usd")] = _as_stored(f, usd.columns)
 
@@ -16202,6 +16309,9 @@ def flow_statements(groups: dict, asof) -> list[dict]:
                   "other": "holder_value_other_usd", "incent_b": "outflow_b_usd", "incent_c": "outflow_c_usd",
                   "incent_a": "outflow_a_usd", "incent_d": "outflow_d_usd", "incent_e": "outflow_e_usd",
                   "credited_fees": "holder_value_fees_only_usd", "rbase": rb}
+        legs_c = (getattr(config, "BUYBACK_LEGS", {}) or {}).get(name)
+        if legs_c:                                  # R14: the buyback paid on to customers is not distributed to holders
+            series["customers"] = "buyback_to_customers_usd"
         for key_, m in series.items():
             vrows[key_] = [(_flow_sum(d(m), *_flow_window(asof, k))[0] if m in have else None) for k in range(5)]
         if not hv.get("funding") and any(n_ == name for (n_, _d) in _ONE_OFF_HV_RECORDED):
@@ -16216,7 +16326,8 @@ def flow_statements(groups: dict, asof) -> list[dict]:
             sup.append(None if rb == "fees_usd" or f is None or rbv is None else f - rbv)
             b, rt = vrows["bought"][k], vrows["retired"][k]
             ex = sum(e[k] or 0.0 for e in extra) if extra else 0.0
-            dist.append(((b or 0.0) - (rt or 0.0) + ex) if (b is not None or extra) else None)
+            cu = (vrows["customers"][k] or 0.0) if legs_c else 0.0
+            dist.append(((b or 0.0) - (rt or 0.0) - cu + ex) if (b is not None or extra) else None)
             kept.append(None if r_ is None else r_ - (cr or 0.0))
             if r_ is None:
                 stat.append("n/a — no revenue series in this quarter" if rev_m in have else "n/a — no revenue line on this project")
@@ -16246,7 +16357,11 @@ def flow_statements(groups: dict, asof) -> list[dict]:
                     (name, _tj_bal) in groups else []),
                   ("→ retired (bought, burned + held)", vrows["retired"], "usd", "retired_buyback_usd", ""),
                   ("→ distributed to holders", dist, "usd",
-                   "actual − retired buyback" + ("".join(f" + {m}" for m in hv.get("distributed_extra") or ())), ""),
+                   "actual − retired buyback" + (" − buyback_to_customers_usd" if legs_c else "")
+                   + ("".join(f" + {m}" for m in hv.get("distributed_extra") or ())), ""),
+                  # R14 (config.BUYBACK_LEGS): bought on the market and paid on to customers — a buyback, not holder value
+                  *([("→ distributed to customers (bought, paid on — NOT holder value)", vrows["customers"], "usd",
+                      "buyback_to_customers_usd", legs_c["why_line"])] if legs_c else []),
                   ("Holder value CREDITED (revenue-funded)", vrows["credited"], "usd", "holder_value_revenue_usd", ""),
                   ("Holder value recorded, NOT credited", vrows["other"], "usd", "holder_value_other_usd",
                    "treasury / emissions-funded (config HOLDER_VALUE funding)"),
