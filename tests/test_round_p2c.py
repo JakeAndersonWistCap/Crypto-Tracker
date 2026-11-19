@@ -70,7 +70,10 @@ def test_fdv_handover_is_declared_in_config_and_the_switch_file_alike():
     decl = config.declared_handover("Aerodrome", "fdv_usd")
     assert decl["declared"] == config.AERODROME_MIGRATION["cutover_utc"] == "2026-10-22"
     assert [trajectory.basis_of("fdv_usd", p) for p in decl["ordered_points"]] == [
-        "coingecko", "chain:base:token", "aero_v3:supply_once"]
+        "coingecko", "chain:base:token", "aero_v3:supply_once",
+        # R11.2c: the total's two merged points before the merger (Aerodrome + Velodrome x 0.044), declared
+        # (was the three above only)
+        "velo_merged:coingecko", "velo_merged:chain:base:token"]
     # handover_refusal reads the legs as measuring points: the same two the global fdv_usd declaration named
     from fetch.base import _measuring_point
     assert list(dict.fromkeys(_measuring_point(p) for p in decl["ordered_points"])) == list(

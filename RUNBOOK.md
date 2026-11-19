@@ -569,7 +569,9 @@ python circ_legs.py Near
 Get-Content -Raw sql\near\bigquery_supply_flows.sql | bq query --dry_run --use_legacy_sql=false --project_id=near-data-510309 --parameter=d0:DATE:2025-07-15 --parameter=d1:DATE:2025-10-06
 #   expect: one line "Query successfully validated ... will process N bytes" - paste it back (nothing is billed by a dry run)
 python token_metrics.py
-#   expect: the run ends without error; near lines for near_foundation_staked_tokens (about 3.80M NEAR) and near_mpc_operator_payouts_tokens; a near_bigquery line with a dry-run estimate and "not approved" for the burn history
+#   expect: the run ends without error; a near_rpc line "near_foundation_staked_tokens=3,80..." and a payout-ledger line, either "338,430.08 NEAR in 85 payout(s) 2026-04-23..2026-10-21" or "... not read on chain yet (resumes next run)"; a near_bigquery line with a dry-run estimate and "not approved" for the burn history
+python token_metrics.py --project Near
+#   expect: only needed if the ledger line said "resumes next run" - repeat until it reads "338,430.08 NEAR in 85 payout(s)" (the archival node rate-limits; two or three passes)
 python near_lockups_weekly.py --force
 #   expect: a line naming the lockup contracts read and near_lockup rows stored (the second reading: lockup releases can then join the unlock leg)
 python archive_backfill.py --run --project Aerodrome --budget-min 30
