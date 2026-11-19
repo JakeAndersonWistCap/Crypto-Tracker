@@ -877,6 +877,61 @@ def _handover_cut_views(groups: dict) -> None:
                 groups[(p["name"], metric)] = g[keep]
 
 
+VELO_MERGED_NOTE: dict = {}
+
+
+def _velo_merged_views(groups: dict) -> None:
+    """R11.2c (config.VELO_MERGED): Aerodrome's supply series BEFORE the merger on the merged basis — on every day
+    VELO's own reading is stored, value + VELO leg x 0.044 under the point velo_merged:<the row's own point> (the
+    declared handover). Inside the restated span (from the first VELO reading to the cutover) a day without a VELO
+    reading holds no value: its row is dropped and counted (unknown, never the unmerged figure). Days before the first
+    VELO reading are untouched. Also the statement's line for Velodrome's own emissions: the rise of VELO's total
+    between consecutive stored readings x 0.044, dated the later reading ([span=Nd] across a hole)."""
+    from fetch.base import _measuring_point              # noqa: PLC0415
+    VELO_MERGED_NOTE.clear()
+    names = {p["name"] for p in scoped_projects()}
+    for name, spec in (getattr(config, "VELO_MERGED", {}) or {}).items():
+        if name not in names:
+            continue
+        until, ratio = pd.Timestamp(spec["until"]), float(spec["ratio"])
+        for metric, leg in spec["legs"].items():
+            v = _daily(groups.get((name, leg["velo"])))
+            v = v[v.index < until]
+            g = groups.get((name, metric))
+            if v.empty or g is None or g.empty:
+                continue
+            add = v * ratio
+            if leg.get("cap"):
+                add = add.clip(upper=float(spec["allocation"]))
+            day = pd.to_datetime(g["date"]).dt.normalize()
+            span = (day >= v.index.min()) & (day < until)
+            has = span & day.isin(add.index)
+            out = g[~(span & ~has)].copy()
+            hit = has[out.index]
+            out.loc[hit, "value"] = out.loc[hit, "value"].astype(float) + day[out.index][hit].map(add).values
+            out.loc[hit, "source"] = [config.VELO_MERGED_POINT.format(point=_measuring_point(str(x)))
+                                      for x in out.loc[hit, "source"]]
+            groups[(name, metric)] = out
+            VELO_MERGED_NOTE[(name, metric)] = (
+                f"{int(has.sum())} day(s) {v.index.min().date()}..{(until - pd.Timedelta(days=1)).date()} restated on the "
+                f"merged basis (+ {leg['velo']} x {ratio:g})"
+                + (f"; {int((span & ~has).sum())} day(s) in the span without a VELO reading hold no value"
+                   if (span & ~has).any() else ""))
+        tot = _daily(groups.get((name, spec["legs"]["total_supply"]["velo"])))
+        tot = tot[tot.index < until]
+        if len(tot) < 2:
+            continue
+        step = tot.diff().dropna() * ratio
+        gap = pd.Series(tot.index, index=tot.index).diff().dropna().dt.days
+        step = step[step > 0]
+        if step.empty:
+            continue
+        groups[(name, spec["issuance"])] = _as_stored(pd.DataFrame({
+            "date": step.index, "project": name, "metric": spec["issuance"], "value": step.values, "tier": 2,
+            "source": ["derived:velo_total_supply_tokens:delta x0.044" + (f"[span={int(gap[d])}d]" if gap[d] > 1 else "")
+                       for d in step.index]}), _view_cols(groups, name))
+
+
 def tokenjar_takeover(groups: dict, name: str, asof) -> tuple[bool, list[str]]:
     """PR1C.2 (Jake 2026-11-10): whether the TokenJar inflows may TAKE OVER the revenue line on this build — every test
     of config.TOKENJAR_TAKEOVER over the Q0 window (asof − 90 days, asof]: a jar row on every day (the as-of day alone
@@ -4126,7 +4181,8 @@ def _handover_step_views(groups: dict) -> None:
         if new.empty:
             continue
         d1 = new["date"].iloc[0]
-        old = gd[(mp == spec["from"]) & (gd["date"] < d1)]
+        frm = (spec["from"],) if isinstance(spec["from"], str) else tuple(spec["from"])
+        old = gd[mp.isin(frm) & (gd["date"] < d1)]
         if old.empty or (d1 - old["date"].iloc[-1]).days > int(spec["max_gap_days"]):
             continue
         v = float(new["value"].iloc[0]) - float(old["value"].iloc[-1])
@@ -4134,7 +4190,7 @@ def _handover_step_views(groups: dict) -> None:
             continue
         groups[(name, metric)] = _as_stored(pd.DataFrame([{
             "date": d1, "project": name, "metric": metric, "value": v, "tier": 2,
-            "source": f"derived:handover_step[{spec['stock']}: {spec['from']} -> {spec['to']}]"}]), g.columns)
+            "source": f"derived:handover_step[{spec['stock']}: {mp[old.index[-1]]} -> {spec['to']}]"}]), g.columns)
 
 
 def _flow_from_zero_views(groups: dict) -> None:
@@ -7005,6 +7061,7 @@ def aggregate(long: pd.DataFrame, fetch_status: pd.DataFrame, asof: pd.Timestamp
     _series_restatement_views(groups, asof)  # P2b-2: a declared restatement — its pending seam, or its holes, named
     _handover_continuation_views(groups)   # P2a D5a: a declared later leg read from another stored series (Maple)
     _handover_cut_views(groups)       # G11 C1: a declared cut — the earlier leg's rows after the later leg starts dropped
+    _velo_merged_views(groups)        # R11.2c: Aerodrome before the merger on the merged basis (+ VELO x 0.044)
     _tokenjar_revenue_views(groups, asof)   # PR1C.2: the TokenJars beside DefiLlama's revenue; in it only on takeover
     _partial_sum_views(groups)    # FIRST: nothing downstream may read a partial sum
     _whole_set_views(groups)      # R5B.2: a PARTIAL day of a declared whole-set contract sum is a hole, not a new point

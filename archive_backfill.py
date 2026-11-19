@@ -217,6 +217,25 @@ def _work(a) -> int:
         for e in eo.log:
             if getattr(e, "status", "") == "failed":
                 print(f"    {e.message[:400]}")
+    # R11.2c VELODROME'S VELO BEFORE THE MERGER, DAY BY DAY: total supply and the escrow's locks on Optimism at each
+    # day's first block, newest first from 2026-10-21 back — the legs that restate Aerodrome's series on the merged
+    # basis. Never overwrites a stored day; it has the run's budget from its own start.
+    for p in projects:
+        spec = (getattr(config, "VELO_MERGED", {}) or {}).get(p["name"])
+        if not spec:
+            continue
+        from fetch import velo_history
+        have = {m: {d[:10] for (d,) in st.conn.execute(
+            "SELECT date FROM metrics WHERE project=? AND metric=?", (p["name"], m))} for m in velo_history.METRICS}
+        vw = [0]
+
+        def _land_velo(day_rows, _w=vw):
+            _w[0] += ar._write_new(st, pd.DataFrame(day_rows)[ar.LONG_COLUMNS])
+        rows, why = velo_history.history(p["name"], spec, have,
+                                         deadline=time.monotonic() + a.budget_min * 60, write=_land_velo)
+        print(f"  Velodrome VELO history {p['name']}: {vw[0]} row(s) written over "
+              f"{len({str(r['date'])[:10] for r in rows})} day(s) (4 per day: total, escrow balance, locked, permanent) "
+              f"— {why}")
     if a.near:
         near = config.PROJECT_BY_NAME.get("Near")
         if near and near in projects:

@@ -44259,6 +44259,72 @@ BURNED_DECLARED_ZERO = {"Aerodrome": {"days_of": "total_supply",
 assert PROJECT_BY_NAME["Aerodrome"]["burn_mechanism"]["model"] == "no_burn"
 
 
+# ===== R11.2c AERODROME BEFORE THE MERGER, ON THE MERGED BASIS (Jake 2026-11-18) =====
+# THE 117.0M AERO FOR VELO HOLDERS IS VELODROME'S EXISTING SUPPLY, CONVERTED (confirmed 2026-11-19, primary sources):
+#   - VELO.totalSupply() at the merger (Optimism block 158,514,211, the last before 2026-10-22 00:00 UTC):
+#     2,648,026,538.38 VELO x 0.044 = 116,513,167.69 AERO.
+#   - The ratio is the contract's: VelodromeMigration.sol `_RATIO_PIPS = 44_000` (Dromos-Labs/metadex-public @8b506b45);
+#     the allocation 117,000,000 is the new token's constructor argument (`_velodromeAllocation`).
+#   - aero.xyz/aero-upgrade: "117M AERO / 2.66B VELO = 0.044 ... calculated based on projected supplies";
+#     aero-economic-case: "No dilution will occur beyond the migration of these existing positions".
+#   The allocation exceeds the converted supply by 486,832.31 AERO (0.42%): minted against a projected VELO supply that
+#   was not reached. So the 117.0M is in NO dilution rate (as built in R10); only that headroom is new at the merger.
+# THE RESTATEMENT: before 2026-10-22 the merged entity's supply is Aerodrome's AERO + Velodrome's VELO x 0.044. Each
+# supply series below is restated at read time on every day VELO's own reading is stored (fetch/velo_history.py, read by
+# archive_backfill on Optimism at each day's first block): value + VELO leg x 0.044, under a new measuring point
+# velo_merged:<the day's own point> — a declared handover, the whole stored span restated, as with Sky's MKR. A day
+# inside the restated span without a VELO reading holds NO value (unknown, never the unmerged figure); days before the
+# first VELO reading keep the legacy basis under their own point (the handover between the two is this declaration).
+# Nothing moves on a store holding no VELO history.
+#   NOT IN IT (named, not invented): VELO v1 (the 2022 token; whether its unconverted remainder can still claim is not
+#   established); VELO bridged to other chains is the same supply behind a lockbox (not extra); Velodrome's issuer
+#   wallets are inferred only (two wallets -> the Aero team multisig / PGF, 537.0M VELO -> 23.63M AERO) and are not used.
+VELO_MERGED = {"Aerodrome": {
+    "chain": "optimism", "token": "0x9560e827aF36c94D2Ac33a39bCE1Fe78631088Db",
+    "escrow": "0xFAf8FD17D9840595845582fCB047DF13f006787d",
+    "ratio": 0.044, "allocation": 117_000_000.0, "until": AERODROME_MIGRATION["cutover_utc"][:10],
+    "from": "2025-07-14",          # the first day Aerodrome's own on-chain total is stored (Jake's store)
+    "at_merger": {"optimism_block": 158_514_211, "velo_total": 2_648_026_538.38, "x_ratio": 116_513_167.69,
+                  "headroom": 486_832.31, "read_on": "2026-11-19"},
+    "verdict": "existing supply converted (not new supply): out of every dilution rate",
+    "legs": {"total_supply": {"velo": "velo_total_supply_tokens", "cap": True},
+             "locked_tokens": {"velo": "velo_locked_tokens"},
+             "ve_locked_supply_tokens": {"velo": "velo_ve_locked_supply_tokens"},
+             "permanent_locked_tokens": {"velo": "velo_permanent_locked_tokens"}},
+    "issuance": "velo_merged_issuance_tokens"}}
+VELO_MERGED_POINT = "velo_merged:{point}"
+for _vm, _vlab in (("velo_total_supply_tokens", "VELO total supply on Optimism (VELO.totalSupply())"),
+                   ("velo_locked_tokens", "VELO held by Velodrome's VotingEscrow (VELO.balanceOf)"),
+                   ("velo_ve_locked_supply_tokens", "VELO locked in veVELO (VotingEscrow.supply())"),
+                   ("velo_permanent_locked_tokens", "VELO permanently locked (VotingEscrow.permanentLockBalance())")):
+    METRICS[_vm] = {"label": _vlab + " — in VELO, before the merger; x 0.044 joins Aerodrome's series on the merged "
+                                     "basis (R11.2c)",
+                    "kind": "stock", "unit": "tokens", "archetypes": [3], "tiers": [2], "sanity_min": 0,
+                    "sanity_max": 1e10, "only_projects": ("Aerodrome",)}
+METRICS["velo_merged_issuance_tokens"] = {
+    "label": "Velodrome's own emissions before the merger, at 0.044 = the rise of VELO's total supply between stored "
+             "readings x 0.044 — on the token-flow statement only (R11.2c)",
+    "kind": "flow", "unit": "tokens", "archetypes": [3], "tiers": [2], "sanity_min": 0, "sanity_max": 1e9,
+    "only_projects": ("Aerodrome",), "view_only": True}
+# the handovers, declared: each restated series' points, in order (the legacy point, its merged form, the new read)
+for _vmet in VELO_MERGED["Aerodrome"]["legs"]:
+    _vh = PROJECT_BY_NAME["Aerodrome"]["series_handover"][_vmet]
+    _vpts = tuple(_vh["ordered_points"])
+    _vh["ordered_points"] = (_vpts[:-1] + tuple(VELO_MERGED_POINT.format(point=_x) for _x in _vpts[:-1]) + _vpts[-1:])
+    _vh["velo_merged"] = ("R11.2c (Jake 2026-11-18): before 2026-10-22 the series is Aerodrome + Velodrome x 0.044 on "
+                          "every day VELO's reading is stored — the merged entity, one basis across the merger")
+PROJECT_BY_NAME["Aerodrome"]["series_handover"]["fdv_usd"]["ordered_points"] = tuple(
+    PROJECT_BY_NAME["Aerodrome"]["series_handover"]["fdv_usd"]["ordered_points"]) + tuple(
+    f"derived:price_x_total_supply[{VELO_MERGED_POINT.format(point=_x)}]" for _x in ("coingecko", "chain:base:token"))
+# the merger step is then what the new token minted ABOVE the supply already counted: the last reading before the new
+# read on either basis (117.0M on the legacy basis, the 0.49M headroom on the merged one)
+HANDOVER_STEP[("Aerodrome", "aero_merger_issuance_tokens")]["from"] = (
+    "chain:base:token", VELO_MERGED_POINT.format(point="chain:base:token"))
+RULE_IN["Aerodrome"]["flow_in"] = tuple(RULE_IN["Aerodrome"]["flow_in"]) + (
+    ("+ Velodrome's emissions before the merger, at 0.044", "velo_merged_issuance_tokens", "event"),)
+RULE_IN["Aerodrome"]["_flow_events"] = tuple(RULE_IN["Aerodrome"]["_flow_events"]) + ("velo_merged_issuance_tokens",)
+
+
 # ===== R10 PART B — NEAR =====
 # Round 10, Part B (Jake 2026-11-18). SPEC.md "Round 10 — Near". Near is not frozen; everything of the round is in this
 # one block. Jake's decisions: revenue = the chain's own burn x price, DefiLlama the cross-check; the switch day is
