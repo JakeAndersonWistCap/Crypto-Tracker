@@ -117,7 +117,9 @@ def test_3a_a_crosscheck_is_on_its_parts_own_days_and_priced_where_it_is_in_toke
 
 
 def test_3a_only_near_has_components_and_no_existing_series_is_touched(scope):
-    assert set(config.S13_COMPONENTS) == {"Near"} and set(config.VALUE_FLOW_COMPONENTS) == {"Near"}
+    # R14: Ether.fi's REVENUE_SPLIT (Jake 2026-11-19) declares components the same way (was: {"Near"} alone)
+    assert set(config.S13_COMPONENTS) == {"Near", "Ether.fi"} and set(config.VALUE_FLOW_COMPONENTS) == {"Near",
+                                                                                                    "Ether.fi"}
     assert not set(config.S13_COMPONENTS) & set(config.FROZEN_PROJECTS)
     g = _s13_groups()
     for m in ("fees_usd", "revenue_usd"):                                     # another project's rows sit beside Near's

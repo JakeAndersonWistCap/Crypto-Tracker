@@ -46933,7 +46933,7 @@ _R14E["log_scans"].append({
                          "0xf40bcc08… is the programme's only USDC sender (pack (c), Blockscout read 2026-11-19)",
     "attribution_sources": ["https://eth.blockscout.com/api/v2/addresses/0x43F4cA92F7F378bCdcF1508b866b5B6c47D6408C/"
                             "token-transfers (USDC, read 2026-11-19: 2,505,229.08 from 0xf40bcc08… in 12 transfers)"],
-    "headline": False, "wired_on": "2026-11-19"})
+    "headline": False, "wired_on": "2026-11-19", "own_tier": scan_tier("Ether.fi", {})})     # G6 0a: its own tier
 METRICS["labs_usdc_to_programme_tokens"] = {
     "label": "USDC sent by ether.fi Labs' Safe 0xf40bcc08… to the Programmatic Buybacks Safe (per day; USDC at $1) — the "
              "cross-check beside the S13 REVENUE line: a share of revenue Labs chooses to send, not revenue (R14)",
@@ -47067,6 +47067,7 @@ ETHERFI_ISSUER_TOPUP_SENDERS = [
 ]
 _R14E["log_scans"].append({
     "key": "sethfi_issuer_topups", "metric": "sethfi_issuer_topup_tokens", "chain": "ethereum",
+    "own_tier": scan_tier("Ether.fi", {}),                                                     # G6 0a: its own tier
     "token": "0xFe0c30065B384F05761f15d0CC899D4F9F9Cc0eB",
     "holders": ["0x86B5780b606940Eb59A062aA85a07959518c0161"], "direction": "in", "store": True,
     "attribution": "count_from", "count_from": list(ETHERFI_ISSUER_TOPUP_SENDERS),
@@ -47126,6 +47127,30 @@ DECLARED_NA_REASONS.setdefault("Ether.fi", []).append(
 # sit in are INFERRED and inside the float, in no stock here. Was: the two wallet legs only (the falls not in (e)).
 UNLOCK_STOCKS["Ether.fi"] = tuple(CIRCULATING_ONCHAIN["Ether.fi"]["subtract"]) + (
     SCHEDULE_LOCK_LEGS["Ether.fi"]["metric"],)
+
+
+# ===== R14 — ETHER.FI'S BUYBACK SPLIT: ONE MEASURING POINT, A DECLARED HANDOVER =====
+# The split of Ether.fi's buyback (burned / held / distributed, retired = burned + held) is measured PER PURCHASE DAY
+# (BUYBACK_DESTINATION_SHARES["Ether.fi"]: one dated row per day read, first-in-first-out through the buyer's outflows).
+# Its derived series name that table as their measuring point rather than each split's values, and the change from the
+# old single declared split (100% distributed) is a declared handover — the whole series is restated on the new basis.
+BUYBACK_SHARES_PER_PURCHASE_DAY = {
+    "Ether.fi": "measured per purchase day: config.BUYBACK_DESTINATION_SHARES['Ether.fi'], first-in-first-out through "
+                "the buyer's outflows (R14)",
+}
+_r14_old_split = "from start: burn 0% / hold 0% / distribute 100%"
+for _m, _base, _parts in (("buyback_burned_tokens", "actual_buyback_tokens", "burn"),
+                          ("buyback_held_tokens", "actual_buyback_tokens", "hold"),
+                          ("buyback_distributed_tokens", "actual_buyback_tokens", "distribute"),
+                          ("retired_buyback_tokens", "actual_buyback_tokens", "burn+hold"),
+                          ("retired_buyback_usd", "actual_buyback_usd", "burn+hold")):
+    PROJECT_BY_NAME["Ether.fi"].setdefault("series_handover", {})[_m] = {
+        "ordered_points": (f"derived:{_base} x {_parts} share ({_r14_old_split})",
+                           f"derived:{_base} x {_parts} share ({BUYBACK_SHARES_PER_PURCHASE_DAY['Ether.fi']})"),
+        "declared": "2026-11-19",
+        "why": "Jake 2026-11-19 (R14 item 2, 'repair the buyback read'): the destinations are measured per purchase day; "
+               "before, one declared split (all distributed) stood for every day",
+        "composition_change": "the whole series restated on the measured split; no day keeps the old basis"}
 
 
 # =====================================================================================================================

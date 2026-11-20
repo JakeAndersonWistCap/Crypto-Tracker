@@ -11962,6 +11962,10 @@ def _buyback_split_views(groups: dict) -> None:
         tags = sorted({(x["from"] or "start", round(x["burn"], 4), round(x["hold"], 4), round(x["distribute"], 4))
                        for x in sh})
         how = "; ".join(f"from {f}: burn {b:.0%} / hold {h:.0%} / distribute {d:.0%}" for f, b, h, d in tags)
+        if name in config.BUYBACK_SHARES_PER_PURCHASE_DAY:
+            # R14: the shares are MEASURED per purchase day (one dated split per day read): ONE measuring point, named
+            # by where the splits live, not by their values — a new day's split is a new row, not a new basis
+            how = config.BUYBACK_SHARES_PER_PURCHASE_DAY[name]
         for metric, parts in (("buyback_burned_tokens", ("burn",)), ("buyback_held_tokens", ("hold",)),
                               ("buyback_distributed_tokens", ("distribute",)),
                               ("retired_buyback_tokens", ("burn", "hold"))):

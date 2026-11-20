@@ -153,6 +153,8 @@ COLUMN_MAP: tuple[tuple[str, str, str], ...] = (
     ("*", "Supplier payout", "supplier_payout"), ("*", "Insider share", "insider_share"),
     ("*", "Discretionary supply", "discretionary"), ("*", "Treasury governance could redeploy", "discretionary"),
     ("*", "Lock terms", "lock_terms"), ("*", "Leakage", "leakage"), ("*", "LEAKAGE", "leakage"),
+    # R14.B (Jake 2026-10-27): the financial-theatre flag, its state and its size
+    ("CP", "FINANCIAL-THEATRE FLAG", "theatre"), ("CP", "Financial-theatre flag", "theatre"),
     ("*", "Uniformity", "uniformity"), ("*", "UNIFORMITY", "uniformity"), ("*", "Non-stakers receive", "uniformity"),
 )
 
