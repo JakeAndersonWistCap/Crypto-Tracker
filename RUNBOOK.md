@@ -534,6 +534,33 @@ A Plume seed started on code older than 2026-10-01 saved its state only at the e
 or stop it and start again on the new code. Don't run both at once: they write the same state file.
 
 
+## 11fe. Round 15 — Ether.fi on Jake's decisions, ending schedules, Aerodrome on Jake's store (2026-11-20)
+
+ETHER.FI. The theatre flag scores ANY buyback, sized from 2026-09-08 (the named outflow keeps 2026-07-01); every fee cell
+reads fees net of the card cashback; a wallet purchase after 2026-11-19 is unknown until measured; the issuer-side Safes'
+sends to exchange-tagged addresses are dilution category (f), taken out of (e) (total unchanged); the Foundation's
+top-ups show on "Holder value RECORDED, NOT CREDITED". ENDING SCHEDULES: an "a year" release counts only what a schedule
+releases in the next 365 days (Ether.fi's team leg: 23,855,556 left to 2027-03-18; Morpho's relock from 2026-11-22):
+on Jake's 11-20 store Ether.fi's (e) reads 9.31% of float (was 16.76%). Total dilution and net holder yield read BLOCKED
+until the run below stores the new (f) scan. AERODROME: the 11-19 -> 11-20 moves are data (a claim batch of 10.58M AERO
+minted on 11-20 for emissions accrued since 10-22), no code move; its subsidy-targeting cells read STALE (the legacy
+route ended at the migration; the v3 route is round 16).
+
+```
+cd C:\Users\jake\Crypto-Tracker
+.venv\Scripts\Activate.ps1
+git switch claude/crypto-metrics-supply-demand-ovkg8g
+git pull
+python -c "import config as c; print(c.THEATRE_FLAG['Ether.fi']['scored'], c.THEATRE_FLAG['Ether.fi']['size_window']['from'], c.metric_alias('Ether.fi','fees_usd'), c.outflow_metrics('Ether.fi','f'), sorted(c.ENDING_SCHEDULES), c.PROJECT_BY_NAME['Aerodrome']['subsidy_targeting']['route_ends'])"
+#   expect: any_buyback 2026-09-08 fees_net_cashback_usd ('etherfi_named_float_outflow_tokens',) ['Ether.fi', 'Morpho'] 2026-10-22
+python token_metrics.py --project Ether.fi
+#   expect in the Run Log (explorer@Ether.fi): "named_float_outflow: RECONCILED ... Counted outflow 9,100,020.0000 over N transfer(s)" (or more; the deployer EOA's 200,000 is not in it)
+#   and (subsidy_targeting@Aerodrome, on the full run): "ROUTE ENDED 2026-10-22: 4 epoch(s) ... NOT READ, NOTHING STORED"
+python token_metrics.py --no-fetch
+python done_check.py --verbose | Select-String "^(Aerodrome|Ether.fi)" -Context 0,10
+#   expect: Aerodrome READY; Ether.fi READY once the (f) rows and the backfill are stored - paste its lines back
+```
+
 ## 11fd. Round 15 — the daily run never hangs, never prompts, never blocks the next day (2026-11-20)
 
 WHAT HAPPENED (your report; your logs are not in the repo). The scheduled runs of 11-11 and 11-18 were KILLED during
