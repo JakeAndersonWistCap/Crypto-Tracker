@@ -47237,6 +47237,14 @@ OUTFLOW_CATEGORIES["Ether.fi"]["basis"] += (
     "addresses (purpose not established), taken out of (e) on its day — the deployer EOA's sends were already in the "
     "float and are not dilution")
 RELEASE_LESS["Ether.fi"] = ("etherfi_named_float_outflow_tokens",)
+# the release is now formed NET of (f) (its source names the leg taken out): a declared change of basis, the whole
+# series restated — never two bases on a day
+PROJECT_BY_NAME["Ether.fi"].setdefault("series_handover", {})["unlock_release_tokens"] = {
+    "ordered_points": ("derived:unlock_release", "derived:unlock_release-etherfi_named_float_outflow_tokens"),
+    "declared": "2026-11-20",
+    "why": "Jake 2026-11-20 (R14 decision 5 (b)): the named float outflow is category (f), taken out of the release (e)",
+    "composition_change": "from R15 the release excludes the issuer-side Safes' sends to exchange-tagged addresses "
+                          "(category (f)); the whole series is restated on that basis"}
 FLOW_LESS_LINE["Ether.fi"] = {
     "label": "+ sent to exchange-tagged addresses from the issuer-side Safes (f) — netted out of (e)",
     "series": "the named float outflow netted out of unlock_release_tokens (config.RELEASE_LESS: "
