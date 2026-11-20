@@ -11,6 +11,12 @@
 # output is decoded as UTF-8 (5.1 otherwise uses the OEM code page and mangles non-ASCII text); the interpreter
 # is .venv, then venv, then the py launcher, then python on PATH; a missing interpreter is logged, not thrown.
 #
+# R15 (Jake 2026-11-20: 11-11 and 11-18 killed during token_metrics, 11-19 open at "BigQuery check", no 11-20 run):
+# the run NEVER HANGS (every step has a wall-clock limit inside a run budget under the task's time limit; a step past
+# its limit is stopped by PID and the run carries on), NEVER PROMPTS (no login when scheduled; gcloud / git / pip told
+# not to ask; every step's stdin is empty) and NEVER BLOCKS THE NEXT DAY (a previous run still open after -StaleHours
+# is stopped by PID and recorded KILLED; register_task.ps1 sets MultipleInstances StopExisting).
+#
 # Everything goes to logs\run_YYYY-MM-DD.log (appended if the task runs twice in a day).
 # Run by hand to test:  powershell -ExecutionPolicy Bypass -File windows\daily_run.ps1
 
@@ -19,7 +25,10 @@ param(
     [int]$RerunPauseMinutes = 15,
     [int]$LoginWaitMinutes = 5,           # the most an interactive Google login may hold the run (Round G 1.7)
     [switch]$Scheduled,                   # set by register_task.ps1: never stop for a login prompt
-    [switch]$Reconcile                    # only close out a previous run that was killed (D2-8a), then exit
+    [switch]$Reconcile,                   # only close out a previous run that was killed (D2-8a), then exit
+    [int]$RunBudgetMinutes = 330,         # R15: the whole run stays under the task's 6 h ExecutionTimeLimit
+    [int]$TailReserveMinutes = 60,        # R15: kept back for the closing steps (credibility .. snapshot)
+    [int]$StaleHours = 6                  # R15: a previous run still open after this many hours is recorded KILLED
 )
 
 $ErrorActionPreference = "Continue"
@@ -29,6 +38,34 @@ $env:PYTHONIOENCODING = "utf-8"
 $env:PYTHONUTF8 = "1"
 $env:PYTHONUNBUFFERED = "1"               # every printed line reaches the log as it is printed (D2-8a)
 try { [Console]::OutputEncoding = [System.Text.Encoding]::UTF8 } catch { }   # no console: nothing to set
+# NOTHING MAY PROMPT (R15 (b), Jake 2026-11-20): gcloud, git, pip and google-auth never ask; every step's stdin is an
+# empty file (Invoke-Step), so a Python input() reads end-of-file at once instead of waiting for a key.
+$env:CLOUDSDK_CORE_DISABLE_PROMPTS = "1"
+$env:GIT_TERMINAL_PROMPT = "0"
+$env:GCM_INTERACTIVE = "never"
+$env:PIP_NO_INPUT = "1"
+$env:PIP_DISABLE_PIP_VERSION_CHECK = "1"
+$env:NO_GCE_CHECK = "True"
+# KEEP THE LAPTOP AWAKE WHILE THE RUN RUNS (R15): woken by the task's wake timer with nobody at the keyboard, Windows
+# goes back to sleep after its unattended-sleep timeout (2 minutes by default) - mid-step. ES_CONTINUOUS |
+# ES_SYSTEM_REQUIRED holds the system awake until this PowerShell exits; the display may still turn off. A closed lid or
+# a chosen Sleep still sleeps.
+try {
+    Add-Type -Namespace CryptoTracker -Name Power -MemberDefinition `
+        '[DllImport("kernel32.dll")] public static extern uint SetThreadExecutionState(uint esFlags);'
+    [void][CryptoTracker.Power]::SetThreadExecutionState([uint32]2147483649)     # 0x80000001
+} catch { }
+$RunT0 = Get-Date
+$StepTimedOut = 124                       # R15: the exit code recorded for a step killed at its wall-clock limit
+$StepNotRun = 125                         # R15: the exit code recorded for a step the run budget left no time for
+# R15: each step's wall-clock limit in minutes; Get-StepLimit also caps it by what is left of $RunBudgetMinutes
+# (the steps before the closing ones leave $TailReserveMinutes), so the run ends before the task's time limit.
+$StepMinutes = @{ "BigQuery check" = 3; "BigQuery check (after login)" = 3; "token_metrics" = 240;
+                  "token_metrics (rerun)" = 90; "NEAR lockups (weekly)" = 60; "NEAR stage 1 (November)" = 30;
+                  "credibility roots" = 10; "credibility report" = 15; "credibility history" = 10;
+                  "daily summary" = 5; "history gaps" = 10; "export snapshot" = 10 }
+$TailSteps = @("credibility roots", "credibility report", "credibility history", "daily summary", "history gaps",
+               "export snapshot")
 
 $PyArgs = @()                             # extra leading arguments (the py launcher's -3)
 if (-not $Python) {
@@ -83,13 +120,27 @@ $RunStarted = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
 $Plan = @("BigQuery check", "token_metrics", "NEAR lockups (weekly)", "NEAR stage 1 (November)", "credibility roots",
           "credibility report", "credibility history", "daily summary", "history gaps", "export snapshot")
 
-function Save-State([string]$open) {
+function Save-State([string]$open, [int]$stepPid = 0) {
     $since = ""
     if ($open) { $since = Get-Date -Format "yyyy-MM-dd HH:mm:ss" }
+    if ($open -and $open -eq $script:OpenLabel -and $script:OpenSince) { $since = $script:OpenSince }
+    $script:OpenLabel = $open
+    $script:OpenSince = $since
     $done = @($script:Steps | ForEach-Object { "$($_[0])=$($_[1])" })
     $st = [ordered]@{ log = $Log; pid = $PID; started = $RunStarted; open = $open; open_since = $since;
-                      final = [bool]$script:FinalWritten; steps = $done }
+                      step_pid = $stepPid; final = [bool]$script:FinalWritten; steps = $done }
     try { ($st | ConvertTo-Json -Depth 3) | Set-Content -Path $StateFile -Encoding UTF8 } catch { }
+}
+
+function Stop-StepProcess([int]$id) {
+    # BY PID ONLY (R15): taskkill /T ends that PID and the processes it started (a python step's own children);
+    # nothing is ever matched by name.
+    if ($id -le 0) { return }
+    try { & taskkill.exe /PID $id /T /F 2>&1 | Out-Null } catch { }
+    try {
+        $left = Get-Process -Id $id -ErrorAction SilentlyContinue
+        if ($left) { $left.Kill() }
+    } catch { }
 }
 
 function Resolve-PreviousRun {
@@ -98,9 +149,29 @@ function Resolve-PreviousRun {
     try { $prev = Get-Content -Path $StateFile -Raw -Encoding UTF8 | ConvertFrom-Json } catch { return "" }
     if ($prev.final) { return "" }
     $alive = $null
+    $stale = ""
     if ($prev.pid) { $alive = Get-Process -Id ([int]$prev.pid) -ErrorAction SilentlyContinue }
     if ($alive -and $alive.ProcessName -like "powershell*" -and $alive.StartTime -le [datetime]$prev.started) {
-        return "a daily run started $($prev.started) (PID $($prev.pid)) is still running - left alone"
+        # STALE RUN (R15, Jake 2026-11-20: the 11-19 run stayed open at "BigQuery check" and there was no 11-20 run):
+        # a run open longer than $StaleHours - past the task's own time limit - is hung, not working. It is stopped BY
+        # PID, recorded KILLED, and this run proceeds. A younger live run is left alone (this run still proceeds;
+        # token_metrics' run lock keeps metrics.db to one writer).
+        $ageH = ((Get-Date) - [datetime]$prev.started).TotalHours
+        if ($ageH -lt $StaleHours) {
+            return "a daily run started $($prev.started) (PID $($prev.pid)) is still running - left alone"
+        }
+        Stop-StepProcess ([int]$prev.pid)
+        $stale = "stale: still open after {0:N1} h (more than $StaleHours h) - PID $($prev.pid) stopped by the next run" -f $ageH
+    }
+    # ITS STEP MAY OUTLIVE IT (R15): Task Scheduler stops the action's PowerShell; the python step it started can keep
+    # running (and holding metrics.db). Stopped BY PID when it is still a python process started after that run.
+    if ($prev.step_pid) {
+        $sp = Get-Process -Id ([int]$prev.step_pid) -ErrorAction SilentlyContinue
+        if ($sp -and $sp.ProcessName -like "py*" -and $sp.StartTime -ge [datetime]$prev.started) {
+            Stop-StepProcess ([int]$prev.step_pid)
+            if ($stale) { $stale += "; " }
+            $stale += "its step's process (PID $($prev.step_pid)) was still running - stopped"
+        }
     }
     $ran = (@($prev.steps) | Where-Object { $_ }) -join ", "
     if (-not $ran) { $ran = "none" }
@@ -110,6 +181,7 @@ function Resolve-PreviousRun {
     if ($notRun.Count -gt 0) { $nr = $notRun -join ", " }
     $stamp = "[reconciled {0}]" -f (Get-Date -Format "yyyy-MM-dd HH:mm:ss")
     $why = "stopped from outside - Task Scheduler stop or time limit, battery, sleep or shutdown; the log does not say which"
+    if ($stale) { $why = $stale }
     $lines = @()
     $where = "between steps"
     if ($prev.open) {
@@ -123,10 +195,68 @@ function Resolve-PreviousRun {
     return "the previous run (started $($prev.started)) was KILLED $where; FINAL lines appended to $($prev.log)"
 }
 
+function Format-Arg([string]$a) {
+    # One Windows command-line argument (Start-Process takes one string): quoted when it has a space or a quote.
+    if ($a.Length -gt 0 -and $a -notmatch '[\s"]') { return $a }
+    $b = $a -replace '(\\*)"', '$1$1\"'
+    $b = $b -replace '(\\+)$', '$1$1'
+    return '"' + $b + '"'
+}
+
+function Get-StepLimit([string]$label) {
+    # R15: the step's own cap, never more than what is left of the run budget (the closing steps' reserve kept back).
+    $cap = 30
+    if ($StepMinutes.ContainsKey($label)) { $cap = [int]$StepMinutes[$label] }
+    $left = $RunBudgetMinutes - ((Get-Date) - $RunT0).TotalMinutes
+    if ($TailSteps -notcontains $label) { $left = $left - $TailReserveMinutes }
+    return [int][Math]::Floor([Math]::Min([double]$cap, $left))
+}
+
+function Read-NewLines($st, [bool]$final) {
+    # The complete lines a step has added to its output file since the last read (UTF-8; a split character is kept).
+    try {
+        $fs = New-Object System.IO.FileStream($st.Path, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Read,
+                                              [System.IO.FileShare]::ReadWrite)
+        try {
+            $len = $fs.Length
+            if ($len -gt $st.Pos) {
+                [void]$fs.Seek($st.Pos, [System.IO.SeekOrigin]::Begin)
+                $buf = New-Object byte[] ([int]($len - $st.Pos))
+                $n = $fs.Read($buf, 0, $buf.Length)
+                $st.Pos += $n
+                $chars = New-Object char[] ($n + 4)
+                $c = $st.Dec.GetChars($buf, 0, $n, $chars, 0)
+                $st.Rest += [string]::new($chars, 0, $c)
+            }
+        } finally { $fs.Dispose() }
+    } catch { }
+    $text = ""
+    $i = $st.Rest.LastIndexOf("`n")
+    if ($final) {
+        $text = $st.Rest
+        $st.Rest = ""
+    } elseif ($i -ge 0) {
+        $text = $st.Rest.Substring(0, $i)
+        $st.Rest = $st.Rest.Substring($i + 1)
+    }
+    if (-not $text) { return }
+    foreach ($ln in ($text -split "`n")) { $ln.TrimEnd("`r") }
+}
+
 function Invoke-Step([string]$label, [string[]]$arguments) {
     # Runs one Python step, writing its output to the log LINE BY LINE as it arrives (a killed step keeps what it
     # printed); the step stays open in the run state until it exits. Returns (exit code, output text).
-    Write-Log "=== $label : $Python $($arguments -join ' ')"
+    # R15 (Jake 2026-11-20): A WALL-CLOCK LIMIT ON EVERY STEP. The step is started (Start-Process; stdin an empty file,
+    # so nothing can wait on a key; output to files, so no pipe can hold the run), waited for with a timeout, and on
+    # timeout THAT PID is stopped (Stop-StepProcess: by PID, with the processes it started), logged, and the run carries
+    # on. A step the run budget leaves no time for is not started, and is named.
+    $limit = Get-StepLimit $label
+    if ($limit -lt 1) {
+        Write-Log "=== $label : NOT RUN - the run budget ($RunBudgetMinutes min, $TailReserveMinutes kept for the closing steps) is spent"
+        $script:Steps += ,@($label, $StepNotRun)
+        return @($StepNotRun, "")
+    }
+    Write-Log "=== $label : $Python $($arguments -join ' ') (limit $limit min)"
     Save-State $label
     $t0 = Get-Date
     $out = New-Object System.Collections.Generic.List[string]
@@ -137,13 +267,51 @@ function Invoke-Step([string]$label, [string[]]$arguments) {
         $w = New-Object System.IO.StreamWriter($fs, (New-Object System.Text.UTF8Encoding($false)))
         $w.AutoFlush = $true
     } catch { $w = $null }
+    $tag = "{0}_{1}" -f $PID, ([guid]::NewGuid().ToString("N").Substring(0, 8))
+    $inFile = Join-Path $LogDir ".step_$tag.in"
+    $outFile = Join-Path $LogDir ".step_$tag.out"
+    $errFile = Join-Path $LogDir ".step_$tag.err"
+    $code = $null
+    $p = $null
     try {
-        & $Python @PyArgs @arguments 2>&1 | ForEach-Object {
-            $s = "$_"
+        [System.IO.File]::WriteAllText($inFile, "")
+        $argLine = (@($PyArgs + $arguments) | ForEach-Object { Format-Arg $_ }) -join " "
+        $p = Start-Process -FilePath $Python -ArgumentList $argLine -WorkingDirectory $Repo -NoNewWindow -PassThru `
+            -RedirectStandardInput $inFile -RedirectStandardOutput $outFile -RedirectStandardError $errFile
+        $null = $p.Handle                 # Windows PowerShell 5.1: keeps ExitCode readable once it exits
+        Save-State $label $p.Id
+        $streams = @(@{ Path = $outFile; Pos = 0; Rest = ""; Dec = (New-Object System.Text.UTF8Encoding($false)).GetDecoder() },
+                     @{ Path = $errFile; Pos = 0; Rest = ""; Dec = (New-Object System.Text.UTF8Encoding($false)).GetDecoder() })
+        $deadline = $t0.AddMinutes($limit)
+        $timedOut = $false
+        while (-not $p.WaitForExit(2000)) {
+            foreach ($st in $streams) {
+                foreach ($s in (Read-NewLines $st $false)) {
+                    if ($w) { $w.WriteLine($s) } else { Add-Content -Path $Log -Value $s -Encoding UTF8 }
+                    $out.Add($s)
+                }
+            }
+            if ((Get-Date) -ge $deadline) { $timedOut = $true; break }
+        }
+        if ($timedOut) {
+            Stop-StepProcess $p.Id
+            [void]$p.WaitForExit(15000)
+            $code = $StepTimedOut
+        } else {
+            $code = $p.ExitCode
+            if ($null -eq $code) { $code = 1 }
+        }
+        foreach ($st in $streams) {
+            foreach ($s in (Read-NewLines $st $true)) {
+                if ($w) { $w.WriteLine($s) } else { Add-Content -Path $Log -Value $s -Encoding UTF8 }
+                $out.Add($s)
+            }
+        }
+        if ($timedOut) {
+            $s = "TIMED OUT after $limit min - stopped PID $($p.Id) (and the processes it started); the run carries on"
             if ($w) { $w.WriteLine($s) } else { Add-Content -Path $Log -Value $s -Encoding UTF8 }
             $out.Add($s)
         }
-        $code = $LASTEXITCODE
     } catch {
         $s = "could not start ${Python}: $($_.Exception.Message)"
         if ($w) { $w.WriteLine($s) } else { Add-Content -Path $Log -Value $s -Encoding UTF8 }
@@ -151,6 +319,7 @@ function Invoke-Step([string]$label, [string[]]$arguments) {
         $code = 9009
     } finally {
         if ($w) { $w.Dispose() }
+        foreach ($f in @($inFile, $outFile, $errFile)) { Remove-Item -Path $f -Force -ErrorAction SilentlyContinue }
     }
     Write-Log ("=== $label exited $code ({0:N0}s)" -f ((Get-Date) - $t0).TotalSeconds)
     $script:Steps += ,@($label, $code)
@@ -193,21 +362,34 @@ function Test-Interactive {
     try { if ([Console]::IsInputRedirected) { return $false } } catch { }
     return $true
 }
+# R15 (b): decided ONCE, before any step. A scheduled run (-Scheduled, which the registered task passes; or no user
+# session, or started by the Task Scheduler service, or no console input) never reaches the login below.
+$Interactive = Test-Interactive
 $BqSkipped = ""
 $adc = Invoke-Step "BigQuery check" @("adc_check.py")
 if ($adc[0] -ne 0) {
     $gcloud = Get-Command gcloud -ErrorAction SilentlyContinue
-    if ((Test-Interactive) -and $gcloud) {
+    if (-not $Interactive) {
+        Write-Log "BigQuery check failed (exit $($adc[0])) - scheduled / non-interactive: no login attempted"
+    } elseif ($gcloud) {
         Write-Log "BigQuery check failed - interactive: logging in (a browser window opens)"
         Write-Host "NEAR BigQuery: the Google login has expired - a browser window opens to log in."
         # BOUNDED (Round G 1.7(b)): the login waits at most $LoginWaitMinutes for the browser, then the run carries on
+        $env:CLOUDSDK_CORE_DISABLE_PROMPTS = $null          # this one gcloud call, run by hand, may ask
         $lp = Start-Process -FilePath $gcloud.Source -ArgumentList @("auth", "application-default", "login") -PassThru -NoNewWindow
-        if ($lp.WaitForExit($LoginWaitMinutes * 60000)) {
-            & gcloud auth application-default set-quota-project near-data-510309 2>&1 |
-                ForEach-Object { Add-Content -Path $Log -Value "$_" -Encoding UTF8 }
+        $loggedIn = $lp.WaitForExit($LoginWaitMinutes * 60000)
+        $env:CLOUDSDK_CORE_DISABLE_PROMPTS = "1"
+        if ($loggedIn) {
+            # R15: bounded too (60 s), stopped by PID if it hangs
+            $qp = Start-Process -FilePath $gcloud.Source -NoNewWindow -PassThru `
+                -ArgumentList @("auth", "application-default", "set-quota-project", "near-data-510309")
+            if (-not $qp.WaitForExit(60000)) {
+                Stop-StepProcess $qp.Id
+                Write-Log "gcloud set-quota-project did not finish in 60 s - stopped PID $($qp.Id)"
+            }
             $adc = Invoke-Step "BigQuery check (after login)" @("adc_check.py")
         } else {
-            try { $lp.Kill() } catch { }
+            Stop-StepProcess $lp.Id
             Write-Log "BigQuery login not completed in $LoginWaitMinutes minute(s) - skipped; the run carries on"
         }
     }
@@ -225,11 +407,16 @@ if ($adc[0] -ne 0) {
 # 2. The run, rerun ONCE if the summary shows network-wide trouble.
 $run = Invoke-Step "token_metrics" @("token_metrics.py")
 if ($run[1] -match "NETWORK-WIDE TROUBLE") {
-    Write-Log "NETWORK-WIDE TROUBLE in the summary - rerunning once in $RerunPauseMinutes minute(s)"
-    Start-Sleep -Seconds ($RerunPauseMinutes * 60)
-    $run = Invoke-Step "token_metrics (rerun)" @("token_metrics.py")
-    if ($run[1] -match "NETWORK-WIDE TROUBLE") {
-        Show-Toast "Crypto-Tracker: network trouble twice" "Both runs hit NETWORK-WIDE TROUBLE. Stored values stand. Log: $Log"
+    if (((Get-StepLimit "token_metrics (rerun)") - $RerunPauseMinutes) -lt 30) {
+        # R15: the pause and the rerun would not fit in the run budget - the closing steps run instead
+        Write-Log "NETWORK-WIDE TROUBLE in the summary - NO rerun: under 30 min of the run budget would be left after the pause"
+    } else {
+        Write-Log "NETWORK-WIDE TROUBLE in the summary - rerunning once in $RerunPauseMinutes minute(s)"
+        Start-Sleep -Seconds ($RerunPauseMinutes * 60)
+        $run = Invoke-Step "token_metrics (rerun)" @("token_metrics.py")
+        if ($run[1] -match "NETWORK-WIDE TROUBLE") {
+            Show-Toast "Crypto-Tracker: network trouble twice" "Both runs hit NETWORK-WIDE TROUBLE. Stored values stand. Log: $Log"
+        }
     }
 }
 if ($run[0] -eq 75) {
@@ -285,9 +472,13 @@ $AdcFix = @{
     4 = "wrong quota project - run: gcloud auth application-default set-quota-project near-data-510309";
     7 = "permission denied - the logged-in user needs roles/bigquery.jobUser on near-data-510309";
     8 = "the one-row query failed - check the network, then: python adc_check.py";
-    9 = "the check timed out (a login prompt or the network) - run: gcloud auth application-default login; gcloud auth application-default set-quota-project near-data-510309"
+    9 = "the check timed out (a login prompt or the network) - run: gcloud auth application-default login; gcloud auth application-default set-quota-project near-data-510309";
+    124 = "the check was stopped at its wall-clock limit - run: gcloud auth application-default login; gcloud auth application-default set-quota-project near-data-510309"
 }
-$AdcFixLine = (($adc[1] -split "`n") | Where-Object { $_ -like "FIX: *" } | Select-Object -Last 1)
+# R15: adc_check.py's failure is ONE line, "BIGQUERY CHECK: FAILED (exit N) - <why>. FIX: <command>" (was: a second
+# line starting "FIX: "); the fix is the text after "FIX: " on either form.
+$AdcFixLine = (($adc[1] -split "`n") | Where-Object { $_ -like "*FIX: *" } | Select-Object -Last 1)
+if ($AdcFixLine) { $AdcFixLine = $AdcFixLine.Substring($AdcFixLine.IndexOf("FIX: ")) }
 $bqOk = ($adc[0] -eq 0)
 $failed = @($Steps | Where-Object { $_[1] -ne 0 -and -not ($bqOk -and $_[0] -eq "BigQuery check") } | ForEach-Object {
     $t = "$($_[0])=$($_[1])"

@@ -12,6 +12,8 @@
 #     read), never starts a second copy while one is running, and runs on battery as
 #     the daily task does (-StopOnBattery for AC only).
 #   The daily task's step 2b stays as the fallback: it reads only when the last stored read is 8+ days old.
+#   R15 (2026-11-20): PowerShell starts with -NonInteractive (nothing in the task can wait on a prompt); IgnoreNew stays
+#   here - the 8 h limit ends a run long before the next weekly trigger, so it cannot drop next Sunday's read.
 # Remove it with:  Unregister-ScheduledTask -TaskName "Crypto-Tracker NEAR lockups" -Confirm:$false
 # Run it now:      Start-ScheduledTask -TaskName "Crypto-Tracker NEAR lockups"
 
@@ -25,7 +27,7 @@ param(
 
 $script = Join-Path $PSScriptRoot "near_lockups_run.ps1"
 $action = New-ScheduledTaskAction -Execute "powershell.exe" `
-    -Argument "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$script`"" `
+    -Argument "-NoProfile -NonInteractive -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$script`"" `
     -WorkingDirectory (Split-Path -Parent $PSScriptRoot)
 $trigger = New-ScheduledTaskTrigger -Weekly -DaysOfWeek $Day -At $At
 $settings = New-ScheduledTaskSettingsSet -WakeToRun -StartWhenAvailable `

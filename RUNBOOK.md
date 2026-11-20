@@ -534,6 +534,136 @@ A Plume seed started on code older than 2026-10-01 saved its state only at the e
 or stop it and start again on the new code. Don't run both at once: they write the same state file.
 
 
+## 11fd. Round 15 — the daily run never hangs, never prompts, never blocks the next day (2026-11-20)
+
+WHAT HAPPENED (your report; your logs are not in the repo). The scheduled runs of 11-11 and 11-18 were KILLED during
+token_metrics. The 11-19 run started at 08:41 and is still open at "BigQuery check". There is no 11-20 log. Every
+cause below is INFERRED from the task's settings (windows/register_task.ps1) and the code. The checks in the block
+below settle which one it was on your laptop.
+
+- **No 11-20 run (inferred, medium confidence).** daily_run.ps1 writes "daily run start" before any step, so no log
+  means Task Scheduler never started it. The likeliest reason in the settings is MultipleInstances IgnoreNew. If the
+  11-19 run was still running at the 11-20 trigger, Task Scheduler dropped the 11-20 run (event 322). StartWhenAvailable
+  only brings back a MISSED run, never a DROPPED one. Two other possibilities: you were not logged on at the trigger
+  time (the task is "only while logged on", event 332), or the laptop was off or asleep without a working wake timer.
+  If your task is at 17:20 (11dx), the 11-20 run may simply not be due yet.
+- **11-19 open at "BigQuery check" (inferred, low-medium).** 08:41 is not your trigger time (06:30, or 17:20 if you
+  followed 11dx), so this was a late StartWhenAvailable start after a missed trigger. The check had a 90-second limit.
+  Two things could still hold it on Windows. (1) After killing the check, Python's `subprocess.run` waits with NO limit
+  for the output pipe to close, and the PowerShell pipeline waits for the same pipe. (2) The password prompt for an
+  expired login reads the console directly: `isatty()` is True for NUL on Windows, so "no stdin" did not stop it. The
+  other explanation is that the run was stopped (shutdown, sign-out, battery, time limit) while in the check, and no run
+  has started since to close its log. `Get-Process` on the PID in the state file tells you which.
+- **11-11 and 11-18 killed during token_metrics (inferred, low).** Five settings can kill a run:
+  - the 6-hour ExecutionTimeLimit (event 329). token_metrics had no limit of its own, and a slow or hung run plus the
+    15-minute pause and the rerun could pass 6 h;
+  - StopIfGoingOnBatteries, if your task predates D2-8a. The cmdlet's default is "stop on battery", and only a
+    re-registration since then turns it off;
+  - the Interactive logon type: signing out, a restart or a shutdown (often a Windows Update restart) ends the task;
+  - the laptop going back to sleep 2 minutes after a wake timer woke it (the unattended-sleep timeout), followed later
+    by a shutdown;
+  - not IgnoreNew: it never kills a run.
+
+  Both dates are Wednesdays, which suggests something weekly on the laptop, but nothing in the repo shows what. The log
+  shape is the same for every cause, so the reconciled line still says "the log does not say which". The Task
+  Scheduler history does: 329 = time limit, 111 = terminated, 322 = a launch ignored because a run was still going,
+  332 = you were not logged on.
+
+WHAT CHANGED (SPEC "Round 15 — the daily run"):
+- adc_check.py has a hard limit. It reads the login from the ADC file (it no longer calls
+  `google.auth.default()`, which runs gcloud with no timeout). It gives each BigQuery call 30 s, never prompts for a
+  password, and stops itself 10 s before the parent's 90 s.
+- The parent writes the check's output to a file, never a pipe, and kills the check by PID.
+- On failure the check prints ONE line, `BIGQUERY CHECK: FAILED (exit N) - ... FIX: ...`. A timeout is exit 9, an
+  expired login exit 2, no login exit 3. The run carries on without NEAR BigQuery and says so first in the summary.
+- Every daily_run step has a wall-clock limit (BigQuery check 3 min, token_metrics 240 min, ...) inside a 5 h 30 min
+  run budget, under the task's 6 h. A step past its limit is stopped by PID and logged as
+  `TIMED OUT after N min - stopped PID <pid>` (exit 124). The run continues. A step with no budget left is
+  `NOT RUN` (exit 125).
+- A scheduled run never logs in or prompts. Nothing it starts can prompt either: gcloud, git and pip are told not to
+  ask, every step's stdin is empty, and PowerShell runs with -NonInteractive.
+- The run holds the laptop awake until it ends (a closed lid still sleeps).
+- A previous run still open after 6 h is stopped by PID and recorded KILLED in its own log, and the new run proceeds.
+  So is a python step that outlived its stopped PowerShell.
+- The task's MultipleInstances is now StopExisting (was IgnoreNew): the next trigger stops a hung run instead of
+  dropping the new one. Kept: 6 h limit, StartWhenAvailable, WakeToRun, runs on battery.
+
+YOUR LAPTOP (Windows PowerShell 5.1, from the repo folder). Steps 1-3 only read. Step 4 closes out the 11-19 run.
+Steps 5-6 change power settings: run them in a PowerShell opened with "Run as administrator". Step 7 re-registers the
+task in your normal PowerShell.
+
+```
+cd C:\Users\jake\Crypto-Tracker
+.venv\Scripts\Activate.ps1
+git switch claude/crypto-metrics-supply-demand-ovkg8g
+git pull
+git log --oneline -1
+#   expect: the line contains "R15"
+# 1. what the task holds NOW (before re-registering) - write these down
+Get-ScheduledTask -TaskName "Crypto-Tracker daily" | Select-Object -ExpandProperty Settings | Format-List ExecutionTimeLimit, StartWhenAvailable, WakeToRun, DisallowStartIfOnBatteries, StopIfGoingOnBatteries, MultipleInstances
+#   expect today: ExecutionTimeLimit PT6H, StartWhenAvailable True, WakeToRun True, both battery lines False, MultipleInstances IgnoreNew
+#   (StopIfGoingOnBatteries True = a battery stop could have killed 11-11 / 11-18; ExecutionTimeLimit PT72H or PT0S = an old registration)
+(Get-ScheduledTask -TaskName "Crypto-Tracker daily").Triggers | Select-Object StartBoundary
+#   expect: one line; its time is your daily time (06:30 or 17:20). Use that time in step 7
+Get-ScheduledTaskInfo -TaskName "Crypto-Tracker daily" | Format-List LastRunTime, LastTaskResult, NextRunTime
+#   expect: LastRunTime 19/11/2026 08:41 if 11-20 never started; LastTaskResult 267009 = still running, 267014 = stopped (by you or the time limit), 3221225786 = ended by shutdown or sign-out, 0 = finished
+# 2. the 11-19 run: still running, or stopped?
+python -c "import json; s=json.load(open('logs/daily_run_state.json', encoding='utf-8-sig')); print(s['started'], s['open'], s['open_since'], s['pid'], s['final'])"
+#   expect: 2026-11-19 08:41:xx BigQuery check 2026-11-19 08:41:xx <pid> False
+Get-Process -Id (Get-Content logs\daily_run_state.json -Raw | ConvertFrom-Json).pid -ErrorAction SilentlyContinue | Select-Object Id, ProcessName, StartTime
+#   expect: NOTHING printed = that run was stopped (shutdown / sign-out / time limit) - then 11-20 was not dropped by IgnoreNew;
+#           a "powershell" line started 19/11/2026 08:41 = it is STILL HUNG at the BigQuery check - IgnoreNew dropped 11-20
+# 3. Task Scheduler's own history (only if "Enable All Tasks History" was already on; otherwise "No events were found")
+Get-WinEvent -LogName Microsoft-Windows-TaskScheduler/Operational -MaxEvents 3000 -ErrorAction SilentlyContinue | Where-Object { $_.Message -like '*Crypto-Tracker daily*' -and $_.Id -in 111,322,329,332 } | Select-Object TimeCreated, Id -First 20
+#   expect: 322 on 2026-11-20 = 11-20 dropped behind the open run; 329 on 11-11 / 11-18 = the 6 h limit; 111 = terminated; 332 = not logged on
+# 4. close out the 11-19 run (the new script stops a run open more than 6 h, BY PID, and records it KILLED)
+powershell -ExecutionPolicy Bypass -File windows\daily_run.ps1 -Reconcile
+#   expect: the previous run (started 2026-11-19 08:41:xx) was KILLED during BigQuery check; FINAL lines appended to ...\logs\run_2026-11-19.log
+#   (or "no killed run to close out" if a later run already closed it)
+# 5. (Administrator PowerShell) wake timers on, on AC and on battery, then check standby type
+powercfg /setacvalueindex SCHEME_CURRENT SUB_SLEEP RTCWAKE 1
+#   expect: no output
+powercfg /setdcvalueindex SCHEME_CURRENT SUB_SLEEP RTCWAKE 1
+#   expect: no output
+powercfg /setactive SCHEME_CURRENT
+#   expect: no output
+powercfg /a
+#   expect: a list; if it says "Standby (S0 Low Power Idle)" this is a Modern Standby laptop - leave it ON AC POWER, logged on (locked is fine) at the run time
+# 6. (Administrator PowerShell) turn on Task Scheduler history so the next stop names its cause
+wevtutil set-log Microsoft-Windows-TaskScheduler/Operational /enabled:true
+#   expect: no output
+# 7. (normal PowerShell, as you) re-register the task with the new settings - use YOUR time from step 1
+powershell -ExecutionPolicy Bypass -File windows\register_task.ps1 -At 17:20
+#   expect: Registered 'Crypto-Tracker daily' daily at 17:20 (stopped after 6 h, runs on battery, a run still open at the next trigger: StopExisting). Wake timers: ...
+#   then:   Settings: ExecutionTimeLimit PT6H; StartWhenAvailable True; WakeToRun True; DisallowStartIfOnBatteries False; StopIfGoingOnBatteries False; MultipleInstances 3 (or StopExisting)
+Export-ScheduledTask -TaskName "Crypto-Tracker daily" | Select-String "MultipleInstancesPolicy|ExecutionTimeLimit|StartWhenAvailable|WakeToRun|Batteries|Scheduled"
+#   expect: <MultipleInstancesPolicy>StopExisting</MultipleInstancesPolicy>, <DisallowStartIfOnBatteries>false</...>, <StopIfGoingOnBatteries>false</...>,
+#           <StartWhenAvailable>true</...>, <WakeToRun>true</...>, <ExecutionTimeLimit>PT6H</...>, and the <Arguments> line ending -Scheduled
+#   (MultipleInstancesPolicy Parallel = the StopExisting value was refused on this Windows; the run's own 6 h stale check still frees the next day)
+powercfg /waketimers
+#   expect: a timer owned by the Task Scheduler for "Crypto-Tracker daily" at the next run time (none listed = the wake will not happen: keep the laptop on and logged on at that time)
+# 8. the check itself never hangs (run by hand; the browser opens only because you are at the keyboard)
+Measure-Command { python adc_check.py | Out-Host } | Select-Object TotalSeconds
+#   expect: one line "BIGQUERY CHECK: OK - user ADC, quota project near-data-510309: one-row query returned 1 row(s), 10 MB billed"
+#           or ONE line "BIGQUERY CHECK: FAILED (exit 2) - the login expired ... FIX: gcloud auth application-default login; ...", and TotalSeconds under 90
+gcloud auth application-default login
+#   expect (only if the line above said FAILED): a browser sign-in, then "Credentials saved to file"
+gcloud auth application-default set-quota-project near-data-510309
+#   expect: "Credentials saved to file" and a line naming the quota project near-data-510309
+# 9. a scheduled run now, exactly as the trigger starts it (it runs for an hour or more; check its first lines after 5 minutes)
+Start-ScheduledTask -TaskName "Crypto-Tracker daily"
+#   expect: no output
+Select-String -Path ("logs\run_" + (Get-Date -Format yyyy-MM-dd) + ".log") -Pattern "daily run start|BigQuery check|no login attempted|NEAR BigQuery skipped"
+#   expect: "daily run start", "=== BigQuery check : ... adc_check.py (limit 3 min)", "=== BigQuery check exited 0 (..s)" within 3 minutes;
+#           with an expired login instead: "exited 2", "scheduled / non-interactive: no login attempted", "NEAR BigQuery skipped - log in: ..." and NO browser window
+```
+
+AC / BATTERY: the task runs on battery and keeps running if you unplug (DisallowStartIfOnBatteries and
+StopIfGoingOnBatteries are false). Many Modern Standby laptops honour wake timers only on AC, so leave the laptop
+plugged in, lid open or set to "Do nothing" on lid close when plugged in, and signed in (locked is fine) at the run
+time. Signing out ends the task. PASTE BACK: the step-1 settings as they were, the step-2 `Get-Process` result, any
+step-3 events, and the step-7 `Settings:` line.
+
 ## 11fc. Round 14 — Ether.fi on the rule; its buyback, revenue lines, top-ups and theatre flag; the R13 decisions (2026-11-19)
 
 ETHER.FI. Circulating = ETHFI.totalSupply() (998,535,999): the 13 issuer-side wallets are in circulating and off the

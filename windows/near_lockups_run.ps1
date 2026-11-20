@@ -22,6 +22,11 @@ $env:PYTHONIOENCODING = "utf-8"
 $env:PYTHONUTF8 = "1"
 $env:PYTHONUNBUFFERED = "1"
 try { [Console]::OutputEncoding = [System.Text.Encoding]::UTF8 } catch { }
+# NOTHING MAY PROMPT (R15 (b), as daily_run.ps1): gcloud, git and pip never ask a scheduled task anything.
+$env:CLOUDSDK_CORE_DISABLE_PROMPTS = "1"
+$env:GIT_TERMINAL_PROMPT = "0"
+$env:GCM_INTERACTIVE = "never"
+$env:PIP_NO_INPUT = "1"
 
 $PyArgs = @()
 if (-not $Python) {
