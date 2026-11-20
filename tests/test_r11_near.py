@@ -120,7 +120,9 @@ def test_3a_only_near_has_components_and_no_existing_series_is_touched(scope):
     # R14: Ether.fi's REVENUE_SPLIT (Jake 2026-11-19) declares components the same way (was: {"Near"} alone)
     assert set(config.S13_COMPONENTS) == {"Near", "Ether.fi"} and set(config.VALUE_FLOW_COMPONENTS) == {"Near",
                                                                                                     "Ether.fi"}
-    assert not set(config.S13_COMPONENTS) & set(config.FROZEN_PROJECTS)
+    # R16: Ether.fi was frozen WITH its components (in its baseline) — none was added to a project frozen before them
+    # (was: no frozen project at all)
+    assert not set(config.S13_COMPONENTS) & set(config.FROZEN_BEFORE_R16)
     g = _s13_groups()
     for m in ("fees_usd", "revenue_usd"):                                     # another project's rows sit beside Near's
         g[("Hyperliquid", m)] = _g(m, pd.date_range("2026-08-01", "2026-11-10"), 7.0, "defillama", "Hyperliquid")
