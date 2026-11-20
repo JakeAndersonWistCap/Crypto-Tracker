@@ -128,7 +128,7 @@ def test_2_every_declared_r9_move_keeps_the_earlier_declarations():
             d = config.FROZEN_MOVES[proj][key]
             # R16: a later round may move the same cell again (R16's renamed headers) — R9's own last step is judged,
             # the later steps follow it on record (was: the record's last step overall)
-            last = [x for x in (d.get("then") or [d]) if str(x.get("why", "")).startswith("R9.")][-1]
+            last = [x for x in [d, *(d.get("then") or [])] if str(x.get("why", "")).startswith("R9.")][-1]
             assert last["to"] == steps[-1]["to"] and last["why"].startswith("R9."), (proj, key)
             assert all(s["why"] and s["date"] and "from" in s for s in steps)
 
