@@ -186,6 +186,9 @@ def parse_args(argv=None) -> argparse.Namespace:
     ap.add_argument("--catch-up-days", type=int, default=None, metavar="N",
                     help="the catch-up's day budget: at most N distinct days read this run, newest first (default "
                          "TOKEN_METRICS_CATCH_UP_DAYS, else 7); a longer gap is filled over several runs")
+    ap.add_argument("--wait", type=float, default=0.0, metavar="N",
+                    help="R15.11: when another run holds the store (logs/store.lock), wait up to N minutes for it "
+                         "(default 0: print one line and exit 76)")
     args = ap.parse_args(argv)
     if args.catch_up and (args.no_fetch or args.seed):
         ap.error("--catch-up runs alone: not with --no-fetch or --seed")
@@ -1099,15 +1102,24 @@ def main(argv=None) -> int:
     import progress
     what = (f"--seed {args.seed}" if args.seed else "--no-fetch build" if args.no_fetch
             else "--catch-up" if args.catch_up else "run")
-    # ONE WRITER ON metrics.db (Round G 1.8): a second run waits for the first, then exits 75 with a plain message
-    from runlock import RunLock, RunLocked
+    # ONE WRITER OF THE STORE, scheduled or by hand (R15.11, storelock.py): every mode takes it, the --no-fetch build
+    # too (it writes). A live holder: one line, exit 76 (or wait --wait N minutes); a stale one is taken over.
+    # Released however this ends. Under daily_run.ps1 the run is nested in the daily run's lock.
+    import storelock
     try:
-        with RunLock(store_mod.DB_PATH, f"token_metrics {what}", say=log.warning):
-            with progress.Heartbeat(f"token_metrics {what}", say=log.info):
-                return _main(args, log)
-    except RunLocked as e:
+        with storelock.hold(f"token_metrics {what}", wait_min=args.wait, say=log.warning):
+            # ONE WRITER ON metrics.db (Round G 1.8): a second run waits for the first, then exits 75 with a plain message
+            from runlock import RunLock, RunLocked
+            try:
+                with RunLock(store_mod.DB_PATH, f"token_metrics {what}", say=log.warning):
+                    with progress.Heartbeat(f"token_metrics {what}", say=log.info):
+                        return _main(args, log)
+            except RunLocked as e:
+                log.error("%s", e.code)
+                return 75
+    except storelock.StoreHeld as e:
         log.error("%s", e.code)
-        return 75
+        return storelock.EXIT_HELD
 
 
 def run_catch_up(st, projects: list[dict], args, log, run_id: str | None = None):

@@ -28,7 +28,8 @@ param(
     [switch]$Reconcile,                   # only close out a previous run that was killed (D2-8a), then exit
     [int]$RunBudgetMinutes = 330,         # R15: the whole run stays under the task's 6 h ExecutionTimeLimit
     [int]$TailReserveMinutes = 60,        # R15: kept back for the closing steps (credibility .. snapshot)
-    [int]$StaleHours = 6                  # R15: a previous run still open after this many hours is recorded KILLED
+    [int]$StaleHours = 6,                 # R15: a previous run still open after this many hours is recorded KILLED
+    [int]$LockWaitScheduledMinutes = 90   # R15.11: wait this long for ANOTHER SCHEDULED holder (the Sunday lockup read)
 )
 
 $ErrorActionPreference = "Continue"
@@ -58,6 +59,8 @@ try {
 $RunT0 = Get-Date
 $StepTimedOut = 124                       # R15: the exit code recorded for a step killed at its wall-clock limit
 $StepNotRun = 125                         # R15: the exit code recorded for a step the run budget left no time for
+$StoreHeld = 76                           # R15.11: storelock.py's "a live writer holds the store" (a missed day)
+$StoreLockTaken = $false
 # R15: each step's wall-clock limit in minutes; Get-StepLimit also caps it by what is left of $RunBudgetMinutes
 # (the steps before the closing ones leave $TailReserveMinutes), so the run ends before the task's time limit.
 $StepMinutes = @{ "BigQuery check" = 3; "BigQuery check (after login)" = 3; "token_metrics" = 240;
@@ -327,6 +330,29 @@ function Invoke-Step([string]$label, [string[]]$arguments) {
     return @($code, ($out -join "`n"))
 }
 
+function Invoke-StoreLock([string[]]$arguments, [int]$seconds) {
+    # R15.11: storelock.py (acquire / release) for THIS PowerShell's PID, bounded like a step; returns (exit code, text).
+    $tag = "{0}_{1}" -f $PID, ([guid]::NewGuid().ToString("N").Substring(0, 8))
+    $o = Join-Path $LogDir ".lock_$tag.out"
+    $e = Join-Path $LogDir ".lock_$tag.err"
+    $code = 1
+    $text = ""
+    try {
+        $argLine = (@($PyArgs + @("storelock.py") + $arguments) | ForEach-Object { Format-Arg $_ }) -join " "
+        $lp = Start-Process -FilePath $Python -ArgumentList $argLine -WorkingDirectory $Repo -NoNewWindow -PassThru `
+            -RedirectStandardOutput $o -RedirectStandardError $e
+        $null = $lp.Handle
+        if ($lp.WaitForExit($seconds * 1000)) { $code = $lp.ExitCode } else { Stop-StepProcess $lp.Id; $code = 124 }
+        $text = ((@(Get-Content -Path $o -Encoding UTF8 -ErrorAction SilentlyContinue) +
+                  @(Get-Content -Path $e -Encoding UTF8 -ErrorAction SilentlyContinue)) -join " ").Trim()
+    } catch {
+        $text = "could not run storelock.py: $($_.Exception.Message)"
+    } finally {
+        foreach ($f in @($o, $e)) { Remove-Item -Path $f -Force -ErrorAction SilentlyContinue }
+    }
+    return @($code, $text)
+}
+
 $Steps = @()                              # (label, exit code) of every step, for the closing console line
 $FinalWritten = $false
 
@@ -344,6 +370,36 @@ Save-State ""
 # writes "daily run FINAL: stopped early" with the steps that ran.
 try {
 
+# 0. ONE WRITER OF THE STORE (R15.11, Jake 2026-11-20: the missed 05:30 run started at 09:13, the minute he ran the R14
+#    block by hand on the same store). storelock.py takes logs\store.lock for this PowerShell's PID before any step;
+#    every step runs under it (TOKEN_METRICS_STORE_LOCK_HELD). A LIVE manual holder: this run does NOT start - it logs
+#    "SKIPPED: a manual run holds the store (PID, since)", names the MISSED DAY, notifies and exits 76. Another
+#    scheduled holder (the Sunday lockup read) is waited for up to -LockWaitScheduledMinutes. A stale lock (PID gone or
+#    reused, or older than 6 h) is taken over and recorded in logs\store_lock.log. Released in the finally block below.
+$LockWho = "scheduled"
+if (-not $Scheduled) { $LockWho = "manual" }
+$lk = Invoke-StoreLock @("acquire", "--pid", "$PID", "--who", $LockWho, "--command", "daily_run.ps1",
+                         "--wait-scheduled-min", "$LockWaitScheduledMinutes") (($LockWaitScheduledMinutes + 2) * 60)
+if ($lk[1]) { Write-Log $lk[1] }
+if ($lk[0] -eq $StoreHeld) {
+    $skipLine = "daily_run: SKIPPED - MISSED DAY {0}: {1} | log $Log" -f (Get-Date -Format "yyyy-MM-dd"), $lk[1]
+    Write-Log $skipLine
+    Write-Log "daily run FINAL: SKIPPED - the store was held; nothing ran (exit $StoreHeld). Missed day $(Get-Date -Format 'yyyy-MM-dd')."
+    Show-Toast "Crypto-Tracker: daily run SKIPPED (missed day)" "$($lk[1]). Run it by hand when that one has finished. Log: $Log"
+    Write-Host $skipLine
+    $FinalWritten = $true
+    Save-State ""
+    exit $StoreHeld
+}
+if ($lk[0] -eq 0) {
+    $StoreLockTaken = $true
+    $env:TOKEN_METRICS_STORE_LOCK_HELD = "$PID"
+} else {
+    # the lock helper itself failed (no Python, a timeout): the run goes on and says so - the steps then take the lock
+    # themselves, so a live manual run still refuses them
+    Write-Log "STORE LOCK: not taken (storelock.py exit $($lk[0])) - each step takes it itself"
+}
+
 # 1. NEAR BigQuery, FIRST, before any other step (Jake 2026-10-12 evening, item 16): his user ADC keeps expiring and
 #    service-account keys are blocked by org policy. adc_check.py runs a REAL one-row query. On failure:
 #      * run by hand (interactive): log in here - gcloud auth application-default login, then set the quota project -
@@ -357,7 +413,7 @@ function Test-Interactive {
     try {
         $me = Get-CimInstance Win32_Process -Filter "ProcessId=$PID" -ErrorAction Stop
         $parent = Get-CimInstance Win32_Process -Filter "ProcessId=$($me.ParentProcessId)" -ErrorAction Stop
-        if ($parent.Name -in @("svchost.exe", "taskeng.exe", "taskhostw.exe")) { return $false }
+        if ($parent.Name -in @("svchost.exe", "taskeng.exe", "taskhostw.exe", "conhost.exe")) { return $false }
     } catch { }
     try { if ([Console]::IsInputRedirected) { return $false } } catch { }
     return $true
@@ -504,6 +560,12 @@ $FinalWritten = $true
 Save-State ""
 exit $run[0]
 } finally {
+    if ($StoreLockTaken) {
+        # R15.11: released however the run ends (a killed run leaves a dead PID: the next writer takes it over)
+        $rl = Invoke-StoreLock @("release", "--pid", "$PID") 60
+        if ($rl[1]) { Write-Log $rl[1] }
+        $StoreLockTaken = $false
+    }
     if (-not $FinalWritten) {
         $ran = ($Steps | ForEach-Object { "$($_[0])=$($_[1])" }) -join ", "
         if (-not $ran) { $ran = "none" }

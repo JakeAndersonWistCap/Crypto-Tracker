@@ -22,13 +22,20 @@ param(
     [string]$Day = "Sunday",
     [string]$TaskName = "Crypto-Tracker NEAR lockups",
     [switch]$StopOnBattery,
-    [int]$LimitHours = 8
+    [int]$LimitHours = 8,
+    [ValidateSet("conhost", "powershell")]
+    [string]$Launcher = "conhost"         # R15.12: conhost --headless (no window to close), as register_task.ps1
 )
 
 $script = Join-Path $PSScriptRoot "near_lockups_run.ps1"
-$action = New-ScheduledTaskAction -Execute "powershell.exe" `
-    -Argument "-NoProfile -NonInteractive -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$script`"" `
-    -WorkingDirectory (Split-Path -Parent $PSScriptRoot)
+$psArgs = "-NoProfile -NonInteractive -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$script`""
+if ($Launcher -eq "conhost") {
+    $action = New-ScheduledTaskAction -Execute "conhost.exe" -Argument "--headless powershell.exe $psArgs" `
+        -WorkingDirectory (Split-Path -Parent $PSScriptRoot)
+} else {
+    $action = New-ScheduledTaskAction -Execute "powershell.exe" -Argument $psArgs `
+        -WorkingDirectory (Split-Path -Parent $PSScriptRoot)
+}
 $trigger = New-ScheduledTaskTrigger -Weekly -DaysOfWeek $Day -At $At
 $settings = New-ScheduledTaskSettingsSet -WakeToRun -StartWhenAvailable `
     -ExecutionTimeLimit (New-TimeSpan -Hours $LimitHours) -MultipleInstances IgnoreNew

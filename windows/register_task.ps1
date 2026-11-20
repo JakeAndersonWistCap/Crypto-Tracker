@@ -32,13 +32,26 @@ param(
     [string]$TaskName = "Crypto-Tracker daily",
     [switch]$StopOnBattery,
     [switch]$AllowBattery,                # kept so older command lines still work; running on battery is the default
-    [int]$LimitHours = 6                  # 0 = no limit (not the default: Jake 2026-10-26, D3-3)
+    [int]$LimitHours = 6,                 # 0 = no limit (not the default: Jake 2026-10-26, D3-3)
+    [ValidateSet("conhost", "powershell")]
+    [string]$Launcher = "conhost",        # R15.12: conhost --headless (no window); "powershell" = the old direct start
+    [switch]$RunWhetherLoggedOn           # R15.12 option, not the default: S4U - runs logged on or not (Administrator)
 )
 
+# NO WINDOW TO CLOSE (R15.12, Jake 2026-11-20: the 09:13 run ended 0xC000013A, STATUS_CONTROL_C_EXIT - its console was
+# closed, or the session ended). "-WindowStyle Hidden" hides PowerShell's window only AFTER it has opened, and where
+# Windows Terminal is the default terminal the console is handed to a Terminal window or tab first, where it stays
+# visible and closing it ends the run. conhost.exe --headless gives the run a console with NO window at all - nothing
+# for Jake to close, nothing shared with his own PowerShell. -Launcher powershell puts the old direct start back.
 $script = Join-Path $PSScriptRoot "daily_run.ps1"
-$action = New-ScheduledTaskAction -Execute "powershell.exe" `
-    -Argument "-NoProfile -NonInteractive -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$script`" -Scheduled" `
-    -WorkingDirectory (Split-Path -Parent $PSScriptRoot)
+$psArgs = "-NoProfile -NonInteractive -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$script`" -Scheduled"
+if ($Launcher -eq "conhost") {
+    $action = New-ScheduledTaskAction -Execute "conhost.exe" -Argument "--headless powershell.exe $psArgs" `
+        -WorkingDirectory (Split-Path -Parent $PSScriptRoot)
+} else {
+    $action = New-ScheduledTaskAction -Execute "powershell.exe" -Argument $psArgs `
+        -WorkingDirectory (Split-Path -Parent $PSScriptRoot)
+}
 $trigger = New-ScheduledTaskTrigger -Daily -At $At
 # R15: Parallel here, then StopExisting on the CIM property below (was: -MultipleInstances IgnoreNew)
 $settings = New-ScheduledTaskSettingsSet -WakeToRun -StartWhenAvailable `
@@ -53,6 +66,12 @@ if (-not $StopOnBattery) {
     $settings.StopIfGoingOnBatteries = $false
 }
 $principal = New-ScheduledTaskPrincipal -UserId "$env:USERDOMAIN\$env:USERNAME" -LogonType Interactive -RunLevel Limited
+if ($RunWhetherLoggedOn) {
+    # R15.12 OPTION: S4U ("Run whether user is logged on or not", no password stored) - the run is independent of the
+    # logon session, so neither signing out nor closing any window ends it. Register from an Administrator PowerShell.
+    # It runs with no desktop: no notifications are shown (the log still has every line).
+    $principal = New-ScheduledTaskPrincipal -UserId "$env:USERDOMAIN\$env:USERNAME" -LogonType S4U -RunLevel Limited
+}
 
 Register-ScheduledTask -TaskName $TaskName -Action $action -Trigger $trigger -Settings $settings `
     -Principal $principal -Description "token_metrics.py + credibility_report.py daily; logs in logs\run_YYYY-MM-DD.log" -Force
@@ -60,7 +79,9 @@ $limitText = "no time limit"
 if ($LimitHours -gt 0) { $limitText = "stopped after $LimitHours h" }
 $batteryText = "runs on battery"
 if ($StopOnBattery) { $batteryText = "AC power only" }
-Write-Host "Registered '$TaskName' daily at $At ($limitText, $batteryText, a run still open at the next trigger: $instances). Wake timers: powercfg /waketimers lists them; check Power Options."
+$logonText = "only while you are logged on"
+if ($RunWhetherLoggedOn) { $logonText = "whether you are logged on or not (S4U)" }
+Write-Host "Registered '$TaskName' daily at $At ($limitText, $batteryText, a run still open at the next trigger: $instances; started by $Launcher, $logonText). Wake timers: powercfg /waketimers lists them; check Power Options."
 # What Task Scheduler now holds (R15): expect ExecutionTimeLimit PT6H, StartWhenAvailable True, WakeToRun True,
 # DisallowStartIfOnBatteries False, StopIfGoingOnBatteries False, MultipleInstances StopExisting (or Parallel).
 try {

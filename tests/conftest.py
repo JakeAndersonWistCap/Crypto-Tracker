@@ -35,6 +35,9 @@ def _isolated_logcache(monkeypatch, tmp_path):
     """fetch/logcache.py persists scanned events between runs. Each test gets its own empty
     cache, so no test reads another's events or writes into the working tree's .cache/."""
     monkeypatch.setenv("TOKEN_METRICS_LOGCACHE", str(tmp_path / "logcache"))
+    # R15.11: the store's one-writer lock (storelock.py) lives in the test's own folder, never the working tree's logs/
+    monkeypatch.setenv("TOKEN_METRICS_STORE_LOCK", str(tmp_path / "store.lock"))
+    monkeypatch.delenv("TOKEN_METRICS_STORE_LOCK_HELD", raising=False)
     # once-a-day checks run every time in tests; the test of the gate itself unsets this
     monkeypatch.setenv("TOKEN_METRICS_DAILY_CHECKS", "always")
     # tiers start together in tests (the stagger, Round G 1.1, has its own test)

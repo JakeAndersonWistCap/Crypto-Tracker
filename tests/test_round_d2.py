@@ -591,7 +591,9 @@ def test_8a_a_killed_run_gets_its_final_lines_on_the_next_start():
     assert ps.index("$PrevKilled = Resolve-PreviousRun") < ps.index('Write-Log "daily run start')
     assert "[switch]$Reconcile" in ps and "if ($Reconcile) {" in ps
     # every way the run ends marks it final; the plan names every unconditional step
-    assert ps.count("$FinalWritten = $true") == 2 and ps.count('Save-State ""') >= 3
+    # R15.11 moved this pin: a run SKIPPED because a live writer holds the store also marks itself final; old value:
+    #   assert ps.count("$FinalWritten = $true") == 2 and ...
+    assert ps.count("$FinalWritten = $true") == 3 and ps.count('Save-State ""') >= 3
     import re
     plan = re.search(r"\$Plan = @\((.*?)\)\n", ps, re.S).group(1)
     plan = re.findall(r'"([^"]+)"', plan)

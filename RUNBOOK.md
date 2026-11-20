@@ -634,11 +634,12 @@ wevtutil set-log Microsoft-Windows-TaskScheduler/Operational /enabled:true
 #   expect: no output
 # 7. (normal PowerShell, as you) re-register the task with the new settings - use YOUR time from step 1
 powershell -ExecutionPolicy Bypass -File windows\register_task.ps1 -At 17:20
-#   expect: Registered 'Crypto-Tracker daily' daily at 17:20 (stopped after 6 h, runs on battery, a run still open at the next trigger: StopExisting). Wake timers: ...
+#   expect: Registered 'Crypto-Tracker daily' daily at 17:20 (stopped after 6 h, runs on battery, a run still open at the next trigger: StopExisting; started by conhost, only while you are logged on). Wake timers: ...
 #   then:   Settings: ExecutionTimeLimit PT6H; StartWhenAvailable True; WakeToRun True; DisallowStartIfOnBatteries False; StopIfGoingOnBatteries False; MultipleInstances 3 (or StopExisting)
-Export-ScheduledTask -TaskName "Crypto-Tracker daily" | Select-String "MultipleInstancesPolicy|ExecutionTimeLimit|StartWhenAvailable|WakeToRun|Batteries|Scheduled"
+Export-ScheduledTask -TaskName "Crypto-Tracker daily" | Select-String "MultipleInstancesPolicy|ExecutionTimeLimit|StartWhenAvailable|WakeToRun|Batteries|Command|Arguments"
 #   expect: <MultipleInstancesPolicy>StopExisting</MultipleInstancesPolicy>, <DisallowStartIfOnBatteries>false</...>, <StopIfGoingOnBatteries>false</...>,
-#           <StartWhenAvailable>true</...>, <WakeToRun>true</...>, <ExecutionTimeLimit>PT6H</...>, and the <Arguments> line ending -Scheduled
+#           <StartWhenAvailable>true</...>, <WakeToRun>true</...>, <ExecutionTimeLimit>PT6H</...>,
+#           <Command>conhost.exe</Command> and <Arguments>--headless powershell.exe -NoProfile -NonInteractive ... -Scheduled</Arguments>
 #   (MultipleInstancesPolicy Parallel = the StopExisting value was refused on this Windows; the run's own 6 h stale check still frees the next day)
 powercfg /waketimers
 #   expect: a timer owned by the Task Scheduler for "Crypto-Tracker daily" at the next run time (none listed = the wake will not happen: keep the laptop on and logged on at that time)
@@ -651,10 +652,12 @@ gcloud auth application-default login
 gcloud auth application-default set-quota-project near-data-510309
 #   expect: "Credentials saved to file" and a line naming the quota project near-data-510309
 # 9. a scheduled run now, exactly as the trigger starts it (it runs for an hour or more; check its first lines after 5 minutes)
+#    Run NOTHING else on the store meanwhile (token_metrics.py, archive_backfill.py): the store lock refuses it (R15.11)
 Start-ScheduledTask -TaskName "Crypto-Tracker daily"
-#   expect: no output
-Select-String -Path ("logs\run_" + (Get-Date -Format yyyy-MM-dd) + ".log") -Pattern "daily run start|BigQuery check|no login attempted|NEAR BigQuery skipped"
-#   expect: "daily run start", "=== BigQuery check : ... adc_check.py (limit 3 min)", "=== BigQuery check exited 0 (..s)" within 3 minutes;
+#   expect: no output, and NO window opens (the run has no window: conhost --headless). A window that does open = see "IF A WINDOW OPENS" below
+Select-String -Path ("logs\run_" + (Get-Date -Format yyyy-MM-dd) + ".log") -Pattern "daily run start|STORE LOCK|BigQuery check|no login attempted|NEAR BigQuery skipped"
+#   expect: "daily run start", "STORE LOCK: taken by PID <n> (scheduled: daily_run.ps1)",
+#           "=== BigQuery check : ... adc_check.py (limit 3 min)", "=== BigQuery check exited 0 (..s)" within 3 minutes;
 #           with an expired login instead: "exited 2", "scheduled / non-interactive: no login attempted", "NEAR BigQuery skipped - log in: ..." and NO browser window
 ```
 
@@ -663,6 +666,55 @@ StopIfGoingOnBatteries are false). Many Modern Standby laptops honour wake timer
 plugged in, lid open or set to "Do nothing" on lid close when plugged in, and signed in (locked is fine) at the run
 time. Signing out ends the task. PASTE BACK: the step-1 settings as they were, the step-2 `Get-Process` result, any
 step-3 events, and the step-7 `Settings:` line.
+
+THE 09:13 RUN (Jake 2026-11-20 morning: LastRunTime 2026-11-20 09:13:35, LastTaskResult 3221225786 = 0xC000013A,
+NextRunTime 2026-11-21 05:30, NumberOfMissedRuns 0). CERTAIN from the code: 0xC000013A is STATUS_CONTROL_C_EXIT. The
+run's console was closed, Ctrl+C reached it, or the logon session ended (sign-out, restart, shutdown). A Task Scheduler
+stop or time limit reports 267014, not this. The trigger is 05:30. INFERRED: the laptop was asleep or off at 05:30
+with no wake, so StartWhenAvailable started the missed run when you logged on at 09:13. A task "run only when user is
+logged on" gets its OWN console, not your PowerShell window's: Ctrl+C or closing your own window cannot reach it.
+The exception is when Windows Terminal is your default terminal. Then the run's console was handed to Terminal and
+could open as a tab in the window you were typing in, and closing that window closed the run with it. That is the
+likeliest path; a sign-out or restart is the other. Check: Settings > System > For developers > Terminal
+(or Windows Terminal > Settings > Startup > Default terminal application). "Windows Terminal" there = the likely path.
+The run also overlapped your R14 block (token_metrics.py, archive_backfill.py) on the same store.
+
+WHAT CHANGED (R15.11-R15.12):
+- The run now has NO window: the task starts `conhost.exe --headless powershell.exe ...`. Nothing can be closed, and
+  nothing is shared with your windows.
+- One writer of the store at a time. The scheduled run, the Sunday lockup read, token_metrics.py (every mode,
+  --no-fetch included) and archive_backfill.py --run all take `logs\store.lock` first.
+  - If you run token_metrics.py while the scheduled run holds it, you see one line:
+    `STORE LOCKED - a scheduled run holds the store (PID 1234, since 2026-11-21 05:30:02: daily_run.ps1). Nothing run
+    (exit 76); run it again when that one has finished, or add --wait N to wait up to N minutes.`
+  - If the scheduled run starts while YOUR command holds it, the day's log reads
+    `SKIPPED: a manual run holds the store (PID ..., since ...: token_metrics run)` and
+    `daily_run: SKIPPED - MISSED DAY <date>`. You get a notification, and the task result is 76. That day is a
+    missed day: run `python token_metrics.py` yourself once your command has finished.
+  - A lock left by a run that died (its PID gone or reused, or held more than 6 h) is taken over, and the takeover
+    is written to `logs\store_lock.log`.
+- Read-only commands never take the lock: done_check.py, project_freeze.py --compare, store_export.py, and
+  archive_backfill.py without --run.
+
+```
+python storelock.py status
+#   expect: "STORE LOCK: free" when nothing runs; while a run holds it: "STORE LOCK: live - a scheduled run holds the store (PID ..., since ...: daily_run.ps1)"
+python token_metrics.py --no-fetch --wait 30
+#   expect: no error (it waits up to 30 minutes for a holder, saying so once a minute; without --wait it exits 76 at once)
+Get-Content logs\store_lock.log -Tail 5 -ErrorAction SilentlyContinue
+#   expect: nothing yet; later, one line per takeover or refusal, dated
+```
+
+IF A WINDOW OPENS at step 9, or LastTaskResult reads 1 (or anything other than the run's exit code) after a run:
+your Windows does not take `conhost --headless`. Re-register with
+`powershell -ExecutionPolicy Bypass -File windows\register_task.ps1 -At 17:20 -Launcher powershell` (the old direct
+start) and set the default terminal to "Windows Console Host" (the setting named above). The run then gets its own
+hidden console window, not a Terminal tab.
+
+OPTION, not the default: `-RunWhetherLoggedOn` (from an Administrator PowerShell) registers the task with the S4U logon
+("Run whether user is logged on or not", no password stored). The run is then independent of your session, so even
+signing out does not end it. It has no desktop, so it shows no notifications (the log has every line), and it is
+unverified on your laptop.
 
 ## 11fc. Round 14 — Ether.fi on the rule; its buyback, revenue lines, top-ups and theatre flag; the R13 decisions (2026-11-19)
 

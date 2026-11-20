@@ -320,3 +320,171 @@ def test_the_runbook_and_spec_sections_are_in_place():
     spec = (ROOT / "SPEC.md").read_text(encoding="utf-8")
     j = spec.index("### Round 15 — the daily run (Jake 2026-11-20), old → new")
     assert j < spec.index("### Round 14") and spec.index("\n### ", j + 1) == spec.index("\n### Round 14")
+
+
+# ================================================================== R15.11 one writer of the store (storelock.py)
+@pytest.fixture
+def holder():
+    """A live process that 'holds' the store; stopped by its PID afterwards."""
+    p = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"])
+    time.sleep(0.2)
+    yield p
+    p.kill()
+    p.wait(timeout=10)
+
+
+def _hold_record(path, pid, who="manual", command="token_metrics run", start=None, since_epoch=None, max_h=6.0):
+    import storelock
+    rec = {"pid": pid, "pid_start": storelock.process_start(pid) if start is None else start,
+           "since": "2026-11-20 09:13:35", "since_epoch": time.time() if since_epoch is None else since_epoch,
+           "who": who, "command": command, "max_h": max_h}
+    Path(path).write_text(json.dumps(rec), encoding="utf-8")
+    return rec
+
+
+def test_r15_11_a_live_holder_blocks_a_second_writer(tmp_path, holder):
+    import storelock
+    lock = tmp_path / "store.lock"
+    _hold_record(lock, holder.pid)
+    assert storelock.state(storelock.read(lock)) == "live"
+    got = storelock.acquire("manual", "archive_backfill --run", path=lock)
+    assert got["status"] == "held" and storelock.read(lock)["pid"] == holder.pid
+    with pytest.raises(storelock.StoreHeld) as e:
+        with storelock.hold("token_metrics run", path=lock):
+            raise AssertionError("must not run while a live writer holds the store")
+    assert str(holder.pid) in str(e.value.code) and "\n" not in str(e.value.code) and "--wait N" in str(e.value.code)
+    # the scheduled run (the CLI daily_run.ps1 calls): one SKIPPED line naming the holder, exit 76
+    env = dict(os.environ, TOKEN_METRICS_STORE_LOCK=str(lock))
+    env.pop(storelock.HELD_ENV, None)
+    r = subprocess.run([sys.executable, str(ROOT / "storelock.py"), "acquire", "--pid", str(os.getpid()), "--who",
+                        "scheduled", "--command", "daily_run.ps1"], cwd=str(ROOT), env=env, capture_output=True,
+                       text=True, timeout=60)
+    assert r.returncode == storelock.EXIT_HELD == 76
+    assert r.stdout.strip().startswith(
+        f"SKIPPED: a manual run holds the store (PID {holder.pid}, since 2026-11-20 09:13:35")
+    assert "REFUSED daily_run.ps1 (scheduled)" in (tmp_path / "store.log").read_text()
+
+
+def test_r15_11_a_manual_wait_takes_the_lock_once_the_holder_ends(tmp_path):
+    import storelock
+    lock = tmp_path / "store.lock"
+    short = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(1.5)"])
+    try:
+        _hold_record(lock, short.pid)
+
+        def nap(s):
+            time.sleep(0.2)
+            short.poll()                                  # reap it, so its PID reads as gone
+        got = storelock.acquire("manual", "token_metrics run", wait_s=30, path=lock, say=lambda s: None, sleep=nap)
+        assert got["status"] == "taken" and storelock.read(lock)["pid"] == os.getpid()
+    finally:
+        short.kill()
+        short.wait(timeout=10)
+        storelock.release(path=lock)
+
+
+def test_r15_11_a_dead_pid_lock_is_taken_over_and_recorded(tmp_path):
+    import storelock
+    lock = tmp_path / "store.lock"
+    gone = subprocess.Popen([sys.executable, "-c", "pass"])
+    gone.wait(timeout=30)
+    _hold_record(lock, gone.pid, start=1.0)
+    said = []
+    got = storelock.acquire("scheduled", "daily_run.ps1", path=lock, say=said.append)
+    assert got["status"] == "taken" and got["took_over"]["pid"] == gone.pid
+    assert storelock.read(lock)["pid"] == os.getpid() and storelock.read(lock)["who"] == "scheduled"
+    assert said and "taken over from a stale lock" in said[0]
+    assert "taken over from a stale lock" in (tmp_path / "store.log").read_text()
+    assert storelock.release(path=lock) and not lock.exists()
+
+
+def test_r15_11_a_reused_pid_with_another_start_time_is_stale(tmp_path, holder):
+    import storelock
+    lock = tmp_path / "store.lock"
+    real = storelock.process_start(holder.pid)
+    _hold_record(lock, holder.pid, start=real - 3600)          # the PID now belongs to a process started later
+    assert storelock.state(storelock.read(lock)) == "reused"
+    got = storelock.acquire("manual", "token_metrics run", path=lock, say=lambda s: None)
+    assert got["status"] == "taken" and got["took_over"]["pid"] == holder.pid
+    storelock.release(path=lock)
+    # held longer than its max_h (6 h, the daily task's limit): stale even though the PID still runs
+    _hold_record(lock, holder.pid, since_epoch=time.time() - 6.5 * 3600)
+    assert storelock.state(storelock.read(lock)) == "old"
+    assert storelock.acquire("manual", "x", path=lock, say=lambda s: None)["status"] == "taken"
+    storelock.release(path=lock)
+    _hold_record(lock, holder.pid, since_epoch=time.time() - 6.5 * 3600, max_h=8.0)   # the weekly lockup read: 8 h
+    assert storelock.state(storelock.read(lock)) == "live"
+
+
+def test_r15_11_the_lock_is_released_after_an_exception_and_a_child_runs_nested(tmp_path, holder, monkeypatch):
+    import storelock
+    lock = tmp_path / "store.lock"
+    with pytest.raises(ValueError):
+        with storelock.hold("token_metrics run", path=lock) as got:
+            assert got["status"] == "taken" and lock.exists()
+            raise ValueError("a crash mid-run")
+    assert not lock.exists()
+    # a daily_run step: the holder is its PowerShell, named in TOKEN_METRICS_STORE_LOCK_HELD
+    _hold_record(lock, holder.pid, who="scheduled", command="daily_run.ps1")
+    monkeypatch.setenv(storelock.HELD_ENV, str(holder.pid))
+    with storelock.hold("token_metrics run", path=lock) as got:
+        assert got["status"] == "nested"
+    assert storelock.read(lock)["pid"] == holder.pid, "a nested step never releases its parent's lock"
+
+
+def test_r15_11_token_metrics_and_the_backfill_refuse_a_held_store(tmp_path, holder, monkeypatch, caplog):
+    import storelock
+    import store as store_mod
+    lock = tmp_path / "store.lock"
+    monkeypatch.setenv("TOKEN_METRICS_STORE_LOCK", str(lock))
+    monkeypatch.setattr(store_mod, "DB_PATH", tmp_path / "m.db")
+    _hold_record(lock, holder.pid, who="scheduled", command="daily_run.ps1")
+    import token_metrics
+    monkeypatch.setattr(token_metrics, "_main", lambda *a, **k: (_ for _ in ()).throw(AssertionError("ran")))
+    t0 = time.monotonic()
+    assert token_metrics.main(["--no-fetch"]) == storelock.EXIT_HELD        # the build writes: it takes the lock
+    assert time.monotonic() - t0 < 30
+    assert f"a scheduled run holds the store (PID {holder.pid}" in caplog.text
+    import archive_backfill
+    monkeypatch.setattr(archive_backfill, "_work", lambda a: (_ for _ in ()).throw(AssertionError("ran")))
+    assert archive_backfill.main(["--run", "--db", str(tmp_path / "m.db")]) == storelock.EXIT_HELD
+    assert storelock.read(lock)["pid"] == holder.pid
+
+
+def test_r15_11_read_only_commands_take_no_lock():
+    for f in ("done_check.py", "project_freeze.py", "store_export.py"):
+        tree = ast.parse((ROOT / f).read_text(encoding="utf-8"))
+        names = {a.name for n in ast.walk(tree) if isinstance(n, (ast.Import, ast.ImportFrom)) for a in n.names}
+        mods = {n.module for n in ast.walk(tree) if isinstance(n, ast.ImportFrom)}
+        assert not ({"storelock", "runlock"} & (names | mods)), f
+    # the backfill's plan (no --run) returns before the lock
+    src = (ROOT / "archive_backfill.py").read_text(encoding="utf-8")
+    assert src.index("if not a.run:") < src.index("storelock.hold(")
+
+
+def test_r15_11_the_powershell_runs_take_and_release_the_store_lock():
+    body = PS[PS.index("\ntry {\n"):]
+    take = body.index('Invoke-StoreLock @("acquire", "--pid", "$PID", "--who", $LockWho')
+    assert take < body.index('$adc = Invoke-Step "BigQuery check"')
+    skip = body[body.index("if ($lk[0] -eq $StoreHeld) {"):body.index("if ($lk[0] -eq 0) {")]
+    assert "MISSED DAY" in skip and "Show-Toast" in skip and "exit $StoreHeld" in skip and "Write-Host $skipLine" in skip
+    assert '$env:TOKEN_METRICS_STORE_LOCK_HELD = "$PID"' in body
+    fin = body[body.rindex("} finally {"):]
+    assert 'Invoke-StoreLock @("release", "--pid", "$PID")' in fin
+    assert 'if (-not $Scheduled) { $LockWho = "manual" }' in PS
+    lock = (ROOT / "windows" / "near_lockups_run.ps1").read_text(encoding="utf-8")
+    assert lock.index("storelock.py acquire") < lock.index("& $Python @PyArgs @arguments") < lock.index(
+        "storelock.py release")
+    assert "--max-hours 8" in lock and "if ($lockCode -eq 76) {" in lock
+
+
+def test_r15_12_the_scheduled_run_has_no_window_to_close():
+    code = "\n".join(ln for ln in REG.splitlines() if not ln.lstrip().startswith("#"))
+    assert '[string]$Launcher = "conhost"' in code
+    assert '-Execute "conhost.exe" -Argument "--headless powershell.exe $psArgs"' in code
+    assert "-WindowStyle Hidden" in code and "-NonInteractive" in code
+    # S4U only on request (registering it needs an Administrator PowerShell)
+    i = code.index("if ($RunWhetherLoggedOn) {")
+    assert code.index("-LogonType Interactive") < i < code.index("-LogonType S4U")
+    lock_reg = (ROOT / "windows" / "register_lockup_task.ps1").read_text(encoding="utf-8")
+    assert '-Execute "conhost.exe" -Argument "--headless powershell.exe $psArgs"' in lock_reg

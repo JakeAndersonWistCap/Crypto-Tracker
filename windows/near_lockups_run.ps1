@@ -53,6 +53,19 @@ $arguments = @("near_lockups_weekly.py")
 if ($Force) { $arguments += "--force" }
 Write-Log "near lockups start (repo $Repo, python $Python $($arguments -join ' '))"
 $t0 = Get-Date
+# ONE WRITER OF THE STORE (R15.11, as daily_run.ps1): logs\store.lock for this PowerShell's PID. A live holder (the
+# daily run, or a run by hand): this read does not start - "SKIPPED: ..." and exit 76 (the daily run's step 2b reads
+# when the last stored read is 8+ days old). A stale lock is taken over. Released in the finally block below.
+# storelock.py reads no network and waits for nothing here, so it returns at once.
+$lockOut = (& $Python @PyArgs storelock.py acquire --pid "$PID" --who "scheduled NEAR lockups" --command "near_lockups_run.ps1" --max-hours 8 2>&1 | ForEach-Object { "$_" }) -join " "
+$lockCode = $LASTEXITCODE
+if ($lockOut) { Write-Log $lockOut }
+if ($lockCode -eq 76) {
+    Write-Log "near lockups FINAL: SKIPPED - the store was held (exit 76)"
+    exit 76
+}
+$lockTaken = ($lockCode -eq 0)
+if ($lockTaken) { $env:TOKEN_METRICS_STORE_LOCK_HELD = "$PID" }
 $w = $null
 try {
     $fs = New-Object System.IO.FileStream($Log, [System.IO.FileMode]::Append, [System.IO.FileAccess]::Write,
@@ -72,6 +85,10 @@ try {
     $code = 9009
 } finally {
     if ($w) { $w.Dispose() }
+    if ($lockTaken) {
+        $rel = (& $Python @PyArgs storelock.py release --pid "$PID" 2>&1 | ForEach-Object { "$_" }) -join " "
+        if ($rel) { Write-Log $rel }
+    }
 }
 Write-Log ("near lockups FINAL: exit $code ({0:N0} min)" -f ((Get-Date) - $t0).TotalMinutes)
 exit $code

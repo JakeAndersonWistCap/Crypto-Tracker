@@ -74,6 +74,9 @@ def _main(argv=None) -> int:
     ap.add_argument("--budget-min", type=float, default=ar.DEFAULT_BUDGET_S / 60)
     ap.add_argument("--near", action="store_true", help="also NEAR's archival header supply and staked NEAR (validators by epoch_id)")
     ap.add_argument("--no-solana", action="store_true")
+    ap.add_argument("--wait", type=float, default=0.0, metavar="N",
+                    help="R15.11: with --run, when another run holds the store (logs/store.lock), wait up to N minutes "
+                         "(default 0: print one line and exit 76)")
     a = ap.parse_args(argv)
     if a.db is None:           # P3-4: the same store, so the same lock file, as token_metrics.py
         import store as store_mod
@@ -93,12 +96,20 @@ def _main(argv=None) -> int:
     # once a minute what it waits for, then exits 75 with the same plain message. (RUNBOOK 11dh 1a: it took none.)
     from runlock import EXIT_LOCKED, RunLock, RunLocked
     log = logging.getLogger("archive_backfill")
+    # R15.11: ONE WRITER OF THE STORE, scheduled or by hand (storelock.py) - taken before the metrics.db lock
+    import storelock
     try:
-        with RunLock(a.db, "archive_backfill --run", say=log.warning):
-            return _work(a)
-    except RunLocked as e:
+        with storelock.hold("archive_backfill --run", wait_min=a.wait, say=log.warning,
+                            path=storelock.lock_path(a.db)):
+            try:
+                with RunLock(a.db, "archive_backfill --run", say=log.warning):
+                    return _work(a)
+            except RunLocked as e:
+                log.error("%s", e.code)
+                return EXIT_LOCKED
+    except storelock.StoreHeld as e:
         log.error("%s", e.code)
-        return EXIT_LOCKED
+        return storelock.EXIT_HELD
 
 
 def _work(a) -> int:
