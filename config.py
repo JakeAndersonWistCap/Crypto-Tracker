@@ -24387,8 +24387,9 @@ REGRESSION_ALLOWLIST += [
      "reason": "parked (P2c-4): " + AERODROME_PARK_PLAIN + " The cell reads the code 'parked'; the allowance ends when "
                "config.aerodrome_park_reason gives no reason"},
     {"project": "Aerodrome", "while_parked": True, "accepted": "2026-10-29",
-     "match": ("CP | NET HOLDER YIELD = holder value yield − dilution (outflows a+b+c+d+e at each day's price, "
-               "annualised) ÷ market cap",),
+     # R16 (Jake 2026-11-20 approved): the match text follows the renamed header — the same cell, the same allowance
+     "match": ("CP | NET HOLDER YIELD = holder value yield − dilution (outflows a+b+c+d+e+f at each day's price, "
+               "annualised) ÷ average market cap over the window",),
      "reason": "parked (P2g-1): " + AERODROME_PARK_PLAIN + " The headline is a function of the parked circulating "
                "figure; the allowance ends when config.aerodrome_park_reason gives no reason"},
     # P4-Q2 (Jake 2026-11-03): WORLD MOBILE IS PARKED — its two lost headlines are accepted losses while it stays parked
@@ -47281,6 +47282,41 @@ BUYBACK_DESTINATION_SHARES["Ether.fi"].append(
                "until re-measured (Jake 2026-11-20, R14 decision 4 (b))"})
 
 
+# ===== R16 — AERODROME'S EMISSIONS ON ACCRUAL FOR DILUTION AND NET HOLDER YIELD (Jake 2026-11-20) =====
+# The v3 Minter mints ON CLAIM (gross_issuance_tokens = d(emissionsMinted)), so dilution swung with each claim batch
+# (10,582,923 AERO read on 2026-11-20 alone). For dilution and net holder yield the emissions now count AS THEY ACCRUE:
+# from the v3 activation (2026-10-22 00:00 UTC — the emissions cap held 6,681,420.96 AERO at the 2026-10-27 read, 5.73
+# days at the base rate 13.489345 AERO/s, P2a D2) each day accrues Minter.emissionRate() x 86,400 =
+# emission_rate_current / 7 (the rate is the base rate, no dynamic module; a day without a rate read takes the last
+# read within 3 days — beyond that no row, unknown never 0; the days 10-22..10-26 before the first read take the first
+# read's rate, which the cap read confirms). Before 2026-10-22 the series is gross_issuance_tokens as before (the legacy
+# weekly mints on the merged basis). The ACCRUAL is the most the gauges can claim (the cap), not what was claimed: by
+# 2026-11-20 29.08M were minted against ~32.6M accrued. SUPPLY (total supply, circulating, net supply change) keeps
+# the mints. Was: (b) and A3's emissions read the mints.
+AERO_EMISSIONS_ACCRUAL = {
+    "Aerodrome": {"metric": "gross_issuance_accrued_tokens", "from": "2026-10-22", "rate_metric": "emission_rate_current",
+                  "days_per_rate": 7.0, "max_ffill_days": 3, "before": "gross_issuance_tokens",
+                  "decided": "Jake 2026-11-20 (R16 item 4)"}}
+METRICS["gross_issuance_accrued_tokens"] = {
+    "label": "AERO emissions AS THEY ACCRUE — before the v3 activation (2026-10-22) the mints (gross issuance); from it "
+             "Minter.emissionRate() x 86,400 a day (the cap the gauges claim against) — dilution and net holder yield "
+             "read this; supply keeps the mints (R16)",
+    "kind": "flow", "unit": "tokens", "archetypes": [3], "tiers": [2], "sanity_min": 0, "sanity_max": 1e9,
+    "view_only": True, "only_projects": ("Aerodrome",)}
+OUTFLOW_CATEGORIES["Aerodrome"]["b"] = ("gross_issuance_accrued_tokens",)
+OUTFLOW_CATEGORIES["Aerodrome"]["basis"] += (
+    " (b) is counted AS IT ACCRUES from the v3 activation (gross_issuance_accrued_tokens, R16): the Minter's rate a day, "
+    "not the claim batches it mints in")
+ABSORPTION_EMISSIONS["Aerodrome"] = ("gross_issuance_accrued_tokens", "emissions_tokens")
+for _m in ("outflow_b_tokens", "outflow_b_usd"):
+    PROJECT_BY_NAME["Aerodrome"].setdefault("series_handover", {})[_m] = {
+        "ordered_points": ("derived:outflow_b[gross_issuance_tokens]" + ("*price" if _m.endswith("usd") else ""),
+                           "derived:outflow_b[gross_issuance_accrued_tokens]" + ("*price" if _m.endswith("usd") else "")),
+        "declared": "2026-11-20", "why": "Jake 2026-11-20 (R16 item 4): emissions on accrual for dilution",
+        "composition_change": "from the v3 activation (2026-10-22) the Minter's accrual a day replaces the claim mints; "
+                              "the whole series restated"}
+
+
 # =====================================================================================================================
 # ===== R14 — FROZEN MOVES OF THE ROUND (tests/fixtures/frozen_moves_r14.json), every earlier declaration kept =====
 def _load_r14_moves() -> int:
@@ -47299,3 +47335,23 @@ def _load_r14_moves() -> int:
 
 
 R14_MOVES_DECLARED = _load_r14_moves()
+
+
+# =====================================================================================================================
+# ===== R16 — FROZEN MOVES OF THE ROUND (tests/fixtures/frozen_moves_r16.json), every earlier declaration kept =====
+def _load_r16_moves() -> int:
+    import json as _json
+    from pathlib import Path as _Path
+    p = _Path(__file__).resolve().parent / "tests" / "fixtures" / "frozen_moves_r16.json"
+    if not p.exists():
+        return 0
+    n = 0
+    for proj, cells in _json.loads(p.read_text(encoding="utf-8")).items():
+        for key, steps in cells.items():
+            for st in steps:
+                declare_later_move(proj, key, st["to"], st["why"], st["date"])
+                n += 1
+    return n
+
+
+R16_MOVES_DECLARED = _load_r16_moves()

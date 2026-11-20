@@ -9,6 +9,8 @@ No test touches the network.
 """
 from __future__ import annotations
 
+# R16: the header was "TOTAL DILUTION = outflows a+b+c+d+e (annualised)" (now names (f))
+
 import json
 import sys
 from pathlib import Path
@@ -161,11 +163,11 @@ AUDIT_CELLS = [  # (sheet, header, shown, without) — Jake's numbers where the 
     ("A4 Permanent Burn", "Unlock dilution, annualised % of free float", "11.26%", "3.29%"),
     ("A4 Permanent Burn", "TOTAL DILUTION = emissions + unlocks", "11.26%", "3.29%"),
     ("CP Comparability", "Unlocks Q0 (tokens)", "17,316,997", "5,059,637"),
-    ("CP Comparability", "TOTAL DILUTION = outflows a+b+c+d+e (annualised) ÷ tradeable float", "11.26%", "3.29%"),
+    ("CP Comparability", "TOTAL DILUTION = outflows a+b+c+d+e+f (annualised) ÷ tradeable float", "11.26%", "3.29%"),
     # R9.2 (the rule, Jake 2026-11-17): circulating counts the Timelock (off the float) — the two cells over circulating
     # / market cap read the same tokens over a larger base (were 11.26% / 3.29% and -8.80% / -0.82%); every cell over
     # the float is unchanged
-    ("CP Comparability", "TOTAL DILUTION = outflows a+b+c+d+e (annualised) ÷ circulating", "7.93%", "2.32%"),
+    ("CP Comparability", "TOTAL DILUTION = outflows a+b+c+d+e+f (annualised) ÷ circulating", "7.93%", "2.32%"),
     ("CP Comparability", "NET HOLDER YIELD", "-6.19%", "-0.58%"),
 ]
 

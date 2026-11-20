@@ -880,6 +880,40 @@ def _handover_cut_views(groups: dict) -> None:
 VELO_MERGED_NOTE: dict = {}
 
 
+def emissions_accrual(before: pd.Series, rate: pd.Series, start, days_per_rate: float = 7.0,
+                      max_ffill: int = 3) -> pd.Series:
+    """R16 (pure): the mints before `start`; from it, each day's accrual = the rate in force / days_per_rate — the last
+    rate read within `max_ffill` days (the days before the first read take the first read). A day the rate is not
+    known has no value (unknown, never 0). The series ends at the last rate read."""
+    start = pd.Timestamp(start)
+    out = before[before.index < start].astype(float)
+    rate = rate.sort_index()
+    if rate.empty:
+        return out
+    days = pd.date_range(start, rate.index.max())
+    r = rate.reindex(days).ffill(limit=max_ffill)
+    r[r.index < rate.index.min()] = float(rate.iloc[0])
+    acc = (r.dropna() / float(days_per_rate))
+    return pd.concat([out, acc]).sort_index()
+
+
+def _emissions_accrual_views(groups: dict) -> None:
+    for name, spec in (getattr(config, "AERO_EMISSIONS_ACCRUAL", {}) or {}).items():
+        if name not in {p["name"] for p in scoped_projects()}:
+            continue
+        before = _daily(groups.get((name, spec["before"])))
+        rate = _daily(groups.get((name, spec["rate_metric"])))
+        acc = emissions_accrual(before, rate, spec["from"], spec["days_per_rate"], spec["max_ffill_days"])
+        if acc.empty:
+            continue
+        cols = next(g.columns for m in (spec["before"], spec["rate_metric"]) if (g := groups.get((name, m))) is not None)
+        start = pd.Timestamp(spec["from"])
+        groups[(name, spec["metric"])] = _as_stored(pd.DataFrame(
+            {"date": acc.index, "project": name, "metric": spec["metric"], "value": acc.values, "tier": 2,
+             "source": [f"derived:accrual[{spec['before']}]" if d < start else
+                        f"derived:accrual[{spec['rate_metric']}/{spec['days_per_rate']:g}]" for d in acc.index]}), cols)
+
+
 def _velo_merged_views(groups: dict) -> None:
     """R11.2c (config.VELO_MERGED): Aerodrome's supply series BEFORE the merger on the merged basis — on every day
     VELO's own reading is stored, value + VELO leg x 0.044 under the point velo_merged:<the row's own point> (the
@@ -8138,6 +8172,7 @@ def aggregate(long: pd.DataFrame, fetch_status: pd.DataFrame, asof: pd.Timestamp
     _handover_continuation_views(groups)   # P2a D5a: a declared later leg read from another stored series (Maple)
     _handover_cut_views(groups)       # G11 C1: a declared cut — the earlier leg's rows after the later leg starts dropped
     _velo_merged_views(groups)        # R11.2c: Aerodrome before the merger on the merged basis (+ VELO x 0.044)
+    _emissions_accrual_views(groups)  # R16: Aerodrome's emissions as they accrue (dilution); supply keeps the mints
     _tokenjar_revenue_views(groups, asof)   # PR1C.2: the TokenJars beside DefiLlama's revenue; in it only on takeover
     _partial_sum_views(groups)    # FIRST: nothing downstream may read a partial sum
     _whole_set_views(groups)      # R5B.2: a PARTIAL day of a declared whole-set contract sum is a hole, not a new point
@@ -10472,13 +10507,15 @@ def _annualise(R: Refs, r: int, p: dict, metric: str, total: str) -> str:
     es = (getattr(config, "ENDING_SCHEDULES", {}) or {}).get(p["name"])
     if not es or metric not in es["into"] or not ENDING_SCHEDULE_ROWS.get(p["name"]):
         return base
-    usd = metric.endswith("_usd")
-    sm = "schedule_release_usd" if usd else "schedule_release_tokens"
-    trail = _annualise_flow(R, r, p, sm, R.D(r, sm, "q0"))
+    trail_tok = _annualise_flow(R, r, p, "schedule_release_tokens", R.D(r, "schedule_release_tokens", "q0"))
     fwd = R.D(r, "schedule_forward_365_tokens", "now")
-    if usd:
-        fwd = f"({fwd})*{R.D(r, 'price_usd', 'now')}"
-    return f"({base})-({trail})+MIN({trail},{fwd})"
+    if not metric.endswith("_usd"):
+        return f"({base})-({trail_tok})+MIN({trail_tok},{fwd})"
+    # R16 (Jake 2026-11-20): the $ figure is capped by the SAME token ratio — the leg's trailing $ (each day's price) x
+    # MIN(1, the year ahead ÷ the trailing tokens). Was: MIN(trailing $, the year ahead x TODAY's price), which mixed
+    # price bases (Morpho's $ unlocks moved 439.5M -> 355.8M a year on a falling price while its tokens did not move)
+    trail_usd = _annualise_flow(R, r, p, "schedule_release_usd", R.D(r, "schedule_release_usd", "q0"))
+    return (f"IF(({trail_tok})>0,({base})-({trail_usd})+({trail_usd})*MIN(1,({fwd})/({trail_tok})),{base})")
 
 
 def _annualise_flow(R: Refs, r: int, p: dict, metric: str, total: str) -> str:
@@ -13841,8 +13878,10 @@ CP_FLOAT_HEAD = ("TRADEABLE FLOAT = circulating − staked/locked − protocol/t
 CP_HVY_HEAD = ("HOLDER VALUE YIELD = revenue-funded $ retired + $ distributed + liquid bribes to voters (annualised) ÷ "
                "market cap — treasury- or emissions-funded buybacks are NOT credited (LITMUS A); fee-market burns are on "
                "A1 net issuance")
-CP_NHY_HEAD = ("NET HOLDER YIELD = holder value yield − dilution (outflows a+b+c+d+e at each day's price, annualised) ÷ "
-               "market cap")
+# R16 (Jake 2026-11-20): the header names (f) and the average market cap over the window. Was: "... (outflows a+b+c+d+e at
+# each day's price, annualised) ÷ market cap"
+CP_NHY_HEAD = ("NET HOLDER YIELD = holder value yield − dilution (outflows a+b+c+d+e+f at each day's price, annualised) ÷ "
+               "average market cap over the window")
 CP_SUBSIDY_HEAD = "SUBSIDY COVER = revenue ÷ $ supply-side incentives (b), per covered day"
 CP_SUBSIDY_BC_HEAD = "Subsidy cover incl. demand-side = revenue ÷ $ (b + c), per covered day"
 CP_DILUTION_CATS = ("a", "b", "c", "d", "e", "f")     # R15: (f) named float outflow (Ether.fi; config)
@@ -14198,7 +14237,7 @@ def _cp_cols(R: Refs, data_by_key: dict) -> list[tuple]:
                       blank_fn=lambda p, c=c: not config.outflow_metrics(p["name"], c))
     # R12.1: the two cells carry the as-published flag (a number format) and its note where a category is declared
     rates += [(*col, False, {"fmt_fn": as_published_flag, "note_fn": _total_dilution_note}) for col in both(
-        "TOTAL DILUTION = outflows a+b+c+d+e (annualised)",
+        "TOTAL DILUTION = outflows a+b+c+d+e+f (annualised)",
         lambda p: [(f"outflow {c}", f"outflow_{c}_tokens", "q0") for c in _cp_cats(p)],
         lambda r, p: "+".join(ann(r, p, f"outflow_{c}_tokens") for c in _cp_cats(p)),
         blank_fn=lambda p: not _cp_cats(p))]
@@ -14313,7 +14352,13 @@ def _cp_cols(R: Refs, data_by_key: dict) -> list[tuple]:
         dil = "+".join(ann(r, p, om(c)) for c in cats) or "0"
         legs = [("holder value", "holder_value_revenue_usd", "q0")] + \
             [(f"outflow {c}", om(c), "q0") for c in cats]
-        out = _coverage_guard(R, r, legs, f"({hvy_expr(r, p)})-({dil})/{mc(r)}",
+        # R16 (Jake 2026-11-20): holder value and dilution are each day's $ (each day's price), so the yield divides
+        # by the AVERAGE market cap over the same window (market_cap_usd's Q0 mean), not today's. Was: ÷ today's
+        hv = R.D(r, "holder_value_revenue_usd", "q0")
+        mca = R.D(r, "market_cap_usd", "q0")
+        nhy_expr = (f"IF(AND(ISNUMBER({hv}),ISNUMBER({mca})),"
+                    f"(({_annualise(R, r, p, 'holder_value_revenue_usd', hv)})-({dil}))/{mca},{NA})")
+        out = _coverage_guard(R, r, legs, nhy_expr,
                               as_published=tuple(om(c) for c in as_published_cats(p) if c in cats))[1:]
         # NAME THE STARVED LEG (item 24, Jake's run on 3500042): an outflow with no value in the window says which
         # and why (its Data note), never a bare n/a

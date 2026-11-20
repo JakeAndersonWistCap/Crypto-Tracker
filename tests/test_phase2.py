@@ -4,6 +4,8 @@ judged on the REAL dumps (fixtures/real_*.json, asof 2026-10-09) — never on a 
 """
 from __future__ import annotations
 
+# R16: the header was "TOTAL DILUTION = outflows a+b+c+d+e (annualised)" (now names (f))
+
 import json
 import sys
 from pathlib import Path
@@ -83,7 +85,7 @@ def test_cp_on_the_real_aerodrome_dump(tmp_path, monkeypatch, dumps_20261009):
     assert 1.0 < sp < 1.4 and 0 < sp_fee < 0.5
     # R9.3 (Jake 2026-11-17): Aerodrome's unlock leg is a DECLARED zero (no vesting schedule in its docs) on every day
     # the total is held — no longer a young series that blocks total dilution; a genuine zero reads 0
-    td = _get(o, "TOTAL DILUTION = outflows a+b+c+d+e (annualised) ÷ circ")
+    td = _get(o, "TOTAL DILUTION = outflows a+b+c+d+e+f (annualised) ÷ circ")
     assert isinstance(td, float) and td > 0, td
     assert _get(o, "Unlocks Q0 (tokens)") == 0.0
     # net holder yield still waits on equal coverage (this dump holds the total, and so the zero, on 21 days of Q0)
@@ -162,7 +164,7 @@ def test_cp_plume_has_no_measured_outflow_and_says_why(tmp_path, monkeypatch):
     wb, _rows = _built(tmp_path, monkeypatch, "Plume")
     X = xlcalc.Workbook(wb)
     o = _row(wb, X, CP, "Plume")
-    td = _get(o, "TOTAL DILUTION = outflows a+b+c+d+e (annualised) ÷ circ")
+    td = _get(o, "TOTAL DILUTION = outflows a+b+c+d+e+f (annualised) ÷ circ")
     # never a 0 while a leg holds nothing: blank, or the text naming the leg that has no rows
     assert td in (None, "") or (isinstance(td, str) and ("emissions_claimed_tokens" in td
                                                          or "merkl_campaigns_plume_tokens" in td

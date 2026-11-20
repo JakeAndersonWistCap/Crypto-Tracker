@@ -1304,7 +1304,7 @@ SUMMARY_SOURCES = {
     "fdv": ("Master", "FDV ($)"),
     "rev_q0": ("Master", "Revenue Q0 ($)"),
     "hvy": (CP_TAB, "HOLDER VALUE YIELD"),
-    "dil": (CP_TAB, "TOTAL DILUTION = outflows a+b+c+d+e (annualised) ÷ tradeable float"),
+    "dil": (CP_TAB, "TOTAL DILUTION = outflows a+b+c+d+e+f (annualised) ÷ tradeable float"),
     "float": (CP_TAB, "TRADEABLE FLOAT"),
     "nhy": (CP_TAB, "NET HOLDER YIELD"),
     "nsc_pct": ("Master", "Net supply change, annualised % of circulating"),
@@ -2713,7 +2713,7 @@ COMPARISON_COLS = (
     # (key, header, source (sheet, prefix) | "@...", format, definition, family)
     ("hvy", "Holder value yield", (CP_TAB, "HOLDER VALUE YIELD"), FMT_PCT,
      "Revenue-funded value to holders a year (retired + distributed + liquid voter bribes) ÷ market cap.", "buyback"),
-    ("dil", "Total dilution, % of float", (CP_TAB, "TOTAL DILUTION = outflows a+b+c+d+e (annualised) ÷ tradeable float"),
+    ("dil", "Total dilution, % of float", (CP_TAB, "TOTAL DILUTION = outflows a+b+c+d+e+f (annualised) ÷ tradeable float"),
      FMT_PCT, "Every outflow a year (security emissions, incentives, grants, unlocks) ÷ the tradeable float.", ""),
     ("nhy", "Net holder yield", (CP_TAB, "NET HOLDER YIELD"), FMT_PCT,
      "Holder value yield − every outflow a year at each day's price ÷ market cap. The sort key of this tab.", ""),
@@ -3303,7 +3303,7 @@ def _write_charts(ws, ctx: Ctx, keys: dict) -> dict:
     rows2, out2 = [], []
     for p in live:
         h = A.cell(CP_TAB, "HOLDER VALUE YIELD", p["name"])
-        d = A.cell(CP_TAB, "TOTAL DILUTION = outflows a+b+c+d+e (annualised) ÷ circulating", p["name"])
+        d = A.cell(CP_TAB, "TOTAL DILUTION = outflows a+b+c+d+e+f (annualised) ÷ circulating", p["name"])
         if h is None or d is None or h.num is None or d.num is None:
             out2.append(p["name"])
             continue

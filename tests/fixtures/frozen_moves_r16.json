@@ -1,0 +1,674 @@
+{
+"Aerodrome": {
+"audit|A3 Revenue Buyback|Emissions Q0 (tokens) — same period": [
+{
+"date": "2026-11-20",
+"from": 59779784.5,
+"to": 59909781.3,
+"why": "R16 item 4 (Jake 2026-11-20): Aerodrome's emissions count AS THEY ACCRUE for dilution and net holder yield (Minter.emissionRate a day from the v3 activation, 2026-10-22); supply keeps the mints"
+}
+],
+"audit|A3 Revenue Buyback|Net absorption Q0 (tokens) = RETIRED buyback (burned + held) − emissions": [
+{
+"date": "2026-11-20",
+"from": -58087597.1,
+"to": -58217594.0,
+"why": "R16 item 4 (Jake 2026-11-20): Aerodrome's emissions count AS THEY ACCRUE for dilution and net holder yield (Minter.emissionRate a day from the v3 activation, 2026-10-22); supply keeps the mints"
+}
+],
+"audit|A3 Revenue Buyback|Net absorption incl. unlocks Q0 (tokens) = RETIRED buyback − emissions − unlocks": [
+{
+"date": "2026-11-20",
+"from": -58087597.1,
+"to": -58217594.0,
+"why": "R16 item 4 (Jake 2026-11-20): Aerodrome's emissions count AS THEY ACCRUE for dilution and net holder yield (Minter.emissionRate a day from the v3 activation, 2026-10-22); supply keeps the mints"
+}
+],
+"audit|A3 Revenue Buyback|Net absorption, implied basis (tokens)": [
+{
+"date": "2026-11-20",
+"from": -59779784.5,
+"to": -59909781.3,
+"why": "R16 item 4 (Jake 2026-11-20): Aerodrome's emissions count AS THEY ACCRUE for dilution and net holder yield (Minter.emissionRate a day from the v3 activation, 2026-10-22); supply keeps the mints"
+}
+],
+"audit|A3 Revenue Buyback|RETIREMENT ÷ DILUTION (x) = RETIRED buyback ÷ (emissions + unlocks), per covered day — 1.0 is the crossover": [
+{
+"date": "2026-11-20",
+"from": 0.0283070162,
+"to": 0.0282455934,
+"why": "R16 item 4 (Jake 2026-11-20): Aerodrome's emissions count AS THEY ACCRUE for dilution and net holder yield (Minter.emissionRate a day from the v3 activation, 2026-10-22); supply keeps the mints"
+}
+],
+"audit|A3 Revenue Buyback|TOTAL DILUTION = emissions + unlocks, annualised % of free float": [
+{
+"date": "2026-11-20",
+"from": 0.268470286,
+"to": 0.269054101,
+"why": "R16 item 4 (Jake 2026-11-20): Aerodrome's emissions count AS THEY ACCRUE for dilution and net holder yield (Minter.emissionRate a day from the v3 activation, 2026-10-22); supply keeps the mints"
+}
+],
+"audit|CP Comparability|Dilution (b) supply-side incentives (annualised) ÷ circulating": [
+{
+"date": "2026-11-20",
+"from": 0.108863122,
+"to": 0.109127038,
+"why": "R16 item 4 (Jake 2026-11-20): Aerodrome's emissions count AS THEY ACCRUE for dilution and net holder yield (Minter.emissionRate a day from the v3 activation, 2026-10-22); supply keeps the mints"
+}
+],
+"audit|CP Comparability|Dilution (b) supply-side incentives (annualised) ÷ tradeable float": [
+{
+"date": "2026-11-20",
+"from": 0.240819006,
+"to": 0.24140282,
+"why": "R16 item 4 (Jake 2026-11-20): Aerodrome's emissions count AS THEY ACCRUE for dilution and net holder yield (Minter.emissionRate a day from the v3 activation, 2026-10-22); supply keeps the mints"
+}
+],
+"audit|CP Comparability|NET HOLDER YIELD = holder value yield − dilution (outflows a+b+c+d+e at each day's price, annualised) ÷ market cap": [
+{
+"date": "2026-11-20",
+"from": -0.0106999496,
+"to": "<absent>",
+"why": "R16 item 5 (Jake 2026-11-20): a declared label change — the total-dilution header names (f), the net holder yield header (f) and the average market cap over the window; the value is carried under the new name"
+}
+],
+"audit|CP Comparability|NET HOLDER YIELD = holder value yield − dilution (outflows a+b+c+d+e+f at each day's price, annualised) ÷ average market cap over the window": [
+{
+"date": "2026-11-20",
+"from": "<absent>",
+"to": -0.0176533027,
+"why": "R16 item 5 (Jake 2026-11-20): a declared label change — the total-dilution header names (f), the net holder yield header (f) and the average market cap over the window; the value is carried under the new name"
+}
+],
+"audit|CP Comparability|Outflow (b) supply-side incentives — $ a year (each day's tokens x that day's price, annualised)": [
+{
+"date": "2026-11-20",
+"from": 117174799.0,
+"to": 117458671.0,
+"why": "R16 item 4 (Jake 2026-11-20): Aerodrome's emissions count AS THEY ACCRUE for dilution and net holder yield (Minter.emissionRate a day from the v3 activation, 2026-10-22); supply keeps the mints"
+}
+],
+"audit|CP Comparability|Outflow categories — basis and what has no series yet (config OUTFLOW_CATEGORIES)": [
+{
+"date": "2026-11-20",
+"from": "(b) gross_issuance_tokens, (c) emissions_tokens, (e) unlock_release_tokens; the Minter's gauge emissions pay LPs (supply side, b); the veAERO anti-dilution rebase (RewardsDistributor, emissions_tokens) is its own line — PROPOSED (c), paid to lockers of the token itself, not for securing anything, so not (a); filing-wallet releases are unlocks (e)",
+"to": "(b) gross_issuance_accrued_tokens, (c) emissions_tokens, (e) unlock_release_tokens; the Minter's gauge emissions pay LPs (supply side, b); the veAERO anti-dilution rebase (RewardsDistributor, emissions_tokens) is its own line — PROPOSED (c), paid to lockers of the token itself, not for securing anything, so not (a); filing-wallet releases are unlocks (e) (b) is counted AS IT ACCRUES from the v3 activation (gross_issuance_accrued_tokens, R16): the Minter's rate a day, not the claim batches it mints in",
+"why": "R16 item 4 (Jake 2026-11-20): Aerodrome's emissions count AS THEY ACCRUE for dilution and net holder yield (Minter.emissionRate a day from the v3 activation, 2026-10-22); supply keeps the mints"
+}
+],
+"audit|CP Comparability|SUBSIDY COVER = revenue ÷ $ supply-side incentives (b), per covered day": [
+{
+"date": "2026-11-20",
+"from": 1.14085424,
+"to": 1.13809705,
+"why": "R16 item 4 (Jake 2026-11-20): Aerodrome's emissions count AS THEY ACCRUE for dilution and net holder yield (Minter.emissionRate a day from the v3 activation, 2026-10-22); supply keeps the mints"
+}
+],
+"audit|CP Comparability|Subsidy cover incl. demand-side = revenue ÷ $ (b + c), per covered day": [
+{
+"date": "2026-11-20",
+"from": 1.02311099,
+"to": 1.02089299,
+"why": "R16 item 4 (Jake 2026-11-20): Aerodrome's emissions count AS THEY ACCRUE for dilution and net holder yield (Minter.emissionRate a day from the v3 activation, 2026-10-22); supply keeps the mints"
+}
+],
+"audit|CP Comparability|Supplier payout per $ of fees = (fees to suppliers + incentive $ to suppliers (b)) ÷ fees, per covered day (PROPOSED)": [
+{
+"date": "2026-11-20",
+"from": 1.11687082,
+"to": 1.11899435,
+"why": "R16 item 4 (Jake 2026-11-20): Aerodrome's emissions count AS THEY ACCRUE for dilution and net holder yield (Minter.emissionRate a day from the v3 activation, 2026-10-22); supply keeps the mints"
+}
+],
+"audit|CP Comparability|TOTAL DILUTION = outflows a+b+c+d+e (annualised) ÷ circulating": [
+{
+"date": "2026-11-20",
+"from": 0.121362986,
+"to": "<absent>",
+"why": "R16 item 5 (Jake 2026-11-20): a declared label change — the total-dilution header names (f), the net holder yield header (f) and the average market cap over the window; the value is carried under the new name"
+}
+],
+"audit|CP Comparability|TOTAL DILUTION = outflows a+b+c+d+e (annualised) ÷ tradeable float": [
+{
+"date": "2026-11-20",
+"from": 0.268470286,
+"to": "<absent>",
+"why": "R16 item 5 (Jake 2026-11-20): a declared label change — the total-dilution header names (f), the net holder yield header (f) and the average market cap over the window; the value is carried under the new name"
+}
+],
+"audit|CP Comparability|TOTAL DILUTION = outflows a+b+c+d+e+f (annualised) ÷ circulating": [
+{
+"date": "2026-11-20",
+"from": "<absent>",
+"to": 0.121626901,
+"why": "R16 item 5 (Jake 2026-11-20): a declared label change — the total-dilution header names (f), the net holder yield header (f) and the average market cap over the window; the value is carried under the new name"
+}
+],
+"audit|CP Comparability|TOTAL DILUTION = outflows a+b+c+d+e+f (annualised) ÷ tradeable float": [
+{
+"date": "2026-11-20",
+"from": "<absent>",
+"to": 0.269054101,
+"why": "R16 item 5 (Jake 2026-11-20): a declared label change — the total-dilution header names (f), the net holder yield header (f) and the average market cap over the window; the value is carried under the new name"
+}
+],
+"audit|CP Comparability|Trend — cp_subsidy_cover (arrow · QoQ · 4Q growth/yr · quarters improved; Trajectory tab)": [
+{
+"date": "2026-11-20",
+"from": "▲ · +9%/yr (4Q) · 2/3 improved · QoQ -13.8%",
+"to": "▲ · +9%/yr (4Q) · 2/4 improved · QoQ -13.8%",
+"why": "R16 item 4 (Jake 2026-11-20): Aerodrome's emissions count AS THEY ACCRUE for dilution and net holder yield (Minter.emissionRate a day from the v3 activation, 2026-10-22); supply keeps the mints"
+}
+],
+"reader|A3 Revenue Buyback|Emissions, last 90 days (tokens)": [
+{
+"date": "2026-11-20",
+"from": 59779784.5,
+"to": 59909781.3,
+"why": "R16 item 4 (Jake 2026-11-20): Aerodrome's emissions count AS THEY ACCRUE for dilution and net holder yield (Minter.emissionRate a day from the v3 activation, 2026-10-22); supply keeps the mints"
+}
+],
+"reader|A3 Revenue Buyback|Net absorption incl. unlocks": [
+{
+"date": "2026-11-20",
+"from": -58087597.1,
+"to": -58217594.0,
+"why": "R16 item 4 (Jake 2026-11-20): Aerodrome's emissions count AS THEY ACCRUE for dilution and net holder yield (Minter.emissionRate a day from the v3 activation, 2026-10-22); supply keeps the mints"
+}
+],
+"reader|A3 Revenue Buyback|Net absorption, 90 days (tokens)": [
+{
+"date": "2026-11-20",
+"from": -58087597.1,
+"to": -58217594.0,
+"why": "R16 item 4 (Jake 2026-11-20): Aerodrome's emissions count AS THEY ACCRUE for dilution and net holder yield (Minter.emissionRate a day from the v3 activation, 2026-10-22); supply keeps the mints"
+}
+],
+"reader|A3 Revenue Buyback|Net absorption, implied (tokens)": [
+{
+"date": "2026-11-20",
+"from": -59779784.5,
+"to": -59909781.3,
+"why": "R16 item 4 (Jake 2026-11-20): Aerodrome's emissions count AS THEY ACCRUE for dilution and net holder yield (Minter.emissionRate a day from the v3 activation, 2026-10-22); supply keeps the mints"
+}
+],
+"reader|A3 Revenue Buyback|Retired ÷ (emis + unlocks), latest": [
+{
+"date": "2026-11-20",
+"from": 0.0283070162,
+"to": 0.0282455934,
+"why": "R16 item 4 (Jake 2026-11-20): Aerodrome's emissions count AS THEY ACCRUE for dilution and net holder yield (Minter.emissionRate a day from the v3 activation, 2026-10-22); supply keeps the mints"
+}
+],
+"reader|A3 Revenue Buyback|Retired ÷ (emissions + unlocks)": [
+{
+"date": "2026-11-20",
+"from": 0.0283070162,
+"to": 0.0282455934,
+"why": "R16 item 4 (Jake 2026-11-20): Aerodrome's emissions count AS THEY ACCRUE for dilution and net holder yield (Minter.emissionRate a day from the v3 activation, 2026-10-22); supply keeps the mints"
+}
+],
+"reader|A3 Revenue Buyback|Total dilution, % of float a year": [
+{
+"date": "2026-11-20",
+"from": 0.268470286,
+"to": 0.269054101,
+"why": "R16 item 4 (Jake 2026-11-20): Aerodrome's emissions count AS THEY ACCRUE for dilution and net holder yield (Minter.emissionRate a day from the v3 activation, 2026-10-22); supply keeps the mints"
+}
+],
+"reader|Comparison|Net holder yield": [
+{
+"date": "2026-11-20",
+"from": -0.0106999496,
+"to": -0.0176533027,
+"why": "R16 items 3 and 4 (Jake 2026-11-20): net holder yield divides by the AVERAGE market cap over the window, and Aerodrome's emissions count as they accrue"
+}
+],
+"reader|Comparison|Subsidy cover (x)": [
+{
+"date": "2026-11-20",
+"from": 1.14085424,
+"to": 1.13809705,
+"why": "R16 item 4 (Jake 2026-11-20): Aerodrome's emissions count AS THEY ACCRUE for dilution and net holder yield (Minter.emissionRate a day from the v3 activation, 2026-10-22); supply keeps the mints"
+}
+],
+"reader|Comparison|Total dilution, % of float": [
+{
+"date": "2026-11-20",
+"from": 0.268470286,
+"to": 0.269054101,
+"why": "R16 item 4 (Jake 2026-11-20): Aerodrome's emissions count AS THEY ACCRUE for dilution and net holder yield (Minter.emissionRate a day from the v3 activation, 2026-10-22); supply keeps the mints"
+}
+],
+"reader|Summary|Net holder yield": [
+{
+"date": "2026-11-20",
+"from": -0.0106999496,
+"to": -0.0176533027,
+"why": "R16 items 3 and 4 (Jake 2026-11-20): net holder yield divides by the AVERAGE market cap over the window, and Aerodrome's emissions count as they accrue"
+}
+],
+"reader|Summary|Total dilution, % of float": [
+{
+"date": "2026-11-20",
+"from": 0.268470286,
+"to": 0.269054101,
+"why": "R16 item 4 (Jake 2026-11-20): Aerodrome's emissions count AS THEY ACCRUE for dilution and net holder yield (Minter.emissionRate a day from the v3 activation, 2026-10-22); supply keeps the mints"
+}
+],
+"reader|Summary|Total dilution, tokens a year": [
+{
+"date": "2026-11-20",
+"from": 242440237.0,
+"to": 242967447.0,
+"why": "R16 item 4 (Jake 2026-11-20): Aerodrome's emissions count AS THEY ACCRUE for dilution and net holder yield (Minter.emissionRate a day from the v3 activation, 2026-10-22); supply keeps the mints"
+}
+]
+},
+"Fluid": {
+"audit|CP Comparability|NET HOLDER YIELD = holder value yield − dilution (outflows a+b+c+d+e at each day's price, annualised) ÷ market cap": [
+{
+"date": "2026-11-20",
+"from": "n/a — outflow (b) = emissions_tokens+emissions_tokens_arbitrum+emissions_tokens_base+emissions_tokens_plasma has no value in this window: BLOCKED — outflow (b) is not formed: emissions_tokens_base: no rows stored; emissions_tokens_plasma: no rows stored",
+"to": "<absent>",
+"why": "R16 item 5 (Jake 2026-11-20): a declared label change — the total-dilution header names (f), the net holder yield header (f) and the average market cap over the window; the value is carried under the new name"
+}
+],
+"audit|CP Comparability|NET HOLDER YIELD = holder value yield − dilution (outflows a+b+c+d+e+f at each day's price, annualised) ÷ average market cap over the window": [
+{
+"date": "2026-11-20",
+"from": "<absent>",
+"to": "n/a — outflow (b) = emissions_tokens+emissions_tokens_arbitrum+emissions_tokens_base+emissions_tokens_plasma has no value in this window: BLOCKED — outflow (b) is not formed: emissions_tokens_base: no rows stored; emissions_tokens_plasma: no rows stored",
+"why": "R16 item 5 (Jake 2026-11-20): a declared label change — the total-dilution header names (f), the net holder yield header (f) and the average market cap over the window; the value is carried under the new name"
+}
+],
+"audit|CP Comparability|TOTAL DILUTION = outflows a+b+c+d+e (annualised) ÷ circulating": [
+{
+"date": "2026-11-20",
+"from": "n/a — outflow_b_tokens (q0): BLOCKED — BLOCKED — outflow (b) is not formed: emissions_tokens_base: no rows stored; emissions_tokens_plasma: no rows stored",
+"to": "<absent>",
+"why": "R16 item 5 (Jake 2026-11-20): a declared label change — the total-dilution header names (f), the net holder yield header (f) and the average market cap over the window; the value is carried under the new name"
+}
+],
+"audit|CP Comparability|TOTAL DILUTION = outflows a+b+c+d+e (annualised) ÷ tradeable float": [
+{
+"date": "2026-11-20",
+"from": "n/a — outflow_b_tokens (q0): BLOCKED — BLOCKED — outflow (b) is not formed: emissions_tokens_base: no rows stored; emissions_tokens_plasma: no rows stored",
+"to": "<absent>",
+"why": "R16 item 5 (Jake 2026-11-20): a declared label change — the total-dilution header names (f), the net holder yield header (f) and the average market cap over the window; the value is carried under the new name"
+}
+],
+"audit|CP Comparability|TOTAL DILUTION = outflows a+b+c+d+e+f (annualised) ÷ circulating": [
+{
+"date": "2026-11-20",
+"from": "<absent>",
+"to": "n/a — outflow_b_tokens (q0): BLOCKED — BLOCKED — outflow (b) is not formed: emissions_tokens_base: no rows stored; emissions_tokens_plasma: no rows stored",
+"why": "R16 item 5 (Jake 2026-11-20): a declared label change — the total-dilution header names (f), the net holder yield header (f) and the average market cap over the window; the value is carried under the new name"
+}
+],
+"audit|CP Comparability|TOTAL DILUTION = outflows a+b+c+d+e+f (annualised) ÷ tradeable float": [
+{
+"date": "2026-11-20",
+"from": "<absent>",
+"to": "n/a — outflow_b_tokens (q0): BLOCKED — BLOCKED — outflow (b) is not formed: emissions_tokens_base: no rows stored; emissions_tokens_plasma: no rows stored",
+"why": "R16 item 5 (Jake 2026-11-20): a declared label change — the total-dilution header names (f), the net holder yield header (f) and the average market cap over the window; the value is carried under the new name"
+}
+]
+},
+"Hyperliquid": {
+"audit|CP Comparability|NET HOLDER YIELD = holder value yield − dilution (outflows a+b+c+d+e at each day's price, annualised) ÷ market cap": [
+{
+"date": "2026-11-20",
+"from": -0.0342173247,
+"to": "<absent>",
+"why": "R16 item 5 (Jake 2026-11-20): a declared label change — the total-dilution header names (f), the net holder yield header (f) and the average market cap over the window; the value is carried under the new name"
+}
+],
+"audit|CP Comparability|NET HOLDER YIELD = holder value yield − dilution (outflows a+b+c+d+e+f at each day's price, annualised) ÷ average market cap over the window": [
+{
+"date": "2026-11-20",
+"from": "<absent>",
+"to": -0.0315473628,
+"why": "R16 item 5 (Jake 2026-11-20): a declared label change — the total-dilution header names (f), the net holder yield header (f) and the average market cap over the window; the value is carried under the new name"
+}
+],
+"audit|CP Comparability|TOTAL DILUTION = outflows a+b+c+d+e (annualised) ÷ circulating": [
+{
+"date": "2026-11-20",
+"from": 0.0500218136,
+"to": "<absent>",
+"why": "R16 item 5 (Jake 2026-11-20): a declared label change — the total-dilution header names (f), the net holder yield header (f) and the average market cap over the window; the value is carried under the new name"
+}
+],
+"audit|CP Comparability|TOTAL DILUTION = outflows a+b+c+d+e (annualised) ÷ tradeable float": [
+{
+"date": "2026-11-20",
+"from": 0.271456398,
+"to": "<absent>",
+"why": "R16 item 5 (Jake 2026-11-20): a declared label change — the total-dilution header names (f), the net holder yield header (f) and the average market cap over the window; the value is carried under the new name"
+}
+],
+"audit|CP Comparability|TOTAL DILUTION = outflows a+b+c+d+e+f (annualised) ÷ circulating": [
+{
+"date": "2026-11-20",
+"from": "<absent>",
+"to": 0.0500218136,
+"why": "R16 item 5 (Jake 2026-11-20): a declared label change — the total-dilution header names (f), the net holder yield header (f) and the average market cap over the window; the value is carried under the new name"
+}
+],
+"audit|CP Comparability|TOTAL DILUTION = outflows a+b+c+d+e+f (annualised) ÷ tradeable float": [
+{
+"date": "2026-11-20",
+"from": "<absent>",
+"to": 0.271456398,
+"why": "R16 item 5 (Jake 2026-11-20): a declared label change — the total-dilution header names (f), the net holder yield header (f) and the average market cap over the window; the value is carried under the new name"
+}
+],
+"reader|Comparison|Net holder yield": [
+{
+"date": "2026-11-20",
+"from": -0.0342173247,
+"to": -0.0315473628,
+"why": "R16 item 3 (Jake 2026-11-20): net holder yield divides by the AVERAGE market cap over the window (each day's $ over each day's value), not today's"
+}
+],
+"reader|Summary|Net holder yield": [
+{
+"date": "2026-11-20",
+"from": -0.0342173247,
+"to": -0.0315473628,
+"why": "R16 item 3 (Jake 2026-11-20): net holder yield divides by the AVERAGE market cap over the window (each day's $ over each day's value), not today's"
+}
+]
+},
+"Maple": {
+"audit|CP Comparability|NET HOLDER YIELD = holder value yield − dilution (outflows a+b+c+d+e at each day's price, annualised) ÷ market cap": [
+{
+"date": "2026-11-20",
+"from": "n/a — outflow (b) = drips_rewards_tokens has no value in this window: BLOCKED — outflow (b) is not formed: drips_rewards_tokens: no rows stored",
+"to": "<absent>",
+"why": "R16 item 5 (Jake 2026-11-20): a declared label change — the total-dilution header names (f), the net holder yield header (f) and the average market cap over the window; the value is carried under the new name"
+}
+],
+"audit|CP Comparability|NET HOLDER YIELD = holder value yield − dilution (outflows a+b+c+d+e+f at each day's price, annualised) ÷ average market cap over the window": [
+{
+"date": "2026-11-20",
+"from": "<absent>",
+"to": "n/a — outflow (b) = drips_rewards_tokens has no value in this window: BLOCKED — outflow (b) is not formed: drips_rewards_tokens: no rows stored",
+"why": "R16 item 5 (Jake 2026-11-20): a declared label change — the total-dilution header names (f), the net holder yield header (f) and the average market cap over the window; the value is carried under the new name"
+}
+],
+"audit|CP Comparability|TOTAL DILUTION = outflows a+b+c+d+e (annualised) ÷ circulating": [
+{
+"date": "2026-11-20",
+"from": "n/a — outflow_b_tokens (q0): BLOCKED — BLOCKED — outflow (b) is not formed: drips_rewards_tokens: no rows stored",
+"to": "<absent>",
+"why": "R16 item 5 (Jake 2026-11-20): a declared label change — the total-dilution header names (f), the net holder yield header (f) and the average market cap over the window; the value is carried under the new name"
+}
+],
+"audit|CP Comparability|TOTAL DILUTION = outflows a+b+c+d+e (annualised) ÷ tradeable float": [
+{
+"date": "2026-11-20",
+"from": "n/a — maple_ssf_safe_tokens (now): no rows stored",
+"to": "<absent>",
+"why": "R16 item 5 (Jake 2026-11-20): a declared label change — the total-dilution header names (f), the net holder yield header (f) and the average market cap over the window; the value is carried under the new name"
+}
+],
+"audit|CP Comparability|TOTAL DILUTION = outflows a+b+c+d+e+f (annualised) ÷ circulating": [
+{
+"date": "2026-11-20",
+"from": "<absent>",
+"to": "n/a — outflow_b_tokens (q0): BLOCKED — BLOCKED — outflow (b) is not formed: drips_rewards_tokens: no rows stored",
+"why": "R16 item 5 (Jake 2026-11-20): a declared label change — the total-dilution header names (f), the net holder yield header (f) and the average market cap over the window; the value is carried under the new name"
+}
+],
+"audit|CP Comparability|TOTAL DILUTION = outflows a+b+c+d+e+f (annualised) ÷ tradeable float": [
+{
+"date": "2026-11-20",
+"from": "<absent>",
+"to": "n/a — maple_ssf_safe_tokens (now): no rows stored",
+"why": "R16 item 5 (Jake 2026-11-20): a declared label change — the total-dilution header names (f), the net holder yield header (f) and the average market cap over the window; the value is carried under the new name"
+}
+]
+},
+"Morpho": {
+"audit|CP Comparability|NET HOLDER YIELD = holder value yield − dilution (outflows a+b+c+d+e at each day's price, annualised) ÷ market cap": [
+{
+"date": "2026-11-20",
+"from": "n/a — outflow (b) = emissions_tokens has no value in this window: BLOCKED — outflow (b) is not formed: emissions_tokens: BLOCKED — the sum of emissions_tokens_claims_ethereum, emissions_tokens_claims_arbitrum, emissions_tokens_claims_base, emissions_tokens_claims_katana, emissions_tokens_claims_ethereum_legacy is not formed: emissions_tokens_claims_ethereum, emissions_tokens_claims_arbitrum, emissions_tokens_claims_base, emissions_tokens_claims_katana, emissions_tokens_claims_ethereum_legacy stored nothing yet (a log scan stores only once its history, or its 100-day window, reconciles). The next token_metrics.py run reads them (config log_scans / EXPLORER_PROBED_SCANS)",
+"to": "<absent>",
+"why": "R16 item 5 (Jake 2026-11-20): a declared label change — the total-dilution header names (f), the net holder yield header (f) and the average market cap over the window; the value is carried under the new name"
+}
+],
+"audit|CP Comparability|NET HOLDER YIELD = holder value yield − dilution (outflows a+b+c+d+e+f at each day's price, annualised) ÷ average market cap over the window": [
+{
+"date": "2026-11-20",
+"from": "<absent>",
+"to": "n/a — outflow (b) = emissions_tokens has no value in this window: BLOCKED — outflow (b) is not formed: emissions_tokens: BLOCKED — the sum of emissions_tokens_claims_ethereum, emissions_tokens_claims_arbitrum, emissions_tokens_claims_base, emissions_tokens_claims_katana, emissions_tokens_claims_ethereum_legacy is not formed: emissions_tokens_claims_ethereum, emissions_tokens_claims_arbitrum, emissions_tokens_claims_base, emissions_tokens_claims_katana, emissions_tokens_claims_ethereum_legacy stored nothing yet (a log scan stores only once its history, or its 100-day window, reconciles). The next token_metrics.py run reads them (config log_scans / EXPLORER_PROBED_SCANS)",
+"why": "R16 item 5 (Jake 2026-11-20): a declared label change — the total-dilution header names (f), the net holder yield header (f) and the average market cap over the window; the value is carried under the new name"
+}
+],
+"audit|CP Comparability|TOTAL DILUTION = outflows a+b+c+d+e (annualised) ÷ circulating": [
+{
+"date": "2026-11-20",
+"from": "n/a — outflow_b_tokens (q0): BLOCKED — BLOCKED — outflow (b) is not formed: emissions_tokens: BLOCKED — the sum of emissions_tokens_claims_ethereum, emissions_tokens_claims_arbitrum, emissions_tokens_claims_base, emissions_tokens_claims_kat",
+"to": "<absent>",
+"why": "R16 item 5 (Jake 2026-11-20): a declared label change — the total-dilution header names (f), the net holder yield header (f) and the average market cap over the window; the value is carried under the new name"
+}
+],
+"audit|CP Comparability|TOTAL DILUTION = outflows a+b+c+d+e (annualised) ÷ tradeable float": [
+{
+"date": "2026-11-20",
+"from": "n/a — outflow_b_tokens (q0): BLOCKED — BLOCKED — outflow (b) is not formed: emissions_tokens: BLOCKED — the sum of emissions_tokens_claims_ethereum, emissions_tokens_claims_arbitrum, emissions_tokens_claims_base, emissions_tokens_claims_kat",
+"to": "<absent>",
+"why": "R16 item 5 (Jake 2026-11-20): a declared label change — the total-dilution header names (f), the net holder yield header (f) and the average market cap over the window; the value is carried under the new name"
+}
+],
+"audit|CP Comparability|TOTAL DILUTION = outflows a+b+c+d+e+f (annualised) ÷ circulating": [
+{
+"date": "2026-11-20",
+"from": "<absent>",
+"to": "n/a — outflow_b_tokens (q0): BLOCKED — BLOCKED — outflow (b) is not formed: emissions_tokens: BLOCKED — the sum of emissions_tokens_claims_ethereum, emissions_tokens_claims_arbitrum, emissions_tokens_claims_base, emissions_tokens_claims_kat",
+"why": "R16 item 5 (Jake 2026-11-20): a declared label change — the total-dilution header names (f), the net holder yield header (f) and the average market cap over the window; the value is carried under the new name"
+}
+],
+"audit|CP Comparability|TOTAL DILUTION = outflows a+b+c+d+e+f (annualised) ÷ tradeable float": [
+{
+"date": "2026-11-20",
+"from": "<absent>",
+"to": "n/a — outflow_b_tokens (q0): BLOCKED — BLOCKED — outflow (b) is not formed: emissions_tokens: BLOCKED — the sum of emissions_tokens_claims_ethereum, emissions_tokens_claims_arbitrum, emissions_tokens_claims_base, emissions_tokens_claims_kat",
+"why": "R16 item 5 (Jake 2026-11-20): a declared label change — the total-dilution header names (f), the net holder yield header (f) and the average market cap over the window; the value is carried under the new name"
+}
+]
+},
+"Pendle": {
+"audit|CP Comparability|NET HOLDER YIELD = holder value yield − dilution (outflows a+b+c+d+e at each day's price, annualised) ÷ market cap": [
+{
+"date": "2026-11-20",
+"from": "n/a — outflow (b) = emissions_tokens has no value in this window: BLOCKED — outflow (b) is not formed: emissions_tokens: BLOCKED — the sum of emissions_tokens_gauge_mainnet, emissions_tokens_gauge_arbitrum, emissions_tokens_gauge_optimism, emissions_tokens_gauge_bsc, emissions_tokens_gauge_base, emissions_tokens_gauge_mantle, emissions_tokens_gauge_sonic, emissions_tokens_gauge_berachain, emissions_tokens_gauge_hyperevm is not formed: emissions_tokens_gauge_bsc, emissions_tokens_gauge_base, emissions_tokens_gauge_mantle, emissions_tokens_gauge_sonic, emissions_tokens_gauge_berachain, emissions_tokens_gauge_hyperevm stored nothing yet (a log scan stores only once its history, or its 100-day window, reconciles). `python token_metrics.py --seed pendle_gauges` finishes the seed in one sitting",
+"to": "<absent>",
+"why": "R16 item 5 (Jake 2026-11-20): a declared label change — the total-dilution header names (f), the net holder yield header (f) and the average market cap over the window; the value is carried under the new name"
+}
+],
+"audit|CP Comparability|NET HOLDER YIELD = holder value yield − dilution (outflows a+b+c+d+e+f at each day's price, annualised) ÷ average market cap over the window": [
+{
+"date": "2026-11-20",
+"from": "<absent>",
+"to": "n/a — outflow (b) = emissions_tokens has no value in this window: BLOCKED — outflow (b) is not formed: emissions_tokens: BLOCKED — the sum of emissions_tokens_gauge_mainnet, emissions_tokens_gauge_arbitrum, emissions_tokens_gauge_optimism, emissions_tokens_gauge_bsc, emissions_tokens_gauge_base, emissions_tokens_gauge_mantle, emissions_tokens_gauge_sonic, emissions_tokens_gauge_berachain, emissions_tokens_gauge_hyperevm is not formed: emissions_tokens_gauge_bsc, emissions_tokens_gauge_base, emissions_tokens_gauge_mantle, emissions_tokens_gauge_sonic, emissions_tokens_gauge_berachain, emissions_tokens_gauge_hyperevm stored nothing yet (a log scan stores only once its history, or its 100-day window, reconciles). `python token_metrics.py --seed pendle_gauges` finishes the seed in one sitting",
+"why": "R16 item 5 (Jake 2026-11-20): a declared label change — the total-dilution header names (f), the net holder yield header (f) and the average market cap over the window; the value is carried under the new name"
+}
+],
+"audit|CP Comparability|TOTAL DILUTION = outflows a+b+c+d+e (annualised) ÷ circulating": [
+{
+"date": "2026-11-20",
+"from": "n/a — outflow_b_tokens (q0): BLOCKED — BLOCKED — outflow (b) is not formed: emissions_tokens: BLOCKED — the sum of emissions_tokens_gauge_mainnet, emissions_tokens_gauge_arbitrum, emissions_tokens_gauge_optimism, emissions_tokens_gauge_bsc,",
+"to": "<absent>",
+"why": "R16 item 5 (Jake 2026-11-20): a declared label change — the total-dilution header names (f), the net holder yield header (f) and the average market cap over the window; the value is carried under the new name"
+}
+],
+"audit|CP Comparability|TOTAL DILUTION = outflows a+b+c+d+e (annualised) ÷ tradeable float": [
+{
+"date": "2026-11-20",
+"from": "n/a — outflow_b_tokens (q0): BLOCKED — BLOCKED — outflow (b) is not formed: emissions_tokens: BLOCKED — the sum of emissions_tokens_gauge_mainnet, emissions_tokens_gauge_arbitrum, emissions_tokens_gauge_optimism, emissions_tokens_gauge_bsc,",
+"to": "<absent>",
+"why": "R16 item 5 (Jake 2026-11-20): a declared label change — the total-dilution header names (f), the net holder yield header (f) and the average market cap over the window; the value is carried under the new name"
+}
+],
+"audit|CP Comparability|TOTAL DILUTION = outflows a+b+c+d+e+f (annualised) ÷ circulating": [
+{
+"date": "2026-11-20",
+"from": "<absent>",
+"to": "n/a — outflow_b_tokens (q0): BLOCKED — BLOCKED — outflow (b) is not formed: emissions_tokens: BLOCKED — the sum of emissions_tokens_gauge_mainnet, emissions_tokens_gauge_arbitrum, emissions_tokens_gauge_optimism, emissions_tokens_gauge_bsc,",
+"why": "R16 item 5 (Jake 2026-11-20): a declared label change — the total-dilution header names (f), the net holder yield header (f) and the average market cap over the window; the value is carried under the new name"
+}
+],
+"audit|CP Comparability|TOTAL DILUTION = outflows a+b+c+d+e+f (annualised) ÷ tradeable float": [
+{
+"date": "2026-11-20",
+"from": "<absent>",
+"to": "n/a — outflow_b_tokens (q0): BLOCKED — BLOCKED — outflow (b) is not formed: emissions_tokens: BLOCKED — the sum of emissions_tokens_gauge_mainnet, emissions_tokens_gauge_arbitrum, emissions_tokens_gauge_optimism, emissions_tokens_gauge_bsc,",
+"why": "R16 item 5 (Jake 2026-11-20): a declared label change — the total-dilution header names (f), the net holder yield header (f) and the average market cap over the window; the value is carried under the new name"
+}
+]
+},
+"Sky": {
+"audit|CP Comparability|NET HOLDER YIELD = holder value yield − dilution (outflows a+b+c+d+e at each day's price, annualised) ÷ market cap": [
+{
+"date": "2026-11-20",
+"from": -0.00242089358,
+"to": "<absent>",
+"why": "R16 item 5 (Jake 2026-11-20): a declared label change — the total-dilution header names (f), the net holder yield header (f) and the average market cap over the window; the value is carried under the new name"
+}
+],
+"audit|CP Comparability|NET HOLDER YIELD = holder value yield − dilution (outflows a+b+c+d+e+f at each day's price, annualised) ÷ average market cap over the window": [
+{
+"date": "2026-11-20",
+"from": "<absent>",
+"to": -0.00234300128,
+"why": "R16 item 5 (Jake 2026-11-20): a declared label change — the total-dilution header names (f), the net holder yield header (f) and the average market cap over the window; the value is carried under the new name"
+}
+],
+"audit|CP Comparability|TOTAL DILUTION = outflows a+b+c+d+e (annualised) ÷ circulating": [
+{
+"date": "2026-11-20",
+"from": 0.0318674866,
+"to": "<absent>",
+"why": "R16 item 5 (Jake 2026-11-20): a declared label change — the total-dilution header names (f), the net holder yield header (f) and the average market cap over the window; the value is carried under the new name"
+}
+],
+"audit|CP Comparability|TOTAL DILUTION = outflows a+b+c+d+e (annualised) ÷ tradeable float": [
+{
+"date": "2026-11-20",
+"from": 0.126553082,
+"to": "<absent>",
+"why": "R16 item 5 (Jake 2026-11-20): a declared label change — the total-dilution header names (f), the net holder yield header (f) and the average market cap over the window; the value is carried under the new name"
+}
+],
+"audit|CP Comparability|TOTAL DILUTION = outflows a+b+c+d+e+f (annualised) ÷ circulating": [
+{
+"date": "2026-11-20",
+"from": "<absent>",
+"to": 0.0318674866,
+"why": "R16 item 5 (Jake 2026-11-20): a declared label change — the total-dilution header names (f), the net holder yield header (f) and the average market cap over the window; the value is carried under the new name"
+}
+],
+"audit|CP Comparability|TOTAL DILUTION = outflows a+b+c+d+e+f (annualised) ÷ tradeable float": [
+{
+"date": "2026-11-20",
+"from": "<absent>",
+"to": 0.126553082,
+"why": "R16 item 5 (Jake 2026-11-20): a declared label change — the total-dilution header names (f), the net holder yield header (f) and the average market cap over the window; the value is carried under the new name"
+}
+],
+"reader|Comparison|Net holder yield": [
+{
+"date": "2026-11-20",
+"from": -0.00242089358,
+"to": -0.00234300128,
+"why": "R16 item 3 (Jake 2026-11-20): net holder yield divides by the AVERAGE market cap over the window (each day's $ over each day's value), not today's"
+}
+],
+"reader|Summary|Net holder yield": [
+{
+"date": "2026-11-20",
+"from": -0.00242089358,
+"to": -0.00234300128,
+"why": "R16 item 3 (Jake 2026-11-20): net holder yield divides by the AVERAGE market cap over the window (each day's $ over each day's value), not today's"
+}
+]
+},
+"Uniswap": {
+"audit|CP Comparability|NET HOLDER YIELD = holder value yield − dilution (outflows a+b+c+d+e at each day's price, annualised) ÷ market cap": [
+{
+"date": "2026-11-20",
+"from": -0.00784073635,
+"to": "<absent>",
+"why": "R16 item 5 (Jake 2026-11-20): a declared label change — the total-dilution header names (f), the net holder yield header (f) and the average market cap over the window; the value is carried under the new name"
+}
+],
+"audit|CP Comparability|NET HOLDER YIELD = holder value yield − dilution (outflows a+b+c+d+e+f at each day's price, annualised) ÷ average market cap over the window": [
+{
+"date": "2026-11-20",
+"from": "<absent>",
+"to": -0.0103249402,
+"why": "R16 item 5 (Jake 2026-11-20): a declared label change — the total-dilution header names (f), the net holder yield header (f) and the average market cap over the window; the value is carried under the new name"
+}
+],
+"audit|CP Comparability|TOTAL DILUTION = outflows a+b+c+d+e (annualised) ÷ circulating": [
+{
+"date": "2026-11-20",
+"from": 0.0231202931,
+"to": "<absent>",
+"why": "R16 item 5 (Jake 2026-11-20): a declared label change — the total-dilution header names (f), the net holder yield header (f) and the average market cap over the window; the value is carried under the new name"
+}
+],
+"audit|CP Comparability|TOTAL DILUTION = outflows a+b+c+d+e (annualised) ÷ tradeable float": [
+{
+"date": "2026-11-20",
+"from": 0.0334922695,
+"to": "<absent>",
+"why": "R16 item 5 (Jake 2026-11-20): a declared label change — the total-dilution header names (f), the net holder yield header (f) and the average market cap over the window; the value is carried under the new name"
+}
+],
+"audit|CP Comparability|TOTAL DILUTION = outflows a+b+c+d+e+f (annualised) ÷ circulating": [
+{
+"date": "2026-11-20",
+"from": "<absent>",
+"to": 0.0231202931,
+"why": "R16 item 5 (Jake 2026-11-20): a declared label change — the total-dilution header names (f), the net holder yield header (f) and the average market cap over the window; the value is carried under the new name"
+}
+],
+"audit|CP Comparability|TOTAL DILUTION = outflows a+b+c+d+e+f (annualised) ÷ tradeable float": [
+{
+"date": "2026-11-20",
+"from": "<absent>",
+"to": 0.0334922695,
+"why": "R16 item 5 (Jake 2026-11-20): a declared label change — the total-dilution header names (f), the net holder yield header (f) and the average market cap over the window; the value is carried under the new name"
+}
+],
+"audit|CP Comparability|Trend — cp_nhy (arrow · QoQ · 4Q growth/yr · quarters improved; Trajectory tab)": [
+{
+"date": "2026-11-20",
+"from": "– · 4Q n/a · 1/2 improved · QoQ -0.1 pp",
+"to": "– · 4Q n/a · 0/2 improved · QoQ -0.3 pp",
+"why": "R16 item 3 (Jake 2026-11-20): net holder yield divides by the AVERAGE market cap over the window — its trend's quarters move with it"
+}
+],
+"reader|Comparison|Net holder yield": [
+{
+"date": "2026-11-20",
+"from": -0.00784073635,
+"to": -0.0103249402,
+"why": "R16 item 3 (Jake 2026-11-20): net holder yield divides by the AVERAGE market cap over the window (each day's $ over each day's value), not today's"
+}
+],
+"reader|Summary|Net holder yield": [
+{
+"date": "2026-11-20",
+"from": -0.00784073635,
+"to": -0.0103249402,
+"why": "R16 item 3 (Jake 2026-11-20): net holder yield divides by the AVERAGE market cap over the window (each day's $ over each day's value), not today's"
+}
+]
+}
+}
