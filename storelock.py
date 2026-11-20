@@ -296,4 +296,6 @@ def main(argv=None) -> int:
 
 
 if __name__ == "__main__":
+    import progress  # noqa: E402 — every entry point is line-buffered before it runs (tests/test_progress.py)
+    progress.line_buffered()
     sys.exit(main())
