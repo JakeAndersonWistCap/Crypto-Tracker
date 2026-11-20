@@ -107,7 +107,8 @@ def test_6_the_ending_schedule_counts_only_what_the_next_365_days_release(scoped
     f = bw._annualise(R, 5, config.PROJECT_BY_NAME[EF], "outflow_e_tokens", "X")
     assert "schedule_release_tokens" in f and "schedule_forward_365_tokens" in f and "MIN(" in f
     usd = bw._annualise(R, 5, config.PROJECT_BY_NAME[EF], "outflow_e_usd", "X")
-    assert "schedule_release_usd" in usd and "price_usd" in usd
+    # R16: the $ cap scales the trailing $ by the token ratio — no other day's price (was: "price_usd" in usd)
+    assert "schedule_release_usd" in usd and "price_usd" not in usd
     assert "MIN(" not in bw._annualise(R, 5, config.PROJECT_BY_NAME[EF], "revenue_usd", "X")   # other series as before
 
 

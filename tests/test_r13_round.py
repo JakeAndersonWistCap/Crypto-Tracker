@@ -183,7 +183,8 @@ def test_a_aerodrome_is_frozen_with_its_rounds_moves_on_record():
     import project_freeze as pf
     assert set(config.FROZEN_PROJECTS) == set(config.FROZEN_BEFORE_R13) | {"Aerodrome"} and len(config.FROZEN_BEFORE_R13) == 7
     base = json.loads(pf.baseline_path("Aerodrome").read_text(encoding="utf-8"))
-    rec = config.FROZEN_MOVES["Aerodrome"]
+    # R16: later rounds' declarations (R16's renamed headers and moves) are left out — the R13 record is 45 cells
+    rec = {k: m for k, m in config.FROZEN_MOVES["Aerodrome"].items() if not str(m.get("why", "")).startswith("R16")}
     assert len(base) == 365 and len(rec) == 45
     # the record ends on the baseline: every recorded cell's `to` is the frozen value, so nothing is undeclared today
     for k, m in rec.items():

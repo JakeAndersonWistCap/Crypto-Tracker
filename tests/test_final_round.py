@@ -283,7 +283,8 @@ def test_aerodrome_absorption_subtracts_gauge_emissions_and_rebase_on_the_real_d
     it: 53,622,724.80 to gauges over 13 paid flips (the epoch in progress, read 10-08, pays 10-15 — not yet) +
     6,157,059.65 rebase over 13 flips (12 before re-dating) = 59,779,784.45 (was 53,752,722 + 5,699,610 = 59,452,332)."""
     wb, value = _build(tmp_path, monkeypatch, "Aerodrome")
-    assert _cell(wb, value, "A3", "Aerodrome", "Emissions Q0 (tokens)") == pytest.approx(59_779_784.46, abs=1)
+    # R16 (Jake 2026-11-20): emissions on accrual from the v3 activation (was 59,779,784.46 on the mints)
+    assert _cell(wb, value, "A3", "Aerodrome", "Emissions Q0 (tokens)") == pytest.approx(59_909_781.35, abs=1)
 
 
 def test_chainlink_unlock_is_the_2026_10_09_release(tmp_path, monkeypatch, dumps_20261009):
@@ -574,7 +575,8 @@ def test_aerodrome_implied_buyback_is_zero_in_every_cell_on_the_real_dump(tmp_pa
     """Decision 2: no protocol share of fees goes to buybacks — implied net absorption = -emissions (-59,452,332), and no
     cell applies the 100% VOTER share as a buyback split."""
     wb, value = _build(tmp_path, monkeypatch, "Aerodrome")
-    assert _cell(wb, value, "A3", "Aerodrome", "Net absorption, implied basis") == pytest.approx(-59_779_784.46, abs=1)
+    # R16: emissions on accrual (was -59,779,784.46)
+    assert _cell(wb, value, "A3", "Aerodrome", "Net absorption, implied basis") == pytest.approx(-59_909_781.35, abs=1)
     for h in ("Implied buyback Q0 ($)", "Implied buyback Q0 (tokens)", "BUYBACK AS % OF SUPPLY", "Buyback % supply at Q1",
               "Buyback % supply at Q2", "Buyback % supply at Q3", "Share applied to this window",
               "Current documented share"):
@@ -819,7 +821,8 @@ def test_aerodrome_traced_purchases_fill_q0_on_the_real_dump(tmp_path, monkeypat
     assert all(len(r["buy_tx"]) == 66 and len(r["forward_tx"]) == 66 for r in tr["rows"])
     wb, value = _build(tmp_path, monkeypatch, "Aerodrome", asof="2026-10-12")
     assert _cell(wb, value, "A3", "Aerodrome", "Actual buyback Q0 ($)") == pytest.approx(829_828)
-    assert _cell(wb, value, "A3", "Aerodrome", "Net absorption Q0 (tokens)") == pytest.approx(-57_873_088.20, abs=1)
+    # R16: emissions on accrual (was -57,873,088.20)
+    assert _cell(wb, value, "A3", "Aerodrome", "Net absorption Q0 (tokens)") == pytest.approx(-58_003_085.09, abs=1)
     # the same retired tokens over the rule's circulating (R8.1: the issuer-side stock is counted in — about 1,997M on
     # this dump against 1,517M before, so the rate is 0.005155 x 1,517 / 1,997)
     rate = _cell(wb, value, "A3", "Aerodrome", "CIRCULATING RETIREMENT RATE")

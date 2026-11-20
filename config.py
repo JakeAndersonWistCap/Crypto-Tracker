@@ -47337,6 +47337,17 @@ def _load_r14_moves() -> int:
 R14_MOVES_DECLARED = _load_r14_moves()
 
 
+# ===== R16 — THE NET HOLDER YIELD HEADLINE: RENAMED AND A CHANGE OF QUANTITY (Jake 2026-11-20, items 3 and 5) =====
+HEADLINE_RENAMES.append(
+    {"from": "CP | NET HOLDER YIELD = holder value yield − dilution (outflows a+b+c+d+e at each day's price, annualised) ÷ "
+             "market cap",
+     "to": "CP | NET HOLDER YIELD = holder value yield − dilution (outflows a+b+c+d+e+f at each day's price, "
+           "annualised) ÷ average market cap over the window",
+     "kind": "change", "ref": "R16.3/R16.5", "date": "2026-11-20",
+     "why": "the header names (f) and the denominator is the window's AVERAGE market cap (each day's $ over each day's "
+            "value), was today's market cap"})
+
+
 # =====================================================================================================================
 # ===== R16 — FROZEN MOVES OF THE ROUND (tests/fixtures/frozen_moves_r16.json), every earlier declaration kept =====
 def _load_r16_moves() -> int:
