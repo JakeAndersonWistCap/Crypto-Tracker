@@ -250,7 +250,9 @@ def test_the_daily_run_line_names_the_bigquery_fix():
     """Item 15: a failed check carries its exact fix in the closing line (adc_check.py's FIX line, else the table)."""
     ps = (Path(__file__).resolve().parents[1] / "windows" / "daily_run.ps1").read_text(encoding="utf-8")
     assert "gcloud auth application-default login" in ps.split("$AdcFix")[1]
-    assert 'Where-Object { $_ -like "FIX: *" }' in ps and '$_[0] -like "BigQuery check*"' in ps
+    # R15 moved this pin: adc_check.py's failure is one line with "FIX: " inside it; old value:
+    #   assert 'Where-Object { $_ -like "FIX: *" }' in ps and ...
+    assert 'Where-Object { $_ -like "*FIX: *" }' in ps and '$_[0] -like "BigQuery check*"' in ps
 
 
 # ------------------------------------------------------------------------------------------- 16 BigQuery on user ADC
@@ -265,14 +267,19 @@ def test_the_daily_run_checks_bigquery_first_logs_in_by_hand_and_skips_when_sche
     # Round G 1.7(b): the interactive login is BOUNDED (Start-Process, WaitForExit of -LoginWaitMinutes), never a wait
     login = ps.index('-ArgumentList @("auth", "application-default", "login")')
     assert "$lp.WaitForExit($LoginWaitMinutes * 60000)" in ps and "[int]$LoginWaitMinutes = 5" in ps
-    assert ps.index("if ((Test-Interactive) -and $gcloud)") < login < ps.index(
-        "& gcloud auth application-default set-quota-project near-data-510309") < ps.index(
+    # R15 moved this pin: interactivity is decided once ($Interactive = Test-Interactive) and set-quota-project is a
+    # bounded Start-Process; old value:
+    #   ps.index("if ((Test-Interactive) -and $gcloud)") < login < ps.index(
+    #       "& gcloud auth application-default set-quota-project near-data-510309") < ps.index(...after login...)
+    assert ps.index("$Interactive = Test-Interactive") < ps.index("} elseif ($gcloud) {") < login < ps.index(
+        '@("auth", "application-default", "set-quota-project", "near-data-510309")') < ps.index(
         'Invoke-Step "BigQuery check (after login)"')
     assert '$env:TOKEN_METRICS_SKIP_NEAR_BQ = "1"' in ps and 'if ($BqSkipped) { $summary = "$BqSkipped | $summary" }' in ps
     assert "[switch]$Scheduled" in ps and "if ($Scheduled) { return $false }" in ps and "svchost.exe" in ps
     assert "-Scheduled" in (root / "windows" / "register_task.ps1").read_text(encoding="utf-8")
     src = (root / "adc_check.py").read_text(encoding="utf-8")
-    assert "crypto_near_mainnet_us.blocks" in src and "LIMIT 1" in src and 'print(f"FIX: {fix}")' in src
+    # R15 moved this pin: the failure is ONE line ending ". FIX: <command>"; old value: 'print(f"FIX: {fix}")' in src
+    assert "crypto_near_mainnet_us.blocks" in src and "LIMIT 1" in src and '. FIX: {fix}"' in src
 
 
 def test_a_skipped_run_reads_no_bigquery_and_the_summary_leads_with_it(tmp_path, monkeypatch):

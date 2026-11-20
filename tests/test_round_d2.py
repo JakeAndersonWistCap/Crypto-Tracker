@@ -571,7 +571,9 @@ def test_8a_every_step_streams_its_output_to_the_log_as_it_arrives():
     assert "$w.AutoFlush = $true" in body and "ForEach-Object {" in body and "$w.WriteLine($s)" in body
     assert "Add-Content -Path $Log -Value $out" not in body, "no write-after-exit of the whole output"
     assert '$env:PYTHONUNBUFFERED = "1"' in ps
-    assert body.index('Save-State $label') < body.index("& $Python") < body.index('Save-State ""')
+    # R15 moved this pin: the step is started with Start-Process (a wall-clock limit, stdin an empty file); old value:
+    #   assert body.index('Save-State $label') < body.index("& $Python") < body.index('Save-State ""')
+    assert body.index('Save-State $label') < body.index("Start-Process -FilePath $Python") < body.index('Save-State ""')
     assert "$script:Steps += ,@($label, $code)" in body
     added = [ln for ln in ps.splitlines() if "D2-8a" in ln or "Save-State" in ln or "Resolve-PreviousRun" in ln]
     assert added and not any(ord(ch) > 127 for ln in added for ch in ln)
