@@ -595,6 +595,18 @@ class SubsidyTargeting:
         rpc = self.rpc_factory(spec["rpc"], deadline)
         head_n, now = rpc.head()                            # the chain's clock decides what is complete
         epochs = complete_epochs(now, int(spec.get("epochs_back", 4)))
+        # R15: from the date the route ENDED (spec route_ends: the Aero migration) its epochs are not read or stored —
+        # a "$0 over 0 pool(s)" there is the legacy Voter's silence, never a measured zero
+        if spec.get("route_ends"):
+            end = int(pd.Timestamp(spec["route_ends"]).tz_localize("UTC").timestamp())
+            ended = [ep for ep in epochs if ep >= end]
+            epochs = [ep for ep in epochs if ep < end]
+            if ended:
+                out.skipped(SOURCE, name, f"ROUTE ENDED {spec['route_ends']}: {len(ended)} epoch(s) "
+                                          f"{day_of(min(ended))}..{day_of(max(ended))} NOT READ, NOTHING STORED — "
+                                          f"{spec.get('route_ends_why', '')}", TIER)
+            if not epochs:
+                return
         todo = self._restore(out, name, spec, epochs, src)
         if not todo:
             out.skipped(SOURCE, name, f"all {len(epochs)} complete epoch(s) {day_of(epochs[-1])}..{day_of(epochs[0])} "

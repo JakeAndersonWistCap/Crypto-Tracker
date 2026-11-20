@@ -123,3 +123,59 @@ def test_6_every_ending_schedule_is_listed_and_a_full_year_ahead_moves_nothing(s
     # from 2026-11-22 the year ahead reaches past its end (2027-11-21): what remains is the cap
     late = pd.Timestamp("2027-06-01")
     assert m["fn"](late) - m["fn"](late + pd.Timedelta(days=365)) == pytest.approx(m["fn"](late))
+
+
+# ----- add 1: the top-ups are holder value RECORDED, not credited -------------------------------------------------------
+def test_add1_the_top_ups_show_as_recorded_holder_value_never_credited(scoped):
+    days = pd.date_range("2026-10-01", "2026-10-10")
+    g = {(EF, "sethfi_issuer_topup_tokens"): _frame("sethfi_issuer_topup_tokens",
+                                                    [(d, 1000.0 if d.day == 5 else 0.0) for d in days]),
+         (EF, "price_usd"): _frame("price_usd", [(d, 0.6) for d in days])}
+    bw._holder_value_views(g)
+    other = g[(EF, "holder_value_other_usd")].set_index("date")["value"]
+    credit = g[(EF, "holder_value_revenue_usd")].set_index("date")["value"]
+    assert other[pd.Timestamp("2026-10-05")] == pytest.approx(600.0) and other.sum() == pytest.approx(600.0)
+    assert credit.sum() == 0.0                                                 # never credited
+    assert EF in config.METRICS["holder_value_other_usd"]["only_projects"]
+
+
+# ----- add 5: Aerodrome's subsidy targeting after the migration ----------------------------------------------------------
+def test_add5_an_ended_route_stores_no_zero_and_the_cells_read_stale(monkeypatch):
+    monkeypatch.setattr(bw, "scoped_projects", lambda: [config.PROJECT_BY_NAME["Aerodrome"]])
+    st = config.PROJECT_BY_NAME["Aerodrome"]["subsidy_targeting"]
+    assert st["route_ends"] == "2026-10-22"
+    eps = ["2026-10-01", "2026-10-08", "2026-10-22", "2026-10-29"]
+    g = {("Aerodrome", "subsidy_fee_cover_pools"): _frame("subsidy_fee_cover_pools", [(d, 0.5) for d in eps[:2]],
+                                                          project="Aerodrome"),
+         ("Aerodrome", "subsidy_emissions_usd"): _frame("subsidy_emissions_usd",
+                                                        [(eps[0], 3e6), (eps[1], 3.7e6), (eps[2], 0.0), (eps[3], 0.0)],
+                                                        project="Aerodrome")}
+    bw._subsidy_route_end_views(g, pd.Timestamp("2026-11-20"))
+    kept = pd.to_datetime(g[("Aerodrome", "subsidy_emissions_usd")]["date"])
+    assert kept.max() == pd.Timestamp("2026-10-08")                            # the false zeros are refused
+    txt = bw.SUBSIDY_ROUTE_STALE["Aerodrome"]
+    assert txt.startswith("n/a — STALE") and "2026-10-08" in txt and "2026-10-22" in txt
+    # on the dumps (as of 2026-10-13) the route has not ended: nothing is stale, nothing moves
+    bw._subsidy_route_end_views(g, pd.Timestamp("2026-10-13"))
+    assert "Aerodrome" not in bw.SUBSIDY_ROUTE_STALE
+
+
+def test_add5_the_reader_does_not_read_or_store_an_epoch_after_the_route_ended(monkeypatch, tmp_path):
+    import fetch.subsidy_targeting as stg
+    from fetch.base import FetchOutput
+    spec = dict(config.PROJECT_BY_NAME["Aerodrome"]["subsidy_targeting"], dir=str(tmp_path))
+    end = int(pd.Timestamp(spec["route_ends"]).tz_localize("UTC").timestamp())
+
+    class _Rpc:
+        def head(self):
+            return 1, end + 3 * 7 * 86400 + 3600                                  # three epochs past the end
+    f = stg.SubsidyTargeting.__new__(stg.SubsidyTargeting)
+    f.rpc_factory = lambda url, deadline: _Rpc()
+    f.clock = lambda: 0.0
+    called = []
+    monkeypatch.setattr(f, "_restore", lambda out, name, spec_, epochs, src: called.append(list(epochs)) or [],
+                        raising=False)
+    out = FetchOutput()
+    f._aerodrome("Aerodrome", dict(spec, epochs_back=4), out, 1e9)
+    assert called and all(ep < end for ep in called[0])                          # only epochs before the end
+    assert any("ROUTE ENDED 2026-10-22" in e.message for e in out.log)

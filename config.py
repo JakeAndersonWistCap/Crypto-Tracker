@@ -47179,6 +47179,27 @@ METRIC_ALIASES[("Ether.fi", "fees_usd")] = "fees_net_cashback_usd"
 # day.
 ETHERFI_DESTINATIONS_READ_THROUGH = "2026-11-19"
 
+# ===== R15 — AERODROME'S SUBSIDY TARGETING: THE LEGACY ROUTE ENDED AT THE MIGRATION (Jake 2026-11-20, R15 add 5) =====
+# fetch/subsidy_targeting.py reads the LEGACY Voter (0x16613524…) through RewardsSugar 0x1b121EfD…. From the Aero
+# migration (2026-10-22) emissions go through the v3 contracts: every epoch from 2026-10-22 read "$0 over 0 pool(s)" on
+# Jake's store (10-22, 10-29, 11-05, 11-12) — a FALSE ZERO (the v3 gauges were paid), and the two ratios were refused, so
+# the CP cells kept showing the 2026-10-08 epoch (cover 0.397, 0.83%) as the "last complete epoch" six weeks on. From
+# the date below the legacy route stores nothing (said in the run log), the rows already stored from it are refused by
+# the build, and the two cells read "n/a — STALE" naming the last epoch read, once the as-of is a week past it. The v3
+# route (the v3 Voter's gauges and their fees) is NOT wired — round 16.
+PROJECT_BY_NAME["Aerodrome"]["subsidy_targeting"]["route_ends"] = "2026-10-22"
+PROJECT_BY_NAME["Aerodrome"]["subsidy_targeting"]["route_ends_why"] = (
+    "the legacy Voter's gauges stopped at the Aero migration (2026-10-22); emissions run through the v3 contracts, "
+    "which this route does not read")
+
+
+# ===== R15 — ETHER.FI'S TOP-UPS ARE HOLDER VALUE RECORDED, NOT CREDITED (Jake 2026-11-20, R15 add 1) =====
+# The Foundation's ETHFI top-ups to sETHFI stakers (412,000 ETHFI, $260,724 in the 90 days to 2026-11-18) are paid to
+# holders out of the Foundation's stock, not revenue: they show on "Holder value RECORDED, NOT CREDITED" at each day's
+# price, beside the credited figure (0), and stay in dilution (e). Was: the line read 0 (only buyback $ reached it).
+HOLDER_VALUE["Ether.fi"]["recorded_extra_tokens"] = ("sethfi_issuer_topup_tokens",)
+
+
 # ===== R15 — NO "A YEAR" DILUTION FIGURE ANNUALISES A SCHEDULE THAT ENDS INSIDE THE YEAR (Jake 2026-11-20, R14
 # decision 6 check) =====
 # A modelled schedule leg whose falls are releases (an unlock stock) is annualised from its trailing quarter like any

@@ -5021,6 +5021,34 @@ def _theatre_flag_views(groups: dict, asof) -> None:
         THEATRE_RESULTS[name] = r
 
 
+SUBSIDY_TARGETING_METRICS = ("subsidy_fee_cover_pools", "subsidy_emissions_to_covered_share", "subsidy_emissions_usd")
+SUBSIDY_ROUTE_STALE: dict = {}   # project -> the CP cells' STALE text (last build)
+
+
+def _subsidy_route_end_views(groups: dict, asof) -> None:
+    """R15 (subsidy_targeting route_ends): rows of an ENDED route dated on or after its end are refused (the legacy
+    Voter's "0 pools" is no zero); once the as-of is a week past the end, the CP cells read STALE with the last epoch."""
+    SUBSIDY_ROUTE_STALE.clear()
+    for p in scoped_projects():
+        st = p.get("subsidy_targeting") or {}
+        if not st.get("route_ends"):
+            continue
+        name, end = p["name"], pd.Timestamp(st["route_ends"])
+        last = None
+        for m in SUBSIDY_TARGETING_METRICS:
+            g = groups.get((name, m))
+            if g is None or g.empty:
+                continue
+            keep = g[pd.to_datetime(g["date"]).dt.normalize() < end]
+            groups[(name, m)] = keep
+            if m == "subsidy_fee_cover_pools" and not keep.empty:
+                last = pd.to_datetime(keep["date"]).max().date()
+        if pd.Timestamp(asof) >= end + pd.Timedelta(days=7):
+            SUBSIDY_ROUTE_STALE[name] = (
+                f"n/a — STALE: the last complete epoch read is {last or 'none'}; the route ENDED {end.date()} "
+                f"({st.get('route_ends_why', '')}) and the epochs after it are not measured — never shown as current")
+
+
 def _ending_schedule_views(groups: dict) -> None:
     """R15 (config.ENDING_SCHEDULES): on every day the schedule's modelled leg is held — schedule_release_tokens (the
     leg's fall that day), schedule_release_usd (x the day's price) and schedule_forward_365_tokens (the leg on the day
@@ -6857,10 +6885,20 @@ def _holder_value_views(groups: dict) -> None:
                 # R10.B2b (Near): the burn is credited BESIDE a buyback — a burn day after the buyback's last stored day
                 # would be a day with half its holder value (a read lag at the end is not a quiet day): not credited yet
                 burn_usd = burn_usd[burn_usd.index <= act.index.max()]
-        if act.empty and not any(not e.empty for e in extra) and burn_usd.empty:
+        # R15 (config HOLDER_VALUE recorded_extra_tokens; Jake 2026-11-20): a payout to holders that is NOT revenue-
+        # funded and not a buyback (Ether.fi's Foundation top-ups to stakers, from its own stock) is RECORDED beside
+        # holder value at the day's price — never credited
+        px_hv = _daily(groups.get((name, "price_usd")))
+        rec_extra = [(_daily(groups.get((name, m))) * px_hv).dropna() for m in spec.get("recorded_extra_tokens", ())]
+        if act.empty and not any(not e.empty for e in extra) and burn_usd.empty and not any(
+                not e.empty for e in rec_extra):
             continue
         # the whole buyback $ = retired (burned + held) + distributed: the funding decides whether it is credited
         credit, other = {}, {}
+        for e in rec_extra:
+            for d, v in e.items():
+                other[d] = other.get(d, 0.0) + float(v)
+                credit.setdefault(d, 0.0)
         # P5-1C.B1: a one-off KEPT in a burn series a burn-route buyback copies is funded as declared, like any recurring
         # flow — its part of that day's buyback $ (its tokens ÷ the day's buyback tokens) is recorded, never credited,
         # where it was not revenue-funded (Uniswap's 100M treasury burn on 2025-12-28)
@@ -8216,6 +8254,7 @@ def aggregate(long: pd.DataFrame, fetch_status: pd.DataFrame, asof: pd.Timestamp
     _one_off_shares(groups, asof)     # P5-1C.B1: the share of each window that is a declared one-off (cell notes)
     _theatre_flag_views(groups, asof)   # R14.B: the financial-theatre flag (config.THEATRE_FLAG), read by CP
     _ending_schedule_views(groups)      # R15: an ending schedule's own falls and its 365 days ahead
+    _subsidy_route_end_views(groups, asof)   # R15: a subsidy-targeting route that ended stores no zero, reads STALE
     COVERED_SETS.clear()
     MEASURED_VS_MODELLED.clear()
     COVERED_SETS.update(_covered_day_sets(groups))   # D6-1: the days each daily flow's rows cover
@@ -14708,10 +14747,12 @@ def _cp_cols(R: Refs, data_by_key: dict) -> list[tuple]:
         ("Subsidy targeting by pool — basis", lambda r, p: config.SUBSIDY_TARGETING_ROUTES.get(p["name"], ""),
          FMT_TEXT, "text"),
         ("Subsidy targeting — FEE COVER of the emitted pools = Σ pool fees ÷ Σ emissions $ (last complete epoch)",
-         lambda r, p: pull(R.D(r, "subsidy_fee_cover_pools", "now")) if p.get("subsidy_targeting") else "", FMT_X,
+         lambda r, p: (SUBSIDY_ROUTE_STALE.get(p["name"]) or pull(R.D(r, "subsidy_fee_cover_pools", "now")))
+         if p.get("subsidy_targeting") else "", FMT_X,
          "pull", False, {"metric_fn": lambda n: "subsidy_fee_cover_pools" if n in ("Aerodrome", "Pendle") else None}),
         ("Subsidy targeting — share of emissions to pools whose own fees cover them (last complete epoch)",
-         lambda r, p: pull(R.D(r, "subsidy_emissions_to_covered_share", "now")) if p.get("subsidy_targeting") else "",
+         lambda r, p: (SUBSIDY_ROUTE_STALE.get(p["name"]) or pull(R.D(r, "subsidy_emissions_to_covered_share", "now")))
+         if p.get("subsidy_targeting") else "",
          FMT_PCT, "pull", False,
          {"metric_fn": lambda n: "subsidy_emissions_to_covered_share" if n in ("Aerodrome", "Pendle") else None}),
         ("ONE-OFF BURN EVENTS — dated, each with its funding; counted in every rate and trend like a recurring burn "
