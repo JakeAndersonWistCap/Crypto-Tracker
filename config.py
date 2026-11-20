@@ -29601,7 +29601,10 @@ TRAJECTORY = {
 # (e) unlocks. A metric sits in ONE category per project; "basis" says why; "pending" marks an assignment still being
 # confirmed against the programme's own docs (research of 2026-10-12). GEODNET is held (Jake: wait for the CL output).
 OUTFLOW_CATEGORY_NAMES = {"a": "security emissions", "b": "supply-side incentives", "c": "demand-side incentives",
-                          "d": "ecosystem / grant spend", "e": "unlocks"}
+                          "d": "ecosystem / grant spend", "e": "unlocks",
+                          # R15 (Jake 2026-11-20, R14 decision 5 (b)): issuer-side tokens sent to exchange-tagged
+                          # addresses, purpose not established — a dilution category of its own, taken out of (e)
+                          "f": "named float outflow"}
 OUTFLOW_CATEGORIES = {
     # GEODNET (Jake's data-accuracy pass on 1e702bb, item 10): A2 read emissions 11.79M a quarter + unlocks 15.87M while CP
     # showed no dilution, so NET HOLDER YIELD = HOLDER VALUE YIELD. The same two legs as A2: the miner rewards paid to
@@ -46672,7 +46675,15 @@ THEATRE_FLAG = {
                                                   "programme_bought": 2_876_642.0},
                           "retired_in_window": 0.0,
                           "purpose": "not established (sale, loan or collateral)"},
-        "decided": _R14_DECIDED + " — item B; decision 9 (a): a NAMED FLOAT OUTFLOW, purpose not established"}}
+        "decided": _R14_DECIDED + " — item B; decision 9 (a): a NAMED FLOAT OUTFLOW, purpose not established",
+        # R15 (Jake 2026-11-20, R14 decisions 1 (b) and 2 (b)): the flag SCORES the wider reading — any buyback,
+        # whatever happens to the tokens; its state and size are read from the programme's start (2026-09-08), while
+        # the named float outflow keeps the window from 2026-07-01. Was: no reading scored, one window for both.
+        "scored": "any_buyback",
+        "size_window": {"from": "2026-09-08",
+                        "why": "the programme's first purchase (Programmatic Buybacks Safe 0x43F4cA92…): the sends "
+                               "that ran WHILE a buyback ran"},
+        "scored_decided": "Scored reading and window: Jake 2026-11-20 (R14 decisions 1 (b), 2 (b))."}}
 _EF14["log_scans"].append({
     "key": "theatre_exchange_out", "metric": "theatre_exchange_outflow_tokens", "chain": "ethereum",
     "token": _ETHFI_ETH, "holders": list(THEATRE_FLAG["Ether.fi"]["wallets"]), "direction": "out", "store": True,
@@ -47151,6 +47162,94 @@ for _m, _base, _parts in (("buyback_burned_tokens", "actual_buyback_tokens", "bu
         "why": "Jake 2026-11-19 (R14 item 2, 'repair the buyback read'): the destinations are measured per purchase day; "
                "before, one declared split (all distributed) stood for every day",
         "composition_change": "the whole series restated on the measured split; no day keeps the old basis"}
+
+
+# ===== R15 — ETHER.FI'S FEES NET OF THE CASH CASHBACK EVERYWHERE (Jake 2026-11-20, R14 decision 3 (b)) =====
+# Every fee cell of Ether.fi (Master, the A-tabs' fee, gross-payout and supplier cells, Flows' "Fees paid") reads
+# fees_net_cashback_usd — DefiLlama's parent fees less the cashback paid to card users — the same figure as the S13 FEES
+# line. A day without a cashback row has no net figure: unknown, never the gross. Was: fees_usd with the cashback in.
+MASTER_FEES_OVERRIDE["Ether.fi"] = ("fees_net_cashback_usd", "net of the card cashback")
+METRIC_ALIASES[("Ether.fi", "fees_usd")] = "fees_net_cashback_usd"
+
+# ===== R15 — A WALLET PURCHASE AFTER THE DESTINATIONS WERE READ IS UNKNOWN UNTIL MEASURED (Jake 2026-11-20, R14
+# decision 4 (b)) =====
+# The destinations were followed through the buyers' outflows up to 2026-11-19. A wallet purchase from 2026-11-20 does
+# not inherit the last measured split (2026-02-09's "all distributed"): its day is left out of the split and named, as
+# for the Operating Safe's unidentified purchases, until a new read measures it. Was: the last row stood for every later
+# day.
+ETHERFI_DESTINATIONS_READ_THROUGH = "2026-11-19"
+
+# ===== R15 — NO "A YEAR" DILUTION FIGURE ANNUALISES A SCHEDULE THAT ENDS INSIDE THE YEAR (Jake 2026-11-20, R14
+# decision 6 check) =====
+# A modelled schedule leg whose falls are releases (an unlock stock) is annualised from its trailing quarter like any
+# flow — Ether.fi's team leg falls 5,963,889 a month, so a quarter of falls x 4 reads ~71.6M a year while only 23,855,556
+# remain (to 2027-03-18). Every annualised release that holds such a leg now counts, for that leg, only what the
+# schedule releases in the 365 days ahead of the reading: annual = annualised total − the leg's annualised trailing
+# falls + MIN(those falls annualised, the schedule's release over the next 365 days). Where the schedule runs the whole
+# year ahead the MIN keeps the trailing figure — nothing moves. Every project with a schedule that ENDS (a modelled
+# leg with an end date): Ether.fi's team leg (2027-03-18) and Morpho's relock (2027-11-21: inside the year from
+# 2026-11-22). Aethir's published schedule runs to 2031 and is not a leg of its releases; no other project has one.
+ENDING_SCHEDULES = {
+    "Ether.fi": {"leg": SCHEDULE_LOCK_LEGS["Ether.fi"]["metric"], "fn": SCHEDULE_LOCK_LEGS["Ether.fi"]["fn"],
+                 "end": SCHEDULE_LOCK_LEGS["Ether.fi"]["end"],
+                 "into": ("unlock_release_tokens", "outflow_e_tokens", "outflow_e_usd")},
+    "Morpho": {"leg": MORPHO_RELOCK["metric"], "fn": relocked_on, "end": MORPHO_RELOCK["end"],
+               "into": ("unlock_release_tokens", "outflow_e_tokens", "outflow_e_usd")},
+}
+for _m, _l, _k, _u in (
+        ("schedule_release_tokens", "The ending schedule's own release on the day (its modelled leg's fall: leg on the "
+                                    "previous day − leg on the day) — the part of the release a schedule makes (R15)",
+         "flow", "tokens"),
+        ("schedule_release_usd", "schedule_release_tokens x that day's price (R15)", "flow", "usd"),
+        ("schedule_forward_365_tokens", "What the ending schedule releases in the 365 days AFTER the day (leg on the day "
+                                        "− leg 365 days later): the most a year ahead can hold (R15)", "stock",
+         "tokens")):
+    METRICS[_m] = {"label": _l, "kind": _k, "unit": _u, "archetypes": [1, 2, 3, 4], "tiers": [2], "sanity_min": 0,
+                   "sanity_max": 1e12, "view_only": True, "only_projects": tuple(ENDING_SCHEDULES)}
+
+
+# ===== R15 — ETHER.FI'S NAMED FLOAT OUTFLOW IS ITS OWN DILUTION CATEGORY (f) (Jake 2026-11-20, R14 decision 5 (b)) =====
+# The ETHFI the issuer-side wallets sent to FalconX- and Binance-tagged addresses (THEATRE_FLAG["Ether.fi"], purpose not
+# established) was a release inside unlocks (e). It is now category (f), "named float outflow", and taken out of (e) on
+# its day (RELEASE_LESS, as Pendle's gauge funding), so total dilution is unchanged and nothing is counted twice. ONLY
+# the senders INSIDE the release stock count: the Operating, Foundation and two Treasury Safes (9,100,020 of the
+# 9,300,020 researched). The deployer EOA 0x9eaC7114… (200,000) and the Safe 0x01e42ad3… are not in the stock — their
+# ETHFI was already in the float, so a send from them is not dilution; it stays in the flag's named outflow only.
+_R15_STOCK = {a.lower() for k, v in PROJECT_BY_NAME["Ether.fi"]["contracts"].items()
+              if isinstance(v, dict) and (k.startswith("noncirc") or k.startswith("treasury"))
+              for a in [str(v.get("address", ""))]}
+ETHERFI_NAMED_OUTFLOW_SENDERS = {w: lab for w, lab in THEATRE_FLAG["Ether.fi"]["wallets"].items()
+                                 if w.lower() in _R15_STOCK}
+assert len(ETHERFI_NAMED_OUTFLOW_SENDERS) == 4
+_r15_theatre_scan = next(sp for sp in PROJECT_BY_NAME["Ether.fi"]["log_scans"] if sp["key"] == "theatre_exchange_out")
+PROJECT_BY_NAME["Ether.fi"]["log_scans"].append(dict(
+    _r15_theatre_scan, key="named_float_outflow", metric="etherfi_named_float_outflow_tokens",
+    holders=list(ETHERFI_NAMED_OUTFLOW_SENDERS), wired_on="2026-11-20",
+    label="ETHFI sent by ether.fi's issuer-side wallets INSIDE the release stock to the FalconX- and Binance-tagged "
+          "addresses — dilution category (f), taken out of (e) (R15; Jake 2026-11-20, R14 decision 5 (b))"))
+METRICS["etherfi_named_float_outflow_tokens"] = dict(
+    METRICS["theatre_exchange_outflow_tokens"],
+    label="ETHFI the issuer-side wallets inside the release stock (Operating, Foundation and two Treasury Safes) sent "
+          "to exchange-tagged addresses on the day — dilution (f), named float outflow, purpose not established (R15)")
+OUTFLOW_CATEGORIES["Ether.fi"]["f"] = ("etherfi_named_float_outflow_tokens",)
+OUTFLOW_CATEGORIES["Ether.fi"]["basis"] += (
+    " (f) NAMED FLOAT OUTFLOW (R15, Jake 2026-11-20): the issuer-side Safes' ETHFI sent to FalconX- / Binance-tagged "
+    "addresses (purpose not established), taken out of (e) on its day — the deployer EOA's sends were already in the "
+    "float and are not dilution")
+RELEASE_LESS["Ether.fi"] = ("etherfi_named_float_outflow_tokens",)
+FLOW_LESS_LINE["Ether.fi"] = {
+    "label": "+ sent to exchange-tagged addresses from the issuer-side Safes (f) — netted out of (e)",
+    "series": "the named float outflow netted out of unlock_release_tokens (config.RELEASE_LESS: "
+              "etherfi_named_float_outflow_tokens)"}
+for _c in ("tokens", "usd"):
+    _m = METRICS.get(f"outflow_e_{_c}")
+    METRICS[f"outflow_f_{_c}"] = dict(_m, label=_m["label"].replace("(e) unlocks", "(f) named float outflow"),
+                                      only_projects=("Ether.fi",))
+
+BUYBACK_DESTINATION_SHARES["Ether.fi"].append(
+    {"from": "2026-11-20", "unknown": True, "verified": False,
+     "source": "NOT YET MEASURED — a wallet purchase after the destinations were read (through 2026-11-19) is unknown "
+               "until re-measured (Jake 2026-11-20, R14 decision 4 (b))"})
 
 
 # =====================================================================================================================

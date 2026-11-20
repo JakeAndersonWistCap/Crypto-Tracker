@@ -221,13 +221,19 @@ def test_B_the_flag_reads_the_window_and_shows_its_evidence(scoped, monkeypatch)
                                                        else 0.0) for d in days])}
     bw._theatre_flag_views(g, asof)
     r = bw.THEATRE_RESULTS[EF]
-    assert r["sent"] == 3_300_000.0                                    # 06-15 is before the window
+    # R15 (Jake 2026-11-20, decision 2 (b)): the NAMED outflow keeps the window from 07-01 (06-15 is before it); the
+    # flag's state and size read from 2026-09-08 (was: r["sent"] == 3,300,000 over 07-01..)
+    assert r["named_sent"] == 3_300_000.0
+    assert r["sent"] == 200_000.0
     assert r["as_written"]["state"] == "NOT RAISED" and r["any_buyback"]["state"] == "RAISED"
     txt = bw.theatre_flag_text(EF)
     for must in ("AS WRITTEN", "IF ANY BUYBACK COUNTS", "FalconX", "Binance", "Blockscout", "evidence, not proof",
-                 "DECISION FOR JAKE", "2026-07-01"):
+                 "2026-07-01", "2026-09-08"):
         assert must in txt, must
-    assert bw.theatre_flag_size(EF).startswith("n/a — NOT RAISED")
+    assert txt.startswith("SCORED — IF ANY BUYBACK COUNTS: RAISED")   # decision 1 (b) (was: a DECISION FOR JAKE line)
+    bought = r["bought"]
+    assert bw.theatre_flag_size(EF) == f"={200_000.0 / bought!r}"    # the scored size: sent ÷ bought since 09-08
+    # (was: "n/a — NOT RAISED", the as-written size)
     # no outflow rows (the fixture's case): NOT TESTABLE, with the research read shown as research, not the store
     g.pop((EF, spec["outflow_metric"]))
     bw._theatre_flag_views(g, asof)
@@ -240,7 +246,9 @@ def test_B_a_scanned_buyback_that_starts_inside_the_window_is_read_from_its_firs
     spec = config.THEATRE_FLAG[EF]
     asof = pd.Timestamp("2026-11-19")
     days = pd.date_range("2026-06-01", asof)
-    prog = pd.date_range("2026-09-08", asof)                          # the programme Safe's first transfer
+    # R15: the flag's window opens at the programme's start (2026-09-08), so a holder whose first transfer is LATER
+    # still starts inside it (was: 2026-09-08, then inside the 07-01 window)
+    prog = pd.date_range("2026-09-20", asof)
     g = {(EF, spec["outflow_metric"]): _frame(spec["outflow_metric"], [(d, 0.0) for d in days]),
          (EF, spec["retired_metric"]): _frame(spec["retired_metric"], [(d, 0.0) for d in days]),
          (EF, "actual_buyback_tokens"): _frame("actual_buyback_tokens", [(d, 0.0) for d in days],
@@ -252,7 +260,7 @@ def test_B_a_scanned_buyback_that_starts_inside_the_window_is_read_from_its_firs
     bw._theatre_flag_views(g, asof)
     r = bw.THEATRE_RESULTS[EF]
     assert r["bought"] == 10.0 * len(prog) and r["any_buyback"]["state"] == "RAISED"
-    assert "programmatic_buyback_tokens from its holders' first transfer 2026-09-08" in bw.theatre_flag_text(EF)
+    assert "programmatic_buyback_tokens from its holders' first transfer 2026-09-20" in bw.theatre_flag_text(EF)
     # the same late start on a series that is NOT a log scan is unknown, never a 0 before it
     g[(EF, "programmatic_buyback_tokens")]["source"] = "derived:x"
     bw._theatre_flag_views(g, asof)

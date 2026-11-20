@@ -149,6 +149,7 @@ COLUMN_MAP: tuple[tuple[str, str, str], ...] = (
     ("*", "Dilution (c)", "outflow_c"), ("*", "Dilution (d)", "outflow_d"), ("*", "Dilution (e)", "outflow_e"),
     ("*", "Outflow (a)", "outflow_a"), ("*", "Outflow (b)", "outflow_b"), ("*", "Outflow (c)", "outflow_c"),
     ("*", "Outflow (d)", "outflow_d"), ("*", "Outflow (e)", "outflow_e"), ("*", "Outflow categories", "outflow_e"),
+    ("*", "Dilution (f)", "outflow_f"), ("*", "Outflow (f)", "outflow_f"),      # R15: the named float outflow
     ("*", "Subsidy cover", "subsidy_cover"), ("*", "SUBSIDY COVER", "subsidy_cover"),
     ("*", "Supplier payout", "supplier_payout"), ("*", "Insider share", "insider_share"),
     ("*", "Discretionary supply", "discretionary"), ("*", "Treasury governance could redeploy", "discretionary"),

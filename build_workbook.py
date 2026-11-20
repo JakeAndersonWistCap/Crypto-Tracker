@@ -1776,6 +1776,15 @@ def as_published_flag(name: str, fmt: str = FMT_PCT):
     return ";".join(f'{sec}"{config.AS_PUBLISHED_FLAG_PREFIX}{lit}"' for sec in fmt.split(";"))
 
 
+def _total_dilution_note(p: dict) -> str:
+    """R15: the TOTAL DILUTION cells' note — as published (R12.1), and the named float outflow (f) where the project
+    declares it: the header lists a..e; the total sums every category the project holds, (f) included."""
+    f = ("TOTAL INCLUDES (f) NAMED FLOAT OUTFLOW (R15, Jake 2026-11-20): " + " + ".join(config.outflow_metrics(
+        p["name"], "f")) + " — taken out of (e) on its day, so nothing is counted twice"
+         if config.outflow_metrics(p["name"], "f") else "")
+    return "; ".join(x for x in (as_published_note(p), f) if x)
+
+
 def as_published_note(p: dict) -> str:
     out = []
     for (n, c), st in sorted(AS_PUBLISHED.items()):
@@ -4989,11 +4998,53 @@ def _theatre_flag_views(groups: dict, asof) -> None:
                     late.append(f"{m} from its holders' first transfer {s.index.min().date()}")
                 vals.append(float(s[(s.index >= lo) & (s.index <= hi)].sum()))
             return None if any(v is None for v in vals) else sum(vals)    # one leg unknown: the sum is unknown
+        # R15: a purchase leg that has ALREADY joined actual_buyback_* (config.BUYBACK_LEGS: Ether.fi's programme from
+        # 2026-09-03) is not added a second time — the bought base counts each purchase once
+        bought_ms = list(spec["bought_metrics"])
+        leg = (getattr(config, "BUYBACK_LEGS", {}) or {}).get(name)
+        ab = groups.get((name, "actual_buyback_tokens"))
+        if leg and ab is not None and not ab.empty and ab["source"].astype(str).str.contains(
+                leg["points"][0], regex=False).any() and leg["metric"] in bought_ms and len(bought_ms) > 1:
+            bought_ms.remove(leg["metric"])
+        named_sent = window_sum([spec["outflow_metric"]])          # the NAMED float outflow: the whole window
+        # R15 (Jake 2026-11-20, decision 2 (b)): the flag's state and size are read over its SIZE window (the
+        # programme's run, config size_window) — the named outflow keeps the declared window
+        sw = spec.get("size_window") or {}
+        if sw.get("from"):
+            lo = max(lo, pd.Timestamp(sw["from"]))
         r = theatre_flag_state(window_sum([spec["outflow_metric"]]), window_sum([spec["retired_metric"]]),
-                               window_sum(spec["bought_metrics"], from_first_activity=True))
+                               window_sum(bought_ms, from_first_activity=True))
         r["window"] = (lo.date(), hi.date())
+        r["named_window"] = (pd.Timestamp(spec["window"]["from"]).date(), hi.date())
+        r["named_sent"] = named_sent
         r["late"] = late
         THEATRE_RESULTS[name] = r
+
+
+def _ending_schedule_views(groups: dict) -> None:
+    """R15 (config.ENDING_SCHEDULES): on every day the schedule's modelled leg is held — schedule_release_tokens (the
+    leg's fall that day), schedule_release_usd (x the day's price) and schedule_forward_365_tokens (the leg on the day
+    less the leg 365 days later). Read by _annualise; no leg rows, no views (the release then reads as before)."""
+    ENDING_SCHEDULE_ROWS.clear()
+    for name, es in (getattr(config, "ENDING_SCHEDULES", {}) or {}).items():
+        leg = groups.get((name, es["leg"]))
+        if leg is None or leg.empty or name not in {p["name"] for p in scoped_projects()}:
+            continue
+        days = pd.DatetimeIndex(sorted(pd.to_datetime(leg["date"]).dt.normalize().unique()))
+        fn = es["fn"]
+        rel = pd.Series([max(fn(d - pd.Timedelta(days=1)) - fn(d), 0.0) for d in days], index=days)
+        fwd = pd.Series([max(fn(d) - fn(d + pd.Timedelta(days=365)), 0.0) for d in days], index=days)
+        src = f"derived:ending_schedule[{es['leg']}, ends {es['end']}]"
+        for m, v in (("schedule_release_tokens", rel), ("schedule_forward_365_tokens", fwd)):
+            groups[(name, m)] = _as_stored(pd.DataFrame({"date": days, "project": name, "metric": m,
+                                                         "value": v.values, "tier": 2, "source": src}), leg.columns)
+        px = _daily(groups.get((name, "price_usd")))
+        u = (rel * px.reindex(days)).dropna()
+        if not u.empty:
+            groups[(name, "schedule_release_usd")] = _as_stored(pd.DataFrame(
+                {"date": u.index, "project": name, "metric": "schedule_release_usd", "value": u.values, "tier": 2,
+                 "source": src + "*price"}), leg.columns)
+        ENDING_SCHEDULE_ROWS[name] = True
 
 
 def theatre_flag_text(name: str) -> str:
@@ -5011,21 +5062,32 @@ def theatre_flag_text(name: str) -> str:
                 + ", ".join(f"{k} {v:,.0f}" for k, v in (rr.get("by_destination") or {}).items())
                 + f"); {rr.get('retired_in_window', 0):,.0f} retired; purpose {rr.get('purpose', 'not established')}."
                 if rr else "")
-    return (f"AS WRITTEN (tokens RETIRED by buyback in the window): {a['state']} — {a['why']}{size(a)}. "
-            f"IF ANY BUYBACK COUNTS: {b['state']} — {b['why']}{size(b)}. Window {r['window'][0]}..{r['window'][1]}"
-            + (f" ({'; '.join(r['late'])})" if r.get("late") else "") + ". "
-            f"Destinations: {dests}. {spec.get('label_caveat', '')}.{research} DECISION FOR JAKE: which reading "
-            f"the flag scores")[:2400]
+    sc = spec.get("scored") or "as_written"
+    first, second = (("IF ANY BUYBACK COUNTS", b), ("AS WRITTEN (tokens RETIRED by buyback)", a)) \
+        if sc == "any_buyback" else (("AS WRITTEN (tokens RETIRED by buyback)", a), ("IF ANY BUYBACK COUNTS", b))
+    nw = r.get("named_window") or (spec["window"]["from"], r["window"][1])
+    ns = r.get("named_sent")
+    named = (f"NAMED FLOAT OUTFLOW {nw[0]}..{nw[1]}: "
+             + (f"{ns:,.0f} sent to the tagged destinations" if ns is not None else "not stored over the window")
+             + ", purpose not established. ")
+    return (f"SCORED — {first[0]}: {first[1]['state']} — {first[1]['why']}{size(first[1])}. "
+            f"Beside it — {second[0]}: {second[1]['state']} — {second[1]['why']}{size(second[1])}. "
+            f"Flag window {r['window'][0]}..{r['window'][1]}"
+            + (f" ({'; '.join(r['late'])})" if r.get("late") else "") + ". " + named
+            + f"Destinations: {dests}. {spec.get('label_caveat', '')}.{research} "
+            f"{spec.get('scored_decided', '')}")[:2400]
 
 
 def theatre_flag_size(name: str):
     """The CP number: sent ÷ retired under the standard's wording; text where it is not formed."""
     if name not in (getattr(config, "THEATRE_FLAG", {}) or {}):
         return ""
-    a = (THEATRE_RESULTS.get(name) or {}).get("as_written") or {"state": "NOT TESTABLE", "size": None}
+    sc = config.THEATRE_FLAG[name].get("scored") or "as_written"       # R15: the reading Jake scores
+    a = (THEATRE_RESULTS.get(name) or {}).get(sc) or {"state": "NOT TESTABLE", "size": None}
     if a["size"] is not None:
         return f"={a['size']!r}"
-    return f"n/a — {a['state']}: " + ("÷ 0 retired tokens in the window" if a["state"] == "NOT RAISED"
+    base = "retired" if sc == "as_written" else "bought"
+    return f"n/a — {a['state']}: " + (f"÷ 0 {base} tokens in the window" if a["state"] == "NOT RAISED"
                                       else "the window's series are not stored")
 
 
@@ -8153,6 +8215,7 @@ def aggregate(long: pd.DataFrame, fetch_status: pd.DataFrame, asof: pd.Timestamp
     _market_share_mean_views(groups)  # PR1.U4: market share's 30- / 60-day means (config.MARKET_SHARE_MEAN)
     _one_off_shares(groups, asof)     # P5-1C.B1: the share of each window that is a declared one-off (cell notes)
     _theatre_flag_views(groups, asof)   # R14.B: the financial-theatre flag (config.THEATRE_FLAG), read by CP
+    _ending_schedule_views(groups)      # R15: an ending schedule's own falls and its 365 days ahead
     COVERED_SETS.clear()
     MEASURED_VS_MODELLED.clear()
     COVERED_SETS.update(_covered_day_sets(groups))   # D6-1: the days each daily flow's rows cover
@@ -10359,7 +10422,27 @@ def _guarded_net(R: Refs, r: int, p: dict, iss_m: str, burn_m: str, w: str = "q0
     return _coverage_guard(R, r, [("issuance", iss_m, w), ("burn", burn_m, w)], expr, same_span=True, p=p)
 
 
+ENDING_SCHEDULE_ROWS: dict = {}   # project -> True where the ending-schedule views were built (last build)
+
+
 def _annualise(R: Refs, r: int, p: dict, metric: str, total: str) -> str:
+    """R15 (config.ENDING_SCHEDULES): an annualised release that holds an ENDING schedule leg counts, for that leg, only
+    what the schedule releases in the 365 days ahead — annual − the leg's annualised trailing falls + MIN(those, the
+    365 days ahead). Every other series: _annualise_flow as before."""
+    base = _annualise_flow(R, r, p, metric, total)
+    es = (getattr(config, "ENDING_SCHEDULES", {}) or {}).get(p["name"])
+    if not es or metric not in es["into"] or not ENDING_SCHEDULE_ROWS.get(p["name"]):
+        return base
+    usd = metric.endswith("_usd")
+    sm = "schedule_release_usd" if usd else "schedule_release_tokens"
+    trail = _annualise_flow(R, r, p, sm, R.D(r, sm, "q0"))
+    fwd = R.D(r, "schedule_forward_365_tokens", "now")
+    if usd:
+        fwd = f"({fwd})*{R.D(r, 'price_usd', 'now')}"
+    return f"({base})-({trail})+MIN({trail},{fwd})"
+
+
+def _annualise_flow(R: Refs, r: int, p: dict, metric: str, total: str) -> str:
     """A Q0-window sum as a yearly figure — over the days the series has ACTUALLY covered.
 
     ** x365/90 UNDERSTATES EVERY SERIES YOUNGER THAN THE WINDOW. Fixed 2026-09-28. ** Run
@@ -13723,7 +13806,7 @@ CP_NHY_HEAD = ("NET HOLDER YIELD = holder value yield − dilution (outflows a+b
                "market cap")
 CP_SUBSIDY_HEAD = "SUBSIDY COVER = revenue ÷ $ supply-side incentives (b), per covered day"
 CP_SUBSIDY_BC_HEAD = "Subsidy cover incl. demand-side = revenue ÷ $ (b + c), per covered day"
-CP_DILUTION_CATS = ("a", "b", "c", "d", "e")
+CP_DILUTION_CATS = ("a", "b", "c", "d", "e", "f")     # R15: (f) named float outflow (Ether.fi; config)
 CP_SUPPLIER_HEAD = ("Supplier payout per $ of fees = (fees to suppliers + incentive $ to suppliers (b)) ÷ fees, per "
                     "covered day (PROPOSED)")
 
@@ -14075,14 +14158,14 @@ def _cp_cols(R: Refs, data_by_key: dict) -> list[tuple]:
                       lambda r, p, c=c: ann(r, p, f"outflow_{c}_tokens"),
                       blank_fn=lambda p, c=c: not config.outflow_metrics(p["name"], c))
     # R12.1: the two cells carry the as-published flag (a number format) and its note where a category is declared
-    rates += [(*col, False, {"fmt_fn": as_published_flag, "note_fn": as_published_note}) for col in both(
+    rates += [(*col, False, {"fmt_fn": as_published_flag, "note_fn": _total_dilution_note}) for col in both(
         "TOTAL DILUTION = outflows a+b+c+d+e (annualised)",
         lambda p: [(f"outflow {c}", f"outflow_{c}_tokens", "q0") for c in _cp_cats(p)],
         lambda r, p: "+".join(ann(r, p, f"outflow_{c}_tokens") for c in _cp_cats(p)),
         blank_fn=lambda p: not _cp_cats(p))]
 
     outflow_usd = []
-    for c in ("a", "b", "c", "d", "e"):
+    for c in CP_DILUTION_CATS:
         nm = config.OUTFLOW_CATEGORY_NAMES[c]
         outflow_usd.append((f"Outflow ({c}) {nm} — $ a year (each day's tokens x that day's price, annualised)",
                             lambda r, p, c=c: "" if not config.outflow_metrics(p["name"], c) else _coverage_guard(
@@ -14673,7 +14756,7 @@ def _cp_cols(R: Refs, data_by_key: dict) -> list[tuple]:
         ("FINANCIAL-THEATRE FLAG — issuer / insider sends to exchange-tagged addresses in a buyback window: state (as "
          "written: tokens RETIRED by buyback; beside it: any buyback), window, destinations and their label sources",
          lambda r, p: theatre_flag_text(p["name"]), FMT_TEXT, "text"),
-        ("Financial-theatre flag — size = sent to exchange-tagged addresses ÷ tokens retired by buyback, in the window",
+        ("Financial-theatre flag — size = sent to exchange-tagged addresses ÷ the scored base (retired, or bought where any buyback counts), in the window",
          lambda r, p: theatre_flag_size(p["name"]), FMT_PCT, "calc"),
     ]
 
@@ -16559,6 +16642,7 @@ def flow_statements(groups: dict, asof) -> list[dict]:
                   "bought": "actual_buyback_usd", "credited": "holder_value_revenue_usd",
                   "other": "holder_value_other_usd", "incent_b": "outflow_b_usd", "incent_c": "outflow_c_usd",
                   "incent_a": "outflow_a_usd", "incent_d": "outflow_d_usd", "incent_e": "outflow_e_usd",
+                  "incent_f": "outflow_f_usd",
                   "credited_fees": "holder_value_fees_only_usd", "rbase": rb}
         legs_c = (getattr(config, "BUYBACK_LEGS", {}) or {}).get(name)
         if legs_c:                                  # R14: the buyback paid on to customers is not distributed to holders
@@ -16628,6 +16712,10 @@ def flow_statements(groups: dict, asof) -> list[dict]:
                    "" if "outflow_d_usd" in have else "no (d) on this project"),
                   ("Outflows beside: unlocks (e)", vrows["incent_e"], "usd", "outflow_e_usd",
                    "" if "outflow_e_usd" in have else "no (e) on this project"),
+                  # R15: the named float outflow (f), only where a project declares it (Ether.fi)
+                  *([("Outflows beside: named float outflow (f)", vrows["incent_f"], "usd", "outflow_f_usd",
+                      "" if "outflow_f_usd" in have else "no (f) rows stored")]
+                    if config.outflow_metrics(name, "f") else []),
                   # G11 D7 (Jake's 10-21 run: NEAR's treasury mint sat inside "+ minted" on no value-flow line): a
                   # declared memo (config.VALUE_FLOW_MEMO) shows the $ of a minted leg and says which line it is not
                   *[(lab, [_flow_sum(_usd_daily(d(m), d("price_usd")), *_flow_window(asof, k))[0] for k in range(5)],
@@ -16802,7 +16890,7 @@ def flow_block_series(name: str, rows: list[dict], groups: dict) -> set:
     ms = {m for m in names if m in config.METRICS}
     if "circulating_supply_used" in ms:
         ms |= set(trajectory._inputs(name, "circulating_supply_used", groups or {}))
-    for c in "abcde":
+    for c in CP_DILUTION_CATS:                     # R15: (f) too
         legs = set(config.outflow_metrics(name, c) or ())
         if legs & ms:
             ms |= {f"outflow_{c}_tokens", f"outflow_{c}_usd"}

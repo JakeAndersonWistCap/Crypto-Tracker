@@ -215,7 +215,9 @@ def test_the_top_ups_are_read_as_their_own_series_into_outflow_e():
     reserve-funded rewards. Their own scan: issuer wallets -> the vault, deposits (shares minted) out."""
     assert config.outflow_metrics(EF, "e") == ("unlock_release_tokens",)
     assert config.RELEASE_GROSS_UP[EF] == ("sethfi_issuer_topup_tokens",)
-    assert EF not in config.RELEASE_LESS
+    # R15 (decision 5 (b)): only the named float outflow (f) is netted out of the release — never the top-ups
+    # (was: EF not in config.RELEASE_LESS)
+    assert "sethfi_issuer_topup_tokens" not in config.RELEASE_LESS.get(EF, ())
     assert "Sky" in config.OUTFLOW_CATEGORIES[EF]["basis"] and "top-ups" in config.OUTFLOW_CATEGORIES[EF]["basis"]
     scan = next(s for s in config.PROJECT_BY_NAME[EF]["log_scans"] if s["key"] == "sethfi_issuer_topups")
     senders = {a.lower() for a in scan["count_from"]}

@@ -1011,6 +1011,7 @@ Per project: every flow INTO circulating (the five outflow categories, config OU
 | into circulating | (c) demand-side incentives | **NO SERIES** |
 | into circulating | (d) ecosystem / grant spend | **NO SERIES** |
 | into circulating | (e) unlocks | **NO SERIES** |
+| into circulating | (f) named float outflow | **NO SERIES** |
 | out of circulating | retirement (bought, burned + held) | **NO SERIES** |
 | out of circulating | burn (every burn) | `gross_burn_tokens` |
 
@@ -1039,6 +1040,7 @@ Funding: revenue (the default: the programme documented base)
 | into circulating | (c) demand-side incentives | **NO SERIES** |
 | into circulating | (d) ecosystem / grant spend | **NO SERIES** |
 | into circulating | (e) unlocks | `unlock_release_tokens` |
+| into circulating | (f) named float outflow | **NO SERIES** |
 | out of circulating | retirement (bought, burned + held) | `retired_buyback_tokens` |
 | out of circulating | burn (every burn) | `gross_burn_tokens_bigquery` |
 
@@ -1069,6 +1071,7 @@ Funding: revenue (the default: the programme documented base)
 | into circulating | (c) demand-side incentives | `plume_airdrop_claims_tokens` |
 | into circulating | (d) ecosystem / grant spend | **NO SERIES** |
 | into circulating | (e) unlocks | `insider_unlock_tokens` |
+| into circulating | (f) named float outflow | **NO SERIES** |
 | out of circulating | retirement (bought, burned + held) | **NO SERIES** |
 | out of circulating | burn (every burn) | **NO SERIES** |
 
@@ -1099,6 +1102,7 @@ Funding: revenue (the default: the programme documented base)
 | into circulating | (c) demand-side incentives | **NO SERIES** |
 | into circulating | (d) ecosystem / grant spend | **NO SERIES** |
 | into circulating | (e) unlocks | `unlock_release_tokens` |
+| into circulating | (f) named float outflow | **NO SERIES** |
 | out of circulating | retirement (bought, burned + held) | `retired_buyback_tokens` |
 | out of circulating | burn (every burn) | **NO SERIES** |
 
@@ -1127,6 +1131,7 @@ Funding: revenue (the default: the programme documented base)
 | into circulating | (c) demand-side incentives | **NO SERIES** |
 | into circulating | (d) ecosystem / grant spend | **NO SERIES** |
 | into circulating | (e) unlocks | `unlock_release_tokens` |
+| into circulating | (f) named float outflow | **NO SERIES** |
 | out of circulating | retirement (bought, burned + held) | `retired_buyback_tokens` |
 | out of circulating | burn (every burn) | `gross_burn_tokens` |
 
@@ -1155,6 +1160,7 @@ Funding: revenue (the default: the programme documented base)
 | into circulating | (c) demand-side incentives | **NO SERIES** |
 | into circulating | (d) ecosystem / grant spend | **NO SERIES** |
 | into circulating | (e) unlocks | `insider_unlock_tokens` |
+| into circulating | (f) named float outflow | **NO SERIES** |
 | out of circulating | retirement (bought, burned + held) | **NO SERIES** |
 | out of circulating | burn (every burn) | **NO SERIES** |
 
@@ -1183,6 +1189,7 @@ Funding: revenue (the default: the programme documented base)
 | into circulating | (c) demand-side incentives | **NO SERIES** |
 | into circulating | (d) ecosystem / grant spend | **NO SERIES** |
 | into circulating | (e) unlocks | `unlock_release_tokens` |
+| into circulating | (f) named float outflow | **NO SERIES** |
 | out of circulating | retirement (bought, burned + held) | `retired_buyback_tokens` |
 | out of circulating | burn (every burn) | **NO SERIES** |
 
@@ -1211,6 +1218,7 @@ Funding: revenue (the default: the programme documented base)
 | into circulating | (c) demand-side incentives | **NO SERIES** |
 | into circulating | (d) ecosystem / grant spend | **NO SERIES** |
 | into circulating | (e) unlocks | `unlock_release_tokens` |
+| into circulating | (f) named float outflow | **NO SERIES** |
 | out of circulating | retirement (bought, burned + held) | **NO SERIES** |
 | out of circulating | burn (every burn) | **NO SERIES** |
 
@@ -1241,6 +1249,7 @@ Funding: revenue (the default: the programme documented base)
 | into circulating | (c) demand-side incentives | **NO SERIES** |
 | into circulating | (d) ecosystem / grant spend | **NO SERIES** |
 | into circulating | (e) unlocks | `unlock_release_tokens` |
+| into circulating | (f) named float outflow | **NO SERIES** |
 | out of circulating | retirement (bought, burned + held) | `retired_buyback_tokens` |
 | out of circulating | burn (every burn) | `total_burn_tokens` |
 
@@ -1269,6 +1278,7 @@ Funding: revenue (the default: the programme documented base)
 | into circulating | (c) demand-side incentives | **NO SERIES** |
 | into circulating | (d) ecosystem / grant spend | `growth_budget_release_tokens` |
 | into circulating | (e) unlocks | `unlock_release_vesting_tokens` |
+| into circulating | (f) named float outflow | **NO SERIES** |
 | out of circulating | retirement (bought, burned + held) | **NO SERIES** |
 | out of circulating | burn (every burn) | `gross_burn_tokens` |
 
@@ -1299,6 +1309,7 @@ Funding: none before 2025-12-27 (0 credited: before the fee switch executed on c
 | into circulating | (c) demand-side incentives | `emissions_tokens` |
 | into circulating | (d) ecosystem / grant spend | **NO SERIES** |
 | into circulating | (e) unlocks | `unlock_release_tokens` |
+| into circulating | (f) named float outflow | **NO SERIES** |
 | out of circulating | retirement (bought, burned + held) | `retired_buyback_tokens` |
 | out of circulating | burn (every burn) | **NO SERIES** |
 
@@ -1327,6 +1338,7 @@ Funding: 2000-01-01..now treasury: the Foundation buys AERO with its own voting 
 | into circulating | (c) demand-side incentives | `emissions_tokens` |
 | into circulating | (d) ecosystem / grant spend | `sky_ecosystem_out_tokens` |
 | into circulating | (e) unlocks | **NO SERIES** |
+| into circulating | (f) named float outflow | **NO SERIES** |
 | out of circulating | retirement (bought, burned + held) | `retired_buyback_tokens` |
 | out of circulating | burn (every burn) | `sky_stage2_burn_tokens` |
 
@@ -1355,6 +1367,7 @@ Funding: revenue (the default: the programme documented base)
 | into circulating | (c) demand-side incentives | **NO SERIES** |
 | into circulating | (d) ecosystem / grant spend | **NO SERIES** |
 | into circulating | (e) unlocks | `unlock_release_tokens` |
+| into circulating | (f) named float outflow | **NO SERIES** |
 | out of circulating | retirement (bought, burned + held) | `retired_buyback_tokens` |
 | out of circulating | burn (every burn) | **NO SERIES** |
 
@@ -1385,6 +1398,7 @@ Funding: revenue (the default: the programme documented base)
 | into circulating | (c) demand-side incentives | **NO SERIES** |
 | into circulating | (d) ecosystem / grant spend | **NO SERIES** |
 | into circulating | (e) unlocks | `unlock_release_tokens` |
+| into circulating | (f) named float outflow | **NO SERIES** |
 | out of circulating | retirement (bought, burned + held) | `retired_buyback_tokens` |
 | out of circulating | burn (every burn) | **NO SERIES** |
 
@@ -1413,10 +1427,11 @@ Funding: revenue (the default: the programme documented base)
 | into circulating | (c) demand-side incentives | `cashback_unfunded_tokens` |
 | into circulating | (d) ecosystem / grant spend | **NO SERIES** |
 | into circulating | (e) unlocks | `unlock_release_tokens` |
+| into circulating | (f) named float outflow | `etherfi_named_float_outflow_tokens` |
 | out of circulating | retirement (bought, burned + held) | `retired_buyback_tokens` |
 | out of circulating | burn (every burn) | **NO SERIES** |
 
-Basis: user programmes are demand-side (c): the Cash ETHFI cashback (CashbackDistributor 0x38F2fBb2… on OP, cashback_paid_tokens, round 3 W3) — only the part NOT covered by the programme's market purchases is dilution (CASHBACK_FUNDING, FR2 S2); Season 5 was paid in KING (not ETHFI); Triple Dip has no identified distributor; the Sep-2025 membership drops are finished. Issuer-wallet releases are unlocks (e). (e) ALSO holds the Foundation's ETHFI top-ups to sETHFI stakers paid from its own stock (sethfi_issuer_topup_tokens; R14, Jake 2026-11-19) — emissions-funded yield, a treasury release like Sky's reserve-funded rewards: the release counts each day at least that day's top-ups (RELEASE_GROSS_UP). No supply-side (b) incentive is paid (decision 8, DECLARED_NA_REASONS)
+Basis: user programmes are demand-side (c): the Cash ETHFI cashback (CashbackDistributor 0x38F2fBb2… on OP, cashback_paid_tokens, round 3 W3) — only the part NOT covered by the programme's market purchases is dilution (CASHBACK_FUNDING, FR2 S2); Season 5 was paid in KING (not ETHFI); Triple Dip has no identified distributor; the Sep-2025 membership drops are finished. Issuer-wallet releases are unlocks (e). (e) ALSO holds the Foundation's ETHFI top-ups to sETHFI stakers paid from its own stock (sethfi_issuer_topup_tokens; R14, Jake 2026-11-19) — emissions-funded yield, a treasury release like Sky's reserve-funded rewards: the release counts each day at least that day's top-ups (RELEASE_GROSS_UP). No supply-side (b) incentive is paid (decision 8, DECLARED_NA_REASONS) (f) NAMED FLOAT OUTFLOW (R15, Jake 2026-11-20): the issuer-side Safes' ETHFI sent to FalconX- / Binance-tagged addresses (purpose not established), taken out of (e) on its day — the deployer EOA's sends were already in the float and are not dilution
 
 **Value flow statement**
 
