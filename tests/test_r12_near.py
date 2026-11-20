@@ -134,8 +134,11 @@ def test_1_net_holder_yield_reads_b_and_exempts_it_only_while_it_is_as_published
     # the cell and both TOTAL DILUTION cells carry the flag and the note
     assert nhy[5]["fmt_fn"] is bw.as_published_flag
     dil = [c for c in cols if c[0].startswith("TOTAL DILUTION = outflows")]
-    assert len(dil) == 2 and all(c[5]["fmt_fn"] is bw.as_published_flag and c[5]["note_fn"] is bw.as_published_note
-                                 for c in dil)
+    # R15: the TOTAL DILUTION note is _total_dilution_note (as published + the (f) note where a project holds (f));
+    # for Near it reads exactly the as-published note (was: note_fn is bw.as_published_note)
+    P = config.PROJECT_BY_NAME["Near"]
+    assert len(dil) == 2 and all(c[5]["fmt_fn"] is bw.as_published_flag and
+                                 c[5]["note_fn"](P) == bw.as_published_note(P) for c in dil)
     assert all("outflow_b_tokens" in c[1](9, NEAR) for c in dil)
 
 
