@@ -534,6 +534,20 @@ A Plume seed started on code older than 2026-10-01 saved its state only at the e
 or stop it and start again on the new code. Don't run both at once: they write the same state file.
 
 
+## 11ff. Round 16 — close-off: Ether.fi frozen; one cap in tokens and $; net holder yield over the average market cap; Aerodrome on accrual (2026-11-20)
+
+ETHER.FI is frozen (nine frozen projects). The ending-schedule cap moves tokens and $ together. Net holder yield divides
+by the AVERAGE market cap over its window (each day's $ over each day's value). Aerodrome's dilution counts emissions as
+they accrue (the Minter's rate a day from 2026-10-22), not the claim batches; supply keeps the mints. The total-dilution
+and net-holder-yield headers name (f). On a frozen project these are declared moves (tests/fixtures/frozen_moves_r16.json).
+
+```
+python -c "import config as c; print('Ether.fi' in c.FROZEN_PROJECTS, len(c.FROZEN_PROJECTS), c.outflow_metrics('Aerodrome','b'), c.R16_MOVES_DECLARED)"
+#   expect: True 9 ('gross_issuance_accrued_tokens',) 82
+python project_freeze.py --compare all
+#   expect: nine lines, each "0 undeclared move(s)"
+```
+
 ## 11fe. Round 15 — Ether.fi on Jake's decisions, ending schedules, Aerodrome on Jake's store (2026-11-20)
 
 ETHER.FI. The theatre flag scores ANY buyback, sized from 2026-09-08 (the named outflow keeps 2026-07-01); every fee cell

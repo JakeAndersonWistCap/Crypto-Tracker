@@ -181,7 +181,9 @@ def test_4_the_default_pace_is_at_or_under_the_free_plans_allowance(monkeypatch)
 def test_a_aerodrome_is_frozen_with_its_rounds_moves_on_record():
     import json
     import project_freeze as pf
-    assert set(config.FROZEN_PROJECTS) == set(config.FROZEN_BEFORE_R13) | {"Aerodrome"} and len(config.FROZEN_BEFORE_R13) == 7
+    # R16: Ether.fi frozen after Aerodrome (was: FROZEN_BEFORE_R13 | {"Aerodrome"})
+    assert set(config.FROZEN_BEFORE_R16) == set(config.FROZEN_BEFORE_R13) | {"Aerodrome"} and len(config.FROZEN_BEFORE_R13) == 7
+    assert set(config.FROZEN_PROJECTS) == set(config.FROZEN_BEFORE_R16) | {"Ether.fi"}
     base = json.loads(pf.baseline_path("Aerodrome").read_text(encoding="utf-8"))
     # R16: later rounds' declarations (R16's renamed headers and moves) are left out — the R13 record is 45 cells
     rec = {k: m for k, m in config.FROZEN_MOVES["Aerodrome"].items() if not str(m.get("why", "")).startswith("R16")}

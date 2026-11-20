@@ -47348,6 +47348,21 @@ HEADLINE_RENAMES.append(
             "value), was today's market cap"})
 
 
+# ===== R16 — ETHER.FI FROZEN (Jake 2026-11-20: "FREEZE ETHER.FI if done_check reads READY on Jake's export and the gate
+# is green on that commit") =====
+# done_check reads Ether.fi READY on Jake's export etherfi-2026-11-20-143253-7a4b5b9 at this round's code (with the (f)
+# scan, the five-chain stake and the insider reads stored, the backfill complete to 2025-08-22). The baseline is Ether.fi's
+# cells on the 15-dump build of the freeze commit (tests/fixtures/frozen_etherfi.json; the dump is as of 2026-10-13, so
+# its figures are the fixture's, not Jake's store's — the freeze guards the CODE: every later move is declared). No
+# earlier move record: Ether.fi was never frozen before (frozen_etherfi_moves.json absent = {}).
+FROZEN_BEFORE_R16 = tuple(FROZEN_PROJECTS)
+FROZEN_PROJECTS["Ether.fi"] = {
+    "baseline": "tests/fixtures/frozen_etherfi.json", "since": "2026-11-20",
+    "why": "rounds 14 to 16 done (Jake 2026-11-20): done_check READY on Jake's store at this code (export "
+           "etherfi-2026-11-20-143253-7a4b5b9); the full gate green on the freeze commit"}
+FROZEN_MOVES["Ether.fi"] = _frozen_moves_record("etherfi")
+
+
 # =====================================================================================================================
 # ===== R16 — FROZEN MOVES OF THE ROUND (tests/fixtures/frozen_moves_r16.json), every earlier declaration kept =====
 def _load_r16_moves() -> int:

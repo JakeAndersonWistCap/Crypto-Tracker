@@ -74,3 +74,14 @@ def test_5_the_headers_name_f_and_the_allowance_follows():
     assert not any("outflows a+b+c+d+e (" in h or "outflows a+b+c+d+e at" in h for h in heads)
     new = "CP | " + bw.CP_NHY_HEAD
     assert any(new in m for a in config.REGRESSION_ALLOWLIST if a["project"] == "Aerodrome" for m in a["match"])
+
+
+# ----- 1: Ether.fi frozen -----------------------------------------------------------------------------------------------
+def test_1_ether_fi_is_frozen_with_its_own_baseline_and_no_earlier_record():
+    import json
+    import project_freeze as pf
+    assert set(config.FROZEN_PROJECTS) == set(config.FROZEN_BEFORE_R16) | {"Ether.fi"}
+    base = json.loads(pf.baseline_path("Ether.fi").read_text(encoding="utf-8"))
+    assert len(base) > 250 and all(k.startswith(("audit|", "reader|")) for k in base)
+    assert config.FROZEN_MOVES["Ether.fi"] == {}                               # never frozen before: nothing to carry
+    assert "7a4b5b9" in config.FROZEN_PROJECTS["Ether.fi"]["why"]
