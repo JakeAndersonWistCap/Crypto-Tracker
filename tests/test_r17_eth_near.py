@@ -156,15 +156,18 @@ def test_the_bounds_and_the_declared_handover_are_not_loosened():
     ov = ETH["series_handover"]["beacon_chain_eth"]["overlap"]
     assert ov["tolerance_pct"] == 1.0 and ov["min_days"] == 455 and ov["days"] == ("2025-07-28", "2026-10-25")
     assert ov["b_point"] == config.STAKED_REBUILD_POINT
+    # R20 (Jake 2026-11-24): beaconcha.in's v2 point is the series' third and current leg — was (rebuild, node)
     assert ETH["series_handover"]["beacon_chain_eth_primary"]["ordered_points"] == (
-        config.STAKED_REBUILD_POINT, config.BEACON_NODE_POINT)
+        config.STAKED_REBUILD_POINT, config.BEACON_NODE_POINT, config.BEACONCHAIN_POINT)
     # no new metric this round
     assert "beacon_chain_eth_node" not in config.METRICS and "beacon_chain_eth_ultrasound" not in config.METRICS
 
 
-def test_the_handover_is_still_held_without_its_overlap():
-    """validatorqueue to 2026-10-25, node rows from 2026-11-04, no rebuild row: beacon_chain_eth keeps its stale leg and
-    says why — the node rows are never joined blind."""
+def test_the_handover_is_a_declared_change_of_quantity_without_the_rebuild():
+    """validatorqueue to 2026-10-25, node rows from 2026-11-04, no rebuild row. R17/R18: beacon_chain_eth kept its
+    stale leg (HANDOVER_HELD, last day 2026-10-25) until staked_eth_rebuild.py stored a marker. R20 (Jake 2026-11-24:
+    that script's query is forbidden; the switch is declared): the node rows join as a DECLARED CHANGE OF QUANTITY,
+    the overlap test untouched and still not passed, the days between the legs a named hole."""
     import build_workbook as bw
     cols = ["date", "project", "metric", "value", "source", "tier", "run_id"]
     vq = pd.DataFrame([(d, "Ethereum", "beacon_chain_eth", 43.7e6, "validatorqueue:staked_amount", 1, "r")
@@ -175,9 +178,11 @@ def test_the_handover_is_still_held_without_its_overlap():
     groups = {("Ethereum", "beacon_chain_eth"): vq, ("Ethereum", "beacon_chain_eth_primary"): node}
     bw._handover_continuation_views(groups)
     g = groups[("Ethereum", "beacon_chain_eth")]
-    assert pd.to_datetime(g["date"]).max() == pd.Timestamp("2026-10-25")
-    assert ("Ethereum", "beacon_chain_eth") in bw.HANDOVER_HELD
-    bw.HANDOVER_HELD.clear()
+    assert pd.to_datetime(g["date"]).max() == pd.Timestamp("2026-11-23")       # was 2026-10-25 (held), R17/R18
+    assert ("Ethereum", "beacon_chain_eth") not in bw.HANDOVER_HELD
+    said = bw.HANDOVER_CONTINUED[("Ethereum", "beacon_chain_eth")]
+    assert "DECLARED CHANGE OF QUANTITY" in said and "2026-10-26..2026-11-03" in said
+    bw.HANDOVER_CONTINUED.clear()
 
 
 # ================================================================================================ Near

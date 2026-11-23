@@ -720,14 +720,21 @@ def _tier_note(project: dict, metric: str, scrape_entries: dict) -> tuple[str, s
                 f"Read the etherscan_supply lines in the Run Log for {name}: 'refused' quotes "
                 f"Etherscan's message (a rate limit, the key, or a plan); or run "
                 f"check_offline_items.py etherscan_ethsupply2.")
+    bcn = project.get("staked_eth_beaconchain") or {}
+    if metric in {bcn.get(k) for k in ("metric", "count_metric", "yield_metric")} - {None}:
+        # R20 (Jake 2026-11-24): beaconcha.in's v2 API is the route; the public beacon node the cross-check
+        return ("staked ETH, the validator count and the ETH.STORE yield are read from beaconcha.in's v2 API (R20; "
+                f"{bcn.get('key_env')} in .env) — nothing stored this run. Without the key, or inside its declared "
+                "cooldown, only staked ETH is read (the public beacon node, today's state) and only while the series "
+                "holds no beaconcha.in row",
+                f"Read the beacon_api lines in the Run Log for {name}: 'unconfigured' names the missing key (a free "
+                f"30-day trial key from beaconcha.in/user/api-key-management goes in .env as {bcn.get('key_env')}=...), "
+                f"'cooldown' the day it ends, a refusal the day and why. Past days fill by themselves from "
+                f"{bcn.get('history_from')} (one request a day of history); staked_eth_rebuild.py is not needed.")
     if metric == (project.get("staked_eth_node") or {}).get("metric"):
         return ("ETH staked (Σ actual balances of all validators at the finalized state, a public beacon node — "
-                "P5-1.12) stored nothing this run; the node serves today only, so a missed day is rebuilt from BigQuery "
-                "(staked_eth_rebuild.py)",
-                f"Read the beacon_api line in the Run Log for {name}: it names the endpoint's refusal. Past days: run "
-                f"python staked_eth_rebuild.py (test only); with --apply it stores the rebuilt days when the ±1% overlap "
-                f"with validatorqueue passes, and when it does not, one row declaring the change of quantity at the "
-                f"seam (R18).")
+                "P5-1.12) stored nothing this run; the node serves today only",
+                f"Read the beacon_api line in the Run Log for {name}: it names the endpoint's refusal.")
     efw = project.get("ef_wallets") or {}
     if metric in {efw.get("held_metric"), efw.get("inferred_metric"), (efw.get("stake") or {}).get("metric")} - {None}:
         return ("the Ethereum Foundation's wallets (ETH + WETH at one finalized block; its validators' balances by "
@@ -739,12 +746,14 @@ def _tier_note(project: dict, metric: str, scrape_entries: dict) -> tuple[str, s
                 "--apply when its ±1% overlap test did not pass (R18)",
                 "Nothing to do unless validatorqueue's series is stale: then run python staked_eth_rebuild.py --apply.")
     if metric in {(project.get("staked_eth_primary") or {}).get(k) for k in ("metric", "count_metric")} - {None}:
-        return ("the validator count was read from beaconcha.in's v2 epoch endpoint (P4-Q4), RETIRED by P5-1.12 "
-                "(free-trial quota spent; beaconcha.in in a declared cooldown, config.HOST_COOLDOWN) — not read",
-                f"No action: {name}'s staked ETH is read from a public beacon node; the count has no free source "
-                f"wired.")
+        return ("the validator count is read from beaconcha.in's v2 epoch endpoint (R20) — nothing stored this run",
+                f"Read the beacon_api lines in the Run Log for {name} (the key, the cooldown or the refusal).")
     se = project.get("staked_eth") or {}
     if metric == se.get("metric"):
+        if se.get("retired"):
+            return ("ETH staked: validatorqueue.com's GitHub history is RETIRED (R20; stale since 2026-10-25) — the "
+                    "series continues on beaconcha.in's v2 API by its declared handover",
+                    f"Read the beacon_api lines in the Run Log for {name}.")
         return ("ETH staked (beaconcha.in finalized votedether, via validatorqueue.com's GitHub history) is "
                 "configured but stored nothing this run",
                 f"Read the validatorqueue line in the Run Log for {name}: 'stopped updating' means the "
@@ -1534,7 +1543,9 @@ def served_by(source: str, project: dict) -> set[str] | None:
     elif source == "validatorqueue":
         m = {(project.get("staked_eth") or {}).get("metric")} - {None}
     elif source == "beacon_api":                       # P5-1.12: a public beacon node's staked ETH
-        m = {(project.get("staked_eth_node") or {}).get("metric")} - {None}
+        m = ({(project.get("staked_eth_node") or {}).get("metric")}
+             | {(project.get("staked_eth_beaconchain") or {}).get(k)
+                for k in ("metric", "count_metric", "yield_metric")}) - {None}
     elif source == "growthepie":
         m = set((project.get("growthepie") or {}).get("metrics") or {})
     elif source == "blockscout_stats":

@@ -49445,3 +49445,351 @@ METRICS["float_buying_tokens"] = {
     "kind": "flow", "unit": "tokens", "archetypes": [1, 2, 3, 4], "tiers": [2], "sanity_min": 0, "sanity_max": 1e12,
     "view_only": True}
 BUYBACK_SPLIT_METRICS = (*BUYBACK_SPLIT_METRICS, "float_buying_tokens")     # no row where the buyback route is 'none'
+# ===== ROUND 20 — ETH LANE (Jake 2026-11-24; SPEC "Round 20 — Ethereum run fixes, NearBlocks pacing, BigQuery budget").
+# One block: Ethereum's staked ETH / validator count / staking yield on beaconcha.in's v2 API, validatorqueue retired,
+# the rule-3 lines, the settlement seam and the BigQuery schedule, fees on Blockscout. Tests: tests/test_r20_eth.py.
+# =====================================================================================================================
+# ----- 1. STAKED ETH, THE VALIDATOR COUNT AND THE STAKING YIELD FROM beaconcha.in (fetch/staked_eth.BeaconchainEth).
+# Jake's store run of 2026-11-23: the beacon_api tier logged "done in 0s — no Http client" and stored nothing;
+# validatorqueue's file has been stale since 2026-10-25. Jake: "Switch staked ETH, validator count and staking yield to
+# the beaconcha.in API ... with ultrasound.money or a public beacon node as the cross-check. Retire validatorqueue. Do
+# not use staked_eth_rebuild.py's 1,170 GB query. Backfill the missing days from beaconcha.in if it serves history."
+# READ 2026-11-23 from docs.beaconcha.in (llms.txt index; api/overview, api/rate-limits, api-reference/ethereum/epoch/
+# overview, api-reference/ethereum/eth-store — each page's own OpenAPI, "External Service API" 1.0.3):
+#   * every v2 endpoint is POST + JSON + `Authorization: Bearer <key>`; keyless -> 401 (checked live 2026-11-23);
+#   * /api/v2/ethereum/epoch by NUMBER serves any past epoch: total_validator_balance ("Sum of the actual balances (in
+#     wei) of all validators at this epoch"), validators_count ("active validators participating in consensus") —
+#     DAILY HISTORY IS SERVED, one request a day;
+#   * /api/v2/ethereum/eth-store serves ETH.STORE per beaconchain-day, newest first, 10 a page, on the trailing windows
+#     24h / 7d / 30d / 90d / all_time on every plan: apr.combined = the day's consensus + execution rewards ÷ Σ
+#     effective balance of the validators active the whole day x 365 (simple; a fraction);
+#   * THE PLAN: "Free Trial 0 EUR (30 days)" — 1 request a second, 1,000 requests, 1 key, "does not auto-renew; access
+#     ends after 30 days unless you upgrade"; Hobbyist 59 EUR a month (1 a second, unlimited). THERE IS NO STANDING
+#     FREE PLAN. The reads are therefore few: ~45 requests on the first run (2026-10-19..today by epoch + 4-5 ETH.STORE
+#     pages), 2 a day after (~60 a month).
+# WHICH QUANTITY EACH SOURCE IS (the declared handover of beacon_chain_eth states both):
+#   validatorqueue (to 2026-10-25)  the EFFECTIVE balance that ATTESTED in the finalized epoch (beaconcha.in v1
+#                                   `votedether`), whole ETH, at the time of validatorqueue's commit
+#   beaconcha.in v2 (from 10-26)    the ACTUAL balance of ALL validators (total_validator_balance) at the UTC day's
+#                                   first epoch — rewards not yet swept, validators exiting or not attesting included
+#   MEASURED on one finalized state, keyless, 2026-11-23 (R17): 44,714,369 ETH actual vs 44,357,984 ETH attesting,
+#   +0.80%. The build measures the step again from the store on validatorqueue's last week (2026-10-19..10-25), which
+#   beaconcha.in's history read covers (history_from).
+BEACONCHAIN_POINT = "beaconchain:v2_epoch.total_validator_balance"
+PROJECT_BY_NAME["Ethereum"]["staked_eth_beaconchain"] = {
+    "metric": "beacon_chain_eth_primary", "count_metric": "beacon_validators_count",
+    "yield_metric": "staking_yield_pct",
+    "key_env": "BEACONCHAIN_API_KEY",
+    "epoch_url": "https://beaconcha.in/api/v2/ethereum/epoch",
+    "ethstore_url": "https://beaconcha.in/api/v2/ethereum/eth-store",
+    "chain": "mainnet",
+    # validatorqueue's last week (the days both legs hold: the step is measured on them) and every day after it
+    "history_from": "2026-10-19",
+    # the Free Trial is 1,000 requests in all: one run never asks more than this, whatever is owed
+    "max_requests_per_run": 120, "ethstore_max_pages": 9,
+    "cross_check": {
+        "against": "staked_eth_node (the public beacon node's Σ actual balances of all validators at its finalized "
+                   "state — itself checked against ultrasound.money's beaconBalancesSum within ±0.1%, R17)",
+        # 0.25% = R17's 0.1% between two nodes on one state + 0.14%, the most the sum moves in a DAY at the spec churn
+        # (256 ETH an epoch each way, plus issuance): the node's slot is up to a day after the day's first epoch
+        "tolerance_pct": 0.25, "max_gap_hours": 26.0,
+        "past_days": "not cross-checked: the node serves no past state (HTTP 403), ultrasound.money's daily history "
+                     "ends 2024-06-22 — said on the Run Log line"},
+    "plan": {"read_on": "2026-11-23", "source": "docs.beaconcha.in/api/overview (Pricing)",
+             "free": "Free Trial: 0 EUR for 30 days, 1 request/s, 1,000 requests, 1 key, no auto-renew",
+             "paid": "Hobbyist 59 EUR/month (annual billing, ex VAT): 1 request/s, unlimited requests"},
+    "ethstore": {"definition": "ETH.STORE: the average return validators on the network achieved over one "
+                               "beaconchain-day (225 epochs counted from genesis: 12:00:23 UTC to 12:00:23 UTC); "
+                               "apr.combined = (consensus-layer + execution-layer rewards, priority fees and MEV "
+                               "included) ÷ Σ effective balance of the validators active all day x 365, simple "
+                               "(not compounded), a fraction",
+                 "field": "apr.combined", "dated": "the UTC day the beaconchain-day STARTS"},
+    "decided": "Jake 2026-11-24 (R20)", "docs_read": "2026-11-23",
+}
+PROJECT_BY_NAME["Ethereum"]["staked_eth"]["retired"] = (
+    "R20 (Jake 2026-11-24): validatorqueue.com's GitHub history has been stale since 2026-10-25 — the reader "
+    "(fetch/staked_eth.StakedEth) is no longer a tier and is not called; its stored rows stand as beacon_chain_eth's "
+    "history up to 2026-10-25")
+PROJECT_BY_NAME["Ethereum"]["staked_eth_primary"]["retired"] = (
+    "R20: superseded by staked_eth_beaconchain (the same endpoint, read from 2026-10-19 only — the 455-day backfill of "
+    "P4-Q4 spent the free trial's 1,000 requests)")
+PROJECT_BY_NAME["Ethereum"]["staked_eth_rebuild"]["forbidden"] = {
+    "decided": "Jake 2026-11-24 (R20)", "key_env": "BEACONCHAIN_API_KEY",
+    "why": "Jake 2026-11-24 (R20): \"Do not use staked_eth_rebuild.py's 1,170 GB query\" (more than a whole month's "
+           "BigQuery budget)."}
+# THE LEGS OF beacon_chain_eth_primary — ONE QUANTITY (Σ actual balances of all validators), three sources in order:
+# the BigQuery rebuild (never adopted; forbidden now), the public beacon node (today's state only: the days before a
+# beaconcha.in row exists), beaconcha.in v2 (each day's first epoch; history by epoch number). The declared cut drops a
+# node row dated on or after beaconcha.in's first row, so the legs meet once; a node row is never written after it
+# (fetch.staked_eth.BeaconchainEth; the store's fallback guard).
+PROJECT_BY_NAME["Ethereum"]["series_handover"]["beacon_chain_eth_primary"] = {
+    "ordered_points": (STAKED_REBUILD_POINT, BEACON_NODE_POINT, BEACONCHAIN_POINT),
+    "cut": True,
+    "why": "R20: beaconcha.in's v2 epoch total_validator_balance is the series from its first stored day (history "
+           "from 2026-10-19 by epoch number); the public beacon node's sum of the same balances is the day's row only "
+           "before that, and the cross-check after",
+    "composition_change": "none — one quantity, Σ actual balances of all validators: beaconcha.in at the UTC day's "
+                          "first epoch, the node at its finalized state the same day (within ±0.25% of each other, "
+                          "the declared cross-check)",
+    "declared": "2026-11-24",
+}
+METRICS["beacon_chain_eth_primary"]["label"] = (
+    "ETH staked — Σ actual balances of all validators: beaconcha.in v2 epoch total_validator_balance at the UTC day's "
+    "first epoch (R20), the public beacon node's sum at its finalized state before beaconcha.in's first row — "
+    "beacon_chain_eth's declared next leg from 2026-10-26")
+METRICS["beacon_validators_count"]["label"] = (
+    "Validators — active validators at the UTC day's first epoch (beaconcha.in v2 epoch validators_count; R20)")
+METRICS["staking_yield_pct"]["only_projects"] = tuple(dict.fromkeys(
+    (*METRICS["staking_yield_pct"]["only_projects"], "Ethereum")))
+METRICS["staking_yield_pct"]["label"] = (
+    "Validator staking yield (annual, fraction) — Plume: the staking diamond's reward rate, gross of commission; "
+    "Ethereum: ETH.STORE apr.combined, beaconcha.in's daily benchmark (consensus + execution rewards incl. MEV ÷ "
+    "effective balance x 365, per beaconchain-day; R20)")
+# THE HANDOVER OF beacon_chain_eth IS A CHANGE OF QUANTITY DECLARED HERE (R20). R18 made it wait for a marker row that
+# only staked_eth_rebuild.py --apply stored; that script is forbidden now, so the declaration is the config's own:
+# from the day after validatorqueue's last row the series reads beacon_chain_eth_primary's rows on beaconcha.in's
+# point (or the node's, before beaconcha.in's first row) — never a rebuilt row. The ±1% / 455-day overlap test of
+# P5-1.12 is NOT loosened: it stays as declared, compares whatever days both legs hold, and says NOT PASSED on the cell
+# (7 common days at most, not 455); the seam is a SERIES BREAK and no trend reads across it. THE MEASURED STEP is read
+# from the store on the days both legs hold (build_workbook.seam_declared).
+_R20_SEAM = ("A DECLARED CHANGE OF QUANTITY at the seam (Jake 2026-11-24, R18 and R20): to validatorqueue's last row "
+             "(2026-10-25) the series is the EFFECTIVE balance that ATTESTED in the finalized epoch (beaconcha.in v1 "
+             "votedether, as validatorqueue.com stored it); from the next stored day it is the ACTUAL balance of ALL "
+             "validators (beaconcha.in v2 total_validator_balance at the UTC day's first epoch; the public beacon "
+             "node's sum of the same balances before beaconcha.in's first row) — rewards not yet swept, validators "
+             "exiting or not attesting included. No trend reads across the seam")
+HANDOVER_CONTINUATION[("Ethereum", "beacon_chain_eth")]["fallback"] = {
+    "unconditional": True, "points": (BEACONCHAIN_POINT, BEACON_NODE_POINT), "step_days": 7,
+    # R18's marker stays readable (fetch.gaps, a store that holds one): it decides nothing any more
+    "marker_metric": "beacon_chain_eth_seam_step_pct", "only_point": BEACON_NODE_POINT,
+    "decided": "Jake 2026-11-24 (R20): staked ETH switches to beaconcha.in's API; the change of quantity is declared "
+               "in config, not by staked_eth_rebuild.py",
+    "composition_change": _R20_SEAM,
+    "reference": "one finalized state read keyless on 2026-11-23 (slot 15,716,896): Σ actual balances 44,714,369 ETH "
+                 "against 44,357,984 ETH of effective balance that attested, +0.80%",
+    "hole_why": "beaconcha.in serves them by epoch number on the first run with BEACONCHAIN_API_KEY in .env after its "
+                "declared cooldown (config.HOST_COOLDOWN); the public beacon node serves no past day",
+}
+HANDOVER_CONTINUATION[("Ethereum", "beacon_chain_eth")]["decided"] = (
+    "SPEC P3-A3 / P4-Q4 / P5-1.12 / R18 / R20: validatorqueue stopped at 2026-10-25; beacon_chain_eth_primary "
+    "(beaconcha.in v2, the public beacon node before its first row) is the declared next leg — a declared change of "
+    "quantity")
+PROJECT_BY_NAME["Ethereum"]["series_handover"]["beacon_chain_eth"]["overlap"].update({
+    # the test itself is P5-1.12's, untouched: the rebuild's rows, ±1%, all 455 days. The rebuild is not run any more,
+    # so it stays UNCHECKED — and the handover is the declared change of quantity, its step measured on the cell
+    "why_none": "the BigQuery rebuild is not run (its query is forbidden, R20): the seam is a DECLARED CHANGE OF "
+                "QUANTITY, its step measured from the store on the days both legs hold",
+    "if_not_passed": "as declared (R20): the two legs are DIFFERENT QUANTITIES and the series switches at the seam as "
+                     "a declared change of quantity — a series break, no trend across it"})
+PROJECT_BY_NAME["Ethereum"]["series_handover"]["beacon_chain_eth"]["why"] = (
+    "validatorqueue.com's GitHub history (beaconcha.in votedether) stopped at 2026-10-25 and is retired (R20); from "
+    "the day after its last stored row the series reads beacon_chain_eth_primary — beaconcha.in v2's "
+    "total_validator_balance — as a declared change of quantity")
+# THE STAKING YIELD: ETH.STORE where the store holds it; our own consensus + execution rewards over staked ETH where it
+# does not (build_workbook._a1_headline). Lido's 7-day APR stays the Credibility reference (a1_validator_yield).
+VALIDATOR_YIELD["Ethereum"]["stored_first"] = {
+    "metric": "staking_yield_pct", "decided": "Jake 2026-11-24 (R20)",
+    "what": "ETH.STORE apr.combined of the latest stored beaconchain-day (beaconcha.in v2 eth-store)"}
+# THE KEY REGISTER (ENV_KEYS): what BEACONCHAIN_API_KEY's absence disables, as it is now.
+ENV_KEYS = tuple(
+    (k, ("Ethereum's staked ETH history and daily row, the validator count and the staking yield (ETH.STORE) from "
+         "beaconcha.in's v2 API (R20). Without it nothing is stored from beaconcha.in; staked ETH alone is then read "
+         "from a keyless public beacon node (today's state, no history) and only while the series holds no "
+         "beaconcha.in row. A key is a FREE TRIAL (30 days, 1,000 requests) or a paid plan — there is no standing "
+         "free plan"), ("beacon_api", "check_offline_items ethstore_check")) if k == "BEACONCHAIN_API_KEY"
+    else (k, what, tiers) for k, what, tiers in ENV_KEYS)
+SOURCE_REGISTER["beaconcha.in"] = dict(
+    SOURCE_REGISTER["beaconcha.in"],
+    used_for="R20 (Jake 2026-11-24), with BEACONCHAIN_API_KEY: POST /api/v2/ethereum/epoch at each UTC day's first "
+             "epoch from 2026-10-19 (total_validator_balance = Ethereum's staked ETH; validators_count) and POST "
+             "/api/v2/ethereum/eth-store (ETH.STORE apr.combined, the staking yield); keyless it answers 401 "
+             "(2026-11-23). In a declared cooldown until 2026-12-01T15:02:02Z (config.HOST_COOLDOWN)",
+    paths=["/api/v2/ethereum/epoch", "/api/v2/ethereum/eth-store"],
+    licence="keyed API (BEACONCHAIN_API_KEY); docs.beaconcha.in/api/overview read 2026-11-23: Free Trial 0 EUR for 30 "
+            "days (1 request/s, 1,000 requests, 1 key, no auto-renew), Hobbyist 59 EUR/month (1/s, unlimited), Scale "
+            "399 EUR/month; ETH.STORE 'is not made available for use as a benchmark' under the EU Benchmarks "
+            "Regulation (its API page) — internal use only; attribution per docs.beaconcha.in/legal/api-terms (not "
+            "read: the page was not fetched)",
+    key="BEACONCHAIN_API_KEY (an Authorization: Bearer header; read only by fetch/staked_eth.BeaconchainEth and the "
+        "by-name check_offline_items ethstore_check)",
+    status="IN USE (R20)")
+
+# ----- 2. ETHEREUM'S RULE-3 LINES (Jake: "wire validator issuance as the supply-side incentive (b) series; declare n/a
+# where Ethereum genuinely has none (no non-circulating unlock wallets, no buyback programme)").
+# (b) = gross_issuance_tokens — the consensus-layer issuance paid to validators (Etherscan ethsupply2 Eth2Staking, day
+# on day, from 2026-09-30): the protocol's payment to the SUPPLIERS of its block space. It WAS category (a), security
+# emissions. NO DOUBLE COUNT: the series MOVES from (a) to (b) — Ethereum's (a) now holds no series — so total
+# dilution (the sum of the categories) counts the same tokens once, and the Flows statement's (a) line says they are
+# in (b). SUBSIDY COVER = fees ÷ $ issuance and LEAKAGE (ii) form from the same series.
+OUTFLOW_CATEGORIES["Ethereum"] = {
+    "b": ("gross_issuance_tokens",),
+    "basis": "validator issuance (consensus rewards) is Ethereum's supply-side incentive (b) — the protocol paying the "
+             "suppliers of block space (Jake 2026-11-24, R20). It was category (a), security emissions: the series "
+             "moved, it is counted once. Nothing else is paid: no demand-side reward (c), no grants in ETH from the "
+             "protocol (d), no unlock (e)"}
+for _c in ("tokens", "usd"):
+    METRICS[f"outflow_b_{_c}"]["only_projects"] = tuple(dict.fromkeys(
+        (*METRICS[f"outflow_b_{_c}"]["only_projects"], "Ethereum")))
+    METRICS[f"outflow_a_{_c}"]["only_projects"] = tuple(
+        n for n in METRICS[f"outflow_a_{_c}"]["only_projects"] if n != "Ethereum")
+NO_SUCH_FLOW.pop(("Ethereum", "b"), None)              # it has its series now (the issuance)
+FLOW_LINE_EVIDENCE.pop(("Ethereum", "Incentives paid beside: supply side (b)"), None)
+FLOW_LINE_EVIDENCE[("Ethereum", "Outflows beside: security emissions (a)")] = {
+    "verdict": "included_in", "line": "Incentives paid beside: supply side (b)",
+    "evidence": "validator issuance is declared Ethereum's supply-side incentive (b) (Jake 2026-11-24, R20); the same "
+                "tokens are not also counted as security emissions (a)",
+    "source": "config.OUTFLOW_CATEGORIES['Ethereum'] ; https://ethereum.org/roadmap/merge/issuance/",
+    "read_on": "2026-11-23"}
+REVENUE_SPLIT["Ethereum"]["other_recipients"] = (
+    "validators / block builders: the priority fee (FEES − REVENUE) and MEV; they are also paid by issuance (the "
+    "supply-side incentive, outflow (b) — R20)")
+DECLARED_NA_REASONS.setdefault("Ethereum", []).extend([
+    {"cols": ("Unlocks Q0",), "match": "no non-circulating wallet set on this project",
+     "text": "n/a — no unlock: ETH has no vesting or locked allocation; nothing is outside circulating to release",
+     "source": "https://blog.ethereum.org/2014/07/22/launching-the-ether-sale (the two endowment pools were allocated "
+               "at genesis, no lockup) ; config.CIRCULATING_ONCHAIN['Ethereum'] (subtract = (): the circulating "
+               "definition takes nothing out)",
+     "read_on": "2026-11-23", "decided": "Jake 2026-11-24 (R20: no non-circulating unlock wallets)",
+     "why": "every ETH circulates from the block it is issued in; the Foundation's wallets are in circulating and off "
+            "the float (R18) — a holding, not an unlock schedule"},
+    {"cols": (), "match": "no buyback programme declared",
+     "source": "https://eips.ethereum.org/EIPS/eip-1559 ('The base fee is always burned (i.e. it is destroyed by the "
+               "protocol)') ; config.buyback_route('Ethereum')",
+     "read_on": "2026-11-23", "decided": "Jake 2026-11-24 (R20: no buyback programme)",
+     "why": "nothing is bought: EIP-1559 destroys the base fee by protocol rule — a burn with no purchase behind it; "
+            "the burn is on A4 and is Ethereum's holder value"},
+    {"cols": (), "match": "no market buyback is measured for this project: NOTHING IS BOUGHT",
+     "source": "https://eips.ethereum.org/EIPS/eip-1559 ('The base fee is always burned (i.e. it is destroyed by the "
+               "protocol)') ; config.buyback_route('Ethereum')",
+     "read_on": "2026-11-23", "decided": "Jake 2026-11-24 (R20: no buyback programme)",
+     "why": "no ETH is bought on the market by the protocol or by anyone for it: buying pressure on the float has no "
+            "numerator"},
+])
+
+# ----- 3. SETTLEMENT: THE REBUILD FROM 2026-08-26, JOINED TO THE ARTEMIS CSV WITH A LABELLED SEAM (Jake's decision,
+# Part 3: "Settlement from 2026-08-26 is our rebuild, joined to the Artemis CSV with a labelled seam (rebuild +6.77%
+# over the 90-day overlap)"). The handover itself is G10-4's; the figure on the label is now Jake's own: +6.77% over
+# the 90 days 2026-05-28..2026-08-25. Never scaled. The 89 days 2026-08-26..2026-11-22 the store lacks are the P2P
+# leg's (fetch/eth_settlement.EthP2PBigQuery, tier eth_p2p_bigquery): 13 Monday..Sunday pieces, 9.48 GB each on Jake's
+# dry runs (123 GB), read by the daily run as backfill pieces under NEAR's top-up reserve — see BIGQUERY_SCHEDULE.
+_R20_SEAM_NOTE = "rebuild +6.77% vs Artemis over the 90-day overlap 2026-05-28..2026-08-25 (Jake's store, R20)"
+SETTLEMENT_REBUILD["ethereum_rebuild"]["handover"] = dict(
+    SETTLEMENT_REBUILD["ethereum_rebuild"]["handover"],
+    declared_by="Jake, 2026-10-21 (G10 item 4); confirmed 2026-11-24 (R20)",
+    validation_note=_R20_SEAM_NOTE, overlap_gap_pct=6.77, overlap=("2026-05-28", "2026-08-25"))
+PROJECT_BY_NAME["Ethereum"]["series_handover"]["settlement_volume_usd"]["composition_change"] = (
+    f"a DIFFERENT MEASURING POINT from 2026-08-26 (a labelled seam) — {_R20_SEAM_NOTE}; never scaled; Artemis's CSV is "
+    f"the reference check")
+# ----- 3b. THE BIGQUERY BUDGET AND THE COMBINED SCHEDULE (Jake's decision, Part 3: "BigQuery: the combined schedule in
+# docs/r19_bigquery_plan.md; budget 1,000 GB a month (November has ~74 GB left)").
+# Google's free tier is 1 TiB = 1,099.5 GB a month in the ledger's units; the budget goes 900 -> 1,000 GB (99.5 GB stay
+# unused). One ledger carries NEAR and Ethereum (fetch/near_bigquery: the Ethereum P2P reader reads NEAR's budget).
+PROJECT_BY_NAME["Near"]["near_bigquery"]["monthly_budget_bytes"] = 1000 * 10 ** 9      # was 900 * 10 ** 9 (R20)
+BIGQUERY_SCHEDULE = {
+    "decided": "Jake 2026-11-24 (R20): the combined schedule of docs/r19_bigquery_plan.md section 2; budget 1,000 GB",
+    "budget_gb": 1000.0, "free_tier_gb": 1099.5,
+    "split_rule": (
+        "1. top-ups first: NEAR's days left x its latest one-day top-up x 1.2 (fetch.near_bigquery._reserve), and "
+        "Ethereum's weekly read (9.48 GB a week measured; 56 GB a month planned)",
+        "2. anything owed inside the live window: NEAR's December 2025 chunk (the daily run takes it on 2026-12-01); "
+        "Ethereum's weeks since 2026-08-26 (the daily run's backfill pieces, oldest first)",
+        "3. until both chains hold 12 months on BigQuery's definition, the chain with less goes first",
+        "4. then NEAR takes whole months, newest first (its own command, a dated approval each month); Ethereum's "
+        "weekly pieces fill what is left (settlement_extend.py backfill, its own command)"),
+    # per run month: how many NEAR history chunks the month's approval covers, and how far back Ethereum's weekly
+    # pieces may reach (settlement_extend.py backfill reads no week before it that month); GB as the plan estimates
+    "months": {
+        "2026-12": {"near_chunks": 1, "near_gb": 226.2, "eth_back_to": "2025-10-27", "eth_weeks": 31, "eth_gb": 293.7},
+        "2027-01": {"near_chunks": 2, "near_gb": 459.9, "eth_back_to": "2025-04-07", "eth_weeks": 29, "eth_gb": 274.8},
+        "2027-02": {"near_chunks": 2, "near_gb": 467.4, "eth_back_to": "2024-11-04", "eth_weeks": 22, "eth_gb": 208.5},
+        "2027-03": {"near_chunks": 3, "near_gb": 686.1, "eth_back_to": "2024-11-04", "eth_weeks": 0, "eth_gb": 0.0},
+        "2027-04": {"near_chunks": 3, "near_gb": 678.5, "eth_back_to": "2024-11-04", "eth_weeks": 0, "eth_gb": 0.0},
+        "2027-05": {"near_chunks": 1, "near_gb": 165.9, "eth_back_to": "2024-11-04", "eth_weeks": 0, "eth_gb": 0.0},
+    },
+    # before the first scheduled month Ethereum's history is not read: only the live window (from 2026-05-28)
+    "eth_before_first_month": "2026-05-28",
+    # THE 89 DAYS 2026-08-26..2026-11-22 (rule 2), as the ledger code decides them (fetch.near_bigquery._run: a backfill
+    # piece runs while budget − used − NEAR's reserve holds it): 13 pieces x 9.48 GB = 123.2 GB.
+    "eth_owed": {"first": "2026-08-26", "last": "2026-11-22", "days": 89, "pieces": 13, "gb_per_piece": 9.48,
+                 "november_left_gb": 74.0, "near_topup_gb_per_day": 2.84, "margin": 1.2},
+    "never_automatic": "the history commands (near_p2p_history.py run, settlement_extend.py backfill --apply) start "
+                       "only by hand; the daily run reads the top-ups and the pieces owed inside the live window",
+}
+SETTLEMENT_REBUILD["ethereum_rebuild"]["p2p"]["extend_approved"] = {
+    "by": "Jake, 2026-11-24 (R20)",
+    "monthly_budget": "the combined schedule of docs/r19_bigquery_plan.md (config.BIGQUERY_SCHEDULE): 31 weekly "
+                      "pieces in 2026-12 (back to 2025-10-27), 29 in 2027-01 (back to 2025-04-07), 22 in 2027-02 "
+                      "(back to 2024-11-04), inside the 1,000 GB monthly budget after NEAR's top-up reserve",
+    "schedule": "BIGQUERY_SCHEDULE"}
+# NEAR's history chunks: a month's dated approval covers the schedule's count unless Jake writes another (`chunks`).
+NEAR_P2P_HISTORY_APPROVAL["chunks"] = None
+
+
+def bigquery_schedule_month(month: str) -> dict:
+    """BIGQUERY_SCHEDULE's row for a run month 'YYYY-MM' (R20). Before the first scheduled month: no NEAR chunk beyond
+    the approval's own default and no Ethereum history; after the last: the last row's reach, no chunk count."""
+    months = BIGQUERY_SCHEDULE["months"]
+    if month in months:
+        return dict(months[month])
+    first, last = min(months), max(months)
+    if month < first:
+        return {"near_chunks": None, "eth_back_to": BIGQUERY_SCHEDULE["eth_before_first_month"], "eth_weeks": 0}
+    return {"near_chunks": None, "eth_back_to": months[last]["eth_back_to"], "eth_weeks": 0}
+
+
+def eth_owed_fill_plan(today: str, left_gb: float | None = None) -> dict:
+    """WHEN THE 89 SETTLEMENT DAYS FILL, by the ledger's own rule (R20; no BigQuery call). `today` 'YYYY-MM-DD' is the
+    day of the next run; `left_gb` what the month's budget has left (default: Jake's ~74 GB for November).
+    A backfill piece runs while (left − NEAR's top-up reserve) holds it; the rest waits for the month's reset.
+    {"this_month_pieces", "this_month_days", "this_month_through", "rest_pieces", "rest_on", "all_filled_on"}."""
+    import calendar
+    import datetime as _dt
+    o = BIGQUERY_SCHEDULE["eth_owed"]
+    d = _dt.date.fromisoformat(today)
+    left = float(o["november_left_gb"] if left_gb is None else left_gb)
+    reserve = (calendar.monthrange(d.year, d.month)[1] - d.day) * o["near_topup_gb_per_day"] * o["margin"]
+    fit = max(0, min(int(o["pieces"]), int((left - reserve) // o["gb_per_piece"])))
+    first = _dt.date.fromisoformat(o["first"])
+    monday = first - _dt.timedelta(days=first.weekday())
+    through = monday + _dt.timedelta(days=7 * fit - 1) if fit else None
+    reset = _dt.date(d.year + (d.month == 12), d.month % 12 + 1, 1)
+    rest = int(o["pieces"]) - fit
+    return {"reserve_gb": reserve, "this_month_pieces": fit,
+            "this_month_days": ((through - first).days + 1) if through else 0,
+            "this_month_through": str(through) if through else None,
+            "rest_pieces": rest, "rest_gb": rest * o["gb_per_piece"],
+            "rest_on": str(reset) if rest else None, "all_filled_on": str(reset) if rest else today}
+
+
+# ----- 4. FEES: BLOCKSCOUT IS THE FIGURE, DefiLlama THE CROSS-CHECK (Jake's decision, Part 3). R18 made S13's FEES line
+# read fees_usd_blockscout; Master's, A1's and CP's fee cells still read DefiLlama's fees_usd. Every cell built for
+# Ethereum's row now reads Blockscout's (the one-definition rule, G13-2: MASTER_FEES_OVERRIDE + METRIC_ALIASES), and
+# DefiLlama's fees_usd is the Credibility reference beside it — recorded, no tolerance invented (base + priority vs
+# DefiLlama's base + priority + blob: Blockscout read +2.6% over the 368 common days on the dumps, R18).
+MASTER_FEES_OVERRIDE["Ethereum"] = ("fees_usd_blockscout", "Blockscout: all gas, base + priority")
+METRIC_ALIASES[("Ethereum", "fees_usd")] = "fees_usd_blockscout"
+METRICS["fees_usd_blockscout"]["label"] = (
+    "Fees paid per day ($) — Blockscout txnsFee (ETH: all gas, base + priority) x same-day price — Ethereum's FEES "
+    "figure on every tab (R20); DefiLlama's fees_usd is the cross-check")
+REVENUE_SPLIT["Ethereum"]["crosscheck"] = (
+    "DefiLlama: 'ethereum' dailyFees (fees_usd: base + priority + blob) is the cross-check of FEES on the Credibility "
+    "tab (R20); its dailyRevenue = dailyHoldersRevenue (revenue_usd, holders_revenue_usd: base + blob fees burned, "
+    "valued by DefiLlama) the cross-check of REVENUE")
+# THE CROSS-CHECK IS THE ONE ALREADY JUDGED (B11, config.CREDIBILITY["Ethereum"]["in_fees"]: the 30 common days, ±10%),
+# WITH ITS SIDES SWAPPED: ours = Blockscout's txnsFee x same-day price, the reference = DefiLlama's fees. Same days,
+# same two series, the SAME tolerance — only which one is "ours". The recorded Q0 row of CREDIBILITY_WIRING
+# (in_fees_blockscout: "DefiLlama vs Blockscout") goes: its "ours" was the fee cell, which now reads Blockscout too.
+CREDIBILITY_WIRING["Ethereum"].pop("in_fees_blockscout", None)
+_r20_fee_args = dict(CREDIBILITY["Ethereum"]["in_fees"]["ours"]["args"])
+assert CREDIBILITY["Ethereum"]["in_fees"]["ref"]["tol"] == 10.0          # the tolerance decided at B11, untouched
+CREDIBILITY["Ethereum"]["in_fees"] = _c_in_py(
+    "Fees, last 30 days (Blockscout txnsFee x same-day price)", "common_days_sum", {**_r20_fee_args, "side": "ref"},
+    {"formula": "common_days_sum", "args": {**_r20_fee_args, "side": "ours"},
+     "tol": CREDIBILITY["Ethereum"]["in_fees"]["ref"]["tol"],
+     "source": "DefiLlama 'ethereum' dailyFees (fees_usd: base + priority + blob fees) on the same days",
+     "note": "R20 (Jake 2026-11-24): Blockscout is the figure, DefiLlama the cross-check. Blockscout's txnsFee is "
+             "gas_used x effective gas price — it has NO blob fees; DefiLlama's Ethereum fees include them, so expect "
+             "the reference a little ABOVE on blob-heavy days (on the dumps Blockscout read +2.6% over 368 common "
+             "days). Empty until 20 shared days are stored."},
+    fmt=_C_USD)
+# =====================================================================================================================

@@ -63,7 +63,7 @@ from .mev_relays import MevRelays
 from .browser_capture import BrowserCapture
 from .chainlink_fees import ChainlinkFees
 from .xref import CrossRefs
-from .staked_eth import BeaconNodeStakedEth, BeaconStakedEth, StakedEth  # noqa: F401
+from .staked_eth import BeaconchainEth, BeaconNodeStakedEth, BeaconStakedEth, StakedEth  # noqa: F401
 from .ef_wallets import EFWallets  # noqa: F401
 from .treasury import TreasuryBills
 from .sky_msc import SkyMsc
@@ -174,7 +174,9 @@ TIER_ORDER = [
     ("chainlink_fees", 2, lambda ctx: ChainlinkFees()),
     ("xref", 1, lambda ctx: CrossRefs(stored_long=ctx.get("stored_long"))),
     # ETH staked (beaconcha.in votedether via validatorqueue.com's GitHub history), 2026-10-05.
-    ("validatorqueue", 1, lambda ctx: StakedEth()),
+    # R20 (Jake 2026-11-24): validatorqueue is RETIRED — its file has been stale since 2026-10-25; the reader
+    # (StakedEth) is no longer a tier and is called by nobody. Its stored rows stand as beacon_chain_eth's history up
+    # to 2026-10-25 (config Ethereum["staked_eth"]["retired"]).
     # P3-A3 (2026-11-02): validatorqueue stopped at 2026-10-25. P4-Q4 (Jake 2026-11-03): staked ETH and the validator
     # count from beaconcha.in's v2 epoch endpoint (BEACONCHAIN_API_KEY, a bearer header), each day's first epoch, the
     # window backfilled newest first under the tier's budget — the store is the state (stored_long), so a stopped
@@ -182,7 +184,10 @@ TIER_ORDER = [
     # P5-1.12 (Jake 2026-11-04): beaconcha.in's free-trial quota is spent (HTTP 429, a 2,300,523 s wait) — it is in a
     # declared cooldown (config.HOST_COOLDOWN) and BeaconStakedEth is no longer a tier. Staked ETH is read once a day from
     # a free public beacon node (Σ actual balances at the finalized state); past days come from staked_eth_rebuild.py.
-    ("beacon_api", 1, lambda ctx: BeaconNodeStakedEth()),
+    # R20 (Jake 2026-11-24): staked ETH, the validator count and the staking yield (ETH.STORE) from beaconcha.in's v2
+    # API (BEACONCHAIN_API_KEY; unconfigured it stores nothing of its own), the public beacon node as the cross-check
+    # — and as the day's row while the series holds no beaconcha.in row. The store is the backfill's state.
+    ("beacon_api", 1, lambda ctx: BeaconchainEth(stored_long=ctx.get("stored_long"))),
     # R18 (Jake 2026-11-24): the Ethereum Foundation's wallets — ETH + WETH held (published and INFERRED, apart) and the
     # ETH its validators stake, once a day, keyless (a public RPC at one finalized block; the public beacon node by key)
     ("ef_wallets", 1, lambda ctx: EFWallets()),
@@ -2153,6 +2158,14 @@ TIER_BUDGET_S = {
     "merkl_campaigns": 120, "merkl_campaigns_plume": 120,
 }
 DEFAULT_BUDGET_S = 120
+# NEARBLOCKS 180 -> WHAT ITS PACING NEEDS (R20, Jake's store run 2026-11-23: five Near reads "NOT CALLED" — the budget
+# ended before the free plan's minute windows). The budget is computed from the declared calls at their dearest, paced
+# 6 credits a minute (fetch.nearblocks.budget_seconds: 82 credits, 605 s of pacing, 750 s today). A normal day (12
+# credits) still ends in about a minute. It stays under the longest tier's budget (business, 900 s), so the fetch
+# stage's longest wait — and windows/daily_run.ps1's step limits — are unchanged.
+from .nearblocks import budget_seconds as _nearblocks_budget     # noqa: E402
+import config as _config_nb                                       # noqa: E402
+TIER_BUDGET_S["nearblocks"] = _nearblocks_budget(_config_nb.PROJECTS)
 for _t in _l2_tiers():
     import config as _config                                        # noqa: E402
     TIER_BUDGET_S[_t] = _config.explorer_tier_budget(_t)
@@ -2233,6 +2246,9 @@ HEARTBEAT_AFTER_S = 30.0
 
 def _budget(name: str) -> float:
     env = os.environ.get("TOKEN_METRICS_BUDGET_" + name.upper().replace(":", "_").replace("-", "_"))
+    if not env and name == "nearblocks":
+        # R20: from the declared calls AS THEY ARE NOW (this module can be imported while config is still loading)
+        TIER_BUDGET_S[name] = max(TIER_BUDGET_S[name], _nearblocks_budget(_config_nb.PROJECTS))
     return float(env) if env else float(TIER_BUDGET_S.get(name, DEFAULT_BUDGET_S))
 
 

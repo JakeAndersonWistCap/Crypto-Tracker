@@ -21251,11 +21251,13 @@ def test_beaconchain_is_dropped_entirely():
     eth = config.PROJECT_BY_NAME["Ethereum"]
     assert "beaconchain" not in eth and "2,649,797" in eth["beaconchain_dropped"]["why"]
     assert "history_legs" not in eth and "gross_issuance_tokens" not in eth["series_handover"]
-    assert "Ethereum" not in config.METRICS["staking_yield_pct"]["only_projects"]
+    # R20 (Jake 2026-11-24): the staking yield is ETH.STORE again, from beaconcha.in's v2 API (fetch/staked_eth.py,
+    # not the dropped fetch/beaconchain.py) — was: "Ethereum" not in staking_yield_pct's only_projects
+    assert "Ethereum" in config.METRICS["staking_yield_pct"]["only_projects"]
     assert "cross_check_metric" not in config.VALIDATOR_YIELD["Ethereum"]
     fwd = config.HISTORY_FORWARD_ONLY["Ethereum"]
     assert "DROPPED 2026-10-01" in fwd["why"] and fwd["until"] is None
-    assert config.SOURCE_REGISTER["beaconcha.in"]["status"] == "DROPPED"
+    assert config.SOURCE_REGISTER["beaconcha.in"]["status"] == "IN USE (R20)"      # was "DROPPED" (Jake 2026-11-24)
     assert not any("beaconcha" in h[0] for h in bw._eth_yield_columns(bw.Refs.__new__(bw.Refs)))
 
 
@@ -21581,9 +21583,11 @@ def test_near_bigquery_dry_runs_until_approved_then_ledgers_its_quota_and_values
     assert "token census: 2 token(s) carry 100.0% of 30 days' priced ft_transfer value" in msgs
     # census 70 + top-up 7 + one 31-day chunk 217 GB; the month's top-ups reserved first:
     # 30 days left x 7 GB (the measured one-day top-up) x 1.2 = 252 GB
+    # R20 (Jake 2026-11-24): the budget is 1,000 GB — was "remaining 606.0 GB of the 900 GB budget", "left for
+    # backfill 354.0 GB"
     assert ("QUOTA 2026-10: 294.00 GB billed this run (backfill 217.00 GB); month used 294.0 GB; remaining "
-            "606.0 GB of the 900 GB budget (free tier 1 TB); top-up reserve 252.0 GB (30 day(s) left x 7.00 "
-            "GB/day") in msgs and "left for backfill 354.0 GB" in msgs
+            "706.0 GB of the 1,000 GB budget (free tier 1 TB); top-up reserve 252.0 GB (30 day(s) left x 7.00 "
+            "GB/day") in msgs and "left for backfill 454.0 GB" in msgs
     p2p = out.frame().query("metric == 'p2p_transfer_volume_usd'")
     assert len(p2p) == 32 and p2p.source.iloc[0] == "near_bigquery:p2p[Artemis method (adapted to NEAR), UNVALIDATED]"
     last = p2p.sort_values("date").value.iloc[-1]

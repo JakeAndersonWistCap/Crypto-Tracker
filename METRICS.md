@@ -1039,8 +1039,8 @@ Per project: every flow INTO circulating (the five outflow categories, config OU
 
 | Flow | Category | Series |
 |---|---|---|
-| into circulating | (a) security emissions | `gross_issuance_tokens` |
-| into circulating | (b) supply-side incentives | **NO SERIES** |
+| into circulating | (a) security emissions | **NO SERIES** |
+| into circulating | (b) supply-side incentives | `gross_issuance_tokens` |
 | into circulating | (c) demand-side incentives | **NO SERIES** |
 | into circulating | (d) ecosystem / grant spend | **NO SERIES** |
 | into circulating | (e) unlocks | **NO SERIES** |
@@ -1048,7 +1048,7 @@ Per project: every flow INTO circulating (the five outflow categories, config OU
 | out of circulating | retirement (bought, burned + held) | **NO SERIES** |
 | out of circulating | burn (every burn) | `gross_burn_tokens` |
 
-Basis: issuance is consensus rewards to validators (security)
+Basis: validator issuance (consensus rewards) is Ethereum's supply-side incentive (b) — the protocol paying the suppliers of block space (Jake 2026-11-24, R20). It was category (a), security emissions: the series moved, it is counted once. Nothing else is paid: no demand-side reward (c), no grants in ETH from the protocol (d), no unlock (e)
 
 **Value flow statement**
 

@@ -165,11 +165,37 @@ def refusal(explicit_command: bool, today, approval: dict, chunk, gb: float, don
         return (f"the chunk {what} is over the {float(cap):,.1f} GB the approval allows (max_gb) — a new decision "
                 f"for Jake; {ask}")
     allowed = a.get("chunks", cfg.get("chunks_per_month", 1))
+    if allowed is None:
+        # R20 (Jake 2026-11-24): an approval that names no count covers the COMBINED SCHEDULE's count for its month
+        # (config.BIGQUERY_SCHEDULE: 1, 2, 2, 3 ...); a month outside the schedule keeps chunks_per_month
+        allowed = scheduled_chunks(f"{now:%Y-%m}", cfg)
     allowed = int(allowed) if isinstance(allowed, int) and not isinstance(allowed, bool) and allowed > 0 else 1
     if int(done_this_month) >= allowed:
         return (f"{now:%Y-%m} has already taken {int(done_this_month)} chunk(s) and its approval covers {allowed} — the "
                 f"chunk {what} waits for next month's approval (or `chunks` raised by Jake)")
     return None
+
+
+def scheduled_chunks(month: str, cfg: dict) -> int:
+    """R20: the NEAR history chunks the combined schedule gives the run month 'YYYY-MM' (config.BIGQUERY_SCHEDULE),
+    else cfg's chunks_per_month."""
+    import config                                              # noqa: PLC0415
+    n = (getattr(config, "BIGQUERY_SCHEDULE", {}).get("months") or {}).get(month, {}).get("near_chunks")
+    return int(n) if isinstance(n, int) and n > 0 else int(cfg.get("chunks_per_month", 1))
+
+
+def combined_plan(r0, cfg: dict, margin: float = 1.2, max_query_gb: float = 400.0) -> dict:
+    """R20 (Jake 2026-11-24): THE COMBINED SCHEDULE of docs/r19_bigquery_plan.md as plan() computes it — the budget
+    config.BIGQUERY_SCHEDULE declares (1,000 GB), each month's NEAR chunk count from the schedule, and Ethereum's
+    scheduled history GB taken out of the month's room beside what the ledger already carries (cfg.other_gb)."""
+    import config                                              # noqa: PLC0415
+    sched = config.BIGQUERY_SCHEDULE
+    other = dict(cfg.get("other_gb") or {})
+    for m, row in sched["months"].items():
+        other[m] = float(other.get(m, 0.0)) + float(row.get("eth_gb") or 0.0)
+    by_month = {m: int(row["near_chunks"]) for m, row in sched["months"].items()}
+    return plan(r0, {**cfg, "other_gb": other, "chunks_by_month": by_month}, float(sched["budget_gb"]), margin,
+                max_query_gb)
 
 
 def plan(r0, cfg: dict, budget_gb: float = 900.0, margin: float = 1.2, max_query_gb: float = 400.0,
@@ -192,7 +218,9 @@ def plan(r0, cfg: dict, budget_gb: float = 900.0, margin: float = 1.2, max_query
         room = (float(budget_gb) - reserve_gb(R, cfg["topup_gb_per_day"], margin) - float(other.get("every_month", 0))
                 - float(other.get(f"{R:%Y-%m}", 0)))
         took, spent = [], 0.0
-        while len(took) < per and r0 + dt.timedelta(days=kd) > R - dt.timedelta(days=1):
+        # R20: a month's count from the combined schedule (cfg.chunks_by_month) unless the caller fixed one
+        per_m = per if chunks_per_month is not None else int((cfg.get("chunks_by_month") or {}).get(f"{R:%Y-%m}", per))
+        while len(took) < per_m and r0 + dt.timedelta(days=kd) > R - dt.timedelta(days=1):
             c = chunk_before(r0, floor, int(cfg["min_chunk_days"]))
             if c is None:
                 break
@@ -284,6 +312,12 @@ def cmd_plan(per: int | None) -> int:
     else:
         print(f"  held: {len(held)} day(s); the hole-free run starts {r0}; the key forms on {key_forms_on(held)} as it stands")
     budget = int(spec["monthly_budget_bytes"]) / 1e9
+    if not per:
+        print(f"\n  THE COMBINED SCHEDULE (R20, config.BIGQUERY_SCHEDULE; budget "
+              f"{config.BIGQUERY_SCHEDULE['budget_gb']:,.0f} GB, Ethereum's scheduled history taken out of each month):")
+        for line in plan_lines(combined_plan(r0, cfg, float(spec["topup_reserve_margin"]),
+                                             int(spec["max_bytes_per_query"]) / 1e9)):
+            print(line)
     for n in ([per] if per else [1, 2, 3]):
         print(f"\n  {n} chunk(s) a month — {cfg['est_gb_per_day']} GB a day of history ({cfg['est_source']}); top-up "
               f"{cfg['topup_gb_per_day']} GB a day x {spec['topup_reserve_margin']}; budget {budget:,.0f} GB:")
