@@ -1820,6 +1820,14 @@ staking and vote-locks by holders ARE circulating (off free float only); undistr
 | PR4C.5 | Morpho frozen | Not frozen. | FROZEN_PROJECTS['Morpho'] (tests/fixtures/frozen_morpho.json, 285 cells; the switch PENDING on the dumps); the 48 cells that differ from the pre-round-4 build declared (41 first moved by PR4, 1 by PR4B, 6 by PR4C alone). |
 | PR4C.GATE | Test pins PR4C moves | tests/test_pr4_morpho.py pinned Morpho's dump circulating 696.0M / float 547.25M and a pin without Mantle. | 574.8M / 426.05M (the relocked 121.2M on 2026-10-13 out); the probe test uses Sonic as the chain beyond the pin. Also moved: test_pr4_morpho / test_pr4b (the relock is a circulating and unlock leg; the limitation text is now the modelled relock), test_round_p3_4 (a switch leg is owed from the window's start). tests/test_pr1_freeze.py: the floor "baseline > 300 cells" became "> 250 and every cell on one side only is declared" — Morpho, an A2 project, writes 285 cells; the cell-set check is stronger than the count it replaces. Gate: tests/test_final_round.py's Morpho pin states the relock leg; tests/test_adapters.py's gap-text test starts from no build state (a build earlier on the same worker left GEODNET's series current, and write_gap_report dropped the test's row as answered by the store — an order dependence, fixed in the test, nothing skipped). |
 
+### Round 18 — Aethir (Jake 2026-11-24), old → new
+
+Tests: tests/test_r18_aethir.py.
+
+| Item | What | Old | New |
+|---|---|---|---|
+| R18.7 | Aethir's subsidy-cover allowance and three MATURING rows | Allowance until 2026-11-14 (expired); `in_locked`, `in_arr`, `a2_customer_revenue` MATURING until 2026-10-17 (expired). | Jake's extension to 2026-12-31, each where its recorded reason still holds: the allowance while `OUTFLOW_INCOMPLETE[("Aethir","b")]` is declared (the checker bonus before 2026-10-05; ends by itself 2027-01-03); the three rows while `aethir_distributor_match` has not had its 10 daily runs (none on record; not verified on Jake's store). `config.R18_AETHIR_EXTENDED` lists the four. |
+
 ### Round 17 — finish the 15: Aerodrome's flow statement, Ether.fi's reference check, holder value yield over the average market cap, "not verified", the Leaderboard (Jake 2026-11-23), old → new
 
 No new metric or rule. Declared moves of the frozen projects: tests/fixtures/frozen_moves_r17.json (each with its item). Tests: tests/test_r17_round.py.

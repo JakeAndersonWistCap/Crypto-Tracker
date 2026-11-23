@@ -47697,3 +47697,30 @@ NEARBLOCKS_BILLING = {
     "v1_v2": "switched off 2026-11-22 (api.nearblocks.io/api-docs/migration; /v1/plans answers HTTP 410) — every "
              "path here has been /v3 since 2026-10-13",
 }
+
+
+# =====================================================================================================================
+# ===== R18.7 — AETHIR: JAKE'S EXTENSION TO 2026-12-31 (Jake 2026-11-24), where the recorded reason still holds =====
+# (1) the subsidy-cover allowance (expired 2026-11-14): its condition is the declared gap OUTFLOW_INCOMPLETE[("Aethir",
+#     "b")] — the checker bonus before 2026-10-05, time-based, held until the checker cumulative spans Q0 (2027-01-03).
+#     The gap is still declared, so the reason holds to 2026-12-31; the allowance still ends by itself when the gap does.
+# (2) the three MATURING rows (until 2026-10-17): in_locked, in_arr and a2_customer_revenue wait for
+#     `check_offline_items.py aethir_distributor_match` over 10 daily runs. No run of it is on record, so the rows were
+#     never re-judged: the reason holds. NOT VERIFIED ON JAKE'S STORE (no export of Aethir here): if the store already
+#     holds 10 daily runs, re-judge the rows instead of waiting for the date.
+R18_AETHIR_EXTENDED = {"until": "2026-12-31", "extended_by": "Jake", "extended_on": "2026-11-24", "items": []}
+for _a in REGRESSION_ALLOWLIST:
+    if _a.get("project") == "Aethir" and "SUBSIDY COVER" in (_a.get("match") or ()) and ("Aethir", "b") in OUTFLOW_INCOMPLETE:
+        _a.update({"until": "2026-12-31", "accepted": "2026-11-24",
+                   "reason": "subsidy cover BLOCKED on an incomplete incentive denominator — the checker bonus before "
+                             "2026-10-05 is in no series (OUTFLOW_INCOMPLETE Aethir b; it ends by itself once the checker "
+                             "cumulative spans Q0, 2027-01-03); extended by Jake 2026-11-24 to 2026-12-31"})
+        R18_AETHIR_EXTENDED["items"].append("REGRESSION_ALLOWLIST Aethir SUBSIDY COVER")
+for _k in ("in_locked", "in_arr"):
+    _r = CREDIBILITY["Aethir"][_k]["ref"]
+    if _r.get("verdict") == "MATURING (until 2026-10-17)":
+        _r["verdict"] = "MATURING (until 2026-12-31)"
+        R18_AETHIR_EXTENDED["items"].append(f"CREDIBILITY Aethir {_k}")
+if CREDIBILITY["Aethir"]["a2_customer_revenue"].get("fresh_label") == "MATURING (until 2026-10-17; first-party only)":
+    CREDIBILITY["Aethir"]["a2_customer_revenue"]["fresh_label"] = "MATURING (until 2026-12-31; first-party only)"
+    R18_AETHIR_EXTENDED["items"].append("CREDIBILITY Aethir a2_customer_revenue")
