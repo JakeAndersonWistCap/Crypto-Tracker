@@ -257,13 +257,14 @@ def test_the_standing_rules_still_hold_the_chunk(tmp_path, monkeypatch):
     # over the 400 GB per-query cap, whatever the approval says
     cl, out, st, res = _chunk(tmp_path, monkeypatch, est=400_000_000_001, cap=10 ** 12, tag="query")
     assert res is None and cl.real == [] and "per-query cap" in out.log[-1].message
-    # the month's budget after the top-up reserve: 900 - 600 used - 30 x 2.84 x 1.2 = 197.8 GB left < 226.2
-    cl, out, st, res = _chunk(tmp_path, monkeypatch, used=600_000_000_000, tag="budget")
+    # the month's budget after the top-up reserve: 1,000 - 700 used - 30 x 2.84 x 1.2 = 197.8 GB left < 226.2
+    # (R20, Jake 2026-11-24: the budget is 1,000 GB — was 900 - 600 used = the same 197.8 GB left)
+    cl, out, st, res = _chunk(tmp_path, monkeypatch, used=700_000_000_000, tag="budget")
     assert res is None and cl.real == [] and "BACKFILL HELD" in out.log[-1].message
-    assert st["ledger"]["2026-12"] == 600_000_000_000
-    # and it fits when the month has the room: 900 - 500 - 102.2 = 297.8 GB
+    assert st["ledger"]["2026-12"] == 700_000_000_000                       # was 600_000_000_000 under 900 GB
+    # and it fits when the month has the room: 1,000 - 500 - 102.2 = 397.8 GB (was 900 - 500 - 102.2 = 297.8)
     cl, out, st, res = _chunk(tmp_path, monkeypatch, used=500_000_000_000, tag="fits")
-    assert res is not None and st["ledger"]["2026-12"] == 726_200_000_000 <= 900 * 10 ** 9
+    assert res is not None and st["ledger"]["2026-12"] == 726_200_000_000 <= 1000 * 10 ** 9     # was <= 900 GB
 
 
 # ================================================================================================= never automatic

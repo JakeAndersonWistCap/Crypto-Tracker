@@ -73,7 +73,10 @@ def test_validate_reads_the_store_read_only_and_writes_its_verdict(tmp_path, mon
 
 
 def test_the_backfill_refuses_until_jakes_budget_decision_is_declared(monkeypatch, capsys):
-    assert config.SETTLEMENT_REBUILD["ethereum_rebuild"]["p2p"]["extend_approved"] is None
+    # R20 (Jake 2026-11-24): the decision IS declared now (the combined schedule, 1,000 GB) — was None. Without it the
+    # backfill refuses, as before.
+    assert config.SETTLEMENT_REBUILD["ethereum_rebuild"]["p2p"]["extend_approved"]["by"].startswith("Jake, 2026-11-24")
+    monkeypatch.setitem(config.SETTLEMENT_REBUILD["ethereum_rebuild"]["p2p"], "extend_approved", None)
     assert se.cmd_backfill("2024-11-04", apply=True) == 3
     assert "REFUSED - the extension waits on Jake's BigQuery budget decision" in capsys.readouterr().out
     monkeypatch.setitem(config.SETTLEMENT_REBUILD["ethereum_rebuild"]["p2p"], "extend_approved", {"by": "test"})

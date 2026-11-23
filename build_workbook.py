@@ -1401,7 +1401,10 @@ def _handover_continuation_views(groups: dict) -> None:
                 # later leg's rows ON THE DECLARED POINT ONLY (the node's actual balances — never a rebuilt day) from
                 # the day after the earlier leg's last row. The overlap's tolerance is untouched: the check still says
                 # NOT PASSED on the cell, and the seam is a series break (the handover's composition_change).
-                seam = seam_fallback(groups, name, fb, add) if fb else None
+                # R20 (Jake 2026-11-24): the change of quantity is DECLARED IN CONFIG (fallback["unconditional"]) — it no
+                # longer waits for a marker row of staked_eth_rebuild.py, whose BigQuery query Jake has forbidden
+                seam = ((seam_declared(groups, name, metric, spec, add) if fb.get("unconditional")
+                         else seam_fallback(groups, name, fb, add)) if fb else None)
                 if seam is None:
                     HANDOVER_HELD[(name, metric)] = (
                         f"NOT HANDED OVER to {spec['from_metric']} ({len(add)} row(s) from "
@@ -1419,9 +1422,10 @@ def _handover_continuation_views(groups: dict) -> None:
             HANDOVER_CONTINUED[(name, metric)] = (
                 f"DECLARED CHANGE OF QUANTITY from {first.date()} ({spec['fallback']['decided']}): "
                 f"{spec['after_point']}'s last stored row is {last.date()}; from {first.date()} the series reads "
-                f"{spec['from_metric']} on {spec['fallback']['only_point']} ({len(add)} row(s) to "
+                f"{spec['from_metric']} on {' / '.join(spec['fallback'].get('points') or (spec['fallback']['only_point'],))}"
+                f" ({len(add)} row(s) to "
                 f"{pd.to_datetime(add['date']).max().date()}). MEASURED STEP: {declared_change['text']}. No trend reads "
-                f"across the seam; the days between the two legs are holes")
+                f"across the seam; " + (declared_change.get("holes") or "the days between the two legs are holes"))
             continue
         HANDOVER_CONTINUED[(name, metric)] = (
             f"HANDED OVER from {(first.date())}: {spec['after_point']}'s last stored row is {last.date()}; from the next "
@@ -1446,6 +1450,51 @@ def seam_fallback(groups: dict, name: str, fb: dict, add: pd.DataFrame) -> dict 
     detail = src[src.find("[") + 1:src.rfind("]")] if "[" in src and src.endswith("]") else src
     return {"rows": rows, "step_pct": float(m["value"]),
             "text": f"{float(m['value']):+.2f}% (recorded {pd.Timestamp(m['d']).date()}: {detail})"}
+
+
+def seam_declared(groups: dict, name: str, metric: str, spec: dict, add: pd.DataFrame) -> dict | None:
+    """R20 (Jake 2026-11-24): a handover that is a CHANGE OF QUANTITY DECLARED IN CONFIG (fallback["unconditional"]) —
+    Ethereum's staked ETH: validatorqueue's effective balance that attested -> Σ actual balances of all validators.
+    {"rows": the later leg's rows on fallback["points"], "step_pct", "text", "holes"}; None while the later leg holds
+    no such row after the earlier leg's last day (the series then keeps its earlier leg, held).
+    THE MEASURED STEP is read from the store, never assumed: on the days BOTH legs hold (the earlier leg's own rows
+    against the later series' rows on the declared points) the mean of later ÷ earlier − 1; with no common day, the
+    first later row against the earlier leg's last row, said to span the days between them, beside the declared
+    one-state reference. THE HOLE is named: every day between the two legs with no row stays unformed."""
+    from fetch.base import _measuring_point                        # noqa: PLC0415
+    fb = spec["fallback"]
+    want = {_measuring_point(x) for x in fb["points"]}
+    rows = add[add["source"].astype(str).map(_measuring_point).isin(want)].copy()
+    if rows.empty:
+        return None
+    g, src = groups[(name, metric)], groups[(name, spec["from_metric"])]
+    lead = g[g["source"].astype(str).map(_measuring_point) == _measuring_point(spec["after_point"])]
+    a = (lead.assign(d=pd.to_datetime(lead["date"]).dt.normalize()).drop_duplicates("d", keep="last")
+         .set_index("d")["value"].astype(float))
+    later = src[src["source"].astype(str).map(_measuring_point).isin(want)]
+    b = (later.assign(d=pd.to_datetime(later["date"]).dt.normalize()).drop_duplicates("d", keep="last")
+         .set_index("d")["value"].astype(float))
+    common = a.index.intersection(b.index)
+    common = common[a[common] != 0][-int(fb.get("step_days", 7)):]
+    last, first = a.index.max(), pd.to_datetime(rows["date"]).dt.normalize().min()
+    if len(common):
+        gaps = (b[common] / a[common] - 1.0) * 100.0
+        step = float(gaps.mean())
+        text = (f"{step:+.2f}% — the mean of later ÷ earlier − 1 on the {len(common)} day(s) both legs hold "
+                f"({common.min().date()}..{common.max().date()}; from {float(gaps.min()):+.2f}% to "
+                f"{float(gaps.max()):+.2f}%)")
+    else:
+        step = float(b[first] / a[last] - 1.0) * 100.0
+        text = (f"{step:+.2f}% between the earlier leg's last row ({a[last]:,.0f} on {last.date()}) and the later "
+                f"leg's first ({b[first]:,.0f} on {first.date()}) — {(first - last).days} day(s) apart, so it also "
+                f"carries the stake's own change; no day holds both legs yet. Reference: {fb['reference']}")
+    held = set(pd.to_datetime(rows["date"]).dt.normalize())
+    missing = [d for d in pd.date_range(last + pd.Timedelta(days=1), pd.to_datetime(rows["date"]).max())
+               if d not in held]
+    holes = ("no day between the two legs is missing" if not missing else
+             f"HOLE: {len(missing)} day(s) hold no row and stay unformed — {_named_day_ranges(missing)} "
+             f"({fb['hole_why']})")
+    return {"rows": rows, "step_pct": step, "text": text, "holes": holes}
 
 
 MONTHLY_FLOW_FORMED: dict = {}   # (project, metric) -> months formed / holes, last build (P2a D5b)
@@ -11864,7 +11913,15 @@ def _a1_headline(R: Refs) -> list[tuple]:
             return calc(f"IF(AND(ISNUMBER({supply}),ISNUMBER({stake})),{val},{NA})")
         if spec["method"] == "consensus_plus_execution":
             cons, exe, legs = _eth_yield_parts(R, r, p, spec)
-            return _coverage_guard(R, r, legs, f"{cons}+{exe}", same_span=False)   # D7-2: a SUM of two yields
+            own = _coverage_guard(R, r, legs, f"{cons}+{exe}", same_span=False)    # D7-2: a SUM of two yields
+            sf = spec.get("stored_first")
+            if sf and sf["metric"] in config.metrics_for_project(p) and own.startswith("="):
+                # R20 (Jake 2026-11-24): THE STAKING YIELD IS ETH.STORE (beaconcha.in's daily benchmark, stored) where
+                # the store holds it; our own consensus + execution over staked ETH is the figure only where it does
+                # not (no key yet) — the two parts stay in the columns beside it
+                n = R.D(r, sf["metric"], "now")
+                return pull(f"IF(ISNUMBER({n}),{n},{own[1:]})")
+            return own
         if spec["method"] == "rate_share":
             # Chainlink (2026-09-29): an emission RATE (tokens/yr) over stake — no annualising.
             rate, stake = R.D(r, spec["rate_metric"], "now"), R.D(r, spec["stake_metric"], "now")

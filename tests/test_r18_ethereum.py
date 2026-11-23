@@ -483,13 +483,24 @@ KEY = ("Ethereum", "beacon_chain_eth")
 DECL = ETH["series_handover"]["beacon_chain_eth"]
 
 
-def test_without_the_declaration_the_handover_stays_held(monkeypatch):
+def test_without_the_marker_the_handover_is_declared_in_config(monkeypatch):
+    """R18: with no marker row (staked_eth_rebuild.py --apply had not stored one) the handover stayed HELD and the
+    series ended 2026-10-25. R20 (Jake 2026-11-24): that script's query is forbidden and the change of quantity is
+    declared in config — the node's rows join without a marker; with the declaration taken away it is held as before."""
     monkeypatch.setattr(bw, "_SCOPE", [ETH])
     groups = _build_groups(NODE_ROWS, marker=False)
     bw._handover_continuation_views(groups)
+    assert KEY in bw.HANDOVER_CONTINUED and KEY not in bw.HANDOVER_HELD
+    assert bw._daily(groups[KEY]).index.max() == pd.Timestamp("2026-11-06")          # was 2026-10-25 (held), R18
+    assert "DECLARED CHANGE OF QUANTITY" in bw.HANDOVER_CONTINUED[KEY]
+    hc = config.HANDOVER_CONTINUATION[KEY]
+    monkeypatch.setitem(hc, "fallback", {k: v for k, v in hc["fallback"].items() if k != "unconditional"})
+    groups = _build_groups(NODE_ROWS, marker=False)
+    bw._handover_continuation_views(groups)
     assert KEY in bw.HANDOVER_HELD and KEY not in bw.HANDOVER_CONTINUED
-    assert bw._daily(groups[KEY]).index.max() == pd.Timestamp("2026-10-25")          # stale, as before
+    assert bw._daily(groups[KEY]).index.max() == pd.Timestamp("2026-10-25")          # R18's behaviour, kept in code
     assert "DECLARED CHANGE OF QUANTITY" not in DECL["composition_change"]
+    bw.HANDOVER_HELD.clear()
 
 
 def test_with_the_declaration_the_series_reads_the_nodes_actual_balances_from_the_seam(monkeypatch):
@@ -510,9 +521,11 @@ def test_with_the_declaration_the_series_reads_the_nodes_actual_balances_from_th
     # the rows carry the continuation's declared source: the handover's ordered points still describe the series
     added = groups[KEY][pd.to_datetime(groups[KEY]["date"]) > pd.Timestamp("2026-10-25")]
     assert set(added["source"].map(base._measuring_point)) == {"derived:=beacon_chain_eth_primary"}
-    # the next build without the marker restores the handover's own text
+    # R18: the next build without the marker restored the handover's own text. R20 (Jake 2026-11-24): the change of
+    # quantity is declared in config, so a build without the marker says it too; the handover's own text comes back
+    # only on a build whose overlap PASSED (the test below)
     bw._handover_continuation_views(_build_groups(NODE_ROWS, marker=False))
-    assert "DECLARED CHANGE OF QUANTITY" not in DECL["composition_change"]
+    assert "DECLARED CHANGE OF QUANTITY" in DECL["composition_change"]          # was: not in (R18, marker-driven)
 
 
 def test_a_later_pass_takes_the_ordinary_handover_even_with_the_marker_in_the_store(monkeypatch):

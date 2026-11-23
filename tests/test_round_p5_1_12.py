@@ -81,12 +81,12 @@ def test_a_long_429_from_a_declared_host_is_recorded(tmp_path, monkeypatch):
 def test_the_beacon_api_tier_no_longer_runs_the_beaconchain_adapter():
     import fetch
     tier = next(t for t in fetch.ADAPTERS if t[0] == "beacon_api") if hasattr(fetch, "ADAPTERS") else None
-    if tier is None:
-        import inspect
-        src = inspect.getsource(fetch)
-        assert '("beacon_api", 1, lambda ctx: BeaconNodeStakedEth())' in src
-    else:
-        assert isinstance(tier[2]({}), se.BeaconNodeStakedEth)
+    # R20 (Jake 2026-11-24): the tier is beaconcha.in's v2 reader again (BeaconchainEth, read from 2026-10-19 only),
+    # with P5-1.12's node read inside it as the cross-check — was `lambda ctx: BeaconNodeStakedEth()`
+    tier = next(t for t in fetch.TIER_ORDER if t[0] == "beacon_api")
+    a = tier[2]({})
+    assert isinstance(a, se.BeaconchainEth) and isinstance(a.node, se.BeaconNodeStakedEth)
+    assert not isinstance(a, se.BeaconStakedEth)             # P4-Q4's 455-day backfill stays unregistered
     assert "retired" in config.PROJECT_BY_NAME["Ethereum"]["staked_eth_primary"]
 
 
@@ -405,7 +405,9 @@ def test_the_handovers_are_declared_and_the_overlap_is_narrower_never_wider():
     assert ov["tolerance_pct"] == 1.0 and ov["min_days"] == 455
     assert ov["days"] == ("2025-07-28", "2026-10-25") and ov["b_point"] == config.STAKED_REBUILD_POINT
     h = eth["series_handover"]["beacon_chain_eth_primary"]
-    assert h["ordered_points"] == (config.STAKED_REBUILD_POINT, config.BEACON_NODE_POINT) and h["cut"]
+    # R20 (Jake 2026-11-24): beaconcha.in's v2 point is the third and current leg — was (rebuild, node)
+    assert h["ordered_points"] == (config.STAKED_REBUILD_POINT, config.BEACON_NODE_POINT,
+                                   config.BEACONCHAIN_POINT) and h["cut"]
     assert config.HANDOVER_CONTINUATION[("Ethereum", "beacon_chain_eth")]["requires_overlap"] is True
 
 

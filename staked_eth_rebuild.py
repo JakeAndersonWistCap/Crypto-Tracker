@@ -1,5 +1,10 @@
 """staked_eth_rebuild.py — Ethereum's staked ETH for the days the beacon node cannot read back (SPEC P5-1.12).
 
+R20 (Jake 2026-11-24): FORBIDDEN BY DEFAULT — "Do not use staked_eth_rebuild.py's 1,170 GB query". Every command below
+REFUSES before anything is read (no node call, no dry run, no query; exit 2) unless --force-bigquery is added. Nothing
+in the daily run depends on this script: staked ETH and its missing days come from beaconcha.in's v2 API
+(fetch.staked_eth.BeaconchainEth) and the handover from validatorqueue is declared in config.
+
     python staked_eth_rebuild.py              TEST ONLY: rebuild, compare with validatorqueue, print; stores nothing
     python staked_eth_rebuild.py --apply      the same, and ONLY IF the test passed, store the rebuilt days
 
@@ -247,11 +252,33 @@ def bigquery_rows(anc: dict) -> list[dict]:
     return rows
 
 
+def refusal(forced: bool, injected: bool = False) -> str | None:
+    """R20 (Jake 2026-11-24: "Do not use staked_eth_rebuild.py's 1,170 GB query"): why this script will NOT run, or None.
+    It refuses BEFORE anything is read — no node call, no dry run, no query — unless --force-bigquery is given (or the
+    rows are injected, as the tests do: nothing is billed then). The daily run does not depend on it: staked ETH comes
+    from beaconcha.in's v2 API (fetch.staked_eth.BeaconchainEth), its past days by epoch number, and the handover from
+    validatorqueue is declared in config (HANDOVER_CONTINUATION fallback, unconditional)."""
+    if forced or injected:
+        return None
+    fb = (config.PROJECT_BY_NAME["Ethereum"]["staked_eth_rebuild"].get("forbidden") or {})
+    if not fb:
+        return None
+    return (f"REFUSED - {fb['why']} Nothing read, nothing billed, nothing stored. Staked ETH and its missing days come "
+            f"from beaconcha.in (python token_metrics.py --project Ethereum, with {fb['key_env']} in .env). To run this "
+            f"query all the same: python staked_eth_rebuild.py --force-bigquery (it bills the month's BigQuery budget).")
+
+
 def main(argv=None, reader=None, bq_rows=None) -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--db", default=str(ROOT / "metrics.db"))
     ap.add_argument("--apply", action="store_true", help="store the rebuilt days, only if the test passed")
+    ap.add_argument("--force-bigquery", action="store_true",
+                    help="R20: run the BigQuery query although Jake has forbidden it (it bills; see refusal())")
     a = ap.parse_args(argv)
+    why_not = refusal(a.force_bigquery, injected=bq_rows is not None)
+    if why_not:
+        print(why_not)
+        return 2
     db = Path(a.db)
     if not db.exists():
         print(f"no store at {db}")

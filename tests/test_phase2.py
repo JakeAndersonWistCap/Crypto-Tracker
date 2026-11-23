@@ -140,7 +140,10 @@ def test_cp_ethereum_float_takes_the_beacon_stake_and_a4_additions_evaluate(tmp_
     hvy = _get(o, "HOLDER VALUE YIELD")
     assert isinstance(hvy, float) and hvy > 0, hvy
     a4 = _row(wb, X, "A4 Permanent Burn", "Ethereum")
-    fees, iss = _rate(wb, X, "Ethereum|fees_usd"), _rate(wb, X, "Ethereum|gross_issuance_tokens")
+    # R20 (Jake 2026-11-24): Ethereum's fee cells read Blockscout's series (config.metric_alias) — the crossover moved
+    # 8,484,196,567 -> 8,616,148,052 on this dump (was: _rate(wb, X, "Ethereum|fees_usd"), DefiLlama's)
+    fees = _rate(wb, X, f"Ethereum|{config.metric_alias('Ethereum', 'fees_usd')}")
+    iss = _rate(wb, X, "Ethereum|gross_issuance_tokens")
     burn = _rate(wb, X, f"Ethereum|{config.a4_burn_metric('Ethereum')}")
     assert _get(a4, "Fees required for crossover") == pytest.approx(fees * iss / burn * 365)
     # PR1B.3 (lead 2026-11-09): the lever's issuance $ is each day's issuance x that day's price (was x the Q0 average)

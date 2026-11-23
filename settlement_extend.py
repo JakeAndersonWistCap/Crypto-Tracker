@@ -143,6 +143,19 @@ def extend_approval() -> dict | None:
     return config.SETTLEMENT_REBUILD["ethereum_rebuild"]["p2p"].get("extend_approved")
 
 
+def scheduled_from(frm: str, today) -> tuple[str, str]:
+    """R20 (Jake 2026-11-24, the combined schedule): how far back this month's backfill may reach — the later of the
+    day asked (`frm`) and config.BIGQUERY_SCHEDULE's `eth_back_to` for today's month. (the day used, why)."""
+    import config
+    month = f"{pd.Timestamp(today):%Y-%m}"
+    row = config.bigquery_schedule_month(month)
+    floor = str(row["eth_back_to"])
+    if pd.Timestamp(frm) >= pd.Timestamp(floor):
+        return frm, f"{month}: the schedule allows back to {floor}"
+    return floor, (f"{month}: the combined schedule (config.BIGQUERY_SCHEDULE) reads Ethereum's history back to "
+                   f"{floor} this month, not to {frm} - the weeks before it wait for their month")
+
+
 def cmd_backfill(frm: str, apply: bool) -> int:
     ok = extend_approval()
     if apply and not ok:
@@ -150,6 +163,8 @@ def cmd_backfill(frm: str, apply: bool) -> int:
               "['ethereum_rebuild']['p2p']['extend_approved'] is not declared). Nothing read.")
         return 3
     r, spec, bq, out, now = _p2p_reader()
+    frm, why = scheduled_from(frm, now)
+    print(f"SCHEDULE - {why}")
     todo, p2p, st = _pieces(r, spec, frm, now)
     print(f"PLAN: {len(todo)} weekly piece(s) from {frm}: "
           + ", ".join(f"{a.date()}..{b.date()}" for a, b in todo[:6]) + (" ..." if len(todo) > 6 else ""))

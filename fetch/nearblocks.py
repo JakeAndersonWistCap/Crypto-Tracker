@@ -167,6 +167,60 @@ def call_credits(path: str, params: dict | None) -> int:
     return min(CREDITS_MAX_PER_CALL, credits_for(int(rows)))
 
 
+# ===== R20 (Jake's store run 2026-11-23: five Near reads "NOT CALLED" — the tier's 180 s ended before the pacing). =====
+# A normal day is ~12 credits, two minute windows. A day that owes more is not: a call above the whole window (a first
+# or catch-up read of 365 rows, 10 credits) waits for an EMPTY window and the next call waits for it to leave — one
+# minute each — so a day that re-reads the six balance histories needs ~10 windows, and 170 s holds three. The tier's
+# budget is now WHAT THE PACING OF THE DEAREST DAY NEEDS, computed from the declared calls (worst_case_credits) by the
+# pacer's own rule on a clock of its own (pacing_seconds): every read lands every day; a normal day still ends in about
+# a minute, because a tier ends when its reads are done, not at its budget.
+CALL_SECONDS = 5.0        # allowed per call for the request itself, on top of the pacing
+BUDGET_SLACK_S = 60.0     # one more minute window: a call stamped late, or a 429 waited once (R17)
+PAYER_PAGES_WORST = 2     # the payer's sent receipts: one page of 100 today (86 rows since 2020), a second allowed
+
+
+def worst_case_credits(spec: dict, flows=()) -> list[int]:
+    """The credits of every call one run can make for one project, each at its DEAREST (nothing stored: the declared
+    limit; a balance history at its 365 rows), in the order run() makes them."""
+    out = []
+    full = int(spec.get("limit") or ROWS_PER_CREDIT)
+    for path in dict.fromkeys(m["path"] for m in (spec.get("metrics") or {}).values()):
+        out.append(call_credits(path, {"limit": full}))
+    for k in ("balance_history", "foundation_history", "treasury_history"):
+        bh = spec.get(k) or {}
+        rows = min(STATS_BALANCE_MAX_ROWS, int(bh.get("limit") or STATS_BALANCE_MAX_ROWS))
+        out += [call_credits(bh.get("path", ""), {"limit": rows}) for _a in (bh.get("accounts") or ())]
+    for k in ("validators_info", "supply_stats", "supply_total"):
+        if spec.get(k):
+            out.append(call_credits(spec[k].get("path", ""), None))
+    if spec.get("payer_out"):
+        out += [call_credits(spec["payer_out"]["path"], {"limit": 100})] * PAYER_PAGES_WORST
+    out += [call_credits("", {"limit": FLOW_PER_PAGE}) for _f in (flows or ())]      # one v3 page a declared flow
+    return out
+
+
+def pacing_seconds(credits: list[int]) -> float:
+    """How long the pacer makes a run of calls with these credits wait in all — the pacer's own rule (a _Pacer), on a
+    clock of its own where each call is instant: the pacing alone."""
+    t = [0.0]
+    pacer = _Pacer(clock=lambda: t[0], sleep=lambda s: t.__setitem__(0, t[0] + s))
+    for c in credits:
+        pacer.wait(c)
+        pacer.charge(c)
+    return t[0]
+
+
+def budget_seconds(projects) -> float:
+    """The tier's time budget: the pacing of the dearest day + CALL_SECONDS a call + the stop margin + one window of
+    slack, rounded up to 30 s. Never under the 180 s it was (R17)."""
+    credits = []
+    for p in projects:
+        if p.get("nearblocks"):
+            credits += worst_case_credits(p["nearblocks"], p.get("near_account_flows") or ())
+    need = pacing_seconds(credits) + CALL_SECONDS * len(credits) + STOP_BEFORE_S + BUDGET_SLACK_S
+    return max(180.0, 30.0 * -(-need // 30.0))
+
+
 class PacedOut(RuntimeError):
     """The next call's pacing wait would pass the tier's budget: not waited, not called — the next run reads it."""
 
@@ -183,9 +237,16 @@ class _Pacer:
     process's spending; other users of the same key are invisible to it.
     """
 
-    def __init__(self):
+    def __init__(self, clock=None, sleep=None):
         self.spent: deque = deque()   # (monotonic time, credits)
         self.total = 0
+        self._clock_fn, self._sleep_fn = clock, sleep     # R20: a clock of its own (pacing_seconds); else the module's
+
+    def _now(self) -> float:
+        return self._clock_fn() if self._clock_fn else _clock()
+
+    def _nap(self, seconds: float) -> None:
+        (self._sleep_fn or _sleep)(seconds)
 
     def wait(self, credits: int, deadline: float | None = None) -> float:
         """Wait until `credits` fit the minute window. A call that costs more than the whole window (a first read of
@@ -196,7 +257,7 @@ class _Pacer:
                                f"this run, {credits} more would pass {CREDITS_PER_DAY}/day")
         waited = 0.0
         while True:
-            now = _clock()
+            now = self._now()
             while self.spent and now - self.spent[0][0] >= 60.0:
                 self.spent.popleft()
             used = sum(c for _, c in self.spent)
@@ -207,12 +268,12 @@ class _Pacer:
             if deadline is not None and now + pause > deadline:
                 raise PacedOut(f"NearBlocks free-plan pacing: the next {credits}-credit call would wait {pause:.0f}s, "
                                f"past this tier's time budget — NOT CALLED this run; the next run reads it")
-            _sleep(pause)
+            self._nap(pause)
             waited += pause
 
     def charge(self, credits: int) -> None:
         # stamped at completion (after any retry inside Http) — the later stamp is the safe one
-        self.spent.append((_clock(), credits))
+        self.spent.append((self._now(), credits))
         self.total += credits
 
 

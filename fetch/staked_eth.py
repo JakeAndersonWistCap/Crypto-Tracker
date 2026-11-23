@@ -399,8 +399,13 @@ class BeaconNodeStakedEth:
     SOURCE = "beacon_api"
     TIER = TIER
 
-    def __init__(self, session=None, daily=None, **_ignored):
-        self.session = session              # tests inject a stub; the run uses a requests.Session
+    def __init__(self, session=None, daily=None, http: Http | None = None, **_ignored):
+        self.session = session              # tests inject a stub; the run uses the Http client's session
+        # R20 (Jake's store run 2026-11-23: "tier beacon_api done in 0s — no Http client", nothing stored): the read
+        # ran on a bare requests.Session, so the tier's timing line had no client to report — no call count, no time,
+        # no error — and a quick refusal read exactly like a day already done. It now owns an Http client (the
+        # streamed sum goes through that client's session, each call counted in its stats).
+        self.http = http or Http(min_interval=0.0, retries=1)
         if daily is None:
             from .logcache import DailyChecks
             daily = DailyChecks()
@@ -408,20 +413,28 @@ class BeaconNodeStakedEth:
 
     def _sess(self):
         if self.session is None:
-            import requests
-            from .base import USER_AGENT
-            self.session = requests.Session()
-            self.session.headers.update({"User-Agent": USER_AGENT, "Accept-Encoding": "gzip, deflate"})
+            self.session = self.http.s
+            self.session.headers.update({"Accept-Encoding": "gzip, deflate"})
         return self.session
 
     def _get(self, url: str, stream: bool = False):
-        from .base import CONNECT_TIMEOUT_S, READ_TIMEOUT_S, host_cooldown, mask_url
+        from .base import CONNECT_TIMEOUT_S, READ_TIMEOUT_S, host_cooldown, mask_url, mask_v2
+        import time as _time
         import urllib.parse
-        host = urllib.parse.urlsplit(url).netloc
-        cool = host_cooldown(host)
+        parts = urllib.parse.urlsplit(url)
+        cool = host_cooldown(parts.netloc)
         if cool:
             raise RuntimeError(cool)
-        r = self._sess().get(url, stream=stream, timeout=(CONNECT_TIMEOUT_S, READ_TIMEOUT_S))
+        t0, st = _time.monotonic(), self.http.stats
+        try:
+            r = self._sess().get(url, stream=stream, timeout=(CONNECT_TIMEOUT_S, READ_TIMEOUT_S))
+        finally:
+            took = _time.monotonic() - t0
+            st["calls"] += 1
+            st["http_s"] += took
+            st.setdefault("times", []).append((took, mask_v2(parts.path)[:60]))
+            if took > st["slowest_s"]:
+                st["slowest_s"], st["slowest"] = took, mask_v2(parts.path)[:80]
         if r.status_code != 200:
             raise RuntimeError(f"HTTP {r.status_code} from {mask_url(url)}")
         return r
@@ -471,6 +484,49 @@ class BeaconNodeStakedEth:
             body = None
         return cross_check_sum(gwei, slot, body, cc)
 
+    def measure(self, spec: dict) -> tuple[dict | None, list[str]]:
+        """ONE READING of the declared nodes, nothing stored (R20: the run stores it, the beaconcha.in tier sets its
+        own figure against it): ({"node", "slot", "when", "eth", "n", "nz", "chk"}, []) from the first endpoint whose
+        sum passes the band, the staleness rule and the second source (R17), else (None, why each endpoint failed)."""
+        from .base import mask_url
+        metric, errs = spec["metric"], []
+        for node in spec["endpoints"]:
+            try:
+                slot, gwei, n, nz = self.read(node, spec.get("state", "finalized"))
+            except Exception as e:  # noqa: BLE001 — one endpoint's failure is said, the next is tried
+                errs.append(f"{mask_url(node)}: {type(e).__name__}: {str(e)[:160]}")
+                continue
+            eth = gwei / 1e9
+            lo, hi = config.METRICS[metric]["sanity_min"], config.METRICS[metric]["sanity_max"]
+            if n < int(spec.get("min_entries", 100_000)) or not (lo <= eth <= hi):
+                errs.append(f"{mask_url(node)}: refused — {n:,} entries, Σ {eth:,.0f} ETH (band {lo:,.0f}.."
+                            f"{hi:,.0f} ETH, at least {int(spec.get('min_entries', 100_000)):,} entries)")
+                continue
+            when = slot_time(slot)
+            # R17: a finalized state older than max_age_hours is a node that stopped following the chain
+            age_h = (_utcnow() - when).total_seconds() / 3600.0
+            if spec.get("max_age_hours") is not None and age_h > float(spec["max_age_hours"]):
+                errs.append(f"{mask_url(node)}: refused — its finalized slot {slot} is {when:%Y-%m-%d %H:%M} UTC, "
+                            f"{age_h:,.1f} h old (finality trails the head by ~13 minutes; more than "
+                            f"{float(spec['max_age_hours']):g} h is a node that has stopped following the chain)")
+                continue
+            chk = self.cross_check(spec, gwei, slot)
+            if chk and chk["status"] == "DISAGREES":
+                errs.append(f"{mask_url(node)}: refused — Σ {eth:,.0f} ETH at slot {slot}; {chk['text']}")
+                continue
+            return {"node": mask_url(node), "slot": slot, "when": when, "eth": eth, "n": n, "nz": nz, "chk": chk}, errs
+        return None, errs
+
+    def store(self, name: str, spec: dict, got: dict, out) -> None:
+        """The reading as the day's row of the series (dated the UTC day of its finalized slot)."""
+        metric, note = spec["metric"], (f"; {got['chk']['text']}" if got.get("chk") else "")
+        src = (f"{spec['point']}[finalized slot {got['slot']}, {got['when']:%H:%M} UTC; {got['nz']:,} of "
+               f"{got['n']:,} non-zero{note}]")
+        out.add(tidy([(got["when"].normalize(), got["eth"])], name, metric, src, TIER), self.SOURCE, name,
+                f"{metric}: {got['eth']:,.0f} ETH — Σ actual balances of all validators at finalized slot "
+                f"{got['slot']} ({got['when']:%Y-%m-%d %H:%M} UTC), {got['n']:,} entries ({got['nz']:,} non-zero), "
+                f"public beacon node {got['node']}{note}", TIER)
+
     def run(self, projects: list[dict], window_days, out):
         for p in projects:
             spec = p.get("staked_eth_node")
@@ -478,46 +534,356 @@ class BeaconNodeStakedEth:
                 continue
             name, metric = p["name"], spec["metric"]
             day = str(today().date())
-            dkey = "staked_eth:beacon_node"
+            dkey = stake_mark(name, metric)
             if not self.daily.due(dkey, day):
                 out.mark_current(self.SOURCE, name, metric, f"{metric}: read today already", TIER)
                 continue
-            errs = []
-            for node in spec["endpoints"]:
-                from .base import mask_url
-                try:
-                    slot, gwei, n, nz = self.read(node, spec.get("state", "finalized"))
-                except Exception as e:  # noqa: BLE001 — one endpoint's failure is said, the next is tried
-                    errs.append(f"{mask_url(node)}: {type(e).__name__}: {str(e)[:160]}")
-                    continue
-                eth = gwei / 1e9
-                lo, hi = config.METRICS[metric]["sanity_min"], config.METRICS[metric]["sanity_max"]
-                if n < int(spec.get("min_entries", 100_000)) or not (lo <= eth <= hi):
-                    errs.append(f"{mask_url(node)}: refused — {n:,} entries, Σ {eth:,.0f} ETH (band {lo:,.0f}.."
-                                f"{hi:,.0f} ETH, at least {int(spec.get('min_entries', 100_000)):,} entries)")
-                    continue
-                when = slot_time(slot)
-                # R17: a finalized state older than max_age_hours is a node that stopped following the chain
-                age_h = (_utcnow() - when).total_seconds() / 3600.0
-                if spec.get("max_age_hours") is not None and age_h > float(spec["max_age_hours"]):
-                    errs.append(f"{mask_url(node)}: refused — its finalized slot {slot} is {when:%Y-%m-%d %H:%M} UTC, "
-                                f"{age_h:,.1f} h old (finality trails the head by ~13 minutes; more than "
-                                f"{float(spec['max_age_hours']):g} h is a node that has stopped following the chain)")
-                    continue
-                chk = self.cross_check(spec, gwei, slot)
-                if chk and chk["status"] == "DISAGREES":
-                    errs.append(f"{mask_url(node)}: refused — Σ {eth:,.0f} ETH at slot {slot}; {chk['text']}")
-                    continue
-                note = f"; {chk['text']}" if chk else ""
-                src = f"{spec['point']}[finalized slot {slot}, {when:%H:%M} UTC; {nz:,} of {n:,} non-zero{note}]"
-                out.add(tidy([(when.normalize(), eth)], name, metric, src, TIER), self.SOURCE, name,
-                        f"{metric}: {eth:,.0f} ETH — Σ actual balances of all validators at finalized slot {slot} "
-                        f"({when:%Y-%m-%d %H:%M} UTC), {n:,} entries ({nz:,} non-zero), public beacon node "
-                        f"{mask_url(node)}{note}", TIER)
-                self.daily.done(dkey, day)
-                break
-            else:
+            got, errs = self.measure(spec)
+            if got is None:
                 out.fail(self.SOURCE, name, f"{metric}: NOTHING STORED — " + "; ".join(errs), TIER)
+                continue
+            self.store(name, spec, got, out)
+            self.daily.done(dkey, day)
+
+
+def stake_mark(name: str, metric: str) -> str:
+    """The day's mark of a staked-ETH read, shaped <source>:<project>:<metric> so the run keeps it ONLY when the series
+    reached the store (token_metrics._mark_stored). R20: the old key (staked_eth:beacon_node) was kept whatever
+    happened to the row, so a read whose row was refused downstream said "read today already" for the rest of the
+    day — a tier done in 0 s with nothing stored."""
+    return f"beacon_api:{name}:{metric}"
+
+
+# ===== R20 (Jake 2026-11-24): STAKED ETH, THE VALIDATOR COUNT AND THE STAKING YIELD FROM beaconcha.in's v2 API. =====
+# Read from docs.beaconcha.in 2026-11-23 (the docs index llms.txt and the pages' own OpenAPI, "External Service API"
+# 1.0.3; the knowledge-base MCP at docs.beaconcha.in/mcp answers JSON-RPC only — "Method not allowed" to a plain GET —
+# and serves the same pages). Every v2 endpoint is a POST with a JSON body and `Authorization: Bearer <key>`; keyless
+# it answers 401 ("a valid API key is required", checked 2026-11-23).
+#
+#   POST /api/v2/ethereum/epoch      {"chain": "mainnet", "epoch": {"number": N}}          (parse_epoch, above)
+#        total_validator_balance  "Sum of the actual balances (in wei) of all validators at this epoch"   -> staked ETH
+#        validators_count         "Number of active validators participating in consensus during this epoch"
+#        (also total_active_balance = Σ effective balance eligible to attest, attesting_balance = Σ effective balance
+#        that voted the target — validatorqueue's quantity; read by nobody here)
+#        ANY PAST EPOCH BY NUMBER: daily history is served — one request a day of history.
+#   POST /api/v2/ethereum/eth-store  {"chain": "mainnet", "range": {"evaluation_window": "24h"|"7d"|"30d"|"90d"|
+#                                     "all_time"}, "page_size": <=10, "cursor": ""}
+#        ETH.STORE: "the average return that validators on the Ethereum network achieved over each 24-hour period";
+#        one datapoint per BEACONCHAIN-DAY (225 epochs from genesis, so a day runs 12:00:23 UTC to 12:00:23 UTC),
+#        newest first, computed only after its day is finalized — immutable. apr.combined = (consensus + execution
+#        rewards, priority fees and MEV included) ÷ Σ effective balance of the validators active the whole day x 365,
+#        simple, a fraction (0.0342 = 3.42%). The trailing windows are served on every plan (the custom ranges are
+#        Scale / Enterprise); 10 datapoints a page with a cursor: HISTORY IS SERVED.
+#
+# THE PLAN (docs.beaconcha.in/api/overview "Pricing", read 2026-11-23): there is NO standing free plan. "Free Trial
+# 0 EUR (30 days)": 1 request a second, 1,000 requests, 1 key, "does not auto-renew; access ends after 30 days unless
+# you upgrade"; then Hobbyist 59 EUR a month (1 a second, unlimited). So the reads are FEW: one epoch call a day of
+# history owed (2026-10-19..today on the first run, ~40), one a day after; ETH.STORE one page a day (4-5 on the first
+# run); at most max_requests_per_run in any run. ~45 on the first run, ~60 a month after.
+#
+# WHAT IS STORED, on which measuring point:
+#   beacon_chain_eth_primary  beaconchain:v2_epoch.total_validator_balance — each UTC day's first epoch (00:00 UTC)
+#   beacon_validators_count   beaconchain:v2_epoch.validators_count — the same answer
+#   staking_yield_pct         beaconchain:v2_eth_store.apr.combined — dated the UTC day its beaconchain-day STARTS
+# THE CROSS-CHECK: today's total_validator_balance against the public beacon node's Σ actual balances of all
+# validators at its finalized state (R17's read, itself checked against ultrasound.money within ±0.1%) — the same
+# quantity, hours apart, so the tolerance is the declared ±0.25% (config: R17's 0.1% + the most the sum moves in a
+# day at the spec churn, 0.14%). Outside it today's beaconcha.in row is REFUSED. A past day cannot be cross-checked
+# (the node serves no past state): said on the Run Log line, the days are stored.
+# THE NODE'S OWN ROW is stored only while the series holds no beaconcha.in row (no key yet, or the declared cooldown):
+# it is the earlier leg of the series' declared handover; once beaconcha.in's rows are stored it is the cross-check.
+ETHSTORE_POINT = "beaconchain:v2_eth_store.apr.combined"
+_WINDOWS = (("7d", 7), ("30d", 30), ("90d", 90))
+
+
+def parse_ethstore(body) -> tuple[list[tuple], list[str], str] | str:
+    """([(day, apr, note)], [why a datapoint was refused], next_cursor) from a v2 eth-store answer, or why the whole
+    answer is refused. A datapoint is REFUSED (never a 0, never repaired) when its day is not a whole beaconchain-day
+    from genesis, its apr is not a fraction in (0, 0.5], or its combined apr is not its two layers' sum."""
+    if not isinstance(body, dict) or not isinstance(body.get("data"), list):
+        return f"no data list in the answer ({type(body).__name__})"
+    rows, refused = [], []
+    for d in body["data"]:
+        if not isinstance(d, dict):
+            return f"a datapoint that is not an object: {str(d)[:80]}"
+        n, t0, t1 = d.get("day"), d.get("day_start"), d.get("day_end")
+        if any(isinstance(x, bool) or not isinstance(x, int) for x in (n, t0, t1)):
+            refused.append(f"day {n!r}: day / day_start / day_end missing or not integers")
+            continue
+        if t1 - t0 != 86400 or t0 != GENESIS_UNIX + n * 86400:
+            refused.append(f"day {n}: {t0}..{t1} is not the {n}th whole day from genesis")
+            continue
+        apr = d.get("apr") if isinstance(d.get("apr"), dict) else {}
+        vals = [apr.get(k) for k in ("combined", "consensus_layer", "execution_layer")]
+        if any(isinstance(v, bool) or not isinstance(v, (int, float)) for v in vals):
+            refused.append(f"day {n}: apr {str(d.get('apr'))[:60]} carries no combined / consensus_layer / "
+                           f"execution_layer number")
+            continue
+        comb, cl, el = (float(v) for v in vals)
+        if not (0.0 < comb <= 0.5) or abs(comb - (cl + el)) > 1e-4:
+            refused.append(f"day {n}: apr combined {comb!r} is not a fraction in (0, 0.5] equal to consensus {cl!r} + "
+                           f"execution {el!r} — the units changed")
+            continue
+        ma = d.get("moving_averages") if isinstance(d.get("moving_averages"), dict) else {}
+        avg = "; ".join(f"{lab} mean {float(a):.4%}" for lab, a in (
+            (lab, (((ma.get(k) or {}).get("apr") or {}).get("combined"))) for k, lab in
+            (("window_7d", "7-day"), ("window_31d", "31-day"))) if isinstance(a, (int, float)) and not isinstance(a, bool))
+        rows.append((pd.Timestamp(t0, unit="s").normalize(), comb,
+                     f"beaconchain-day {n}; consensus {cl:.4%} + execution {el:.4%}" + (f"; {avg}" if avg else "")))
+    paging = body.get("paging") if isinstance(body.get("paging"), dict) else {}
+    return rows, refused, str(paging.get("next_cursor") or "")
+
+
+def node_cross_check(eth: float, day: pd.Timestamp, node: dict | None, cc: dict) -> dict:
+    """{"status": "agrees" | "DISAGREES" | "not made", "text", "gap_pct"}: beaconcha.in's total_validator_balance at
+    `day`'s first epoch against the node's Σ actual balances at its finalized slot (cc: tolerance_pct, max_gap_hours)."""
+    if not node:
+        return {"status": "not made", "gap_pct": None, "text": "cross-check NOT MADE: the public beacon node gave no "
+                                                               "reading this run"}
+    hours = (node["when"] - pd.Timestamp(day).normalize()).total_seconds() / 3600.0
+    if not (0.0 <= hours <= float(cc["max_gap_hours"])):
+        return {"status": "not made", "gap_pct": None,
+                "text": f"cross-check NOT MADE: the node's finalized slot {node['slot']} is {hours:+.1f} h from the "
+                        f"day's first epoch (more than {float(cc['max_gap_hours']):g} h)"}
+    gap = (node["eth"] / eth - 1.0) * 100.0
+    ok = abs(gap) <= float(cc["tolerance_pct"])
+    return {"status": "agrees" if ok else "DISAGREES", "gap_pct": gap,
+            "text": f"cross-check {'agrees' if ok else 'DISAGREES'}: public beacon node Σ actual balances "
+                    f"{node['eth']:,.0f} ETH at finalized slot {node['slot']} ({hours:.1f} h later), {gap:+.4f}% "
+                    f"(tolerance ±{float(cc['tolerance_pct']):g}%)"}
+
+
+class BeaconchainEth:
+    """R20: staked ETH, the validator count and the ETH.STORE yield from beaconcha.in v2, the public beacon node as the
+    cross-check (and as the series' row while beaconcha.in has stored none). config Ethereum["staked_eth_beaconchain"]."""
+    SOURCE = "beacon_api"
+    TIER = TIER
+
+    def __init__(self, http: Http | None = None, daily=None, key: str | None = None, stored_long=None,
+                 deadline_s: float | None = None, node=None, **_ignored):
+        import os
+        self.http = http or Http(min_interval=1.1, retries=1)       # 1 request a second on every plan up to Hobbyist
+        if daily is None:
+            from .logcache import DailyChecks
+            daily = DailyChecks()
+        self.daily = daily
+        self._key_arg = key
+        self._env = os.environ
+        self.stored = stored_long
+        self.deadline_s = deadline_s
+        self.node = node or BeaconNodeStakedEth(daily=daily, http=self.http)
+        self.requests = 0
+        self._wrote = False                 # a beaconcha.in staked row was written this run
+
+    # ---- the key: read from the environment only, sent in the Authorization header only, never logged
+    def key(self, spec: dict) -> str:
+        return (self._env.get(spec["key_env"], "") if self._key_arg is None else self._key_arg).strip()
+
+    def _scrub(self, spec: dict, text) -> str:
+        k, s = self.key(spec), str(text)
+        return s.replace(k, "***") if k else s
+
+    def blocked(self, spec: dict) -> tuple[str, str] | None:
+        """("unconfigured" | "cooldown", why) when beaconcha.in is not asked this run, else None."""
+        import urllib.parse
+        if not self.key(spec):
+            return "unconfigured", (f"no {spec['key_env']} in .env — beaconcha.in's v2 API answers 401 without a key; "
+                                    f"NOTHING STORED from it")
+        from .base import host_cooldown
+        cool = host_cooldown(urllib.parse.urlsplit(spec["epoch_url"]).netloc)
+        return ("cooldown", cool) if cool else None
+
+    def _held(self, name: str, metric: str, point: str) -> set:
+        """The days `metric` already holds on `point` in the store (the backfill's state is the store)."""
+        df = self.stored
+        if df is None or getattr(df, "empty", True):
+            return set()
+        from .base import _measuring_point
+        df = df[(df["project"] == name) & (df["metric"] == metric)]
+        if df.empty:
+            return set()
+        df = df[df["source"].astype(str).map(_measuring_point) == _measuring_point(point)]
+        return set(pd.to_datetime(df["date"]).dt.normalize())
+
+    def _post(self, spec: dict, url: str, body: dict):
+        self.requests += 1
+        return self.http.post(url, json_body=body, headers={"Authorization": f"Bearer {self.key(spec)}"})
+
+    def _left(self, spec: dict, deadline: float) -> str:
+        import time as _time
+        if self.requests >= int(spec["max_requests_per_run"]):
+            return f"the run's {int(spec['max_requests_per_run'])}-request cap (the plan's allowance is counted)"
+        return "the tier's time budget" if _time.monotonic() >= deadline else ""
+
+    def run(self, projects: list[dict], window_days, out):
+        import time as _time
+        for p in projects:
+            spec = p.get("staked_eth_beaconchain")
+            if not spec:
+                continue
+            name, metric, cmetric, ymetric = p["name"], spec["metric"], spec["count_metric"], spec["yield_metric"]
+            day = str(today().date())
+            k_stake, k_yield = stake_mark(name, metric), stake_mark(name, ymetric)
+            stake_due, yield_due = self.daily.due(k_stake, day), self.daily.due(k_yield, day)
+            why = self.blocked(spec)
+            if why:
+                (out.unconfigured if why[0] == "unconfigured" else out.skipped)(
+                    self.SOURCE, name, f"{metric}, {cmetric}, {ymetric}: {why[1]}", TIER)
+            if not stake_due and (why or not yield_due):
+                out.mark_current(self.SOURCE, name, metric, f"{metric}: read today already", TIER)
+                continue
+            if self.deadline_s is not None:
+                deadline = _time.monotonic() + self.deadline_s
+            else:
+                from . import _budget                                  # noqa: PLC0415
+                deadline = _time.monotonic() + _budget(self.SOURCE) - STOP_BEFORE_S
+            node, nerrs, nspec = None, [], p.get("staked_eth_node")
+            if stake_due and nspec:
+                node, nerrs = self.node.measure(nspec)
+            stored_today, self._wrote = False, False
+            if stake_due and not why:
+                stored_today = self._epochs(name, spec, node, nerrs, deadline, out)
+            if yield_due and not why:
+                self._ethstore(name, spec, deadline, out)
+            if stake_due and not stored_today and not self._wrote:
+                # beaconcha.in gave no row this run (no key, the cooldown, a refusal): the node's reading is the day's
+                # row ONLY while the series holds no beaconcha.in row (the earlier leg of its declared handover); once
+                # it does, the node is the cross-check alone — a fallback is never written into the current leg
+                held = self._held(name, metric, POINT)
+                if node is None:
+                    out.fail(self.SOURCE, name, f"{metric}: NOTHING STORED — the public beacon node: "
+                                                + ("; ".join(nerrs) or "not declared"), TIER)
+                elif held:
+                    out.fail(self.SOURCE, name,
+                             f"{metric}: NOTHING STORED for today — beaconcha.in gave no row "
+                             f"({why[0] if why else 'see its line above'}) and the series is on its rows since "
+                             f"{min(held).date()}; the public beacon node read {node['eth']:,.0f} ETH at finalized "
+                             f"slot {node['slot']} (the cross-check, not stored: a fallback is never written into the "
+                             f"series' current leg)", TIER)
+                else:
+                    self.node.store(name, nspec, node, out)
+                    stored_today = True
+            if stored_today:
+                self.daily.done(k_stake, day)
+
+    def _epochs(self, name: str, spec: dict, node, nerrs, deadline: float, out) -> bool:
+        """The days owed (history_from..today, newest first) by epoch number; True when today's row is stored."""
+        metric, cmetric = spec["metric"], spec["count_metric"]
+        end = today().normalize()
+        have = self._held(name, metric, POINT) & self._held(name, cmetric, COUNT_POINT)
+        todo = [d for d in pd.date_range(pd.Timestamp(spec["history_from"]), end)[::-1] if d not in have]
+        staked, counts, refused, stopped, check = [], [], [], "", None
+        for d in todo:
+            stopped = self._left(spec, deadline)
+            if stopped:
+                break
+            ep = epoch_at(d)
+            try:
+                body = self._post(spec, spec["epoch_url"], {"chain": spec.get("chain", "mainnet"),
+                                                            "epoch": {"number": int(ep)}})
+            except Exception as e:  # noqa: BLE001 — a refused key, the plan, a rate limit: stop, never hammer
+                st = getattr(e, "status", None)
+                stopped = self._scrub(spec, f"epoch {ep} ({d.date()}): {type(e).__name__}"
+                                            + (f" HTTP {st}" if st else "") + f": {str(e)[:160]}")
+                break
+            got = parse_epoch(body, ep)
+            if isinstance(got, str):
+                refused.append(f"{d.date()}: {self._scrub(spec, got)}")
+                continue
+            lo, hi = config.METRICS[metric]["sanity_min"], config.METRICS[metric]["sanity_max"]
+            if not (lo <= got[0] <= hi):
+                refused.append(f"{d.date()}: {got[0]:,.0f} ETH is outside the band {lo:,.0f}..{hi:,.0f}")
+                continue
+            if d == end:
+                check = node_cross_check(got[0], d, node, spec["cross_check"])
+                if check["status"] == "DISAGREES":
+                    refused.append(f"{d.date()}: {got[0]:,.0f} ETH REFUSED — {check['text']}")
+                    continue
+            staked.append((d, got[0]))
+            counts.append((d, got[1]))
+        left = len(todo) - len(staked) - len(refused)
+        tail = (f"; {len(refused)} day(s) REFUSED (nothing stored for them): " + "; ".join(refused[:4])
+                if refused else "") + (f"; STOPPED at {stopped} — {left} day(s) left, the next run resumes"
+                                       if stopped else "")
+        if not staked:
+            (out.fail if todo else out.mark_current)(
+                *((self.SOURCE, name, f"{metric}, {cmetric}: NOTHING STORED this run" + tail, TIER) if todo else
+                  (self.SOURCE, name, metric, f"{metric}: every day from {spec['history_from']} is held", TIER)))
+            return not todo
+        self._wrote = True
+        staked.sort()
+        counts.sort()
+        note = (f"; {check['text']}" if check else
+                "; no row of today in this read, so no cross-check (the node serves no past state)")
+        if node is None and nerrs:
+            note += f" [node: {'; '.join(nerrs)[:200]}]"
+        last = staked[-1]
+        out.add(tidy(staked, name, metric, POINT, TIER), self.SOURCE, name,
+                f"{metric}: {len(staked)} day(s) {staked[0][0].date()}..{last[0].date()}, latest {last[1]:,.0f} ETH — "
+                f"beaconcha.in v2 epoch total_validator_balance (Σ actual balances of all validators, wei → ETH) at "
+                f"each day's first epoch; {len(have)} day(s) already held; {self.requests} request(s) this run"
+                + note + tail, TIER)
+        out.add(tidy(counts, name, cmetric, COUNT_POINT, TIER), self.SOURCE, name,
+                f"{cmetric}: {len(counts)} day(s), latest {counts[-1][1]:,} active validators (beaconcha.in v2 epoch "
+                f"validators_count)", TIER)
+        return last[0] == end and not stopped
+
+    def _ethstore(self, name: str, spec: dict, deadline: float, out) -> None:
+        """ETH.STORE's daily apr.combined for the days owed since history_from: the smallest trailing window that
+        reaches the oldest owed day, paged newest first until it is reached."""
+        ymetric = spec["yield_metric"]
+        end, first = today().normalize(), pd.Timestamp(spec["history_from"])
+        have = self._held(name, ymetric, ETHSTORE_POINT)
+        # the newest datapoint is the beaconchain-day that ENDED at the last 12:00:23 UTC (half an hour allowed for its
+        # finality): the day dated yesterday after ~12:30 UTC, the day before until then
+        newest = (_utcnow() - pd.Timedelta(hours=12, minutes=30)).normalize() - pd.Timedelta(days=1)
+        owed = [d for d in pd.date_range(first, newest) if d not in have] if newest >= first else []
+        if not owed:
+            out.mark_current(self.SOURCE, name, ymetric, f"{ymetric}: every ETH.STORE day to {newest.date()} is held "
+                                                         f"(the next one is complete after 12:00 UTC)", TIER)
+            self.daily.done(stake_mark(name, ymetric), str(end.date()))
+            return
+        reach = (end - min(owed)).days + 1
+        window = next((w for w, n in _WINDOWS if reach <= n), _WINDOWS[-1][0])
+        rows, refused, cursor, stopped = {}, [], "", ""
+        for _page in range(int(spec.get("ethstore_max_pages", 9))):
+            stopped = self._left(spec, deadline)
+            if stopped:
+                break
+            try:
+                body = self._post(spec, spec["ethstore_url"], {
+                    "chain": spec.get("chain", "mainnet"), "range": {"evaluation_window": window},
+                    "page_size": 10, "cursor": cursor})
+            except Exception as e:  # noqa: BLE001
+                st = getattr(e, "status", None)
+                stopped = self._scrub(spec, f"{type(e).__name__}" + (f" HTTP {st}" if st else "") + f": {str(e)[:160]}")
+                break
+            got = parse_ethstore(body)
+            if isinstance(got, str):
+                stopped = self._scrub(spec, got)
+                break
+            page, bad, cursor = got
+            refused += bad
+            for d, v, note in page:
+                rows.setdefault(d, (v, note))
+            if not cursor or not page or min(d for d, _v, _n in page) <= min(owed):
+                break
+        new = sorted((d, v, n) for d, (v, n) in rows.items() if d not in have and d >= first)
+        tail = (f"; {len(refused)} datapoint(s) REFUSED: " + "; ".join(refused[:3]) if refused else "") + (
+            f"; STOPPED at {stopped}" if stopped else "")
+        if not new:
+            (out.fail if (stopped or refused) else out.mark_current)(
+                *((self.SOURCE, name, f"{ymetric}: NOTHING STORED this run" + tail, TIER) if (stopped or refused) else
+                  (self.SOURCE, name, ymetric, f"{ymetric}: no ETH.STORE day newer than the store's", TIER)))
+            return
+        frames = [tidy([(d, v)], name, ymetric, f"{ETHSTORE_POINT}[{n}]", TIER) for d, v, n in new]
+        out.add(pd.concat(frames, ignore_index=True), self.SOURCE, name,
+                f"{ymetric}: {len(new)} day(s) {new[0][0].date()}..{new[-1][0].date()}, latest {new[-1][1]:.4%} — "
+                f"ETH.STORE apr.combined (beaconcha.in v2 eth-store, window {window}): the day's consensus + execution "
+                f"rewards ÷ Σ effective balance of the validators active all day x 365, each row dated the UTC day its "
+                f"beaconchain-day starts ({new[-1][2]})" + tail, TIER)
+        if not stopped:
+            self.daily.done(stake_mark(name, ymetric), str(end.date()))
 
 
 def _chain(*its):
