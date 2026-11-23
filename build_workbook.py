@@ -927,6 +927,11 @@ def _velo_merged_views(groups: dict) -> None:
     for name, spec in (getattr(config, "VELO_MERGED", {}) or {}).items():
         if name not in names:
             continue
+        if not spec.get("restate", True):
+            # R18 (Jake 2026-11-24): before the merger the project ALONE — no Velodrome history in any figure. Nothing
+            # is restated, no Velodrome emission is formed and no line of the statement reads VELO
+            VELO_FLIPS.pop(name, None)
+            continue
         until, ratio = pd.Timestamp(spec["until"]), float(spec["ratio"])
         _velo_gauge_views(groups, name, spec, until)      # R12: the flips' gauge emissions, before the legs read them
         for metric, leg in spec["legs"].items():
@@ -1008,6 +1013,43 @@ def _velo_merged_views(groups: dict) -> None:
 
 VELO_FLIPS: dict = {}
 WEEK_S = 7 * 86_400
+REVENUE_BEFORE_MERGER_NOTE: dict = {}
+
+
+def _revenue_before_merger_views(groups: dict) -> None:
+    """R18 (Jake 2026-11-24, config.REVENUE_BEFORE_MERGER): "before 2026-10-22, Aerodrome only; from 2026-10-22 the
+    combined revenue counts". The stored fee family is DefiLlama's merged parent (Velodrome V1-V3 inside it from
+    2022-06-01). On every day before `until` each leg reads the stored row LESS the predecessor's own listing of that day
+    (stored beside it, the sum of its children) — floored at 0, the row's source saying so in an annotation (the same
+    measuring point: the composition is the declaration). Inside the span a day without the predecessor's reading
+    holds no value (unknown, never the combined figure); a day before `first_day` (the project did not exist) is
+    dropped. From `until` on nothing is touched. Nothing moves on a store holding no predecessor series."""
+    REVENUE_BEFORE_MERGER_NOTE.clear()
+    names = {p["name"] for p in scoped_projects()}
+    for name, spec in (getattr(config, "REVENUE_BEFORE_MERGER", {}) or {}).items():
+        if name not in names:
+            continue
+        until, first = pd.Timestamp(spec["until"]), pd.Timestamp(spec["first_day"])
+        for metric, less in spec["legs"].items():
+            g = groups.get((name, metric))
+            v = _daily(groups.get((name, less)))
+            v = v[v.index < until]
+            if g is None or g.empty or v.empty:
+                continue
+            day = pd.to_datetime(g["date"]).dt.normalize()
+            merged = g["source"].astype(str).map(lambda x: config.strip_source_annotations(x) in spec["sources"])
+            before = merged & (day < until)
+            has = before & day.isin(v.index) & (day >= first)
+            out = g[~(before & ~has)].copy()
+            hit = has[out.index]
+            out.loc[hit, "value"] = (out.loc[hit, "value"].astype(float)
+                                     - day[out.index][hit].map(v).values).clip(lower=0.0)
+            out.loc[hit, "source"] = [f"{x}[{spec['tag']}]" for x in out.loc[hit, "source"]]
+            groups[(name, metric)] = out
+            dropped = int((before & ~has).sum())
+            REVENUE_BEFORE_MERGER_NOTE[(name, metric)] = (
+                f"{int(has.sum())} day(s) before {until.date()} read less {less} ({spec['what']})"
+                + (f"; {dropped} day(s) hold no value (before {first.date()}, or no {less} reading)" if dropped else ""))
 
 
 def _velo_primary_less(groups: dict) -> None:
@@ -5641,6 +5683,7 @@ def _circulating_change_views(groups: dict, asof=None) -> None:
     closing − opening circulating. A day after a hole, or the day the basis changes, gets no row (a hole, never 0):
     a change across two different measures is not a change in supply. The undated days are kept in CIRC_CHANGE_GAPS."""
     CIRC_CHANGE_GAPS.clear()
+    ONE_OFF_ISSUANCE_OUT.clear()
     CIRC_CHANGE_OPENING.clear()
     CIRC_SEAM_STEPS.clear()
     CIRC_SEAM_STEPS_Q0.clear()
@@ -5659,6 +5702,18 @@ def _circulating_change_views(groups: dict, asof=None) -> None:
         basis = _circ_used_basis(groups, name, d, src)
         steps = CIRC_SEAM_STEPS.setdefault(name, [])
         steps.clear()
+        # R18 (Jake 2026-11-24): A ONE-OFF ISSUANCE measured as the step of a declared handover (config.HANDOVER_STEP
+        # with net_supply_change "left out" — the AERO minted for VELO conversions at the merger) is on its own line of
+        # the token-flow statement and NOT in the day's change: the net supply change and its yearly rate leave it out
+        one_off = {}
+        for (n_, m_), sp_ in (getattr(config, "HANDOVER_STEP", {}) or {}).items():
+            if n_ == name and sp_.get("net_supply_change") == "left out":
+                for dd, vv in _daily(groups.get((n_, m_))).items():
+                    one_off[dd] = one_off.get(dd, 0.0) + float(vv)
+        ONE_OFF_ISSUANCE_OUT[name] = sorted(one_off.items())
+
+        def _less(lo_, hi_):
+            return sum(x for dd, x in one_off.items() if lo_ < dd <= hi_)
         for i in range(1, len(s)):
             n = int((d[i] - d[i - 1]).days)
             if basis[i] != basis[i - 1]:
@@ -5678,10 +5733,10 @@ def _circulating_change_views(groups: dict, asof=None) -> None:
             elif n != 1:
                 # R11.1 (Jake 2026-11-18, option b): A CHANGE ACROSS A HOLE IS ONE MULTI-DAY CHANGE when both readings
                 # are on the same basis — the difference of two stocks loses nothing; the row says the days it holds
-                rows.append((d[i], v[i] - v[i - 1], src[i], n))
+                rows.append((d[i], v[i] - v[i - 1] - _less(d[i - 1], d[i]), src[i], n))
                 spans.append((d[i - 1], d[i]))
             else:
-                rows.append((d[i], v[i] - v[i - 1], src[i], 1))
+                rows.append((d[i], v[i] - v[i - 1] - _less(d[i - 1], d[i]), src[i], 1))
         if asof is not None:                      # the Q0 window's undated days: the reason on the cell
             lo = pd.Timestamp(asof).normalize() - pd.Timedelta(days=int(config.NET_SUPPLY_CIRC["window_days"]) - 1)
             gaps = [(x, why) for x, why in gaps if lo <= x <= pd.Timestamp(asof).normalize()]
@@ -6209,6 +6264,7 @@ def _near_lockup_views(groups: dict) -> None:
 # declared basis its own readings form (the seam of a declared handover, measured on both bases on one day)
 CIRC_SEAM_ALT: dict = {}
 # project -> [(day, basis before, basis from, the step = the day's figure on the new basis − on the old)], last build
+ONE_OFF_ISSUANCE_OUT: dict = {}        # R18: project -> [(day, tokens)] a one-off issuance left out of the net supply change
 CIRC_SEAM_STEPS: dict = {}
 CIRC_SEAM_STEPS_Q0: dict = {}          # ... those inside the net supply change's window
 
@@ -8206,6 +8262,7 @@ def aggregate(long: pd.DataFrame, fetch_status: pd.DataFrame, asof: pd.Timestamp
     _handover_continuation_views(groups)   # P2a D5a: a declared later leg read from another stored series (Maple)
     _handover_cut_views(groups)       # G11 C1: a declared cut — the earlier leg's rows after the later leg starts dropped
     _velo_merged_views(groups)        # R11.2c: Aerodrome before the merger on the merged basis (+ VELO x 0.044)
+    _revenue_before_merger_views(groups)   # R18: before the merger the fee family is Aerodrome's alone
     _emissions_accrual_views(groups)  # R16: Aerodrome's emissions as they accrue (dilution); supply keeps the mints
     _tokenjar_revenue_views(groups, asof)   # PR1C.2: the TokenJars beside DefiLlama's revenue; in it only on takeover
     _partial_sum_views(groups)    # FIRST: nothing downstream may read a partial sum
@@ -11112,6 +11169,12 @@ def _circ_seam_note(p: dict) -> str:
     """R13: the declared handovers of the circulating figure inside the window, each with its measured step — said on
     the net supply change, which leaves the steps out ('' where there is none)."""
     steps = CIRC_SEAM_STEPS_Q0.get(p["name"]) or []
+    one = ONE_OFF_ISSUANCE_OUT.get(p["name"]) or []
+    if one and not _SHIFT["k"] and not steps:
+        return (" A ONE-OFF ISSUANCE IS LEFT OUT (R18, Jake 2026-11-24): "
+                + "; ".join(f"{d.date()} {t:,.0f} tokens" for d, t in one)
+                + " — the merger issuance, on its own line of the token-flow statement; it is in the supply and in "
+                  "circulating, and in no yearly rate.")
     if not steps or _SHIFT["k"]:
         return ""
     return (" DECLARED HANDOVER(S) OF THE CIRCULATING FIGURE INSIDE THE WINDOW, LEFT OUT (R13): "

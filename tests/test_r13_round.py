@@ -13,6 +13,12 @@ sys.path.insert(0, str(ROOT))
 import build_workbook as bw  # noqa: E402
 import config  # noqa: E402
 
+@pytest.fixture(autouse=True)
+def _r18_merged_basis_on(monkeypatch):
+    """R18 (Jake 2026-11-24) switched the merged-basis restatement OFF for the build (config.VELO_MERGED restate).
+    These tests check the mechanism's arithmetic, which stays in the code: they run it switched on."""
+    monkeypatch.setitem(config.VELO_MERGED["Aerodrome"], "restate", True)
+
 
 def _rows(metric, days, values, source):
     return pd.DataFrame({"date": pd.to_datetime(days), "project": "Aerodrome", "metric": metric,
@@ -186,7 +192,7 @@ def test_a_aerodrome_is_frozen_with_its_rounds_moves_on_record():
     assert set(config.FROZEN_PROJECTS) == set(config.FROZEN_BEFORE_R16) | {"Ether.fi"}
     base = json.loads(pf.baseline_path("Aerodrome").read_text(encoding="utf-8"))
     # R16: later rounds' declarations (R16's renamed headers and moves) are left out — the R13 record is 45 cells
-    rec = {k: m for k, m in config.FROZEN_MOVES["Aerodrome"].items() if not str(m.get("why", "")).startswith("R16")}
+    rec = {k: m for k, m in config.FROZEN_MOVES["Aerodrome"].items() if not str(m.get("why", "")).startswith(("R16", "R17", "R18"))}
     assert len(base) == 365 and len(rec) == 45
     # the record ends on the baseline: every recorded cell's `to` is the frozen value, so nothing is undeclared today
     for k, m in rec.items():
