@@ -158,6 +158,11 @@ class _Out:
 
 def test_the_node_read_stores_the_finalized_sum_dated_by_its_slot(tmp_path, monkeypatch):
     monkeypatch.setenv("TOKEN_METRICS_LOGCACHE", str(tmp_path))
+    # R17 (SPEC R17.E1): a finalized state more than 6 hours old is refused, so the read's clock is set to the slot's
+    # own morning (was: no clock — the 2026-11-04 slot was stored whatever the day of the read)
+    monkeypatch.setattr(se, "_utcnow", lambda: pd.Timestamp("2026-11-04 10:30"))
+    from fetch import scrape                                 # R17: the second source's robots check, not the network
+    monkeypatch.setattr(scrape, "robots_verdict", lambda url: (True, "test"))
     node = _Node([15_580_224])
     a = se.BeaconNodeStakedEth(session=node, daily=_Daily())
     out = _Out()

@@ -15802,8 +15802,10 @@ def test_nearblocks_stats_run_first_and_calls_are_paced_to_the_free_plan(monkeyp
     class H(_NearFlowHttp):
         def get(self, url, params=None, headers=None):
             stamps.append((nearblocks._clock(), url))
+            asked.append(nearblocks.call_credits(url.split("api.nearblocks.io")[-1], params))
             return super().get(url, params, headers)
 
+    asked = []
     rows = [_near_flow_action("some-user.near", 10 ** 24)]
     http = H({None: {"cursor": "p2", "txns": rows}, "p2": {"cursor": None, "txns": rows}},
              v3={"/v3/txn-stats": {"data": []}, "/v3/address-stats": {"data": []}})
@@ -15815,14 +15817,15 @@ def test_nearblocks_stats_run_first_and_calls_are_paced_to_the_free_plan(monkeyp
     # 2026-10-11, C), once a day too — RETIRED in fix round 2 (N1: v3 reports circulating == total); G17-1a reads
     # /v3/stats again for its TOTAL only (total_supply_dashboard, once a day), so four.
     assert kinds == ["v3", "v3", "v3", "v3", "flow", "flow"], kinds
-    # BILLED AS NEARBLOCKS BILLS: ceil(per_page/25), per_page defaulting to 25 (rateLimiter.ts L132). Every call is v3
-    # since 2026-10-13 and sends `limit`, never per_page — so each costs 1, the flow pages included.
-    cost = {"flow": 1, "v3": 1}
+    # BILLED AS NEARBLOCKS BILLS (R17, read 2026-11-23 from its API reference and rateLimiter.ts): ceil(limit / 25) from
+    # 1 up to 10, a validators path always 1. Was (2026-09-28 reading): `limit` not billed, cost = {"flow": 1, "v3": 1},
+    # "6 calls, 6 credits against 6 a minute: no wait" (len(waits) <= 1).
+    assert asked == [4, 4, 1, 1, 4, 4], asked           # two first-read stats at limit=100, validators, /stats, 2 pages
     for t0, _ in stamps:
-        in_window = sum(cost[k] for (t, _), k in zip(stamps, kinds) if t0 <= t < t0 + 60)
+        in_window = sum(c for (t, _), c in zip(stamps, asked) if t0 <= t < t0 + 60)
         assert in_window <= nearblocks.CREDITS_PER_MINUTE, (t0, in_window, stamps)
-    # 6 calls, 6 credits against 6 a minute: no wait
-    assert len(_nearblocks_fake_clock) <= 1, _nearblocks_fake_clock
+    # 18 credits against 6 a minute: the windows are waited, never overspent
+    assert len(_nearblocks_fake_clock) >= 2, _nearblocks_fake_clock
 
 
 def test_http_429_without_retry_after_waits_the_configured_window(monkeypatch):
@@ -16310,12 +16313,20 @@ def test_nearblocks_three_two_credit_calls_do_not_wait_and_the_v3_stats_cost_one
     for _ in range(3):
         nb._get("https://api.nearblocks.io/v3/accounts/x/txns", {"per_page": 50}, "k")
     assert _nearblocks_fake_clock == [], f"three 2-credit calls must not wait: {_nearblocks_fake_clock}"
+    # R17 (NearBlocks' API reference, read 2026-11-23): v3 `limit` IS billed, 1 credit per 25 rows up to 10 — a stats
+    # call at limit=100 costs 4. Was: six calls at limit=100 "are six credits, not twenty-four" (no wait), the seventh
+    # waited. A top-up of 25 rows or fewer is the one-credit call now.
     nb2 = nearblocks.NearBlocks(http=H())
     for _ in range(6):
-        nb2._get("https://api.nearblocks.io/v3/txn-stats", {"limit": 100}, "k")
-    assert _nearblocks_fake_clock == [], "six v3 calls are six credits, not twenty-four"
-    nb2._get("https://api.nearblocks.io/v3/txn-stats", {"limit": 100}, "k")
+        nb2._get("https://api.nearblocks.io/v3/txn-stats", {"limit": 25}, "k")
+    assert _nearblocks_fake_clock == [], "six one-credit top-ups fit one minute"
+    nb2._get("https://api.nearblocks.io/v3/txn-stats", {"limit": 25}, "k")
     assert len(_nearblocks_fake_clock) == 1, "the seventh credit in a minute does wait"
+    nb3 = nearblocks.NearBlocks(http=H())
+    del _nearblocks_fake_clock[:]
+    nb3._get("https://api.nearblocks.io/v3/txn-stats", {"limit": 100}, "k")
+    nb3._get("https://api.nearblocks.io/v3/txn-stats", {"limit": 100}, "k")
+    assert len(_nearblocks_fake_clock) == 1, "two calls at limit=100 are eight credits: the second waits"
 
 
 def test_nearblocks_buyback_is_incremental_newest_first_and_daily_stats_run_once_a_day(monkeypatch):

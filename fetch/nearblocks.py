@@ -143,6 +143,38 @@ def credits_for(rows: int) -> int:
     return max(1, -(-int(rows) // ROWS_PER_CREDIT))
 
 
+# ===== R17 (Jake's store 2026-11-23: the NearBlocks tier timing out). THE BILL, AS NEARBLOCKS WRITES IT TODAY. =====
+# Read 2026-11-23 from NearBlocks' own API reference (api.nearblocks.io/openapi.json, "Credits") and its source
+# (Nearblocks/nearblocks main, apps/api/src/middlewares/rateLimiter.ts `credits`):
+#   "Each request uses 1 credit per 25 items requested with `limit`, rounded up, from 1 up to 10 credits ...
+#    limit=100 uses 4 ... Validator endpoints always use 1 credit."
+# v3 `limit` IS billed (the 2026-09-28 reading — only per_page billed — no longer holds): a stats call at limit=100
+# costs 4, a stats/balance call at limit=365 costs 10. The pacer charged each of them 1, so a run spent ~70 credits
+# while counting ~10: the minute window (6) and then the day (333) ran out, every call answered 429, each 429 was
+# waited 60 s, and the tier was abandoned at its 180 s budget. A key does not change this: a keyless caller (by IP)
+# and a free key (by user) are both put on the free plan (rateLimiter.ts useFreePlan); only a paid plan lifts it.
+CREDITS_MAX_PER_CALL = 10
+STOP_BEFORE_S = 10.0      # the run stops asking this long before the tier's budget: what was read is stored
+TOP_UP_SLACK_ROWS = 2     # a top-up asks the owed days plus this many rows (the last stored day is read again)
+
+
+def call_credits(path: str, params: dict | None) -> int:
+    """What NearBlocks bills one call: 1 for a validators path; else ceil(rows / 25) on `per_page` or `limit`
+    (25 when neither is sent), from 1 up to 10."""
+    if "/validators" in str(path):
+        return 1
+    rows = (params or {}).get("per_page") or (params or {}).get("limit") or ROWS_PER_CREDIT
+    return min(CREDITS_MAX_PER_CALL, credits_for(int(rows)))
+
+
+class PacedOut(RuntimeError):
+    """The next call's pacing wait would pass the tier's budget: not waited, not called — the next run reads it."""
+
+
+class RateLimited(RuntimeError):
+    """NearBlocks answered 429 after the wait: no further call is made this run (never hammered)."""
+
+
 class _Pacer:
     """Sliding 60s window: never more than CREDITS_PER_MINUTE credits in any 60 seconds.
 
@@ -155,7 +187,10 @@ class _Pacer:
         self.spent: deque = deque()   # (monotonic time, credits)
         self.total = 0
 
-    def wait(self, credits: int) -> float:
+    def wait(self, credits: int, deadline: float | None = None) -> float:
+        """Wait until `credits` fit the minute window. A call that costs more than the whole window (a first read of
+        365 rows, 10 credits) waits for an EMPTY window. With `deadline` (the tier's budget, monotonic), a wait that
+        would pass it is not made: PacedOut."""
         if self.total + credits > CREDITS_PER_DAY:
             raise RuntimeError(f"NearBlocks free-plan daily budget: {self.total} credits spent "
                                f"this run, {credits} more would pass {CREDITS_PER_DAY}/day")
@@ -165,9 +200,13 @@ class _Pacer:
             while self.spent and now - self.spent[0][0] >= 60.0:
                 self.spent.popleft()
             used = sum(c for _, c in self.spent)
-            if used + credits <= CREDITS_PER_MINUTE:
+            if used + credits <= CREDITS_PER_MINUTE or not self.spent:
                 return waited
-            pause = 60.0 - (now - self.spent[0][0]) + 0.5
+            oldest = self.spent[0][0] if credits <= CREDITS_PER_MINUTE else self.spent[-1][0]
+            pause = 60.0 - (now - oldest) + 0.5
+            if deadline is not None and now + pause > deadline:
+                raise PacedOut(f"NearBlocks free-plan pacing: the next {credits}-credit call would wait {pause:.0f}s, "
+                               f"past this tier's time budget — NOT CALLED this run; the next run reads it")
             _sleep(pause)
             waited += pause
 
@@ -234,14 +273,23 @@ class NearBlocks:
     TIER = TIER
 
     def __init__(self, http: Http | None = None, last_dates: dict | None = None,
-                 page_cap: int = FLOW_PAGE_CAP, **_ignored):
+                 page_cap: int = FLOW_PAGE_CAP, stored_long=None, deadline_s: float | None = None, **_ignored):
         # page_cap: the seed (token_metrics --seed nearblocks) lifts it to read a year at once.
         self.page_cap = page_cap
-        self.http = http or Http(min_interval=1.0, retries=2, rate_limit_wait=RATE_LIMIT_WAIT)
+        # R17: ONE retry (was 2). A 429 is waited once — the server's Retry-After when sent, else the minute window —
+        # and a call still refused ends the run's NearBlocks calls (self.limited): two 60 s waits on one call were
+        # two thirds of the tier's 180 s budget
+        self.http = http or Http(min_interval=1.0, retries=1, rate_limit_wait=RATE_LIMIT_WAIT)
         self.pacer = _Pacer()
         # (project, metric) -> newest stored date, for the once-a-day skip of the v3 stats.
         self.last_dates = last_dates or {}
         self.sunsets: dict = {}       # path -> what the deprecation / sunset answer said (Part E4)
+        # R17: the store (a history backfill already held is not asked again), the tier's budget as a deadline set by
+        # run() (None outside a run: a seed or a probe paces without one), and the 429 that ends the run's calls
+        self.stored = stored_long
+        self.deadline_s = deadline_s
+        self.deadline: float | None = None
+        self.limited: str = ""
 
     def _get(self, url: str, params: dict, key: str):
         # BILLED AS NEARBLOCKS BILLS IT: ceil(per_page / 25), per_page defaulting to 25
@@ -252,8 +300,10 @@ class NearBlocks:
         if _RETIRED_PATH.match(path):
             raise RetiredPath(f"NearBlocks {path.split('/')[1]} path {path} is retired (v1 sunset 2026-10-31) — "
                               f"use its /v3 equivalent (NearBlocks apps/api/docs/v3-migration.md); not called")
-        credits = credits_for(int(params.get("per_page") or ROWS_PER_CREDIT))
-        waited = self.pacer.wait(credits)
+        if self.limited:
+            raise RateLimited(f"not called: {self.limited}")
+        credits = call_credits(path, params)
+        waited = self.pacer.wait(credits, self.deadline)
         if waited:
             log.info("nearblocks: paced %.0fs before a %d-credit call to %s (free plan: %d "
                      "credits/min)", waited, credits, url.split("?")[0], CREDITS_PER_MINUTE)
@@ -263,6 +313,12 @@ class NearBlocks:
             status = getattr(e, "status", None)
             if status == 410 or _SUNSET_WORDS.search(str(e)):
                 self._sunset(path, f"HTTP {status or '?'}: {str(e).replace(key, '***')[:160]}")
+            if status == 429 or "HTTP 429" in str(e) or "exceeded your API request limit" in str(e):
+                # R17: the wait was made (Retry-After when sent, else one minute window) and it is still refused —
+                # the day's or the month's allowance is spent. Nothing else is asked this run.
+                self.limited = (f"NearBlocks answered HTTP 429 on {path} after the wait — the plan's allowance is "
+                                f"spent ({self.pacer.total} credit(s) counted this run); no further NearBlocks call "
+                                f"this run, the next run reads what is owed")
             raise
         finally:
             self.pacer.charge(credits)
@@ -295,6 +351,8 @@ class NearBlocks:
         # budget left the stats never called, and tx_count / active_addresses fell through to
         # "no sources.yaml entry" (run 20260928T150426Z). The buyback read resumes across runs,
         # so going second costs it nothing.
+        # R17: the tier's budget as a deadline (the registry passes it; a seed or a probe paces without one)
+        self.deadline = _clock() + self.deadline_s if self.deadline_s is not None else None
         for p in projects:
             spec = p.get("nearblocks")
             if spec:
@@ -335,6 +393,7 @@ class NearBlocks:
 
         yesterday = today() - pd.Timedelta(days=1)
         bodies: dict = {}             # ONE CALL PER PATH: txn-stats serves txns AND txn_fee (2026-10-06)
+        limits = self._stats_limits(name, spec, yesterday)
         for metric, m in spec["metrics"].items():
             url = spec["base_url"].rstrip("/") + m["path"]
             # ONCE A DAY (2026-09-28). txn-stats and address-stats are DAILY aggregates and today
@@ -349,6 +408,9 @@ class NearBlocks:
                                  f"complete day arrives tomorrow.", TIER)
                 continue
             if m["path"] in bodies:
+                if isinstance(bodies[m["path"]], Exception):
+                    out.fail(SOURCE, name, f"{metric}: {m['path']}: {self._scrub(spec, bodies[m['path']])}", TIER)
+                    continue
                 self._store(name, metric, m, bodies[m["path"]], window_days, out)
                 continue
             allowed, why = robots_verdict(url)
@@ -358,15 +420,49 @@ class NearBlocks:
                         tiers_attempted="1", suggestion="Not worked around. Manual entry, or another source.")
                 continue
             try:
-                body = self._get(url, {"limit": int(spec["limit"])}, key)
+                body = self._get(url, {"limit": limits[m["path"]]}, key)
             except Exception as e:  # noqa: BLE001 — a failed source must not kill the run
                 msg = self._scrub(spec, e)
+                bodies[m["path"]] = e                     # the path's other metrics say the same, without a call
                 out.fail(SOURCE, name, f"{metric}: {m['path']}: {msg}", TIER)
                 out.gap(name, metric, reason=f"NearBlocks {m['path']} did not answer: {msg}",
                         tiers_attempted="1", suggestion="Read the status above; a 401 is the key.")
                 continue
             bodies[m["path"]] = body
             self._store(name, metric, m, body, window_days, out)
+
+    def _stats_limits(self, name: str, spec: dict, yesterday) -> dict:
+        """{path: rows to ask}: the owed days of the path's stalest metric plus TOP_UP_SLACK_ROWS, never above the
+        declared `limit` — one credit on a normal day (<= 25 rows) instead of four. The declared limit when a metric
+        has nothing stored or has owed days inside its history (the catch-up)."""
+        from .base import catch_up_owed
+        full, out = int(spec["limit"]), {}
+        for metric, m in spec["metrics"].items():
+            last = self.last_dates.get((name, metric))
+            if last is None or catch_up_owed(name, metric):
+                want = full
+            else:
+                owed = int((pd.Timestamp(yesterday).normalize() - pd.Timestamp(last).normalize()).days)
+                if owed <= 0:
+                    continue                                       # held through yesterday: this metric asks nothing
+                want = min(full, owed + TOP_UP_SLACK_ROWS)
+            out[m["path"]] = max(out.get(m["path"], 0), want)
+        return {path: out.get(path, full) for path in {m["path"] for m in spec["metrics"].values()}}
+
+    def _history_held(self, name: str, metric: str, bh: dict) -> bool:
+        """A history backfill that ends before a fixed day (`store_before`) is in the store once the day before it is
+        held from this measuring point — it cannot change, so it is not asked again (10 credits a wallet saved)."""
+        df = self.stored
+        if not bh.get("store_before") or df is None or getattr(df, "empty", True):
+            return False
+        from .base import _measuring_point
+        df = df[(df["project"] == name) & (df["metric"] == metric)]
+        if df.empty:
+            return False
+        want = _measuring_point(f"{SOURCE}:stats/balance[{'+'.join(bh['accounts'])}]")
+        df = df[df["source"].astype(str).map(_measuring_point) == want]
+        last_day = pd.Timestamp(bh["store_before"]).normalize() - pd.Timedelta(days=1)
+        return bool((pd.to_datetime(df["date"]).dt.normalize() == last_day).any())
 
     def _validators_info(self, name: str, spec: dict, vi: dict, out):
         """THE NETWORK'S CURRENT TOTAL STAKE (Jake's run 2026-10-08 11:27) — /v3/validators/info, one call a day:
@@ -488,8 +584,30 @@ class NearBlocks:
             out.unconfigured(SOURCE, name, f"{metric}: no {spec['key_env']} in .env", TIER)
             return
         from .scrape import robots_verdict
+        from .base import catch_up_owed
+        # R17: WHAT IS HELD IS NOT ASKED AGAIN. A history that ends before a fixed day is read once; the live sum is
+        # read once a day (yesterday's close cannot change) and then only the owed days: stats/balance answers the N
+        # most recent days ON WHICH THE ACCOUNT HAS A ROW, at most one a day, so `owed + 2` rows always reach back to
+        # the last stored day — the carry-forward below starts from a stored close, one credit a wallet instead of ten.
+        full = min(int(bh.get("limit", STATS_BALANCE_MAX_ROWS)), STATS_BALANCE_MAX_ROWS)
+        rows_to_ask = full
+        if not catch_up_owed(name, metric) and not bh.get("_full"):
+            if self._history_held(name, metric, bh):
+                out.mark_current(SOURCE, name, metric,
+                                 f"{metric}: NOT re-fetched — the history before {bh['store_before']} is held "
+                                 f"(a past day's close does not change)", TIER)
+                return
+            last = self.last_dates.get((name, metric))
+            if last is not None and not bh.get("store_before"):
+                owed = int((today().normalize() - pd.Timedelta(days=1) - pd.Timestamp(last).normalize()).days)
+                if owed <= 0:
+                    out.mark_current(SOURCE, name, metric,
+                                     f"{metric}: NOT re-fetched — yesterday's close is already stored", TIER)
+                    return
+                rows_to_ask = min(full, owed + TOP_UP_SLACK_ROWS)
         scale = 10 ** int(bh.get("yocto_exponent", 24))
         per: dict = {}
+        asked_full = False
         for acct in bh["accounts"]:
             url = spec["base_url"].rstrip("/") + bh["path"].format(account=acct)
             allowed, why = robots_verdict(url)
@@ -497,8 +615,7 @@ class NearBlocks:
                 out.fail(SOURCE, name, f"{metric}: robots.txt disallows {url} — {why}; NOTHING STORED", TIER)
                 return
             try:
-                body = self._get(url, {"limit": min(int(bh.get("limit", STATS_BALANCE_MAX_ROWS)),
-                                                    STATS_BALANCE_MAX_ROWS)}, key)
+                body = self._get(url, {"limit": rows_to_ask}, key)
             except Exception as e:  # noqa: BLE001
                 out.fail(SOURCE, name, f"{metric}: {acct}: {self._scrub(spec, e)} — NOTHING STORED (all-or-nothing)", TIER)
                 return
@@ -518,6 +635,7 @@ class NearBlocks:
                 except (KeyError, TypeError, ValueError):
                     continue
             per[acct] = pd.Series(sr, dtype=float).sort_index()
+            asked_full = asked_full or len(rows) >= rows_to_ask      # the answer was cut at the rows asked
         start = max(s_.index.min() for s_ in per.values())
         end = today().normalize() - pd.Timedelta(days=1)
         # A HISTORY BACKFILL STOPS BEFORE THE LIVE READ (fix round 2, N2: lockup.near + contributors.near are read
@@ -528,6 +646,14 @@ class NearBlocks:
         if start > end:
             out.fail(SOURCE, name, f"{metric}: no complete day on which all {len(per)} wallets have a balance", TIER)
             return
+        last = self.last_dates.get((name, metric))
+        if rows_to_ask < full and last is not None and start > pd.Timestamp(last).normalize() + pd.Timedelta(days=1) \
+                and asked_full:
+            # the top-up did not reach back to the last stored close (more than one row a day): the full read, once —
+            # a hole is never carried over
+            log.info("nearblocks: %s top-up of %d row(s) starts %s, after %s — reading the full history",
+                     metric, rows_to_ask, start.date(), pd.Timestamp(last).date())
+            return self._balance_history(name, spec, {**bh, "_full": True}, out)
         days = pd.date_range(start, end, freq="D")
         total = sum(s_.reindex(s_.index.union(days)).ffill().reindex(days) for s_ in per.values())
         pairs = [(d, float(v)) for d, v in total.items() if v == v]
@@ -594,6 +720,13 @@ class NearBlocks:
         if not key:
             out.unconfigured(SOURCE, name, f"{metric}: no {spec['key_env']} in .env", TIER)
             return
+        from .base import catch_up_owed
+        last = self.last_dates.get((name, metric))
+        if last is not None and pd.Timestamp(last).normalize() >= today().normalize() - pd.Timedelta(days=1) \
+                and not catch_up_owed(name, metric):
+            out.mark_current(SOURCE, name, metric, f"{metric}: NOT re-fetched — held through yesterday (complete days "
+                                                   f"only; the next one arrives tomorrow)", TIER)
+            return
         try:
             ops = signer_participants(self.http, po["recipients"])
         except Exception as e:  # noqa: BLE001 — a failed source must not kill the run
@@ -604,7 +737,10 @@ class NearBlocks:
         since = pd.Timestamp(po["from"])
         rows, nxt, complete = [], None, False
         for _page in range(self.page_cap):
-            params = {"limit": 100}
+            # R17: only the receipts the payer SENT are asked (v3 `predecessor`: "with only one of predecessor /
+            # receiver set, the other side is the account itself") — the rows the filter below keeps, without paging
+            # through everything it received (2026-11-23: 86 rows, one page, back to 2020; unfiltered, the page cap)
+            params = {"limit": 100, "predecessor": account}
             if nxt:
                 params["next"] = nxt
             try:
