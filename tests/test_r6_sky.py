@@ -125,14 +125,16 @@ def test_3_the_pause_proxy_is_a_held_buyback_in_circulating_and_off_float(monkey
 
 def test_3_the_held_buyback_comes_off_a3s_effective_float_on_sky_only():
     import build_workbook as bw
-    R = bw.Refs(100, 10, ["2026-09"])
-    sky = bw._effective_float_held(R, 5, config.PROJECT_BY_NAME["Sky"])
-    assert sky.startswith("-IF(ISNUMBER(") and '|treasury_holding_tokens"' in sky and sky.endswith(",NA())")
+    # R20 (Jake 2026-11-24): A3's "effective float" is gone — A3 shows the one free float (free_float.views), whose
+    # held-buybacks component is the Pause Proxy's stock on Sky only. Was: bw._effective_float_held's formula term.
+    import free_float
+    assert bw.FREE_FLOAT_HEAD.startswith("FREE FLOAT (tokens)") and not hasattr(bw, "_effective_float_held")
+    assert free_float.parts(config.PROJECT_BY_NAME["Sky"])["held"]["add"] == ("treasury_holding_tokens",)
     for frozen in config.FROZEN_BEFORE_R7D:
-        # R9.2 (the rule): what leaves their effective float is the stock the rule moved INTO circulating (so the float
-        # does not move) — never the Pause Proxy's leg, which is Sky's
-        f = bw._effective_float_held(R, 5, config.PROJECT_BY_NAME[frozen])
-        assert '|rule_in_off_float_tokens"' in f and "treasury_holding_tokens" not in f, (frozen, f)
+        # R9.2 (the rule): what leaves their float is the stock the rule moved INTO circulating (so the float does not
+        # move) — never the Pause Proxy's leg, which is Sky's
+        sp = free_float.parts(config.PROJECT_BY_NAME[frozen])
+        assert "rule_in_off_float_tokens" in sp["issuer"] and "treasury_holding_tokens" not in sp["held"]["add"], frozen
 
 
 # ================================================================== 5: done_check — declared, with a source

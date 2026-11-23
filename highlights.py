@@ -569,7 +569,8 @@ def card_c3(L: Lookup) -> Card:
               positive_projects=npos)
     C = reader.COMPARISON
     refs = [L.ref(C, p, "Net holder yield"), L.ref(C, p, "Holder value yield"),
-            L.ref(C, p, "Total dilution, % of float"), L.ref(C, p, "Lock rate, % of circulating")]
+            # R20: the dilution net holder yield subtracts, on its base (was "Total dilution, % of float")
+            L.ref(C, p, "Dilution, % of market cap"), L.ref(C, p, "Lock rate, % of circulating")]
     lock = num(refs[3].value)
     clause = "the only project in the set where that holds" if npos == 1 else "the highest in the set"
     reading = f"Measured returns to holders exceed measured dilution; {clause}"

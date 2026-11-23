@@ -82,7 +82,7 @@ ARCHETYPE_KEYS = {
         "BURNED BUYBACK ÷ (EMISSIONS + UNLOCKS) (x) — tokens bought back and BURNED, per covered day, ÷ (tokens emitted "
         "+ tokens unlocked from the non-circulating wallets) per covered day, at the emission rate in force (Sky's "
         "scheduled rate where declared, else the last 90 days' measured rate). A buyback held in a treasury or paid "
-        "out to stakers is not burned and is not counted (a held buyback leaves the tradeable float while held "
+        "out to stakers is not burned and is not counted (a held buyback leaves the free float while held "
         "instead). Where emissions + unlocks are a measured 0 and the burn is above 0 the key reads 'no new supply' "
         "and ranks first. Ties are broken by net holder yield. Higher is better; 1.0x is the crossover."),
     4: ("Burn ÷ issuance (x)",
@@ -1346,9 +1346,12 @@ SUMMARY_SOURCES = {
     "fdv": ("Master", "FDV ($)"),
     "rev_q0": ("Master", "Revenue Q0 ($)"),
     "hvy": (CP_TAB, "HOLDER VALUE YIELD"),
-    "dil": (CP_TAB, "TOTAL DILUTION = outflows a+b+c+d+e+f (annualised) ÷ tradeable float"),
-    "float": (CP_TAB, "TRADEABLE FLOAT"),
+    "dil": (CP_TAB, "TOTAL DILUTION = outflows a+b+c+d+e+f (annualised) ÷ free float"),
+    "float": (CP_TAB, "FREE FLOAT (tokens)"),          # R20: the one free float (was CP's TRADEABLE FLOAT)
     "nhy": (CP_TAB, "NET HOLDER YIELD"),
+    "dil_mc": (CP_TAB, "DILUTION, % OF MARKET CAP"),   # R20: what net holder yield subtracts, on its own base
+    "buy": (CP_TAB, "BUYING PRESSURE ON FLOAT"),       # R20: net float pressure's demand side
+    "nfp": (CP_TAB, "NET FLOAT PRESSURE"),             # R20
     "nsc_pct": ("Master", "Net supply change, annualised % of circulating"),
     "nsc_tok": ("Master", "NET SUPPLY CHANGE Q0 (tokens)"),
     "payout": (CP_TAB, "Payout ratio — the project's own net basis"),
@@ -1391,13 +1394,27 @@ def _write_summary(sh: Sheet, ctx: Ctx, keys: dict) -> None:
                  FMT_RANK, "Rank", "computed", 0, 9),
         "hvy": ("Holder value yield", "Revenue-funded value to holders a year (retired + distributed + liquid voter "
                 "bribes) ÷ the average market cap over the same days.", FMT_PCT, "Holders", "CP Comparability, HOLDER VALUE YIELD", 0, 11),
-        "dil": ("Total dilution, % of float", "Every outflow a year (security emissions, supply- and demand-side "
-                "incentives, grants, unlocks) ÷ the tradeable float.", FMT_PCT, "Holders",
-                "CP Comparability, TOTAL DILUTION ÷ tradeable float", 0, 11),
-        "dil_tok": ("Total dilution, tokens a year", "Total dilution % × the tradeable float, in tokens a year.",
-                    FMT_TOK, "Holders", "computed: CP total dilution × CP tradeable float", 0, 13),
-        "nhy": ("Net holder yield", "Holder value yield − every outflow a year at each day's price ÷ the average market cap over the same days.",
+        # R20 (Jake 2026-11-24, item 5): the two nets, each with the same base on both sides. Net holder yield = holder
+        # value yield − dilution, BOTH ÷ market cap; net float pressure = buying pressure − total dilution, BOTH ÷ the
+        # free float. Was: holder value yield (÷ market cap), total dilution (% of float), net holder yield.
+        "dil_mc": ("Dilution, % of market cap", "Every outflow a year (security emissions, supply- and demand-side "
+                   "incentives, grants, unlocks) at each day's price ÷ the average market cap over the same days — the "
+                   "term net holder yield subtracts.", FMT_PCT, "Holders",
+                   "CP Comparability, DILUTION, % OF MARKET CAP", 0, 11),
+        "nhy": ("Net holder yield", "Holder value yield − dilution, both as % of market cap (the two columns to the "
+                "left): every outflow a year at each day's price ÷ the average market cap over the same days.",
                 FMT_PCT, "Holders", "CP Comparability, NET HOLDER YIELD", 0, 11),
+        "nfp": ("Net float pressure", "Buying pressure on float − total dilution, both as % of the free float a year "
+                "(the two columns to the right): revenue-funded buying that is burned or held, less new supply. Above "
+                "0 the free float shrinks.", FMT_PCT, "Holders", "CP Comparability, NET FLOAT PRESSURE", 0, 11),
+        "buy": ("Buying pressure on float, % a year", "Revenue-funded buying that is burned or held, in tokens a year "
+                "÷ the free float — the demand side of net float pressure.", FMT_PCT, "Holders",
+                "CP Comparability, BUYING PRESSURE ON FLOAT", 0, 11),
+        "dil": ("Total dilution, % of float", "Every outflow a year (security emissions, supply- and demand-side "
+                "incentives, grants, unlocks) ÷ the free float — the supply side of net float pressure.", FMT_PCT,
+                "Holders", "CP Comparability, TOTAL DILUTION ÷ free float", 0, 11),
+        "dil_tok": ("Total dilution, tokens a year", "Total dilution % × the free float, in tokens a year.",
+                    FMT_TOK, "Holders", "computed: CP total dilution × CP free float", 0, 13),
         # PR1.S8 (Jake 2026-11-05): the net supply change IS the change in circulating supply, everywhere
         "nsc_pct": ("Net supply change, % a year", "The change in circulating supply over the last 90 days (closing − "
                     "opening circulating), × 365 ÷ 90, % of circulating supply now (+ is a growing circulating "
@@ -1568,13 +1585,17 @@ def _summary_row(sh, ctx: Ctx, C, row, p, rank, key, parked: bool = False) -> No
                   + (f" — {kwhy}" if kwhy else "") + (f" — {plain(ksrc.text)}" if ksrc is not None and ksrc.text
                                                       else "") + "."))
     number("hvy", srcs["hvy"])
+    number("dil_mc", srcs["dil_mc"])
+    number("nhy", srcs["nhy"])
+    number("nfp", srcs["nfp"])
+    number("buy", srcs["buy"])
     number("dil", srcs["dil"])
     d, f = srcs["dil"], srcs["float"]
     if d is not None and d.num is not None and f is not None and f.num is not None:
         rd, rf = data.put(name, "dil_pct", d.num), data.put(name, "float", f.num)
         oo = _one_off_para(d.comment)           # PR1B.1: the dilution's one-off, on the same figure in tokens
         put_formula(sh, row, C["dil_tok"], f"={rd}*{rf}", d.fill,
-                    f"{d.num:.2%} × tradeable float {f.num:,.0f}." + (f"\n\n{oo}" if oo else "")
+                    f"{d.num:.2%} × free float {f.num:,.0f}." + (f"\n\n{oo}" if oo else "")
                     + f"\n\nWorking: {d.where}; {f.where}.")
         nums += 1
         greens += _green(d.fill)
@@ -1585,8 +1606,7 @@ def _summary_row(sh, ctx: Ctx, C, row, p, rank, key, parked: bool = False) -> No
             put_code(sh, row, C["dil_tok"], code, f"{why}\n\nWorking: {bad.where} (empty).")
         else:
             put_code(sh, row, C["dil_tok"], code_of(bad.text if bad else ""),
-                     _code_reason(bad, "no total dilution or no tradeable float"), bad.fill if bad else None)
-    number("nhy", srcs["nhy"])
+                     _code_reason(bad, "no total dilution or no free float"), bad.fill if bad else None)
     # PR1.S8: Master's net supply change is the circulating change (no burn-only note: it is not the mint − burn)
     for k in ("nsc_pct", "nsc_tok"):
         why = nsc_not_carried(p, srcs[k], srcs["dil"])
@@ -1985,7 +2005,6 @@ E_SHORT = {
     "Share of staker distributions to VIRTUAL": "Share paid to virtual balances",
     "PENDLE still in the OLD vePENDLE": "Still in old vePENDLE (tokens)",
     "sPENDLE + old vePENDLE (tokens)": "sPENDLE + old vePENDLE (tokens)",
-    "Effective float": "Effective float (tokens)",
     "Destination effect on float": "Effect on float",
     "Buyback to LOCKED supply": "Buyback to locked supply",
     "Buyback to YIELD PAYOUT": "Buyback paid out as yield",
@@ -2014,11 +2033,10 @@ E_SHORT = {
     "Issuance as % of supply (annualised)": "Issuance, % of supply a year",
     "Staked tokens (locked_tokens)": "Staked tokens",
     "Staking rate = staked inside circulating": "Staking rate",
-    "Resulting float": "Float after staking",
     "NET ISSUANCE AFTER BURN Q0 (tokens)": "Net issuance after burn (tokens)",
     "Gross issuance Q0 ($": "Gross issuance, 90 days ($)",      # PR1B.3: each day's issuance × that day's price
     "FEES ÷ ISSUANCE (x) — key ratio": "Fees ÷ issuance (x)",
-    "FREE FLOAT = circulating − locked": "Free float (tokens)",
+    "FREE FLOAT (tokens)": "Free float (tokens)",      # R20: the one series, on A1, A2 and A3
     "Materiality ": "Materiality",
     "Customer revenue Q0 ($)": "Customer revenue, 90 days",
     "  of which payments collected at the fee aggregator": "Of which aggregator payments",
@@ -2748,21 +2766,30 @@ def _src_header(A: Audit, sheet: str, prefix: str) -> str:
 
 # ---------------------------------------------------------------------------------------------- Comparison
 BUYING_PRESSURE_SHORT = "Buying pressure on float, % a year"     # P4-Q5c: the A3 tab and Comparison
-BUYING_PRESSURE_DEF = ("Every market buyback a year, whatever its destination (burned, held in a treasury or paid out to "
-                       "stakers), in tokens, ÷ the tradeable float. A held buyback is already out of the float while "
-                       "held.")
+BUYING_PRESSURE_DEF = ("Revenue-funded buying that is burned or held, in tokens a year, ÷ the free float — the demand "
+                       "side of net float pressure. A buyback paid out to stakers, or funded by the treasury or "
+                       "emissions, is not in it. A held buyback is already out of the float while held.")
 COMPARISON_COLS = (
     # (key, header, source (sheet, prefix) | "@...", format, definition, family)
     ("hvy", "Holder value yield", (CP_TAB, "HOLDER VALUE YIELD"), FMT_PCT,
      "Revenue-funded value to holders a year (retired + distributed + liquid voter bribes) ÷ the average market cap over the same days.", "buyback"),
-    ("dil", "Total dilution, % of float", (CP_TAB, "TOTAL DILUTION = outflows a+b+c+d+e+f (annualised) ÷ tradeable float"),
-     FMT_PCT, "Every outflow a year (security emissions, incentives, grants, unlocks) ÷ the tradeable float.", ""),
+    # R20: the two nets, each beside its two sides on the same base
+    ("dil_mc", "Dilution, % of market cap", (CP_TAB, "DILUTION, % OF MARKET CAP"), FMT_PCT,
+     "Every outflow a year at each day's price ÷ the average market cap over the same days — the term net holder yield "
+     "subtracts.", ""),
     ("nhy", "Net holder yield", (CP_TAB, "NET HOLDER YIELD"), FMT_PCT,
-     "Holder value yield − every outflow a year at each day's price ÷ the average market cap over the same days. The sort key of this tab.", ""),
+     "Holder value yield − dilution, both as % of market cap: every outflow a year at each day's price ÷ the average "
+     "market cap over the same days. The sort key of this tab.", ""),
+    ("nfp", "Net float pressure", (CP_TAB, "NET FLOAT PRESSURE"), FMT_PCT,
+     "Buying pressure on float − total dilution, both as % of the free float a year: revenue-funded buying that is "
+     "burned or held, less new supply. Above 0 the free float shrinks.", ""),
+    ("buy_press", BUYING_PRESSURE_SHORT, (CP_TAB, "BUYING PRESSURE ON FLOAT"), FMT_PCT, BUYING_PRESSURE_DEF, "buyback"),
+    ("dil", "Total dilution, % of float", (CP_TAB, "TOTAL DILUTION = outflows a+b+c+d+e+f (annualised) ÷ free float"),
+     FMT_PCT, "Every outflow a year (security emissions, incentives, grants, unlocks) ÷ the free float — the supply "
+     "side of net float pressure.", ""),
     ("payout", "Payout ratio", (CP_TAB, "Payout ratio — the project's own net basis"), FMT_X,
      "Credited holder value ÷ revenue on the project's own revenue basis, in x (1.0x = the whole revenue credited).",
      "buyback"),
-    ("buy_press", BUYING_PRESSURE_SHORT, (CP_TAB, "BUYING PRESSURE ON FLOAT"), FMT_PCT, BUYING_PRESSURE_DEF, "buyback"),
     ("subsidy", "Subsidy cover (x)", (CP_TAB, "SUBSIDY COVER"), FMT_X,
      "Revenue ÷ the $ of supply-side incentives, per covered day: above 1.0x the business pays for its incentives. "
      "Each day's incentive tokens are valued at that day's price, as Summary's rank key for an A2 project values its "
@@ -2834,7 +2861,7 @@ def _write_comparison(sh: Sheet, ctx: Ctx, keys: dict) -> None:
                 is_text=True)]
     spec = {}
     for k, h, src, fmt, d, fam in COMPARISON_COLS:
-        col = Col(h, d, fmt, "Holders" if k in ("hvy", "dil", "nhy", "payout", "buy_press") else "Subsidy and value"
+        col = Col(h, d, fmt, "Holders" if k in ("hvy", "dil", "dil_mc", "nhy", "nfp", "payout", "buy_press") else "Subsidy and value"
                   if k in ("subsidy", "leak", "fees_fdv", "rev_mcap") else "Revenue lines" if k.startswith("rl_")
                   else "Holding", (
                       f"{src[0]}, {_src_header(A, src[0], src[1])}" if isinstance(src, tuple) else "computed"), 0, 12,

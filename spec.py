@@ -55,8 +55,11 @@ COLUMN_MAP: tuple[tuple[str, str, str], ...] = (
     ("*", "Max supply", "circulating"), ("*", "Total supply", "circulating"), ("*", "Supply figure complete", "notes"),
     ("*", "Staked / locked inside circulating", "stake_inside"), ("*", "Staked tokens", "stake_inside"),
     ("*", "Tokens locked — cross-check", "cross_check"), ("*", "Tokens locked", "stake_inside"),
-    ("*", "TRADEABLE FLOAT", "float"), ("*", "Tradeable float", "float"), ("*", "FREE FLOAT ÷ ARR", "ff_arr"),
-    ("*", "FREE FLOAT", "float"), ("*", "Resulting float", "float"), ("*", "Effective float", "float"),
+    ("*", "FREE FLOAT ÷ ARR", "ff_arr"),
+    # R20: one free float on every tab (was TRADEABLE FLOAT / Resulting float / Effective float as well)
+    ("*", "FREE FLOAT", "float"), ("*", "Free float ÷ circulating", "float"),
+    ("*", "Issuer, foundation and treasury holdings", "float"),
+    ("*", "NET FLOAT PRESSURE", "total_dilution"), ("*", "DILUTION, % OF MARKET CAP", "total_dilution"),
     ("*", "Destination effect on float", "lock_terms"), ("*", "Staking rate", "lock_rate"),
     ("*", "Lock rate", "lock_rate"), ("*", "Lock: contract vs dashboard", "cross_check"),
     ("*", "Holding demand — lock rate", "lock_rate"), ("*", "Holding demand — components", "lock_terms"),

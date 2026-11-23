@@ -313,7 +313,7 @@ def test_lock_rate_for_ethereum_is_staked_over_circulating(tmp_path, monkeypatch
     lock = _get(o, "Holding demand — lock rate")
     assert isinstance(lock, float) and lock == pytest.approx(stake / circ) and 0.30 < lock < 0.40, lock
     assert _get(o, "Staked / locked inside circulating") == pytest.approx(stake)
-    assert _get(o, "TRADEABLE FLOAT") == pytest.approx(circ - stake)
+    assert _get(o, "FREE FLOAT (tokens)") == pytest.approx(circ - stake)
     a1 = _tab_row(wb, X, "A1 Infrastructure", "Ethereum") if "A1 Infrastructure" in wb.sheetnames else None
     if a1 is not None:
         assert _get(a1, "Staking rate") == pytest.approx(lock)                      # rule 1: one figure

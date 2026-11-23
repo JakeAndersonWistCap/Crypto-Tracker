@@ -48836,3 +48836,51 @@ FLOW_TOKEN_MEMO["Chainlink"] = (
      "Deposit Address') and on to 0x28C6c062… ('Binance: Hot Wallet'); labels are evidence, not proof "
      "(config.THEATRE_FLAG); in circulating before and after — an issuer-held -> float move, not in the expected "
      "closing; it stays inside unlocks (e)"),)
+
+
+# =====================================================================================================================
+# ROUND 20 — FLOAT (Jake 2026-11-24, Part 2 "free float"): ONE free float per project per day, its components, its daily
+# movements and the two headline nets. Everything below is read by build_workbook._free_float_views (the ONE place the
+# float is formed), build_workbook.float_statements (the Flows sheet) and the CP / reader columns.
+#   free float = circulating − staked / locked / earning − issuer, foundation and treasury holdings − held buybacks
+# Every tab and figure reads free_float_tokens; "float after staking" (A1), "FREE FLOAT = circulating − locked" (A2's own),
+# "effective float" (A3), "tradeable float" (CP) and the dilution cells' own float are gone as separate computations.
+# =====================================================================================================================
+FREE_FLOAT_METRIC = "free_float_tokens"
+FREE_FLOAT_COMPONENTS = (
+    # (series, the name on the sheet)
+    ("free_float_staked_locked_tokens", "staked / locked / earning inside circulating"),
+    ("free_float_issuer_treasury_tokens", "issuer, foundation and treasury holdings inside circulating"),
+    ("free_float_held_buybacks_tokens", "held buybacks inside circulating"),
+)
+METRICS[FREE_FLOAT_METRIC] = {
+    "label": "FREE FLOAT (R20, Jake 2026-11-24) = circulating − staked / locked / earning − issuer, foundation and "
+             "treasury holdings − held buybacks, per day — the ONE float every tab reads (build_workbook."
+             "_free_float_views); a day a component is not read holds no value",
+    "kind": "stock", "unit": "tokens", "archetypes": [1, 2, 3, 4], "tiers": [2], "sanity_min": 0, "sanity_max": 1e15,
+    "view_only": True}
+for _m, _lab in FREE_FLOAT_COMPONENTS:
+    METRICS[_m] = {
+        "label": f"Free float component (R20): {_lab} — what the one free float subtracts, per day, counted once",
+        "kind": "stock", "unit": "tokens", "archetypes": [1, 2, 3, 4], "tiers": [2], "sanity_min": 0,
+        "sanity_max": 1e15, "view_only": True}
+# A held buyback the rule already carries inside the issuer stock (RULE_IN off_float) is SHOWN under held buybacks, not
+# under issuer / treasury — the same tokens, taken off once (Chainlink's Reserve).
+FREE_FLOAT_HELD_IN_ISSUER = {"Chainlink": ("buyback_fund_balance",)}
+# The named line "of which: sent to exchange-tagged addresses" on the float movements, where a series exists.
+FLOAT_EXCHANGE_SENDS = {"Ether.fi": "theatre_exchange_outflow_tokens", "Chainlink": "issuer_exchange_outflow_tokens"}
+# The daily identity: yesterday's float + the day's movements = today's float; a residual beyond this share of
+# yesterday's float is flagged with its cause (the same ±0.5% the circulating statement uses).
+FLOAT_RESIDUAL_LIMIT = 0.005
+FLOAT_DAILY_DAYS, FLOAT_WEEKS = 35, 13          # the Flows sheet's daily and weekly blocks (the quarters sum all days)
+
+# NET FLOAT PRESSURE (R20 item 5) = revenue-funded buying (burned or held) − new supply, BOTH ÷ free float, a year.
+# Its demand side: float_buying_tokens = each day's retired buyback (burned + held, retired_buyback_tokens) where the
+# buyback was revenue-funded that day (config.holder_funding — the funding holder value yield already credits by);
+# a day whose buyback was treasury- or emissions-funded, or before the mechanism's execution, is a measured 0.
+METRICS["float_buying_tokens"] = {
+    "label": "Revenue-funded buying, burned or held (tokens a day) — retired_buyback_tokens on the days the buyback was "
+             "revenue-funded (config.holder_funding); the demand side of net float pressure (R20)",
+    "kind": "flow", "unit": "tokens", "archetypes": [1, 2, 3, 4], "tiers": [2], "sanity_min": 0, "sanity_max": 1e12,
+    "view_only": True}
+BUYBACK_SPLIT_METRICS = (*BUYBACK_SPLIT_METRICS, "float_buying_tokens")     # no row where the buyback route is 'none'

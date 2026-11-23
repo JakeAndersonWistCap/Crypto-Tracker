@@ -31,6 +31,7 @@ from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from openpyxl.utils import get_column_letter
 
 import config
+import free_float
 import trajectory
 import wiring
 from config import GLOBALS, METRICS, PROJECTS
@@ -8478,6 +8479,8 @@ def aggregate(long: pd.DataFrame, fetch_status: pd.DataFrame, asof: pd.Timestamp
     _revenue_from_fees_views(groups)    # G9 N: Plume's revenue = the fees its RewardDistributor receives
     _holder_value_views(groups)   # Phase 2: revenue-funded holder value, credited vs recorded (LITMUS A)
     _gross_burn_day_priced_usd_views(groups, asof)    # PR1B.3: $ burn = each day's burn x that day's price, the holder-value basis
+    free_float.buying_views(groups)   # R20: revenue-funded buying (burned or held) — net float pressure's demand side
+    free_float.views(groups, asof)    # R20: THE ONE FREE FLOAT, its components and its daily movements
     _settlement_views(groups)
     _monthly_flow_views(groups)       # P2a D5b: complete-month flows from daily log scans (Maple's SSF Safe)
     _handover_overlap_checks(groups)  # G11 B8 / C1: each declared handover's two legs compared on their common days
@@ -11362,14 +11365,7 @@ def _a2_headline(R: Refs) -> list[tuple]:
     """Free float, its market cap, Free Float / ARR (the note's WMTx headline) and the supply
     trajectory. Where the lock cannot be read the cells SAY SO — circulating is never passed
     off as free float, which would overstate it by everything staked."""
-    circ = lambda r, p: _circ(R, r, p)  # noqa: E731
-    # A DECLARED ZERO LOCK (free_float_lock_zero) is the number 0, not a missing figure.
-    # LOCKED TOKENS ALREADY OUT OF CIRCULATING ARE SUBTRACTED ONCE (Jake, 2026-09-30): free float =
-    # circulating − the locked tokens INSIDE circulating. Where the circulating figure in use has
-    # the declared locked exclusions taken out (Aerodrome's team 95M, once its on-chain set is
-    # primary), they leave the locked total too.
-    def lock(r, p=None):
-        return _ff_lock(R, r, p or {})
+    # R20: the free float is the one series (free_float.views) — the lock inside circulating is subtracted there, once
     price = lambda r: R.D(r, "price_usd", "now")  # noqa: E731
     # OVER COVERED DAYS (2026-09-28): a young customer-revenue series is not divided as if it
     # were 90 days old — see _annualise.
@@ -11384,15 +11380,11 @@ def _a2_headline(R: Refs) -> list[tuple]:
         return f"IF(ISNUMBER({own}),{own},{ann})"
     emi = lambda r: R.D(r, "emissions_tokens", "q0")  # noqa: E731
     def ff(r, p):
-        rh = _released_held(R, r, p)                 # PR4.1: released issuer-held supply leaves the free float
-        if rh:
-            return (f"IF(AND(ISNUMBER({circ(r, p)}),ISNUMBER({lock(r, p)}),ISNUMBER({rh})),"
-                    f"{circ(r, p)}-{lock(r, p)}-{rh},{NA})")
-        return f"IF(AND(ISNUMBER({circ(r, p)}),ISNUMBER({lock(r, p)})),{circ(r, p)}-{lock(r, p)},{NA})"
+        return _free_float(R, r, p)      # R20: the one series (was: circulating − locked − released issuer-held)
 
     def cell(expr_fn):
         def build(r, p):
-            why = _free_float_reason(p)
+            why = _free_float_missing(p)
             return why if why else calc(expr_fn(r, p))
         return build
 
@@ -11400,20 +11392,25 @@ def _a2_headline(R: Refs) -> list[tuple]:
                "partial_direction": "the lock figure is incomplete, so FREE FLOAT READS HIGH by "
                                     "whatever the missing leg holds; ratios built on it inherit that."}
     return [
-        ("FREE FLOAT = circulating − locked (tokens)", cell(ff), FMT_NUM, "calc", True,
-         {"metric": "locked_tokens", **partial, "partial_fmt": '#,##0" PARTIAL↑";(#,##0)" PARTIAL↑"'}),
+        (FREE_FLOAT_HEAD, cell(ff), FMT_NUM, "calc", True,
+         {"metric": config.FREE_FLOAT_METRIC, "note_fn": lambda p: _free_float_note(p), **partial, "partial_fmt": '#,##0" PARTIAL↑";(#,##0)" PARTIAL↑"'}),
         ("Free float market cap ($, spot)", cell(lambda r, p: f"({ff(r, p)})*{price(r)}"), FMT_USD, "calc", False,
          {"metric": "locked_tokens", **partial, "partial_fmt": '$#,##0" PARTIAL↑";($#,##0)" PARTIAL↑"'}),
         ("FREE FLOAT ÷ ARR (x) = free float market cap ÷ ARR (the project's own where published, else customer revenue annualised) — headline",
          cell(lambda r, p: f"({ff(r, p)})*{price(r)}/({arr(r, p)})"), FMT_X, "calc", True,
          {"metric": "customer_revenue_usd", **partial, "partial_fmt": '0.00"x PARTIAL↑";(0.00"x)" PARTIAL↑"'}),
         ("SUPPLY TRAJECTORY = emissions (annualised) ÷ free float — annual dilution %",
-         lambda r, p: _free_float_reason(p) or calc(f"{_annualise(R, r, p, 'emissions_tokens', emi(r))}/({ff(r, p)})"), FMT_PCT, "calc", True,
+         lambda r, p: _free_float_missing(p) or calc(f"{_annualise(R, r, p, 'emissions_tokens', emi(r))}/({ff(r, p)})"), FMT_PCT, "calc", True,
          {"metric": "emissions_tokens", **partial, "partial_fmt": '0.0%" PARTIAL↓";(0.0%)" PARTIAL↓"'}),
         _published_unlock_column(),
     ]
 
 
+# R20: the ONE header every tab shows the one free float under (A1, A2, A3, CP). Was, per tab: A1 "Resulting float =
+# circulating − staked inside circulating", A2 "FREE FLOAT = circulating − locked (tokens)", A3 "Effective float =
+# circulating − ve locked − held reserve (...)", CP "TRADEABLE FLOAT = circulating − staked/locked − protocol/treasury-held"
+FREE_FLOAT_HEAD = ("FREE FLOAT (tokens) = circulating − staked/locked/earning − issuer/foundation/treasury holdings − "
+                   "held buybacks — the one series every tab reads (free_float_tokens, R20)")
 UNLOCK_HEAD = "UNLOCK DILUTION Q0 (tokens) — released from the non-circulating wallets, NOT emissions"
 UNLOCK_PCT_HEAD = "Unlock dilution, annualised % of free float"
 TOTAL_DILUTION_HEAD = "TOTAL DILUTION = emissions + unlocks, annualised % of free float"
@@ -11421,12 +11418,8 @@ NET_ABS_UNLOCK_HEAD = "Net absorption incl. unlocks Q0 (tokens) = RETIRED buybac
 
 
 def _ff_expr(R, r: int, p: dict) -> str:
-    """Free float = circulating − the lock inside it (as A2's FREE FLOAT column)."""
-    c, lk = _circ(R, r, p), _ff_lock(R, r, p)
-    rule = _rule_in_term(R, r, p)      # R9.2: the issuer-side stock the rule counts in circulating is not free float
-    if rule:
-        return f"IF(AND(ISNUMBER({c}),ISNUMBER({lk}),ISNUMBER({rule})),{c}-{lk}-{rule},{NA})"
-    return f"IF(AND(ISNUMBER({c}),ISNUMBER({lk})),{c}-{lk},{NA})"
+    """The one free float (R20). Was: circulating − the lock inside it − the rule's issuer stock, formed here."""
+    return _free_float(R, r, p)
 
 
 def _unlock_cols(R: Refs, absorption: bool = False) -> list[tuple]:
@@ -11452,7 +11445,7 @@ def _unlock_cols(R: Refs, absorption: bool = False) -> list[tuple]:
         def build(r, p):
             if not has(p):
                 return ""
-            why = _free_float_reason(p)
+            why = _free_float_missing(p)
             return why if why else calc(fn(r, p))
         return build
     cols = [
@@ -11587,7 +11580,7 @@ def a3_key_note(p: dict) -> str:
     halt = config.buyback_halt_text(name)          # PR2.3: a halted programme's key is a measured 0, dated
     return (halt + "\n\n" if halt else "") + (
             f"A3 KEY (P4-Q5a, Jake 2026-11-03): {burn} ÷ ({em}; {un}), each per covered day. A held buyback is not "
-            f"burned (P4-Q5b): it leaves the tradeable float while held instead. Emissions + unlocks a measured 0 with "
+            f"burned (P4-Q5b): it leaves the free float while held instead. Emissions + unlocks a measured 0 with "
             f"a burn above 0 reads '{A3_NO_NEW_SUPPLY}' and ranks first."
             + (f" {option_c_text(name)}" if OPTION_C.get(name) else ""))
 
@@ -13250,7 +13243,7 @@ HEADLINE_IDS = (
     ("A1", "TVL", "a1_tvl"),
     ("A1", "FEES ÷ ISSUANCE", "a1_fees_issuance"),
     ("A2", "FREE FLOAT ÷ ARR", "a2_ff_arr"),
-    ("A2", "FREE FLOAT = circulating", "a2_free_float"),
+    ("A2", "FREE FLOAT (tokens)", "a2_free_float"),
     ("A2", "SUPPLY TRAJECTORY", "a2_trajectory"),
     ("A2", "Customer revenue Q0", "a2_customer_revenue"),
     ("A2", "Emissions to suppliers Q0", "a2_emissions"),
@@ -13270,7 +13263,7 @@ HEADLINE_IDS = (
     ("A4", "GROSS BURN Q0", "a4_gross_burn"),
     ("A4", "GROSS ISSUANCE Q0", "a4_gross_issuance"),
     ("A4", "Pool release Q0", "a4_pool_release"),
-    ("CP", "TRADEABLE FLOAT", "cp_float"),
+    ("CP", "FREE FLOAT (tokens)", "cp_float"),
     ("CP", "HOLDER VALUE YIELD", "cp_hvy"),
     ("CP", "NET HOLDER YIELD", "cp_nhy"),
     ("CP", "SUBSIDY COVER", "cp_subsidy_cover"),
@@ -14087,8 +14080,9 @@ def _revenue_line_cols(R: Refs) -> list[tuple]:
 # TRADEABLE FLOAT = circulating − staked / locked − protocol / treasury-held (zero inside circulating by the convention,
 # so float is A2's free float). Every retirement and dilution rate on BOTH bases; the five outflow categories (config
 # OUTFLOW_CATEGORIES); holder value funding-aware (config HOLDER_VALUE); attributes from phase2_attributes.json.
-CP_FLOAT_HEAD = ("TRADEABLE FLOAT = circulating − staked/locked − protocol/treasury-held (tokens) — protocol/treasury-"
-                 "held is already out of circulating by the convention, so this is A2's free float")
+# R20: was "TRADEABLE FLOAT = circulating − staked/locked − protocol/treasury-held (tokens) — ..."; CP shows the one
+# free float under the one header
+CP_FLOAT_HEAD = FREE_FLOAT_HEAD
 # R17 (Jake 2026-11-23): ÷ the average market cap over the window. Was: "... (annualised) ÷ market cap — treasury- ..."
 CP_HVY_HEAD = ("HOLDER VALUE YIELD = revenue-funded $ retired + $ distributed + liquid bribes to voters (annualised) ÷ "
                "average market cap over the window — treasury- or emissions-funded buybacks are NOT credited (LITMUS "
@@ -14146,14 +14140,15 @@ def _cp_lock(R: Refs, r, p: dict) -> str:
 
 
 def _cp_float_reason(p: dict) -> str | None:
-    return None if p["name"] in config.CP_STAKE_METRIC else _free_float_reason(p)
+    """R20: why the one free float is not formed for this project (free_float.MISSING), else None."""
+    return _free_float_missing(p)
 
 
 def _lock_zero_note(p: dict) -> str:
     """P3-1b (R1): the comment on a cell whose staked/locked input is the MEASURED 0 of config free_float_lock_zero —
     it names the absent mechanism and its source; '' elsewhere."""
     why = p.get("free_float_lock_zero")
-    return (f"Staked / locked = 0 — a measured zero (SPEC rule 3), not a missing figure: {why}. Tradeable float = "
+    return (f"Staked / locked = 0 — a measured zero (SPEC rule 3), not a missing figure: {why}. Free float = "
             "circulating.") if why else ""
 
 
@@ -14211,19 +14206,39 @@ def one_off_dilution_note(p: dict) -> str:
             "without the distributor is a note in Project notes only.")
 
 
+def _free_float(R: Refs, r, p: dict) -> str:
+    """R20 (Jake 2026-11-24): THE free float, now — the ONE series (config.FREE_FLOAT_METRIC, formed in
+    free_float.views and nowhere else): circulating − staked / locked / earning − issuer, foundation and treasury
+    holdings − held buybacks. Every float cell and every "÷ free float" on every tab reads this; no cell forms a float
+    of its own (tests/test_r20_float.py). A day a component is not read holds no value — n/a, never the float without
+    it."""
+    f = R.D(r, config.FREE_FLOAT_METRIC, "now")
+    return f"IF(ISNUMBER({f}),{f},{NA})"
+
+
+def _free_float_missing(p: dict) -> str | None:
+    """Why this project has no free float at all (the missing component named, free_float.MISSING) — or None."""
+    name = p["name"]
+    if name in free_float.FORMED or name not in free_float.MISSING:
+        return None
+    return free_float.MISSING[name][:240]
+
+
 def _cp_float(R: Refs, r, p: dict) -> str:
-    """TRADEABLE FLOAT = circulating − staked / locked inside it − a held buyback inside it (P4-Q5b: a buyback held in a
-    treasury leaves the float while held, as locked tokens do, and returns when the held stock falls — the stock on the
-    day is subtracted). The held leg is config.held_buyback_float_metric (Maple's SSF, NEAR's revenue wallets); a day it
-    is not measured makes the float n/a, never the float without it."""
-    c, lk = _circ(R, r, p), _cp_lock(R, r, p)
-    h = _held_inside(R, r, p)
-    rh = _released_held(R, r, p)
-    if rh:
-        h = f"{h}+{rh}" if h else rh
-    if h:
-        return f"IF(AND(ISNUMBER({c}),ISNUMBER({lk}),ISNUMBER({h})),{c}-{lk}-({h}),{NA})"
-    return f"IF(AND(ISNUMBER({c}),ISNUMBER({lk})),{c}-{lk},{NA})"
+    """The one free float (R20) — the name CP's builders call it by. Was (to R19): circulating − staked / locked inside
+    it − a held buyback inside it − the released issuer-held supply, formed in the cell."""
+    return _free_float(R, r, p)
+
+
+def _free_float_note(p: dict) -> str:
+    """The comment on a free float cell: what the one series subtracts for this project (free_float.PARTS)."""
+    pt = free_float.PARTS.get(p["name"]) or {}
+    if not pt:
+        return ""
+    return ("FREE FLOAT (R20, Jake 2026-11-24) = circulating_supply_used − staked / locked / earning ("
+            f"{pt['staked_locked']}) − issuer, foundation and treasury holdings ({pt['issuer_treasury']}) − held "
+            f"buybacks ({pt['held_buybacks']}). One series per day (free_float_tokens), read by every tab; a day a "
+            "component is not read holds no value. Its daily movements are on the Flows sheet.")
 
 
 def _rule_in_views(groups: dict) -> None:
@@ -14351,30 +14366,22 @@ def _held_buyback_note(p: dict) -> str:
     if h["how"] == "subtract":
         less = (f", less {h['less']} (the part circulating already takes out: {h['less_why']})" if h.get("less")
                 else "")
-        return (f"Held buyback OUT of the tradeable float while held (P4-Q5b): {h['held']} on the day{less} is "
+        return (f"Held buyback OUT of the free float while held (P4-Q5b): {h['held']} on the day{less} is "
                 f"subtracted — {h['why']}. A fall in the held balance returns those tokens to the float.")
-    return (f"Held buyback already out of circulating (P4-Q5b): {h['why']} — so the tradeable float already leaves it "
+    return (f"Held buyback already out of circulating (P4-Q5b): {h['why']} — so the free float already leaves it "
             "out, and a fall in it returns to float through circulating; it is not subtracted twice.")
 
 
-def _effective_float_held(R: Refs, r, p: dict) -> str:
-    """R6.3 (config.EFFECTIVE_FLOAT_HELD): a held buyback brought INTO circulating by a declared handover comes off A3's
-    effective float too, as it does off the tradeable float — so the effective float does not rise by it. Only the
-    projects declared there (Sky: the Pause Proxy, the Flapper's receiver); a held stock not read today is no value."""
-    m = config.EFFECTIVE_FLOAT_HELD.get(p["name"])
-    rule = _rule_in_term(R, r, p)                          # R9.2: the rule's issuer-held stock leaves it too
-    out = ""
-    if m:
-        v = R.D(r, m, "now")
-        out += f"-IF(ISNUMBER({v}),{v},NA())"
-    if rule:
-        out += f"-IF(ISNUMBER({rule}),{rule},NA())"
-    return out
-
-
-HELD_BUYBACK_HEAD = ("Held buyback inside circulating (tokens) — out of the tradeable float while held (P4-Q5b)")
-BUYING_PRESSURE_HEAD = ("BUYING PRESSURE ON FLOAT, % a year = all market buybacks (burned + held + distributed, tokens, "
-                        "annualised) ÷ tradeable float (P4-Q5c)")
+HELD_BUYBACK_HEAD = ("Held buyback inside circulating (tokens) — off the free float while held (R20; P4-Q5b)")
+# R20 (Jake 2026-11-24, item 5): the DEMAND SIDE of net float pressure — revenue-funded buying, burned or held. Was
+# (P4-Q5c): "... = all market buybacks (burned + held + distributed, tokens, annualised) ÷ tradeable float (P4-Q5c)"
+BUYING_PRESSURE_HEAD = ("BUYING PRESSURE ON FLOAT, % a year = revenue-funded buying, burned or held (tokens, annualised) ÷ "
+                        "free float — the demand side of net float pressure (R20)")
+ISSUER_HELD_HEAD = ("Issuer, foundation and treasury holdings inside circulating (tokens) — off the free float (R20)")
+DILUTION_MC_HEAD = ("DILUTION, % OF MARKET CAP = outflows a+b+c+d+e+f at each day's price (annualised) ÷ average market "
+                    "cap over the window — what net holder yield subtracts (R20)")
+NET_FLOAT_PRESSURE_HEAD = ("NET FLOAT PRESSURE, % a year = buying pressure on float − total dilution ÷ free float "
+                           "(revenue-funded buying, burned or held − new supply; both ÷ free float) (R20)")
 
 
 def _buying_pressure_col(R: Refs) -> tuple:
@@ -14398,16 +14405,20 @@ def _buying_pressure_col(R: Refs) -> tuple:
         why = _cp_float_reason(p)
         if why:
             return why
-        bt, f = R.D(r, "actual_buyback_tokens", "q0"), _cp_float(R, r, p)
-        return _coverage_guard(R, r, [("buyback", "actual_buyback_tokens", "q0")],
-                               f"IF(ISNUMBER({f}),({_annualise(R, r, p, 'actual_buyback_tokens', bt)})/({f}),{NA})")
+        # R20: the numerator is the revenue-funded buying that is burned or held (float_buying_tokens). Was: every
+        # market buyback whatever its destination (actual_buyback_tokens)
+        bt, f = R.D(r, "float_buying_tokens", "q0"), _cp_float(R, r, p)
+        return _coverage_guard(R, r, [("buyback", "float_buying_tokens", "q0")],
+                               f"IF(ISNUMBER({f}),({_annualise(R, r, p, 'float_buying_tokens', bt)})/({f}),{NA})")
 
     def note(p):
         h = config.held_buyback_float_metric(p["name"])
-        return ("Buying pressure on float (P4-Q5c): every market buyback, any destination (actual_buyback_tokens), "
-                "annualised, ÷ the tradeable float" + (f" — which leaves out the held buyback ({h}) while it is held "
-                                                      "(P4-Q5b)" if h else "") + ".")
-    return (BUYING_PRESSURE_HEAD, build, FMT_PCT, "calc", False, {"metric": "actual_buyback_tokens", "note_fn": note})
+        return ("Buying pressure on float (R20): revenue-funded buying that is burned or held (float_buying_tokens = "
+                "retired_buyback_tokens on the days the buyback was revenue-funded), annualised, ÷ the free float"
+                + (f" — which leaves out the held buyback ({h}) while it is held" if h else "")
+                + ". A buyback paid out to stakers, or funded by the treasury or emissions, is not in it. The demand "
+                  "side of net float pressure.")
+    return (BUYING_PRESSURE_HEAD, build, FMT_PCT, "calc", False, {"metric": "float_buying_tokens", "note_fn": note})
 
 
 def _cp_inner(f):
@@ -14431,9 +14442,9 @@ def _cp_cols(R: Refs, data_by_key: dict) -> list[tuple]:
     def held_cell(r, p):
         """P4-Q5b: the held buyback the float subtracts (its stock now); 0 where it is already out of circulating."""
         h = config.held_buyback_float(p["name"])
-        if not h:
+        if not h and p["name"] not in config.FREE_FLOAT_HELD_IN_ISSUER:
             return ""
-        return calc(_held_inside(R, r, p)) if h["how"] == "subtract" else "=0"
+        return calc(R.D(r, free_float.C_HELD, "now"))       # R20: the stored component (was formed in the cell)
 
     def ann(r, p, m):
         return _annualise(R, r, p, m, R.D(r, m, "q0"))
@@ -14454,7 +14465,7 @@ def _cp_cols(R: Refs, data_by_key: dict) -> list[tuple]:
                                        same_span=False)
             return build
         return [(f"{label} ÷ circulating", mk(circ, "circ"), FMT_PCT, "calc"),
-                (f"{label} ÷ tradeable float", mk(flt, "float"), FMT_PCT, "calc")]
+                (f"{label} ÷ free float", mk(flt, "float"), FMT_PCT, "calc")]
 
     def has_bb(p):
         return "retired_buyback_tokens" in config.metrics_for_project(p) or "actual_buyback_tokens" in \
@@ -14618,6 +14629,46 @@ def _cp_cols(R: Refs, data_by_key: dict) -> list[tuple]:
                    f'has no value in this window: "&'
                    f'IFERROR(IF({note}="","no rows stored",{note}),"no Data row"),{out})')
         return "=" + out
+
+    def dil_mc(r, p):
+        """R20 (item 5): DILUTION, % OF MARKET CAP — the term net holder yield subtracts, on net holder yield's own base
+        (each day's outflow $ at that day's price, annualised, ÷ the average market cap over the window), shown beside
+        holder value yield so the subtraction is visible: net holder yield = holder value yield − this."""
+        cats = _cp_cats(p)
+        if not cats:
+            return ""
+        om = lambda c: lag_matched(p, f"outflow_{c}_usd")  # noqa: E731 — the same legs net holder yield reads (R5.3)
+        dil = "+".join(ann(r, p, om(c)) for c in cats)
+        m_ = R.D(r, "market_cap_usd", "q0")
+        # THE SAME LEGS AS NET HOLDER YIELD'S GUARD (holder value beside the outflows), so the outflows are read over
+        # the windows net holder yield reads them over (a monthly leg anchors the others, P3-A1) and the two cells
+        # block together: holder value yield − this = net holder yield
+        legs = ([("holder value", "holder_value_revenue_usd", "q0")] if hv_has(p) else []) + \
+            [(f"outflow {c}", om(c), "q0") for c in cats]
+        return _coverage_guard(R, r, legs, f"IF(ISNUMBER({m_}),({dil})/{m_},{NA})",
+                               same_span=None if hv_has(p) else False,
+                               as_published=tuple(om(c) for c in as_published_cats(p) if c in cats))
+
+    td_head = next(c[0] for c in rates if c[0].startswith("TOTAL DILUTION = outflows") and c[0].endswith("÷ free float"))
+
+    def nfp(r, p):
+        """R20 (item 5): NET FLOAT PRESSURE = revenue-funded buying (burned or held) − new supply, BOTH as % of the free
+        float a year: this row's BUYING PRESSURE ON FLOAT cell less its TOTAL DILUTION ÷ free float cell — the two cells
+        themselves (written to its left), so the net can never be formed on another float or another window.
+        A project that buys nothing on the market by design (config.BUYING_PRESSURE_BY_DESIGN: a code, not a number)
+        has a demand side of 0. A side that is not a number makes the net that side's own text (its n/a or BLOCKED
+        reason) — unknown is never 0."""
+        cell = lambda head: _TAB_CELLS.get(("CP", p["name"], head))  # noqa: E731
+        d_at, s_at = cell(BUYING_PRESSURE_HEAD), cell(td_head)
+        if not d_at or not s_at:
+            return "n/a — net float pressure: its two sides are not on this row"
+        ref = lambda at: f"'{at[0]}'!{at[1]}"  # noqa: E731
+        s = ref(s_at)
+        d = "0" if p["name"] in config.BUYING_PRESSURE_BY_DESIGN else ref(d_at)
+        no_s = f'IF({s}="","n/a — net float pressure: no outflow category on this project (no total dilution)",{s})'
+        if d == "0":
+            return f"=IF(ISNUMBER({s}),0-{s},{no_s})"
+        return f"=IF(ISNUMBER({s}),IF(ISNUMBER({d}),{d}-{s},{d}),{no_s})"
 
     def funding_text(p):
         h = config.HOLDER_VALUE.get(p["name"]) or {}
@@ -14913,20 +14964,22 @@ def _cp_cols(R: Refs, data_by_key: dict) -> list[tuple]:
         ("Circulating supply (tokens) — our convention, the figure in use", lambda r, p: pull(circ(r, p)), FMT_NUM,
          "pull", False, {"metric": "circulating_supply_used",
                          "note_fn": lambda p: config.coingecko_circ_basis_note(p["name"])}),   # PR1.U5, PR4.1
+        # R20: the three components the one free float subtracts, each its own stored series (free_float.views)
         ("Staked / locked inside circulating (tokens)",
-         lambda r, p: _cp_float_reason(p) or calc(_cp_lock(R, r, p)), FMT_NUM, "calc", False,
-         {"metric_fn": lambda n: config.CP_STAKE_METRIC.get(n, "locked_tokens"), "note_fn": lambda p: _lock_zero_note(p)}),
+         lambda r, p: calc(R.D(r, free_float.C_LOCK, "now")), FMT_NUM, "calc", False,
+         {"metric": free_float.C_LOCK, "note_fn": lambda p: _lock_zero_note(p)}),
         (HELD_BUYBACK_HEAD, held_cell, FMT_NUM, "calc", False,
-         {"metric_fn": lambda n: config.held_buyback_float_metric(n) or "buyback_held_tokens",
-          "note_fn": _held_buyback_note}),
-        (CP_FLOAT_HEAD, lambda r, p: _cp_float_reason(p) or calc(flt(r, p)), FMT_NUM, "calc", True,
-         {"metric_fn": lambda n: config.CP_STAKE_METRIC.get(n, "locked_tokens"),
+         {"metric": free_float.C_HELD, "note_fn": _held_buyback_note}),
+        (ISSUER_HELD_HEAD, lambda r, p: calc(R.D(r, free_float.C_ISSUER, "now")), FMT_NUM, "calc", False,
+         {"metric": free_float.C_ISSUER, "note_fn": lambda p: _free_float_note(p)}),
+        (FREE_FLOAT_HEAD, lambda r, p: _cp_float_reason(p) or calc(flt(r, p)), FMT_NUM, "calc", True,
+         {"metric": config.FREE_FLOAT_METRIC,
           "partial_fn": lambda p: config.lock_partial_reason(p["name"]),
-          "partial_direction": "the lock figure is incomplete, so TRADEABLE FLOAT READS HIGH.",
+          "partial_direction": "the lock figure is incomplete, so FREE FLOAT READS HIGH.",
           "partial_fmt": '#,##0" PARTIAL↑";(#,##0)" PARTIAL↑"',
-          "note_fn": lambda p: "\n\n".join(x for x in (_lock_zero_note(p), _held_buyback_note(p),
+          "note_fn": lambda p: "\n\n".join(x for x in (_free_float_note(p), _lock_zero_note(p), _held_buyback_note(p),
                                                        _released_held_note(p)) if x)}),
-        ("Tradeable float ÷ circulating", lambda r, p: _cp_float_reason(p) or calc(f"({flt(r, p)})/({circ(r, p)})"),
+        ("Free float ÷ circulating", lambda r, p: _cp_float_reason(p) or calc(f"({flt(r, p)})/({circ(r, p)})"),
          FMT_PCT, "calc", False, {"note_fn": lambda p: _lock_zero_note(p)}),
         _buying_pressure_col(R),
         # ---- EVERY RETIREMENT AND DILUTION RATE ON BOTH BASES (item 1) ----
@@ -14946,9 +14999,16 @@ def _cp_cols(R: Refs, data_by_key: dict) -> list[tuple]:
         ("Holder value RECORDED, NOT CREDITED (treasury / emissions-funded) ÷ average market cap over the window",
          hv_other, FMT_PCT, "calc"),
         ("Holder value funding by period (config HOLDER_VALUE)", lambda r, p: funding_text(p), FMT_TEXT, "text"),
+        (DILUTION_MC_HEAD, dil_mc, FMT_PCT, "calc", False, {"note_fn": lambda p: "\n\n".join(
+            x for x in (one_off_dilution_note(p), lag_matched_note(p), as_published_note(p)) if x),
+            "fmt_fn": as_published_flag}),
         (CP_NHY_HEAD, nhy, FMT_PCT, "calc", True, {"metric": "holder_value_revenue_usd", "note_fn": lambda p: "\n\n".join(
             x for x in (_holder_value_note(p), one_off_dilution_note(p), lag_matched_note(p), as_published_note(p))
             if x), "fmt_fn": as_published_flag}),
+        (NET_FLOAT_PRESSURE_HEAD, nfp, FMT_PCT, "calc", True, {"metric": config.FREE_FLOAT_METRIC, "note_fn": lambda p: (
+            "NET FLOAT PRESSURE (R20, Jake 2026-11-24) = revenue-funded buying that is burned or held − new supply "
+            "(outflows a+b+c+d+e+f), each in tokens a year ÷ the free float. Demand side: BUYING PRESSURE ON FLOAT; "
+            "supply side: TOTAL DILUTION ÷ free float (both on this row). Above 0 the float shrinks.")}),
         *_tbill_cols(R, [("Holder value yield", hvy), ("Net holder yield", nhy),
                          ("Staker yield — validator", lambda r, p: vyield(r, p)),
                          ("Staker yield — protocol, tokens", lambda r, p: tyield(r, p))]),
@@ -15188,7 +15248,7 @@ def _axis_row(ws) -> None:
 def write_cp(ws, R: Refs, data_by_key: dict):
     projects = scoped_projects()
     _title(ws, "CP — Comparability", "One supply definition for every project: circulating (our convention) and "
-                                     "TRADEABLE FLOAT = circulating − staked/locked − protocol/treasury-held. Every "
+                                     "FREE FLOAT = circulating − staked/locked/earning − issuer/foundation/treasury holdings − held buybacks (one series). Every "
                                      "retirement and dilution rate on both. The five outflow categories (a security "
                                      "emissions, b supply-side, c demand-side, d ecosystem / grants, e unlocks), "
                                      "subsidy cover, holder value yield (revenue-funded only) and net holder yield, "
@@ -15198,7 +15258,7 @@ def write_cp(ws, R: Refs, data_by_key: dict):
     specs = _with_details("CP", _cp_cols(R, data_by_key), R)
     end = _write_table(ws, R, projects, specs, data_by_key,
                        ["market_cap_usd", "circulating_supply", "locked_tokens", "fees_usd"],
-                       key_cols=_key_cols(specs, "TRADEABLE FLOAT", "HOLDER VALUE YIELD", "NET HOLDER YIELD",
+                       key_cols=_key_cols(specs, "FREE FLOAT (tokens)", "HOLDER VALUE YIELD", "NET HOLDER YIELD",
                                           "SUBSIDY COVER"))
     _confidence_tally(ws, end + 2, projects, specs, data_by_key)
     _set_widths(ws, _widths(specs))
@@ -15608,17 +15668,9 @@ def write_a3(ws, R: Refs, data_by_key: dict):
                            f"{R.D(r, 'locked_tokens', 'now')}+{R.D(r, 'locked_tokens_legacy_vependle', 'now')},"
                            f"{NA})"),
          FMT_NUM, "calc", False, {"metric": "locked_tokens_legacy_vependle"}),
-        ("Effective float = circulating − ve locked − held reserve (a hold removes supply, a payout returns it)",
-         lambda r, p: calc(
-             f"({circ(r, p)})"
-             f"-IF(ISNUMBER({R.D(r, 'locked_tokens', 'now')}),{_stake_inside(R, r, p)},0)"
-             # R18: a held reserve the rule counts IN circulating and takes off the float through RULE_IN's off_float
-             # (Chainlink's Reserve) leaves the effective float there — once, never here as well
-             + ("" if "buyback_fund_balance" in ((config.RULE_IN.get(p["name"]) or {}).get("off_float") or ()) else
-                f"-IF(AND({R.C(r, 'Destination effect on float')}=\"locked_supply\","
-                f"ISNUMBER({R.D(r, 'buyback_fund_balance', 'now')})),{R.D(r, 'buyback_fund_balance', 'now')},0)")
-             + _effective_float_held(R, r, p)),
-         FMT_NUM, "calc"),
+        # R20: the one free float (was "Effective float = circulating − ve locked − held reserve", formed here)
+        (FREE_FLOAT_HEAD, lambda r, p: _free_float_missing(p) or calc(_free_float(R, r, p)), FMT_NUM, "calc", False,
+         {"metric": config.FREE_FLOAT_METRIC, "note_fn": lambda p: _free_float_note(p)}),
         ("Destination effect on float", lambda r, p: pull(R.C(r, "Destination effect on float")), FMT_TEXT, "pull"),
         # A hold and a payout move float in OPPOSITE directions, so they never share a formula.
         # Chainlink's Reserve is the case: a multi-day withdrawal timelock with no withdrawals
@@ -15626,7 +15678,7 @@ def write_a3(ws, R: Refs, data_by_key: dict):
         # THE COLUMN IS FOR HELD BUYBACKS (Jake's probes15, root C): a destination of 'hold' shows the held balance
         # even where the hold is classed treasury-redeployable (NEAR's three DAO revenue wallets) — that class only
         # decides whether the effective float above subtracts it, which this cell does not change.
-        ("Buyback to LOCKED supply (destination = hold) — reduces effective float",
+        ("Buyback to LOCKED supply (destination = hold) — off the free float while held",
          lambda r, p: (calc(f"IF(OR({R.C(r, 'Destination effect on float')}=\"locked_supply\","
                             f"{R.C(r, 'Buyback destination')}=\"hold\"),"
                             f"{R.D(r, 'buyback_fund_balance', 'now')},{NA})")), FMT_NUM, "calc", True),
@@ -15704,8 +15756,8 @@ def write_a1(ws, R: Refs, data_by_key: dict, months: list[str]):
          lambda r, p: calc(f"({_cp_lock(R, r, p)})/({_circ(R, r, p)})"), FMT_PCT, "calc"),
         # THE SAME FLOAT AS A2 AND CP (item 1): circulating − the lock inside it (_ff_lock; the declared stake series
         # where CP reads one)
-        ("Resulting float = circulating − staked inside circulating",
-         lambda r, p: calc(f"({_circ(R, r, p)})-({_cp_lock(R, r, p)})"), FMT_NUM, "calc"),
+        (FREE_FLOAT_HEAD, lambda r, p: _free_float_missing(p) or calc(_free_float(R, r, p)), FMT_NUM, "calc", False,
+         {"metric": config.FREE_FLOAT_METRIC, "note_fn": lambda p: _free_float_note(p)}),
         # THE HEADLINE BURN, as A4 reads it (Jake's review of 97b29ae, item 5: NEAR's Master 61,580 vs A1 69,238 were two
         # series; the headline is config.a4_burn_metric — for NEAR the chain's record, Jake's run 2026-10-08)
         # EVERY BURN, fee-market burns included (Phase 2 amendment 1: they come off A4 and feed net issuance here)
@@ -16761,18 +16813,79 @@ def _rule_flow(name: str) -> bool:
     return name in config.RULE_IN and bool(config.RULE_IN[name].get("flow_rule", True))
 
 
+def _token_flow_legs(p: dict, groups: dict) -> tuple:
+    """The circulating token-flow statement's legs for one project — (have, d, pre, rel_m, legs): the series the
+    project's tabs read, the per-day reader of a leg, whether the supply is pre-minted, the release series, and
+    [(label, series or None, sign)]. One selection, read by the quarterly statement (flow_statements) and by the
+    daily free-float movements (R20, _float_movement_views)."""
+    name = p["name"]
+    # what the project's tabs read: the metrics that apply to it, and any series stored or built for it (Aerodrome's
+    # Minter emissions are stored though no archetype lists them)
+    have = set(config.metrics_for_project(p)) | {m for (n, m) in groups if n == name}
+    _fl_key = (config.flow_less_line(name) or {}).get("series", FLOW_CLAIMS_LEG)
+    d = lambda m: (UNLOCK_LESS_TAKEN.get((name, "unlock_release_tokens"), pd.Series(dtype=float))  # noqa: E731
+                   if m == _fl_key else _daily(groups.get((name, m))))
+    pre = _premint(p)
+    mint_m = None if pre else (config.issuance_basis(name) if config.issuance_basis(name) in have else None)
+    rel_m = "pool_release_tokens" if pre else ("unlock_release_tokens" if config.has_unlock_leg(name) else None)
+    # F1 (fix round 2): where circulating IS a published schedule, the schedule's own step is the release leg (it
+    # counts every unlock — pool releases included, so they are not added again)
+    sched = (name, "scheduled_release_tokens") in groups and config.circulating_primary_metric(name) == \
+        (config.FIRST_PARTY_HISTORY.get(name) or {}).get("metric")
+    rel_lab = "+ scheduled releases (published schedule)" if sched else "+ released from issuer wallets"
+    rel_m = "scheduled_release_tokens" if sched else rel_m
+    burn_m = config.a1_burn_metric(name) if config.a1_burn_metric(name) in have else None
+    ret_m = ("issuer_return_tokens" if rel_m == "unlock_release_tokens" and (name, "issuer_return_tokens") in groups
+             else None)
+    # G1/F2 (fix round 2): where the pre-minted release is the MINING wallets' (b) and the unlock leg (e) reads the
+    # other issuer wallets — disjoint by construction (config.mining_wallets / discretionary_wallets) — both legs
+    # move circulating, so both are on the statement (GEODNET)
+    disc_m = ("unlock_release_tokens" if pre and rel_m == "pool_release_tokens" and config.mining_wallets(name)
+              and config.has_unlock_leg(name) else None)
+    if disc_m:
+        ret_m = "issuer_return_tokens" if (name, "issuer_return_tokens") in groups else None
+    legs = [("+ minted", mint_m, 1), (rel_lab, rel_m, 1),
+            *([("+ released from the other issuer wallets (e)", disc_m, 1)] if disc_m else []),
+            ("− returned to issuer-side wallets", ret_m, -1), ("− burned", burn_m, -1)]
+    # a project whose supply enters circulating by named legs measured over the whole window (config
+    # FLOW_RELEASE_LEGS; Hyperliquid since the ledger replay, fix round 3 B1) reads them instead of the pool release
+    if config.FLOW_RELEASE_LEGS.get(name):
+        fl = config.FLOW_RELEASE_LEGS[name]
+        ret_m = "issuer_return_tokens" if (name, "issuer_return_tokens") in groups else None
+        legs = [("+ minted", mint_m, 1), *[(lab, m, 1) for lab, m in fl],
+                ("− returned to issuer-side wallets", ret_m, -1), ("− burned", burn_m, -1)]
+    # PR4E.1 (Jake's 11-13 run: Morpho's residual positive in every quarter, Q-3 +0.97%): claims out of a
+    # distributor inside the non-circulating set leave the set and enter circulating, but (e) is formed net of them
+    # (they are (b), PR4.1) — so they are their own "+" line, the amount actually netted out of (e) each day
+    if rel_m == "unlock_release_tokens" and (name, "unlock_release_tokens") in UNLOCK_LESS_TAKEN:
+        at = next(i for i, (_l, m, _s) in enumerate(legs) if m == "unlock_release_tokens") + 1
+        # R5.1: a project's own words for the line (Pendle: the gauge funding), else the distributors' claims
+        fl = config.flow_less_line(name) or {}
+        legs.insert(at, (fl.get("label", FLOW_CLAIMS_LABEL), fl.get("series", FLOW_CLAIMS_LEG), 1))
+    if _rule_flow(name):
+        # R9.2 (the rule): a release from a wallet the rule counts IN circulating does not change circulating — it
+        # dilutes the FLOAT (the unlock legs keep counting it, R9.3). What moves circulating is what is minted,
+        # what is released from wallets still OUTSIDE it (declared: `flow_outside`), and what is burned.
+        rs = config.RULE_IN[name]
+        legs = [("+ minted", mint_m, 1),
+                *[(x[0], x[1], 1) for x in rs.get("flow_in") or ()],
+                *[(x[0], x[1], 1) for x in rs.get("flow_outside") or ()],
+                # R13: a project whose supply burn is a declared series of its own (Aerodrome from the migration:
+                # the Foundation's burned buyback — the only burn of the new token so far) reads it here
+                ("− burned", rs["flow_burn"] if (name, rs.get("flow_burn")) in groups else burn_m, -1),
+                # R17: what else left the supply (Aerodrome: AERO a Foundation wallet destroyed that was not bought)
+                *[(x[0], x[1], -1) for x in rs.get("flow_destroyed") or () if (name, x[1]) in groups]]
+        # (R10.A1d: a leg declared a one-off EVENT — config RULE_IN[...]["_flow_events"] — reads 0 on a day with no row)
+    return have, d, pre, rel_m, legs
+
+
 def flow_statements(groups: dict, asof) -> list[dict]:
     """The rows of the Flows tab (see FLOWS_HEAD); also returned for the tests and coverage_audit."""
     period = GLOBALS["period_days"]
     out = []
     for p in scoped_projects():
         name = p["name"]
-        # what the project's tabs read: the metrics that apply to it, and any series stored or built for it (Aerodrome's
-        # Minter emissions are stored though no archetype lists them)
-        have = set(config.metrics_for_project(p)) | {m for (n, m) in groups if n == name}
-        _fl_key = (config.flow_less_line(name) or {}).get("series", FLOW_CLAIMS_LEG)
-        d = lambda m: (UNLOCK_LESS_TAKEN.get((name, "unlock_release_tokens"), pd.Series(dtype=float))  # noqa: E731
-                       if m == _fl_key else _daily(groups.get((name, m))))
+        have, d, pre, rel_m, legs = _token_flow_legs(p, groups)
         circ = d("circulating_supply_used")
         gc = groups.get((name, "circulating_supply_used"))
         circ_mp = (pd.Series(gc["source"].astype(str).map(lambda x: trajectory.basis_of("circulating_supply_used", x)).values,
@@ -16784,57 +16897,6 @@ def flow_statements(groups: dict, asof) -> list[dict]:
             _gd = gc.assign(date=pd.to_datetime(gc["date"]).dt.normalize()).sort_values("date")
             circ_mp = pd.Series([_circ_basis_name(b) for b in _circ_used_basis(
                 groups, name, list(_gd["date"]), [str(x) for x in _gd["source"]])], index=_gd["date"].values)
-        pre = _premint(p)
-        mint_m = None if pre else (config.issuance_basis(name) if config.issuance_basis(name) in have else None)
-        rel_m = "pool_release_tokens" if pre else ("unlock_release_tokens" if config.has_unlock_leg(name) else None)
-        # F1 (fix round 2): where circulating IS a published schedule, the schedule's own step is the release leg (it
-        # counts every unlock — pool releases included, so they are not added again)
-        sched = (name, "scheduled_release_tokens") in groups and config.circulating_primary_metric(name) == \
-            (config.FIRST_PARTY_HISTORY.get(name) or {}).get("metric")
-        rel_lab = "+ scheduled releases (published schedule)" if sched else "+ released from issuer wallets"
-        rel_m = "scheduled_release_tokens" if sched else rel_m
-        burn_m = config.a1_burn_metric(name) if config.a1_burn_metric(name) in have else None
-        ret_m = ("issuer_return_tokens" if rel_m == "unlock_release_tokens" and (name, "issuer_return_tokens") in groups
-                 else None)
-        # G1/F2 (fix round 2): where the pre-minted release is the MINING wallets' (b) and the unlock leg (e) reads the
-        # other issuer wallets — disjoint by construction (config.mining_wallets / discretionary_wallets) — both legs
-        # move circulating, so both are on the statement (GEODNET)
-        disc_m = ("unlock_release_tokens" if pre and rel_m == "pool_release_tokens" and config.mining_wallets(name)
-                  and config.has_unlock_leg(name) else None)
-        if disc_m:
-            ret_m = "issuer_return_tokens" if (name, "issuer_return_tokens") in groups else None
-        legs = [("+ minted", mint_m, 1), (rel_lab, rel_m, 1),
-                *([("+ released from the other issuer wallets (e)", disc_m, 1)] if disc_m else []),
-                ("− returned to issuer-side wallets", ret_m, -1), ("− burned", burn_m, -1)]
-        # a project whose supply enters circulating by named legs measured over the whole window (config
-        # FLOW_RELEASE_LEGS; Hyperliquid since the ledger replay, fix round 3 B1) reads them instead of the pool release
-        if config.FLOW_RELEASE_LEGS.get(name):
-            fl = config.FLOW_RELEASE_LEGS[name]
-            ret_m = "issuer_return_tokens" if (name, "issuer_return_tokens") in groups else None
-            legs = [("+ minted", mint_m, 1), *[(lab, m, 1) for lab, m in fl],
-                    ("− returned to issuer-side wallets", ret_m, -1), ("− burned", burn_m, -1)]
-        # PR4E.1 (Jake's 11-13 run: Morpho's residual positive in every quarter, Q-3 +0.97%): claims out of a
-        # distributor inside the non-circulating set leave the set and enter circulating, but (e) is formed net of them
-        # (they are (b), PR4.1) — so they are their own "+" line, the amount actually netted out of (e) each day
-        if rel_m == "unlock_release_tokens" and (name, "unlock_release_tokens") in UNLOCK_LESS_TAKEN:
-            at = next(i for i, (_l, m, _s) in enumerate(legs) if m == "unlock_release_tokens") + 1
-            # R5.1: a project's own words for the line (Pendle: the gauge funding), else the distributors' claims
-            fl = config.flow_less_line(name) or {}
-            legs.insert(at, (fl.get("label", FLOW_CLAIMS_LABEL), fl.get("series", FLOW_CLAIMS_LEG), 1))
-        if _rule_flow(name):
-            # R9.2 (the rule): a release from a wallet the rule counts IN circulating does not change circulating — it
-            # dilutes the FLOAT (the unlock legs keep counting it, R9.3). What moves circulating is what is minted,
-            # what is released from wallets still OUTSIDE it (declared: `flow_outside`), and what is burned.
-            rs = config.RULE_IN[name]
-            legs = [("+ minted", mint_m, 1),
-                    *[(x[0], x[1], 1) for x in rs.get("flow_in") or ()],
-                    *[(x[0], x[1], 1) for x in rs.get("flow_outside") or ()],
-                    # R13: a project whose supply burn is a declared series of its own (Aerodrome from the migration:
-                    # the Foundation's burned buyback — the only burn of the new token so far) reads it here
-                    ("− burned", rs["flow_burn"] if (name, rs.get("flow_burn")) in groups else burn_m, -1),
-                    # R17: what else left the supply (Aerodrome: AERO a Foundation wallet destroyed that was not bought)
-                    *[(x[0], x[1], -1) for x in rs.get("flow_destroyed") or () if (name, x[1]) in groups]]
-            # (R10.A1d: a leg declared a one-off EVENT — config RULE_IN[...]["_flow_events"] — reads 0 on a day with no row)
         note_tok = {"Sky": "MKR -> SKY conversions (converter 0xA1Ea1bA1…) enter circulating with NO series — NOT WIRED "
                            "(149.6M SKY in the 90 days to 2026-10-12, research of 2026-10-13); they are not dilution "
                            "(SPEC.md section 12, item 7) and show here as residual",
@@ -17163,7 +17225,7 @@ def _flows_one_off_note(row: dict) -> str:
     return ("ONE-OFF (PR1.U3): " + "; ".join(out)) if out else ""
 
 
-def write_flows(wb, rows: list[dict]) -> None:
+def write_flows(wb, rows: list[dict], asof=None) -> None:
     ws = wb.create_sheet(FLOWS_SHEET, index=wb.sheetnames.index("CP Comparability") + 1)
     _title(ws, "Flows — token-flow and value-flow statements per project per quarter",
            "Token flow: opening circulating + minted + released − returned − burned = expected closing, against the closing "
@@ -17173,6 +17235,7 @@ def write_flows(wb, rows: list[dict]) -> None:
            "90-day blocks. Values computed at build from the views every tab reads (SPEC.md section 8).")
     hr = 4
     _header(ws, hr, FLOWS_HEAD)
+    rows = _with_float_rows(rows, asof)  # R20: on the sheet only — FLOWS_ROWS (wiring, coverage, the blocks) is unchanged
     for i, row in enumerate(rows, start=hr + 1):
         onote = _flows_one_off_note(row)
         if onote:
@@ -17190,6 +17253,60 @@ def write_flows(wb, rows: list[dict]) -> None:
     ws.freeze_panes = ws.cell(row=hr + 1, column=4)
     for col, w in zip("ABCDEFGHIJK", (14, 12, 40, 16, 16, 16, 16, 16, 7, 40, 60)):
         ws.column_dimensions[col].width = w
+    _write_float_blocks(ws, hr + 1 + len(rows) + 2, asof)
+
+
+FLOAT_ROWS: list = []             # R20: the Flows sheet's "Free float" statement rows of this build (free_float.statements)
+
+
+def _with_float_rows(rows: list[dict], asof=None) -> list[dict]:
+    """R20: each project's "Free float" statement right after its own circulating / value statements (the float rows
+    are free_float.statements over this build's views); a project with no statement of its own keeps its float rows at
+    the end. Existing rows keep their order."""
+    FLOAT_ROWS.clear()
+    if asof is None:
+        return rows
+    FLOAT_ROWS[:] = free_float.statements(_LAST_GROUPS, asof)
+    by = {}
+    for f in FLOAT_ROWS:
+        by.setdefault(f["Project"], []).append(f)
+    out = []
+    for i, row in enumerate(rows):
+        out.append(row)
+        nxt = rows[i + 1]["Project"] if i + 1 < len(rows) else None
+        if nxt != row["Project"] and row["Project"] in by:
+            out.extend(by.pop(row["Project"]))
+    for rest in by.values():
+        out.extend(rest)
+    return out
+
+
+def _write_float_blocks(ws, r0: int, asof=None) -> None:
+    """R20: under the statements, the free float's WEEKLY view (config.FLOAT_WEEKS trailing weeks) and DAILY view (the
+    last config.FLOAT_DAILY_DAYS days) per project — each row the sum of its days, with the daily identity's residual
+    and its flag (free_float.period_table)."""
+    if asof is None or not free_float.MOVES:
+        return
+    r = r0
+    for title, days, n in ((f"Free float — WEEKLY movements (the last {config.FLOAT_WEEKS} weeks; each row = the sum of "
+                            "its days)", 7, config.FLOAT_WEEKS),
+                           (f"Free float — DAILY movements (the last {config.FLOAT_DAILY_DAYS} days): yesterday's float "
+                            "+ movements = today's float; a residual beyond ±0.5% is flagged with its cause", 1,
+                            config.FLOAT_DAILY_DAYS)):
+        ws.cell(row=r, column=1, value=title).font = Font(bold=True)
+        _header(ws, r + 1, free_float.BLOCK_HEAD)
+        r += 2
+        for p in scoped_projects():
+            for line in free_float.period_table(p["name"], _LAST_GROUPS, asof, days, n):
+                for j, v in enumerate(line, start=1):
+                    c = ws.cell(row=r, column=j, value=v)
+                    num = isinstance(v, (int, float)) and not isinstance(v, bool)
+                    _style(c, "calc", (FMT_PCT if free_float.BLOCK_HEAD[j - 1] == "Residual ÷ opening" else FMT_NUM)
+                           if num else FMT_TEXT)
+                    if isinstance(v, str) and v.startswith("FLAG"):
+                        c.fill = FILL_AMBER
+                r += 1
+        r += 2
 
 
 # ===== PR1.S12 (Jake 2026-11-05): THE FLOWS RECONCILIATION BLOCKS. =====
@@ -17785,7 +17902,7 @@ def build_workbook(store, path: Path | str, run_id: str | None = None,
         _axis_row(_ws)
     with wiring.phase("shown"):
         FLOWS_ROWS[:] = flow_statements(_LAST_GROUPS, asof)          # alignment C11: the Flows tab
-        write_flows(wb, FLOWS_ROWS)
+        write_flows(wb, FLOWS_ROWS, asof)
     # PR1.S12: an unexplained Q0 residual beyond tolerance takes the project's statement cells off green (and, in the
     # reader, out of the ranks) — before Coverage reads the fills
     FLOW_BLOCKS.clear()

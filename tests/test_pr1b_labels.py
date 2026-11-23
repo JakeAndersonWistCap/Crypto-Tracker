@@ -163,7 +163,7 @@ AUDIT_CELLS = [  # (sheet, header, shown, without) — Jake's numbers where the 
     ("A4 Permanent Burn", "Unlock dilution, annualised % of free float", "11.26%", "3.29%"),
     ("A4 Permanent Burn", "TOTAL DILUTION = emissions + unlocks", "11.26%", "3.29%"),
     ("CP Comparability", "Unlocks Q0 (tokens)", "17,316,997", "5,059,637"),
-    ("CP Comparability", "TOTAL DILUTION = outflows a+b+c+d+e+f (annualised) ÷ tradeable float", "11.26%", "3.29%"),
+    ("CP Comparability", "TOTAL DILUTION = outflows a+b+c+d+e+f (annualised) ÷ free float", "11.26%", "3.29%"),
     # R9.2 (the rule, Jake 2026-11-17): circulating counts the Timelock (off the float) — the two cells over circulating
     # / market cap read the same tokens over a larger base (were 11.26% / 3.29% and -8.80% / -0.82%); every cell over
     # the float is unchanged

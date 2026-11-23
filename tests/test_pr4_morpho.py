@@ -169,10 +169,10 @@ def test_1_on_the_dumps_circulating_is_total_less_the_dao_pending_and_the_float_
     878.8M (was 574.8M with the DAO out); the DAO (304.0M) and the released entities (148.7M) leave the float, which
     does not move: 426.05M."""
     circ = _cell(morpho, "Circulating supply (tokens)")
-    flt = _cell(morpho, "TRADEABLE FLOAT")
+    flt = _cell(morpho, "FREE FLOAT (tokens)")
     assert circ == pytest.approx(1_000_000_000 - 121_200_000, abs=1)
     assert flt == pytest.approx(547_252_376.94 - 121_200_000, abs=1)
-    assert _cell(morpho, "Tradeable float ÷ circulating") == pytest.approx(flt / circ, rel=1e-9)
+    assert _cell(morpho, "Free float ÷ circulating") == pytest.approx(flt / circ, rel=1e-9)
     assert morpho["reader|A2 Coordination|Free float (tokens)"] == pytest.approx(426_052_377, abs=1)
     assert morpho["reader|A2 Coordination|Circulating supply"] == pytest.approx(878_800_000, abs=1)
     # R13: the note is formed on THIS build's switch state, taken from the build's record (was: the live module's,

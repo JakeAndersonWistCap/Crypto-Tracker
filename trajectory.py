@@ -452,6 +452,15 @@ def _inputs(project: str, metric: str, groups: dict) -> tuple:
                                  *(spec.get("add") or ())) if x)
     if metric == "circulating_supply_lockup_rule":
         return ("total_supply", "near_lockup_locked_tokens", "near_foundation_accounts_tokens")
+    if metric == getattr(config, "FREE_FLOAT_METRIC", "free_float_tokens") and project in config.PROJECT_BY_NAME:
+        # R20: the one free float is followed to the series it is formed from (free_float.parts), as the cell's own
+        # formula was when it named them — so a float on a MODELLED leg, or across a declared break of an input, says so
+        import free_float                                                # noqa: PLC0415
+        sp = free_float.parts(config.PROJECT_BY_NAME[project])
+        if isinstance(sp, str):
+            return ("circulating_supply_used",)
+        return ("circulating_supply_used", *sp["lock"]["add"], *sp["lock"]["less"], *sp["issuer"], *sp["held"]["add"],
+                *sp["held"]["less"])
     if metric == "rule_in_off_float_tokens" and (config.RULE_IN.get(project) or {}).get("modelled_legs"):
         # R14.1b: a MODELLED off-float leg (Ether.fi's unvested team tokens) is followed, so every float on it reads
         # MODELLED; only the declared modelled legs (a project without one is unchanged)

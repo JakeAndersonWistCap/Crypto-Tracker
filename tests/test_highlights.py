@@ -265,9 +265,10 @@ def make_reader(over: dict | None = None, drop: tuple = ()) -> openpyxl.Workbook
     ws = wb[reader.A4_TAB]
     ws["D5"].number_format = reader.FMT_PCT
     cm = ["Project", "Token", "Primary archetype", "Holder value yield", "Total dilution, % of float", "Net holder yield",
-          "Subsidy cover (x)", "Lock rate, % of circulating"]
-    C = sheet(reader.COMPARISON, cm, [(n, n[:3].upper(), d["sec"], d["hvy"], d["dil"], d["nhy"], d["cover"], d["lock"])
-                                      for n, d in data.items()])
+          "Subsidy cover (x)", "Lock rate, % of circulating",
+          "Dilution, % of market cap"]              # R20: C3 quotes the dilution on net holder yield's base
+    C = sheet(reader.COMPARISON, cm, [(n, n[:3].upper(), d["sec"], d["hvy"], d["dil"], d["nhy"], d["cover"], d["lock"],
+                                       d["dil"]) for n, d in data.items()])
     for r in range(5, C.max_row + 1):
         for c, f in ((4, reader.FMT_PCT), (5, reader.FMT_PCT), (6, reader.FMT_PCT), (7, reader.FMT_X), (8, reader.FMT_PCT)):
             C.cell(r, c).number_format = f

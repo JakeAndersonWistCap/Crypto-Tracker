@@ -20,11 +20,13 @@ from openpyxl.utils import get_column_letter
 
 SHEET = "Leaderboard"
 HEADER_ROW = 4
-HEADERS = ("Rank", "Project", "Key metric", "Holder value yield", "Total dilution, % of float", "Net holder yield",
+# R20 (Jake 2026-11-24): the dilution beside net holder yield is on its base (÷ market cap). Was: "Total dilution, % of
+# float" — holder value yield (÷ market cap) − dilution (÷ float) did not give the net shown beside them.
+HEADERS = ("Rank", "Project", "Key metric", "Holder value yield", "Dilution, % of market cap", "Net holder yield",
            "Confidence (share green)", "Freeze date", "As-of date", "In one line")
 # leaderboard column -> the Summary header it quotes
 QUOTES = {"Key metric": "Archetype key", "Holder value yield": "Holder value yield",
-          "Total dilution, % of float": "Total dilution, % of float", "Net holder yield": "Net holder yield",
+          "Dilution, % of market cap": "Dilution, % of market cap", "Net holder yield": "Net holder yield",
           "Confidence (share green)": "Confidence (share green)"}
 WIDTHS = (11, 16, 16, 14, 14, 14, 14, 12, 12, 118)
 PROVISIONAL = "provisional"
@@ -45,11 +47,11 @@ def line_for(project: str, vals: dict, *, frozen: bool, rank, key_label: str, pa
     hvy, dil, nhy, conf = (vals.get(h) for h in HEADERS[3:7])
     parts = []
     if _num(hvy) and _num(dil):
-        parts.append(f"returns {_pct(hvy)} a year to holders and dilutes the float by {_pct(dil)} a year")
+        parts.append(f"returns {_pct(hvy)} of market cap a year to holders and dilutes them by {_pct(dil)} of market cap a year")
     elif _num(hvy):
         parts.append(f"returns {_pct(hvy)} a year to holders; its dilution is not measured ({dil})")
     elif _num(dil):
-        parts.append(f"dilutes the float by {_pct(dil)} a year; its holder value yield is not measured ({hvy})")
+        parts.append(f"dilutes holders by {_pct(dil)} of market cap a year; its holder value yield is not measured ({hvy})")
     else:
         parts.append(f"has neither holder value yield ({hvy}) nor dilution ({dil}) measured")
     if _num(nhy):

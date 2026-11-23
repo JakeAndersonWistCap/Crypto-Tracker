@@ -112,7 +112,7 @@ def test_r1_staked_is_zero_float_is_circulating_dilution_and_lock_rate_are_numbe
     assert _num(staked) and staked == 0, staked
     assert "measured zero" in comment and words in comment, comment
     circ, _ = _cell(built, "audit", CP, name, "Circulating supply (tokens)")
-    flt, _ = _cell(built, "audit", CP, name, "TRADEABLE FLOAT")
+    flt, _ = _cell(built, "audit", CP, name, "FREE FLOAT (tokens)")
     # R9.2 (the rule): the treasury / issuer wallets are IN circulating and OFF the float — the float stays what
     # circulating was before the rule (nothing staked), and circulating is above it by exactly those wallets
     was = {"Uniswap": 612_409_760.0, "Fluid": 77_971_195.0}[name]

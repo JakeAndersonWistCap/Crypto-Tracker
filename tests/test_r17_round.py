@@ -159,7 +159,8 @@ def _summary(rows):
     wb = openpyxl.Workbook()
     ws = wb.active
     ws.title = "Summary"
-    heads = ["Project", "Archetype key", "Rank in archetype", "Holder value yield", "Total dilution, % of float",
+    # R20: the Leaderboard quotes "Dilution, % of market cap" (was "Total dilution, % of float")
+    heads = ["Project", "Archetype key", "Rank in archetype", "Holder value yield", "Dilution, % of market cap",
              "Net holder yield", "Confidence (share green)"]
     for i, h in enumerate(heads, 1):
         ws.cell(4, i, h)

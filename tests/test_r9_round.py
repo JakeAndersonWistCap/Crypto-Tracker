@@ -74,7 +74,8 @@ def test_2_a_rule_in_leg_is_not_subtracted_and_comes_off_the_float_once(monkeypa
             return f"D[{m}]"
     p = {"name": "Testco"}
     assert bw._released_held(R(), 5, p) == "D[rule_in_off_float_tokens]"
-    assert "D[rule_in_off_float_tokens]" in bw._effective_float_held(R(), 5, p)
+    # R20: A3's own "effective float" term is gone; the rule's stock is the one float's issuer component
+    assert bw._free_float(R(), 5, p) == f"IF(ISNUMBER(D[free_float_tokens]),D[free_float_tokens],{bw.NA})"
     # float = (total − burn) − lock − treasury: what it was when the treasury was out of circulating
     assert 900.0 - 0.0 - 250.0 == 1000.0 - 100.0 - 250.0 - 0.0
 
