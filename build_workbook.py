@@ -7477,8 +7477,25 @@ def _foundation_burn_views(groups: dict) -> None:
         raw = _ser_of(groups, name, bl["metric"])
         raw = raw[raw.index >= start] if raw is not None else None
         if raw is not None and not raw.empty:
-            ok, extra = foundation_burn_split(_daily(groups.get((name, fb["flow"]))), raw)
+            # R17: only what was bought SINCE the purchase-day basis can be the stake that is burned (earlier
+            # purchases sit in the legacy locks) — the 10,000,000 AERO minted to the buyer Safe on 2026-11-19 and
+            # burned on 11-20 is a burned buyback only up to those purchases; the rest is destroyed, not bought.
+            # Was: every purchase since the programme began was room, so held read 10M below zero on that day
+            bought = _daily(groups.get((name, fb["flow"])))
+            since = (fb.get("purchase_day_basis") or {}).get("from")
+            if since:
+                bought = bought[bought.index >= pd.Timestamp(since)]
+            ok, extra = foundation_burn_split(bought, raw)
             other = _ser_of(groups, name, bl.get("other_metric") or "")
+            if bl.get("other_metric"):
+                # R17: EVERY AERO a Foundation wallet destroyed that is not a burned buyback, as one series — not its
+                # own stake (stored) + its own stake beyond what was bought (the split's remainder): what the
+                # token-flow statement subtracts beside the burned buyback, so the supply's fall is explained in full
+                tot = extra.add(other[other.index >= start] if other is not None else 0.0, fill_value=0.0)
+                groups[(name, bl["other_metric"])] = _as_stored(pd.DataFrame(
+                    {"date": tot.index, "project": name, "metric": bl["other_metric"], "value": tot.values, "tier": 2,
+                     "source": "derived:foundation_destroyed_not_bought[not its own stake + own stake beyond the "
+                               "purchases since the basis]"}), cols)
             info.update({"burned": float(ok.sum()), "not_bought": float(extra.sum()),
                          "other": float(other[other.index >= start].sum()) if other is not None else None,
                          "days": int(len(ok)), "burn_days": [d for d, v in ok.items() if v > 0]})
@@ -13875,9 +13892,10 @@ def _revenue_line_cols(R: Refs) -> list[tuple]:
 # OUTFLOW_CATEGORIES); holder value funding-aware (config HOLDER_VALUE); attributes from phase2_attributes.json.
 CP_FLOAT_HEAD = ("TRADEABLE FLOAT = circulating − staked/locked − protocol/treasury-held (tokens) — protocol/treasury-"
                  "held is already out of circulating by the convention, so this is A2's free float")
+# R17 (Jake 2026-11-23): ÷ the average market cap over the window. Was: "... (annualised) ÷ market cap — treasury- ..."
 CP_HVY_HEAD = ("HOLDER VALUE YIELD = revenue-funded $ retired + $ distributed + liquid bribes to voters (annualised) ÷ "
-               "market cap — treasury- or emissions-funded buybacks are NOT credited (LITMUS A); fee-market burns are on "
-               "A1 net issuance")
+               "average market cap over the window — treasury- or emissions-funded buybacks are NOT credited (LITMUS "
+               "A); fee-market burns are on A1 net issuance")
 # R16 (Jake 2026-11-20): the header names (f) and the average market cap over the window. Was: "... (outflows a+b+c+d+e at
 # each day's price, annualised) ÷ market cap"
 CP_NHY_HEAD = ("NET HOLDER YIELD = holder value yield − dilution (outflows a+b+c+d+e+f at each day's price, annualised) ÷ "
@@ -14313,9 +14331,15 @@ def _cp_cols(R: Refs, data_by_key: dict) -> list[tuple]:
     def hv_has(p):
         return "holder_value_revenue_usd" in config.metrics_for_project(p)
 
+    # R17 (Jake 2026-11-23): holder value yield and its two siblings divide by the AVERAGE market cap over their own
+    # window (market_cap_usd's Q0 mean), as net holder yield does since R16 — each day's $ over each day's value. Was:
+    # ÷ today's market cap (mc)
+    mca = lambda r: R.D(r, "market_cap_usd", "q0")  # noqa: E731
+
     def hvy_expr(r, p):
         v = R.D(r, "holder_value_revenue_usd", "q0")
-        return f"IF(AND(ISNUMBER({v}),ISNUMBER({mc(r)})),{_annualise(R, r, p, 'holder_value_revenue_usd', v)}/{mc(r)},{NA})"
+        return (f"IF(AND(ISNUMBER({v}),ISNUMBER({mca(r)})),"
+                f"{_annualise(R, r, p, 'holder_value_revenue_usd', v)}/{mca(r)},{NA})")
 
     def no_hv(p):
         """Why there is no holder value figure. P3-1a: a project whose route was set to 'none' because a real mechanism
@@ -14334,14 +14358,14 @@ def _cp_cols(R: Refs, data_by_key: dict) -> list[tuple]:
             return ""
         v = R.D(r, "holder_value_fees_only_usd", "q0")
         return _coverage_guard(R, r, [("holder value, fees only", "holder_value_fees_only_usd", "q0")],
-                               f"IF(AND(ISNUMBER({v}),ISNUMBER({mc(r)})),"
-                               f"{_annualise(R, r, p, 'holder_value_fees_only_usd', v)}/{mc(r)},{NA})")
+                               f"IF(AND(ISNUMBER({v}),ISNUMBER({mca(r)})),"
+                               f"{_annualise(R, r, p, 'holder_value_fees_only_usd', v)}/{mca(r)},{NA})")
 
     def hv_other(r, p):
         if "holder_value_other_usd" not in config.metrics_for_project(p):
             return ""
         v = R.D(r, "holder_value_other_usd", "q0")
-        return calc(f"IF(ISNUMBER({v}),{_annualise(R, r, p, 'holder_value_other_usd', v)}/{mc(r)},0)")
+        return calc(f"IF(ISNUMBER({v}),{_annualise(R, r, p, 'holder_value_other_usd', v)}/{mca(r)},0)")
 
     def nhy(r, p):
         if not hv_has(p):
@@ -14687,7 +14711,8 @@ def _cp_cols(R: Refs, data_by_key: dict) -> list[tuple]:
         (CP_HVY_HEAD, hvy, FMT_PCT, "calc", True, {"metric": "holder_value_revenue_usd", "note_fn": lambda p: _holder_value_note(p)}),
         ("Holder value yield — fees only (where liquid bribes are credited: Aerodrome, decision 4)", hv_fees_only,
          FMT_PCT, "calc"),
-        ("Holder value RECORDED, NOT CREDITED (treasury / emissions-funded) ÷ market cap", hv_other, FMT_PCT, "calc"),
+        ("Holder value RECORDED, NOT CREDITED (treasury / emissions-funded) ÷ average market cap over the window",
+         hv_other, FMT_PCT, "calc"),
         ("Holder value funding by period (config HOLDER_VALUE)", lambda r, p: funding_text(p), FMT_TEXT, "text"),
         (CP_NHY_HEAD, nhy, FMT_PCT, "calc", True, {"metric": "holder_value_revenue_usd", "note_fn": lambda p: "\n\n".join(
             x for x in (_holder_value_note(p), one_off_dilution_note(p), lag_matched_note(p), as_published_note(p))
@@ -16570,7 +16595,9 @@ def flow_statements(groups: dict, asof) -> list[dict]:
                     *[(x[0], x[1], 1) for x in rs.get("flow_outside") or ()],
                     # R13: a project whose supply burn is a declared series of its own (Aerodrome from the migration:
                     # the Foundation's burned buyback — the only burn of the new token so far) reads it here
-                    ("− burned", rs["flow_burn"] if (name, rs.get("flow_burn")) in groups else burn_m, -1)]
+                    ("− burned", rs["flow_burn"] if (name, rs.get("flow_burn")) in groups else burn_m, -1),
+                    # R17: what else left the supply (Aerodrome: AERO a Foundation wallet destroyed that was not bought)
+                    *[(x[0], x[1], -1) for x in rs.get("flow_destroyed") or () if (name, x[1]) in groups]]
             # (R10.A1d: a leg declared a one-off EVENT — config RULE_IN[...]["_flow_events"] — reads 0 on a day with no row)
         note_tok = {"Sky": "MKR -> SKY conversions (converter 0xA1Ea1bA1…) enter circulating with NO series — NOT WIRED "
                            "(149.6M SKY in the 90 days to 2026-10-12, research of 2026-10-13); they are not dilution "

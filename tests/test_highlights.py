@@ -826,7 +826,9 @@ def test_apply_layout_adds_highlights_first_then_the_look(monkeypatch):
     fake = types.SimpleNamespace(apply_look=lambda w: calls.append(w.sheetnames[0]))
     monkeypatch.setitem(sys.modules, "reader_look", fake)
     out = reader_layout.apply_layout(wb, None)
-    assert calls == ["Highlights"] and "applied" in out["look"]       # called after the tab is added
+    # R17.D (Jake 2026-11-23): the Leaderboard is the first sheet, Highlights the second
+    # (was: assert calls == ["Highlights"])
+    assert calls == ["Leaderboard"] and wb.sheetnames[1] == "Highlights" and "applied" in out["look"]
     assert out["floor_met"] is True and out["cards"] == out["rendered"]
     assert any("applied" in ln for ln in reader_layout.report_lines("x"))
 
@@ -837,7 +839,8 @@ def test_apply_layout_below_the_floor_keeps_the_tab_with_the_statement(monkeypat
     monkeypatch.setattr(reader_layout, "MIN_CARDS", 9)
     out = reader_layout.apply_layout(wb, None)
     assert out["floor_met"] is False and out["cards"] == [] and "C5" not in out["rendered"]
-    assert wb.sheetnames[0] == "Highlights" and wb["Highlights"]["A3"].value == H.FLOOR_NOTE
+    # R17.D: Highlights is the second sheet, after the Leaderboard (was: wb.sheetnames[0] == "Highlights")
+    assert wb.sheetnames[:2] == ["Leaderboard", "Highlights"] and wb["Highlights"]["A3"].value == H.FLOOR_NOTE
     assert any("FLOOR NOT MET" in ln for ln in reader_layout.report_lines("x"))
 
 

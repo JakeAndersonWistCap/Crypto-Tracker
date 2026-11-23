@@ -1,0 +1,372 @@
+{
+"Aerodrome": {
+"audit|CP Comparability|HOLDER VALUE YIELD = revenue-funded $ retired + $ distributed + liquid bribes to voters (annualised) ÷ average market cap over the window — treasury- or emissions-funded buybacks are NOT credited (LITMUS A); fee-market burns are on A1 net issuance": [
+{
+"date": "2026-11-23",
+"from": "<absent>",
+"to": 0.100678985,
+"why": "R17.A3 (Jake 2026-11-23): a declared label change — the holder value yield header (and its 'recorded, not credited' sibling) ends '÷ average market cap over the window'; the figure is carried under the new name, on the new denominator"
+}
+],
+"audit|CP Comparability|HOLDER VALUE YIELD = revenue-funded $ retired + $ distributed + liquid bribes to voters (annualised) ÷ market cap — treasury- or emissions-funded buybacks are NOT credited (LITMUS A); fee-market burns are on A1 net issuance": [
+{
+"date": "2026-11-23",
+"from": 0.0619229907,
+"to": "<absent>",
+"why": "R17.A3 (Jake 2026-11-23): a declared label change — the holder value yield header (and its 'recorded, not credited' sibling) ends '÷ average market cap over the window'; the figure is carried under the new name, on the new denominator"
+}
+],
+"audit|CP Comparability|Holder value RECORDED, NOT CREDITED (treasury / emissions-funded) ÷ average market cap over the window": [
+{
+"date": "2026-11-23",
+"from": "<absent>",
+"to": 0.00263357195,
+"why": "R17.A3 (Jake 2026-11-23): a declared label change — the holder value yield header (and its 'recorded, not credited' sibling) ends '÷ average market cap over the window'; the figure is carried under the new name, on the new denominator"
+}
+],
+"audit|CP Comparability|Holder value RECORDED, NOT CREDITED (treasury / emissions-funded) ÷ market cap": [
+{
+"date": "2026-11-23",
+"from": 0.0016197884,
+"to": "<absent>",
+"why": "R17.A3 (Jake 2026-11-23): a declared label change — the holder value yield header (and its 'recorded, not credited' sibling) ends '÷ average market cap over the window'; the figure is carried under the new name, on the new denominator"
+}
+],
+"audit|CP Comparability|Holder value yield — fees only (where liquid bribes are credited: Aerodrome, decision 4)": [
+{
+"date": "2026-11-23",
+"from": 0.0564412491,
+"to": 0.0917663631,
+"why": "R17.A3 (Jake 2026-11-23): holder value yield divides by the AVERAGE market cap over its own window (each day's $ over each day's value), the same as net holder yield since R16.3; was today's market cap"
+}
+],
+"reader|A3 Revenue Buyback|Holder value yield": [
+{
+"date": "2026-11-23",
+"from": 0.0619229907,
+"to": 0.100678985,
+"why": "R17.A3 (Jake 2026-11-23): holder value yield divides by the AVERAGE market cap over its own window (each day's $ over each day's value), the same as net holder yield since R16.3; was today's market cap"
+}
+],
+"reader|Comparison|Holder value yield": [
+{
+"date": "2026-11-23",
+"from": 0.0619229907,
+"to": 0.100678985,
+"why": "R17.A3 (Jake 2026-11-23): holder value yield divides by the AVERAGE market cap over its own window (each day's $ over each day's value), the same as net holder yield since R16.3; was today's market cap"
+}
+],
+"reader|Summary|Holder value yield": [
+{
+"date": "2026-11-23",
+"from": 0.0619229907,
+"to": 0.100678985,
+"why": "R17.A3 (Jake 2026-11-23): holder value yield divides by the AVERAGE market cap over its own window (each day's $ over each day's value), the same as net holder yield since R16.3; was today's market cap"
+}
+]
+},
+"Ether.fi": {
+"audit|CP Comparability|HOLDER VALUE YIELD = revenue-funded $ retired + $ distributed + liquid bribes to voters (annualised) ÷ average market cap over the window — treasury- or emissions-funded buybacks are NOT credited (LITMUS A); fee-market burns are on A1 net issuance": [
+{
+"date": "2026-11-23",
+"from": "<absent>",
+"to": 0.0,
+"why": "R17.A3 (Jake 2026-11-23): a declared label change — the holder value yield header (and its 'recorded, not credited' sibling) ends '÷ average market cap over the window'; the figure is carried under the new name, on the new denominator"
+}
+],
+"audit|CP Comparability|HOLDER VALUE YIELD = revenue-funded $ retired + $ distributed + liquid bribes to voters (annualised) ÷ market cap — treasury- or emissions-funded buybacks are NOT credited (LITMUS A); fee-market burns are on A1 net issuance": [
+{
+"date": "2026-11-23",
+"from": 0.0,
+"to": "<absent>",
+"why": "R17.A3 (Jake 2026-11-23): a declared label change — the holder value yield header (and its 'recorded, not credited' sibling) ends '÷ average market cap over the window'; the figure is carried under the new name, on the new denominator"
+}
+],
+"audit|CP Comparability|Holder value RECORDED, NOT CREDITED (treasury / emissions-funded) ÷ average market cap over the window": [
+{
+"date": "2026-11-23",
+"from": "<absent>",
+"to": 0.00203312581,
+"why": "R17.A3 (Jake 2026-11-23): a declared label change — the holder value yield header (and its 'recorded, not credited' sibling) ends '÷ average market cap over the window'; the figure is carried under the new name, on the new denominator"
+}
+],
+"audit|CP Comparability|Holder value RECORDED, NOT CREDITED (treasury / emissions-funded) ÷ market cap": [
+{
+"date": "2026-11-23",
+"from": 0.00165575399,
+"to": "<absent>",
+"why": "R17.A3 (Jake 2026-11-23): a declared label change — the holder value yield header (and its 'recorded, not credited' sibling) ends '÷ average market cap over the window'; the figure is carried under the new name, on the new denominator"
+}
+]
+},
+"Fluid": {
+"audit|CP Comparability|HOLDER VALUE YIELD = revenue-funded $ retired + $ distributed + liquid bribes to voters (annualised) ÷ average market cap over the window — treasury- or emissions-funded buybacks are NOT credited (LITMUS A); fee-market burns are on A1 net issuance": [
+{
+"date": "2026-11-23",
+"from": "<absent>",
+"to": 0.0,
+"why": "R17.A3 (Jake 2026-11-23): a declared label change — the holder value yield header (and its 'recorded, not credited' sibling) ends '÷ average market cap over the window'; the figure is carried under the new name, on the new denominator"
+}
+],
+"audit|CP Comparability|HOLDER VALUE YIELD = revenue-funded $ retired + $ distributed + liquid bribes to voters (annualised) ÷ market cap — treasury- or emissions-funded buybacks are NOT credited (LITMUS A); fee-market burns are on A1 net issuance": [
+{
+"date": "2026-11-23",
+"from": 0.0,
+"to": "<absent>",
+"why": "R17.A3 (Jake 2026-11-23): a declared label change — the holder value yield header (and its 'recorded, not credited' sibling) ends '÷ average market cap over the window'; the figure is carried under the new name, on the new denominator"
+}
+]
+},
+"Hyperliquid": {
+"audit|CP Comparability|HOLDER VALUE YIELD = revenue-funded $ retired + $ distributed + liquid bribes to voters (annualised) ÷ average market cap over the window — treasury- or emissions-funded buybacks are NOT credited (LITMUS A); fee-market burns are on A1 net issuance": [
+{
+"date": "2026-11-23",
+"from": "<absent>",
+"to": 0.0155918832,
+"why": "R17.A3 (Jake 2026-11-23): a declared label change — the holder value yield header (and its 'recorded, not credited' sibling) ends '÷ average market cap over the window'; the figure is carried under the new name, on the new denominator"
+}
+],
+"audit|CP Comparability|HOLDER VALUE YIELD = revenue-funded $ retired + $ distributed + liquid bribes to voters (annualised) ÷ market cap — treasury- or emissions-funded buybacks are NOT credited (LITMUS A); fee-market burns are on A1 net issuance": [
+{
+"date": "2026-11-23",
+"from": 0.0169114779,
+"to": "<absent>",
+"why": "R17.A3 (Jake 2026-11-23): a declared label change — the holder value yield header (and its 'recorded, not credited' sibling) ends '÷ average market cap over the window'; the figure is carried under the new name, on the new denominator"
+}
+],
+"reader|A3 Revenue Buyback|Holder value yield": [
+{
+"date": "2026-11-23",
+"from": 0.0169114779,
+"to": 0.0155918832,
+"why": "R17.A3 (Jake 2026-11-23): holder value yield divides by the AVERAGE market cap over its own window (each day's $ over each day's value), the same as net holder yield since R16.3; was today's market cap"
+}
+],
+"reader|Comparison|Holder value yield": [
+{
+"date": "2026-11-23",
+"from": 0.0169114779,
+"to": 0.0155918832,
+"why": "R17.A3 (Jake 2026-11-23): holder value yield divides by the AVERAGE market cap over its own window (each day's $ over each day's value), the same as net holder yield since R16.3; was today's market cap"
+}
+],
+"reader|Summary|Holder value yield": [
+{
+"date": "2026-11-23",
+"from": 0.0169114779,
+"to": 0.0155918832,
+"why": "R17.A3 (Jake 2026-11-23): holder value yield divides by the AVERAGE market cap over its own window (each day's $ over each day's value), the same as net holder yield since R16.3; was today's market cap"
+}
+]
+},
+"Maple": {
+"audit|CP Comparability|HOLDER VALUE YIELD = revenue-funded $ retired + $ distributed + liquid bribes to voters (annualised) ÷ average market cap over the window — treasury- or emissions-funded buybacks are NOT credited (LITMUS A); fee-market burns are on A1 net issuance": [
+{
+"date": "2026-11-23",
+"from": "<absent>",
+"to": 0.0107205979,
+"why": "R17.A3 (Jake 2026-11-23): a declared label change — the holder value yield header (and its 'recorded, not credited' sibling) ends '÷ average market cap over the window'; the figure is carried under the new name, on the new denominator"
+}
+],
+"audit|CP Comparability|HOLDER VALUE YIELD = revenue-funded $ retired + $ distributed + liquid bribes to voters (annualised) ÷ market cap — treasury- or emissions-funded buybacks are NOT credited (LITMUS A); fee-market burns are on A1 net issuance": [
+{
+"date": "2026-11-23",
+"from": 0.00854100677,
+"to": "<absent>",
+"why": "R17.A3 (Jake 2026-11-23): a declared label change — the holder value yield header (and its 'recorded, not credited' sibling) ends '÷ average market cap over the window'; the figure is carried under the new name, on the new denominator"
+}
+],
+"reader|A3 Revenue Buyback|Holder value yield": [
+{
+"date": "2026-11-23",
+"from": 0.00854100677,
+"to": 0.0107205979,
+"why": "R17.A3 (Jake 2026-11-23): holder value yield divides by the AVERAGE market cap over its own window (each day's $ over each day's value), the same as net holder yield since R16.3; was today's market cap"
+}
+],
+"reader|Comparison|Holder value yield": [
+{
+"date": "2026-11-23",
+"from": 0.00854100677,
+"to": 0.0107205979,
+"why": "R17.A3 (Jake 2026-11-23): holder value yield divides by the AVERAGE market cap over its own window (each day's $ over each day's value), the same as net holder yield since R16.3; was today's market cap"
+}
+],
+"reader|Summary|Holder value yield": [
+{
+"date": "2026-11-23",
+"from": 0.00854100677,
+"to": 0.0107205979,
+"why": "R17.A3 (Jake 2026-11-23): holder value yield divides by the AVERAGE market cap over its own window (each day's $ over each day's value), the same as net holder yield since R16.3; was today's market cap"
+}
+]
+},
+"Morpho": {
+"audit|CP Comparability|HOLDER VALUE YIELD = revenue-funded $ retired + $ distributed + liquid bribes to voters (annualised) ÷ average market cap over the window — treasury- or emissions-funded buybacks are NOT credited (LITMUS A); fee-market burns are on A1 net issuance": [
+{
+"date": "2026-11-23",
+"from": "<absent>",
+"to": 0.0,
+"why": "R17.A3 (Jake 2026-11-23): a declared label change — the holder value yield header (and its 'recorded, not credited' sibling) ends '÷ average market cap over the window'; the figure is carried under the new name, on the new denominator"
+}
+],
+"audit|CP Comparability|HOLDER VALUE YIELD = revenue-funded $ retired + $ distributed + liquid bribes to voters (annualised) ÷ market cap — treasury- or emissions-funded buybacks are NOT credited (LITMUS A); fee-market burns are on A1 net issuance": [
+{
+"date": "2026-11-23",
+"from": 0.0,
+"to": "<absent>",
+"why": "R17.A3 (Jake 2026-11-23): a declared label change — the holder value yield header (and its 'recorded, not credited' sibling) ends '÷ average market cap over the window'; the figure is carried under the new name, on the new denominator"
+}
+]
+},
+"Pendle": {
+"audit|CP Comparability|HOLDER VALUE YIELD = revenue-funded $ retired + $ distributed + liquid bribes to voters (annualised) ÷ average market cap over the window — treasury- or emissions-funded buybacks are NOT credited (LITMUS A); fee-market burns are on A1 net issuance": [
+{
+"date": "2026-11-23",
+"from": "<absent>",
+"to": 0.0107164739,
+"why": "R17.A3 (Jake 2026-11-23): a declared label change — the holder value yield header (and its 'recorded, not credited' sibling) ends '÷ average market cap over the window'; the figure is carried under the new name, on the new denominator"
+}
+],
+"audit|CP Comparability|HOLDER VALUE YIELD = revenue-funded $ retired + $ distributed + liquid bribes to voters (annualised) ÷ market cap — treasury- or emissions-funded buybacks are NOT credited (LITMUS A); fee-market burns are on A1 net issuance": [
+{
+"date": "2026-11-23",
+"from": 0.00942064071,
+"to": "<absent>",
+"why": "R17.A3 (Jake 2026-11-23): a declared label change — the holder value yield header (and its 'recorded, not credited' sibling) ends '÷ average market cap over the window'; the figure is carried under the new name, on the new denominator"
+}
+],
+"audit|CP Comparability|Trend — cp_hvy (arrow · QoQ · 4Q growth/yr · quarters improved; Trajectory tab)": [
+{
+"date": "2026-11-23",
+"from": "– · NEW since Q-2 · 0/1 improved · QoQ -37.6%",
+"to": "– · NEW since Q-2 · 0/1 improved · QoQ -31.8%",
+"why": "R17.A3 (Jake 2026-11-23): holder value yield divides by the AVERAGE market cap over its own window (each day's $ over each day's value), the same as net holder yield since R16.3; was today's market cap"
+}
+],
+"reader|A3 Revenue Buyback|Holder value yield": [
+{
+"date": "2026-11-23",
+"from": 0.00942064071,
+"to": 0.0107164739,
+"why": "R17.A3 (Jake 2026-11-23): holder value yield divides by the AVERAGE market cap over its own window (each day's $ over each day's value), the same as net holder yield since R16.3; was today's market cap"
+}
+],
+"reader|Comparison|Holder value yield": [
+{
+"date": "2026-11-23",
+"from": 0.00942064071,
+"to": 0.0107164739,
+"why": "R17.A3 (Jake 2026-11-23): holder value yield divides by the AVERAGE market cap over its own window (each day's $ over each day's value), the same as net holder yield since R16.3; was today's market cap"
+}
+],
+"reader|Summary|Holder value yield": [
+{
+"date": "2026-11-23",
+"from": 0.00942064071,
+"to": 0.0107164739,
+"why": "R17.A3 (Jake 2026-11-23): holder value yield divides by the AVERAGE market cap over its own window (each day's $ over each day's value), the same as net holder yield since R16.3; was today's market cap"
+}
+]
+},
+"Sky": {
+"audit|CP Comparability|HOLDER VALUE YIELD = revenue-funded $ retired + $ distributed + liquid bribes to voters (annualised) ÷ average market cap over the window — treasury- or emissions-funded buybacks are NOT credited (LITMUS A); fee-market burns are on A1 net issuance": [
+{
+"date": "2026-11-23",
+"from": "<absent>",
+"to": 0.0236487881,
+"why": "R17.A3 (Jake 2026-11-23): a declared label change — the holder value yield header (and its 'recorded, not credited' sibling) ends '÷ average market cap over the window'; the figure is carried under the new name, on the new denominator"
+}
+],
+"audit|CP Comparability|HOLDER VALUE YIELD = revenue-funded $ retired + $ distributed + liquid bribes to voters (annualised) ÷ market cap — treasury- or emissions-funded buybacks are NOT credited (LITMUS A); fee-market burns are on A1 net issuance": [
+{
+"date": "2026-11-23",
+"from": 0.0244349843,
+"to": "<absent>",
+"why": "R17.A3 (Jake 2026-11-23): a declared label change — the holder value yield header (and its 'recorded, not credited' sibling) ends '÷ average market cap over the window'; the figure is carried under the new name, on the new denominator"
+}
+],
+"reader|A3 Revenue Buyback|Holder value yield": [
+{
+"date": "2026-11-23",
+"from": 0.0244349843,
+"to": 0.0236487881,
+"why": "R17.A3 (Jake 2026-11-23): holder value yield divides by the AVERAGE market cap over its own window (each day's $ over each day's value), the same as net holder yield since R16.3; was today's market cap"
+}
+],
+"reader|Comparison|Holder value yield": [
+{
+"date": "2026-11-23",
+"from": 0.0244349843,
+"to": 0.0236487881,
+"why": "R17.A3 (Jake 2026-11-23): holder value yield divides by the AVERAGE market cap over its own window (each day's $ over each day's value), the same as net holder yield since R16.3; was today's market cap"
+}
+],
+"reader|Summary|Holder value yield": [
+{
+"date": "2026-11-23",
+"from": 0.0244349843,
+"to": 0.0236487881,
+"why": "R17.A3 (Jake 2026-11-23): holder value yield divides by the AVERAGE market cap over its own window (each day's $ over each day's value), the same as net holder yield since R16.3; was today's market cap"
+}
+]
+},
+"Uniswap": {
+"audit|CP Comparability|HOLDER VALUE YIELD = revenue-funded $ retired + $ distributed + liquid bribes to voters (annualised) ÷ average market cap over the window — treasury- or emissions-funded buybacks are NOT credited (LITMUS A); fee-market burns are on A1 net issuance": [
+{
+"date": "2026-11-23",
+"from": "<absent>",
+"to": 0.0255455856,
+"why": "R17.A3 (Jake 2026-11-23): a declared label change — the holder value yield header (and its 'recorded, not credited' sibling) ends '÷ average market cap over the window'; the figure is carried under the new name, on the new denominator"
+}
+],
+"audit|CP Comparability|HOLDER VALUE YIELD = revenue-funded $ retired + $ distributed + liquid bribes to voters (annualised) ÷ market cap — treasury- or emissions-funded buybacks are NOT credited (LITMUS A); fee-market burns are on A1 net issuance": [
+{
+"date": "2026-11-23",
+"from": 0.0193992602,
+"to": "<absent>",
+"why": "R17.A3 (Jake 2026-11-23): a declared label change — the holder value yield header (and its 'recorded, not credited' sibling) ends '÷ average market cap over the window'; the figure is carried under the new name, on the new denominator"
+}
+],
+"audit|CP Comparability|Holder value RECORDED, NOT CREDITED (treasury / emissions-funded) ÷ average market cap over the window": [
+{
+"date": "2026-11-23",
+"from": "<absent>",
+"to": 0.0,
+"why": "R17.A3 (Jake 2026-11-23): a declared label change — the holder value yield header (and its 'recorded, not credited' sibling) ends '÷ average market cap over the window'; the figure is carried under the new name, on the new denominator"
+}
+],
+"audit|CP Comparability|Holder value RECORDED, NOT CREDITED (treasury / emissions-funded) ÷ market cap": [
+{
+"date": "2026-11-23",
+"from": 0.0,
+"to": "<absent>",
+"why": "R17.A3 (Jake 2026-11-23): a declared label change — the holder value yield header (and its 'recorded, not credited' sibling) ends '÷ average market cap over the window'; the figure is carried under the new name, on the new denominator"
+}
+],
+"audit|CP Comparability|Trend — cp_hvy (arrow · QoQ · 4Q growth/yr · quarters improved; Trajectory tab)": [
+{
+"date": "2026-11-23",
+"from": "– · NEW since Q-3 (fee switch executed 2025-12-27) · 2/2 improved · QoQ +20.2%",
+"to": "– · NEW since Q-3 (fee switch executed 2025-12-27) · 2/2 improved · QoQ +37.9%",
+"why": "R17.A3 (Jake 2026-11-23): holder value yield divides by the AVERAGE market cap over its own window (each day's $ over each day's value), the same as net holder yield since R16.3; was today's market cap"
+}
+],
+"reader|Comparison|Holder value yield": [
+{
+"date": "2026-11-23",
+"from": 0.0193992602,
+"to": 0.0255455856,
+"why": "R17.A3 (Jake 2026-11-23): holder value yield divides by the AVERAGE market cap over its own window (each day's $ over each day's value), the same as net holder yield since R16.3; was today's market cap"
+}
+],
+"reader|Summary|Holder value yield": [
+{
+"date": "2026-11-23",
+"from": 0.0193992602,
+"to": 0.0255455856,
+"why": "R17.A3 (Jake 2026-11-23): holder value yield divides by the AVERAGE market cap over its own window (each day's $ over each day's value), the same as net holder yield since R16.3; was today's market cap"
+}
+]
+}
+}

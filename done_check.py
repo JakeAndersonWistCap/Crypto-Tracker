@@ -69,6 +69,9 @@ HEADER_ROW = 4
 ORDER = {c: i for i, c in enumerate(("BROKEN", "STALE", "unranked", "MISSING", "rule-3", "blocked", "history",
                                       "not wired", "n/a"))}
 
+NEVER_NOT_VERIFIED = ("BROKEN", "STALE", "error", "blank")   # R17: what "not verified" can never cover
+NOT_VERIFIED_SEEN: dict = {}                                 # project -> the cells listed apart on the last check
+
 # ============================================================================================ dates
 _ISO = re.compile(r"\b(\d{4})-(\d{2})-(\d{2})\b")
 _MONTHS = {m.lower(): i for i, m in enumerate(calendar.month_name) if m}
@@ -443,6 +446,12 @@ def check(rwb, awb, asof: date) -> list:
         bl = judge_reader(book, n)
         bl += judge_audit(book, n, cov, heads)
         bl += judge_suspects(hits, n, bl)
+        # R17 (config.NOT_VERIFIED, Jake 2026-11-23): a cell nothing can evidence is listed apart, not a blocker —
+        # never a BROKEN row, a STALE note, an error or a blank
+        import config                                                     # noqa: PLC0415
+        nv = [b for b in bl if b.cls not in NEVER_NOT_VERIFIED and config.not_verified(n, b.header)]
+        NOT_VERIFIED_SEEN[n] = nv
+        bl = [b for b in bl if b not in nv]
         bl.sort(key=lambda x: ORDER.get(x.cls, len(ORDER)))                 # the worst first; stable within a class
         results.append((n, "NOT READY" if bl else "READY", bl, ""))
     return results
@@ -495,7 +504,12 @@ def main(argv=None) -> int:
         if a.verbose:
             for b in blockers:
                 print(f"    [{b.cls}] {b.line()}")
+            for b in NOT_VERIFIED_SEEN.get(name, ()):
+                print(f"    [not verified - shown grey, not counted] {b.line()}")
     print(f"DONE CHECK: {counts['READY']} READY, {counts['NOT READY']} NOT READY, {counts['PARKED']} PARKED")
+    n_nv = sum(len(v) for v in NOT_VERIFIED_SEEN.values())
+    if n_nv:
+        print(f"NOT VERIFIED (config.NOT_VERIFIED): {n_nv} cell(s) shown grey, not counted — --verbose lists them")
     return 1 if counts["NOT READY"] else 0
 
 

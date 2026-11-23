@@ -22,11 +22,18 @@ def apply_layout(wb, ctx) -> dict:
     import highlights                                      # noqa: PLC0415
     import reader_look                                     # noqa: PLC0415
     res = highlights.add_highlights(wb, ctx, min_cards=MIN_CARDS)
+    import leaderboard                                     # noqa: PLC0415
+    import reader                                          # noqa: PLC0415
+    # R17.D: the first sheet; Highlights is the second. It quotes the Summary: a workbook without one has no board
+    board = (leaderboard.add_leaderboard(wb, ctx) if reader.SUMMARY in wb.sheetnames
+             else {"ranked": {}, "provisional": [], "lines": {}})
     reader_look.apply_look(wb)
     look = "reader_look.apply_look applied"
     LAST.clear()
     LAST.update({"cards": res["cards"], "rendered": res["rendered"], "omitted": res["omitted"],
-                 "floor_met": res["floor_met"], "lines": res["lines"], "look": look})
+                 "floor_met": res["floor_met"], "lines": res["lines"], "look": look,
+                 "leaderboard": {"ranked": board["ranked"], "provisional": board["provisional"],
+                                 "lines": board["lines"]}})
     return {"cards": res["cards"], "rendered": res["rendered"], "omitted": res["omitted"],
             "floor_met": res["floor_met"], "look": look}
 

@@ -30,8 +30,9 @@ TOKEN_FMT = '[>=1000000000]#,##0.0,,,"bn";[>=1000000]#,##0.0,,"m";#,##0'
 DATA_TABS = (reader.SUMMARY, reader.A1_TAB, reader.A2_TAB, reader.A3_TAB, reader.A4_TAB, reader.COMPARISON,
              reader.BUSINESS)
 HIGHLIGHTS = "Highlights"
-TAB_ORDER = (HIGHLIGHTS, *DATA_TABS, reader.NOTES, reader.CHARTS, reader.ABOUT, reader.DEFS)   # P3-6: + Project notes
-TAB_COLOURS = {HIGHLIGHTS: "1F8A8A", reader.SUMMARY: NAVY, reader.A1_TAB: "2F5597", reader.A2_TAB: "2F5597",
+LEADERBOARD = "Leaderboard"                                             # R17.D: the first sheet
+TAB_ORDER = (LEADERBOARD, HIGHLIGHTS, *DATA_TABS, reader.NOTES, reader.CHARTS, reader.ABOUT, reader.DEFS)   # P3-6: + Project notes
+TAB_COLOURS = {LEADERBOARD: "C55A11", HIGHLIGHTS: "1F8A8A", reader.SUMMARY: NAVY, reader.A1_TAB: "2F5597", reader.A2_TAB: "2F5597",
                reader.A3_TAB: "2F5597", reader.A4_TAB: "2F5597", reader.COMPARISON: "5B6B7B",
                reader.BUSINESS: "5B6B7B", reader.NOTES: "5B6B7B", reader.CHARTS: "BFBFBF", reader.ABOUT: "BFBFBF",
                reader.DEFS: "BFBFBF"}

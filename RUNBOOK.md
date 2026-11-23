@@ -534,6 +534,31 @@ A Plume seed started on code older than 2026-10-01 saved its state only at the e
 or stop it and start again on the new code. Don't run both at once: they write the same state file.
 
 
+## 11fg. Round 17 — finish the 15: Aerodrome's flow statement, Ether.fi's reference check, holder value yield over the average market cap, "not verified", the Leaderboard (2026-11-23)
+
+No new metric or rule. AERODROME: the token-flow statement was BROKEN (Q0 residual −0.52%) because 10,000,000 AERO
+minted to the Foundation buyer Safe on 2026-11-19 and burned on 2026-11-20 was in "+ minted" and in no "−" line, and the
+window read of 11-20 had not run. The statement now has a line for what a Foundation wallet destroys that is no burned
+buyback; the days before the first v3 read (10-23..10-27) are backfilled from the Minter's own counter. ETHER.FI: the
+CoinGecko cross-check no longer adds the 13 issuer wallets to a circulating that already counts them. HOLDER VALUE
+YIELD divides by the average market cap over its window, as net holder yield (a declared move on every frozen project:
+tests/fixtures/frozen_moves_r17.json). A cell no source can evidence shows grey as "not verified" (config.NOT_VERIFIED)
+and is not a blocker. The reader's first sheet is the LEADERBOARD: frozen projects ranked inside their archetype, the
+others below as provisional.
+
+```
+python -c "import config as c, reader_look as k; print(c.R17_MOVES_DECLARED, k.TAB_ORDER[:2], sorted(c.NOT_VERIFIED))"
+#   expect: the number of declared moves, ('Leaderboard', 'Highlights'), the projects with a "not verified" cell
+python token_metrics.py --seed aero_buyback
+#   reads every buyback window day the store has missed (the 11-20 burn of 10,000,000 AERO among them)
+python archive_backfill.py --project Aerodrome --run
+#   expect a line "Aerodrome issuance before the first v3 read ..." naming the rows written (10-23..10-27) or why it stopped
+python headline_check.py --audit token_metrics_audit.xlsx --reader token_metrics.xlsx --db metrics.db --out ..\tm-exports\headline_check.md
+#   one table per project: each Leaderboard figure and every input behind it, cross-checked or single-source
+python project_freeze.py --compare all
+#   expect: nine lines, each "0 undeclared move(s)"
+```
+
 ## 11ff. Round 16 — close-off: Ether.fi frozen; one cap in tokens and $; net holder yield over the average market cap; Aerodrome on accrual (2026-11-20)
 
 ETHER.FI is frozen (nine frozen projects). The ending-schedule cap moves tokens and $ together. Net holder yield divides

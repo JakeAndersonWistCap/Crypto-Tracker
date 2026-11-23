@@ -34,7 +34,8 @@ import reader_layout  # noqa: E402
 import reader_look  # noqa: E402
 
 OLD = "char" + "lie"           # the old edition's name, spelled so that this file does not carry it either
-ORDER = ["Highlights", "Summary", "A1 Infrastructure", "A2 Coordination", "A3 Revenue Buyback", "A4 Permanent Burn",
+# R17.D (Jake 2026-11-23): the Leaderboard is the first sheet (was: ORDER began with "Highlights")
+ORDER = ["Leaderboard", "Highlights", "Summary", "A1 Infrastructure", "A2 Coordination", "A3 Revenue Buyback", "A4 Permanent Burn",
          "Comparison", "Business", "Project notes", "Charts", "About", "Definitions"]
 
 
@@ -90,7 +91,7 @@ def test_highlights_first_then_the_tabs_in_the_layout_order_and_project_notes_pr
     visible = [n for n in wb.sheetnames if wb[n].sheet_state == "visible"]
     assert visible == ORDER, visible
     assert wb.sheetnames[len(ORDER):] == [reader.DATA_SHEET, reader.SERIES_SHEET]
-    assert wb.active.title == "Highlights" and sum(ws.sheet_view.tabSelected for ws in wb.worksheets) == 1
+    assert wb.active.title == "Leaderboard" and sum(ws.sheet_view.tabSelected for ws in wb.worksheets) == 1
     notes = wb[reader.NOTES]
     assert notes.max_row > 10 and any(notes.cell(r, 1).font.b for r in range(1, notes.max_row + 1))
     assert one["stats"]["tabs"][:len(ORDER)] == ORDER                     # the run's reader line names them so
@@ -213,8 +214,9 @@ def test_the_reader_tabs_hold_the_same_values_as_without_the_layout(one, bare):
     one declared change (token counts as 1.2m / 3.4bn)."""
     a, names_a = _cells(bare["reader"])
     b, names_b = _cells(one["reader"])
-    assert sorted(names_b) == sorted(names_a + ["Highlights"])
-    b = {k: v for k, v in b.items() if k[0] != "Highlights"}
+    # R17.D: the layout adds two sheets, the Leaderboard and Highlights (was: + ["Highlights"] alone)
+    assert sorted(names_b) == sorted(names_a + ["Highlights", "Leaderboard"])
+    b = {k: v for k, v in b.items() if k[0] not in ("Highlights", "Leaderboard")}
     assert {k for k in a if k[1] != "#dims"} == {k for k in b if k[1] != "#dims"}
     for k, v in a.items():
         if k[1] == "#dims":

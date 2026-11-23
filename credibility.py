@@ -2863,6 +2863,11 @@ def circulating_input(name: str) -> dict:
                                                               pol.get("add_back") and f"Staked add-back: "
                                                               f"{pol['add_back']}.", partial_note) if x)}}
     counts = config.coingecko_counts_holdings(name)
+    if name in config.RULE_IN and not config.RULE_IN[name].get("reference_leaves_out", True):
+        # R17 (Jake 2026-11-23, A2): on the rule OURS already counts these wallets, and so does the reference (Ether.fi:
+        # CoinGecko reports the total) — adding them again compared 1,180.2M with CoinGecko's 998.5M (+18%, CHECK) and
+        # took every cell judged by in_circ to CHECK. A wallet the rule counts in circulating is not added a second time
+        counts = tuple(c for c in counts if c not in config.rule_in_legs(name))
     ll = config.coingecko_like_for_like(name)
     if ll and ours_m == "circulating_supply_onchain":
         # CoinGecko ON OUR BASIS (Aerodrome, Jake's probes16): it excludes the PERMANENT locks (993.0M vs 990.2M), so
@@ -3048,6 +3053,9 @@ def build_rows(headline_cells: list[dict], rows: dict, long, asof, projects=None
         inputs.update(price_inputs(name))
         inputs["in_circ"] = circulating_input(name)
         gap_legs = config.coingecko_counts_holdings(name)
+        if name in config.RULE_IN and not config.RULE_IN[name].get("reference_leaves_out", True):
+            # R17: on the rule there is no definitional gap for a wallet both sides count
+            gap_legs = tuple(c for c in gap_legs if c not in config.rule_in_legs(name))
         if gap_legs and config.circulating_onchain_primary(name):
             inputs["in_circ_gap"] = {
                 "what": f"Definitional gap: documented wallets our circulating excludes and CoinGecko counts "

@@ -43,8 +43,10 @@ def test_3_net_holder_yield_divides_by_the_windows_average_market_cap():
     P = config.PROJECT_BY_NAME["Maple"]
     f = nhy[1](9, P)
     assert "D(market_cap_usd,q0)" in f and "D(market_cap_usd,now)" not in f
-    # the holder value yield column itself stays over today's market cap (unchanged)
-    assert "D(market_cap_usd,now)" in _col(cols, "HOLDER VALUE YIELD")[1](9, P)
+    # R17.A3 (Jake 2026-11-23): the holder value yield column divides by the same average
+    # (was R16: it stayed over today's market cap — assert "D(market_cap_usd,now)" in the column)
+    hvy = _col(cols, "HOLDER VALUE YIELD")[1](9, P)
+    assert "D(market_cap_usd,q0)" in hvy and "D(market_cap_usd,now)" not in hvy
 
 
 # ----- 4 -------------------------------------------------------------------------------------------------------------

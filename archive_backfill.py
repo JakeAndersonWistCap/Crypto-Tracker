@@ -213,6 +213,19 @@ def _work(a) -> int:
         rows, why = aero_v3.supply_history(p, have, deadline=time.monotonic() + a.budget_min * 60, write=_land)
         print(f"  Aerodrome supply {p['name']}: {wrote[0]} row(s) written over "
               f"{len({str(r['date'])[:10] for r in rows})} day(s) (legs: {', '.join(aero_v3.SUPPLY_LEGS)}) — {why}")
+        # R17 (A1): the days between the cutover and the first v3 read hold no issuance row (the Minter's counter was
+        # first read on 2026-10-27 at 2.33M) — read from the same counter at each day's first block
+        first = st.conn.execute(
+            "SELECT date, value FROM metrics WHERE project=? AND metric='aero_v3_emissions_minted_cumulative' "
+            "ORDER BY date LIMIT 1", (p["name"],)).fetchone()
+        if first:
+            held = {str(r[0])[:10] for r in st.conn.execute(
+                "SELECT date FROM metrics WHERE project=? AND metric='gross_issuance_tokens' AND date>=?",
+                (p["name"], str(cutover)[:10])).fetchall()}
+            wrote[0] = 0
+            mrows, mwhy = aero_v3.minted_opening_history(p, (str(first[0])[:10], float(first[1])), held, write=_land)
+            print(f"  Aerodrome issuance before the first v3 read {p['name']}: {wrote[0]} row(s) written over "
+                  f"{len({str(r['date'])[:10] for r in mrows})} day(s) (gross_issuance_tokens, issuer_mint_tokens) — {mwhy}")
         # R10.A2 THE VOTER EPOCHS, FINISHED HERE: the daily tier stops its log scan at 200 s (it stood at block
         # 53,523,726 of 56,256,121 on 2026-11-18); this pass continues the SAME saved scan with the run's budget and
         # writes every complete epoch it reads. An epoch the store holds is never read or written again.

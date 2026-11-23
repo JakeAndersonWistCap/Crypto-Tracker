@@ -330,6 +330,7 @@ def test_the_reader_look_places_project_notes_after_business(after):
     import reader_look
     wb = openpyxl.load_workbook(after["reader"])                     # P4-Q8: the look is on the reader itself
     vis = [n for n in wb.sheetnames if wb[n].sheet_state == "visible"]
-    assert vis == ["Highlights", "Summary", *ARCH, "Comparison", "Business", "Project notes", "Charts", "About",
+    # R17.D (Jake 2026-11-23): the Leaderboard is first (was: vis began with "Highlights")
+    assert vis == ["Leaderboard", "Highlights", "Summary", *ARCH, "Comparison", "Business", "Project notes", "Charts", "About",
                    "Definitions"]
     assert wb[reader.NOTES].sheet_properties.tabColor.rgb[-6:] == reader_look.TAB_COLOURS[reader.BUSINESS]

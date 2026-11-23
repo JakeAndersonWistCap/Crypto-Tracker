@@ -56,7 +56,9 @@ TEXT_FMT = "@"
 CODES = {"n/a": "808080", "blocked": "C00000", "not wired": "C65911", "by design": "44546A", "parked": "7F7F7F",
          "unranked": "595959", "secondary": "2F5597", "no new supply": "375623",
          "not yet split": "806000",                 # PR1.S13: a project's three revenue lines before its own round
-         "lumpy": "7030A0"}                         # PR1B.10a: a change whose window is carried by a few days
+         "lumpy": "7030A0",                         # PR1B.10a: a change whose window is carried by a few days
+         "not verified": "7F7F7F"}                  # R17: no source can evidence the cell (config.NOT_VERIFIED) — grey
+FILL_NOT_VERIFIED = PatternFill("solid", fgColor="D9D9D9")
 NO_NEW_SUPPLY = "no new supply"            # P4-Q5a: A3's key where emissions + unlocks are a measured 0, burn above 0
 NO_NEW_SUPPLY_KEY = float("inf")           # ... which ranks it first (_rank_rows sorts the key high to low)
 PERIODS = (("1D", 1), ("7D", 7), ("30D", 30), ("90D", 90), ("6M", 182), ("1Y", 365), ("3Y", 1095), ("custom", None))
@@ -716,6 +718,13 @@ def _row_project(sh: Sheet, row: int) -> str:
 
 def put_code(sh: Sheet, row: int, col: Col, code: str, reason: str, fill: PatternFill | None = None) -> str:
     reason = _with_lead(reason or "", col, _row_project(sh, row)) or reason
+    # R17 (config.NOT_VERIFIED): a code cell nothing can evidence reads "not verified", grey, with what was searched
+    import config                                          # noqa: PLC0415 — as the module's other late imports
+    nv = config.not_verified(_row_project(sh, row) or "", col.header) if code not in ("by design", "secondary") else None
+    if nv:
+        code, fill = config.NOT_VERIFIED_CODE, FILL_NOT_VERIFIED
+        reason = (f"NOT VERIFIED — no source can evidence this cell. Searched ({nv['read_on']}): {nv['searched']}. "
+                  f"The build's own reason: {reason}")
     c = sh.ws.cell(row, _idx(sh, col), code)
     c.font = Font(name=FONT, size=9, italic=True, color=CODES[code])
     c.alignment = Alignment(horizontal="right")
@@ -1348,13 +1357,13 @@ def _write_summary(sh: Sheet, ctx: Ctx, keys: dict) -> None:
                  "key reads 'unranked' and sorts last; a parked project reads 'parked' and is outside the ranks.",
                  FMT_RANK, "Rank", "computed", 0, 9),
         "hvy": ("Holder value yield", "Revenue-funded value to holders a year (retired + distributed + liquid voter "
-                "bribes) ÷ market cap.", FMT_PCT, "Holders", "CP Comparability, HOLDER VALUE YIELD", 0, 11),
+                "bribes) ÷ the average market cap over the same days.", FMT_PCT, "Holders", "CP Comparability, HOLDER VALUE YIELD", 0, 11),
         "dil": ("Total dilution, % of float", "Every outflow a year (security emissions, supply- and demand-side "
                 "incentives, grants, unlocks) ÷ the tradeable float.", FMT_PCT, "Holders",
                 "CP Comparability, TOTAL DILUTION ÷ tradeable float", 0, 11),
         "dil_tok": ("Total dilution, tokens a year", "Total dilution % × the tradeable float, in tokens a year.",
                     FMT_TOK, "Holders", "computed: CP total dilution × CP tradeable float", 0, 13),
-        "nhy": ("Net holder yield", "Holder value yield − every outflow a year at each day's price ÷ market cap.",
+        "nhy": ("Net holder yield", "Holder value yield − every outflow a year at each day's price ÷ the average market cap over the same days.",
                 FMT_PCT, "Holders", "CP Comparability, NET HOLDER YIELD", 0, 11),
         # PR1.S8 (Jake 2026-11-05): the net supply change IS the change in circulating supply, everywhere
         "nsc_pct": ("Net supply change, % a year", "The change in circulating supply over the last 90 days (closing − "
@@ -2712,11 +2721,11 @@ BUYING_PRESSURE_DEF = ("Every market buyback a year, whatever its destination (b
 COMPARISON_COLS = (
     # (key, header, source (sheet, prefix) | "@...", format, definition, family)
     ("hvy", "Holder value yield", (CP_TAB, "HOLDER VALUE YIELD"), FMT_PCT,
-     "Revenue-funded value to holders a year (retired + distributed + liquid voter bribes) ÷ market cap.", "buyback"),
+     "Revenue-funded value to holders a year (retired + distributed + liquid voter bribes) ÷ the average market cap over the same days.", "buyback"),
     ("dil", "Total dilution, % of float", (CP_TAB, "TOTAL DILUTION = outflows a+b+c+d+e+f (annualised) ÷ tradeable float"),
      FMT_PCT, "Every outflow a year (security emissions, incentives, grants, unlocks) ÷ the tradeable float.", ""),
     ("nhy", "Net holder yield", (CP_TAB, "NET HOLDER YIELD"), FMT_PCT,
-     "Holder value yield − every outflow a year at each day's price ÷ market cap. The sort key of this tab.", ""),
+     "Holder value yield − every outflow a year at each day's price ÷ the average market cap over the same days. The sort key of this tab.", ""),
     ("payout", "Payout ratio", (CP_TAB, "Payout ratio — the project's own net basis"), FMT_X,
      "Credited holder value ÷ revenue on the project's own revenue basis, in x (1.0x = the whole revenue credited).",
      "buyback"),

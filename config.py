@@ -47363,6 +47363,80 @@ FROZEN_PROJECTS["Ether.fi"] = {
 FROZEN_MOVES["Ether.fi"] = _frozen_moves_record("etherfi")
 
 
+# ===== R17 — AERODROME'S TOKEN-FLOW RESIDUAL: A 10,000,000 AERO MINT-THEN-BURN (Jake 2026-11-23, A1) =====
+# Jake's store read Q0 residual −0.52% (BROKEN beyond ±0.5%). Read on Base 2026-11-23 (public RPC, eth_call at the
+# blocks, eth_getLogs of the new AERO token 0x3f5bF3Ed…):
+#   2026-11-19 23:29:36 UTC, block 59,703,006, tx 0x6fab2ccf08dcb9c1c13d7bfba8c4ebbb2cbb5dd6b0329024f07bf42678f7b65a:
+#     the Minter minted 8,000,000 + 2,000,000 AERO to the Foundation buyer Safe 0x10b42e92… and 400,000 + 100,000 to
+#     the team splitter 0x9beb95cc… (the 5% team share) — totalSupply 2,146,278,249.34 -> 2,156,778,251.61;
+#   2026-11-20 17:10:41 UTC, block 60,021,327, tx 0x439ba89d39cdb2c1eef596afe24f8468bed91037e3777305c8723c53a307361e:
+#     exactly 10,000,000 AERO burned out of the sAERO escrow 0xBF7977E1… (Transfer -> 0x0) — totalSupply
+#     2,157,553,150.47 -> 2,147,553,150.47; the buyer Safe's liquid AERO 10,000,000 -> 0 at block 59,987,522 (15:18).
+# So the 10.58M "minted" that Jake's 11-20 read holds is NOT a batch of gauge claims (R15.E8 said so — wrong): 10.5M
+# of it is this mint, and its 10M was destroyed the next day. WHY the Foundation minted and burned is NOT ESTABLISHED
+# (no primary source read). The statement was BROKEN because "− burned" read the burned BUYBACK only, and the window
+# read of 11-20 (the burn) had never run on Jake's store (the daily run reads YESTERDAY's window; no run on 11-21):
+# `python token_metrics.py --seed aero_buyback` reads every missed day.
+#   (1) the statement subtracts EVERY AERO destroyed: the burned buyback, and beside it what a Foundation wallet
+#       destroyed that was not bought (foundation_aero_burned_other_tokens, now also holding its own stake beyond the
+#       purchases since the basis) — a measured 0 on a day with no row;
+#   (2) a burn is a burned buyback only up to the purchases SINCE the purchase-day basis (2026-08-25) not yet burned;
+#   (3) the days from the cutover to the first v3 read (Minter.emissionsMinted 2,328,133.58 at the read of 10-27, all
+#       of it minted in those days, never in gross_issuance_tokens / issuer_mint_tokens) are backfilled from the same
+#       counter at 00:00 UTC of each day (archive_backfill's Aerodrome supply hook): five rows, 10-23..10-27, each
+#       dated the day of the later read as the daily reader's are. No row on 10-22: the legacy Minter's last weekly
+#       row holds that day (EPOCH_PAID_AT re-dates it to the flip that paid), and a second measuring point on it
+#       would be an overlap of the declared handover.
+# FLOW_RESIDUAL_EXPLAINED is not set.
+RULE_IN["Aerodrome"]["flow_destroyed"] = (
+    ("− destroyed by a Foundation wallet, not a burned buyback (minted to it or not its own stake)",
+     "foundation_aero_burned_other_tokens"),)
+RULE_IN["Aerodrome"]["_flow_events"] = tuple(RULE_IN["Aerodrome"]["_flow_events"]) + (
+    "foundation_aero_burned_other_tokens",)
+METRICS["foundation_aero_burned_other_tokens"]["label"] = (
+    "AERO a Foundation wallet destroyed out of the escrow that is NOT a burned buyback — not its own stake of that "
+    "transaction (protocol fees at the accumulator, a stake routed earlier), or its own stake beyond what it bought "
+    "since the purchase-day basis (the 10,000,000 minted to the buyer Safe and burned 2026-11-20) — out of the supply "
+    "(R13; R17)")
+AERO_MINT_THEN_BURN_2026_11 = {
+    "mint": {"tx": "0x6fab2ccf08dcb9c1c13d7bfba8c4ebbb2cbb5dd6b0329024f07bf42678f7b65a", "block": 59_703_006,
+             "utc": "2026-11-19 23:29:36", "to_buyer_safe": 10_000_000.0, "to_team_splitter": 500_000.0},
+    "burn": {"tx": "0x439ba89d39cdb2c1eef596afe24f8468bed91037e3777305c8723c53a307361e", "block": 60_021_327,
+             "utc": "2026-11-20 17:10:41", "burned": 10_000_000.0},
+    "read_on": "2026-11-23", "source": "Base public RPC: totalSupply / balanceOf at the blocks, Transfer logs",
+    "purpose": "not established"}
+
+
+# ===== R17 — "NOT VERIFIED": A CELL NOTHING CAN EVIDENCE IS SHOWN GREY, NOT A BLOCKER (Jake 2026-11-23) =====
+# "Where nothing can evidence a cell, show it grey as 'not verified' instead of blocking READY." Per project: the cells
+# (reader or audit header prefixes) for which NO source can be found, each with what was searched and when. Only a cell
+# that holds NO NUMBER is affected (a code cell): the reader shows the code "not verified" in grey with the search in its
+# comment, and done_check lists it apart instead of counting it. It never hides a number, a BROKEN row, a STALE note,
+# an error or a blank; an entry without `searched` and `read_on` declares nothing. Every entry is Jake's to review.
+NOT_VERIFIED: dict = {}
+NOT_VERIFIED_CODE = "not verified"
+
+
+def not_verified(project: str, header) -> dict | None:
+    """The NOT_VERIFIED entry covering this project's cell (by header prefix), or None."""
+    h = str(header or "")
+    return next((e for e in NOT_VERIFIED.get(project, ())
+                 if e.get("searched") and e.get("read_on") and any(h.startswith(c) for c in e.get("cols", ()))), None)
+
+
+# ===== R17 — THE HOLDER VALUE YIELD HEADLINE: RENAMED AND A CHANGE OF QUANTITY (Jake 2026-11-23, A3) =====
+HEADLINE_RENAMES.append(
+    {"from": "CP | HOLDER VALUE YIELD = revenue-funded $ retired + $ distributed + liquid bribes to voters "
+             "(annualised) ÷ market cap — treasury- or emissions-funded buybacks are NOT credited (LITMUS A); "
+             "fee-market burns are on A1 net issuance",
+     "to": "CP | HOLDER VALUE YIELD = revenue-funded $ retired + $ distributed + liquid bribes to voters (annualised) "
+           "÷ average market cap over the window — treasury- or emissions-funded buybacks are NOT credited (LITMUS "
+           "A); fee-market burns are on A1 net issuance",
+     "kind": "change", "ref": "R17.A3", "date": "2026-11-23",
+     "why": "the denominator is the window's AVERAGE market cap (each day's $ over each day's value), as net holder "
+            "yield's since R16; was today's market cap"})
+
+
 # =====================================================================================================================
 # ===== R16 — FROZEN MOVES OF THE ROUND (tests/fixtures/frozen_moves_r16.json), every earlier declaration kept =====
 def _load_r16_moves() -> int:
@@ -47381,3 +47455,21 @@ def _load_r16_moves() -> int:
 
 
 R16_MOVES_DECLARED = _load_r16_moves()
+
+# ===== R17 — FROZEN MOVES OF THE ROUND (tests/fixtures/frozen_moves_r17.json), every earlier declaration kept =====
+def _load_r17_moves() -> int:
+    import json as _json
+    from pathlib import Path as _Path
+    p = _Path(__file__).resolve().parent / "tests" / "fixtures" / "frozen_moves_r17.json"
+    if not p.exists():
+        return 0
+    n = 0
+    for proj, cells in _json.loads(p.read_text(encoding="utf-8")).items():
+        for key, steps in cells.items():
+            for st in steps:
+                declare_later_move(proj, key, st["to"], st["why"], st["date"])
+                n += 1
+    return n
+
+
+R17_MOVES_DECLARED = _load_r17_moves()

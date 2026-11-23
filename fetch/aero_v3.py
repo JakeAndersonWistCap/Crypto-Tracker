@@ -1095,3 +1095,57 @@ def supply_history(project: dict, have: dict, deadline: float | None = None, rea
         why += (f"; filing_managed_lock_tokens NOT read on {len(unread)} day(s), left unwritten: "
                 + "; ".join(unread[:3]) + (" …" if len(unread) > 3 else ""))
     return rows, why
+
+
+def minted_opening_history(project: dict, first_read: tuple, have_days: set, reader=None, state: dict | None = None,
+                           write=None) -> tuple[list, str]:
+    """R17 (Jake 2026-11-23, A1): THE DAYS BEFORE THE FIRST v3 READ. gross_issuance_tokens is the day-on-day change of
+    Minter.emissionsMinted, dated the day of the later read; the first read was 2026-10-27, so the AERO minted between
+    the cutover and that read (2,328,134.42) was in no row. `first_read` = (day, the cumulative stored that day). The
+    counter is read at 00:00 UTC of each day from the day after the cutover to the day before the first read (archive
+    eth_calls, the SAME counter; 0 at the cutover), and each day D gets the counter at D 00:00 − the counter at D−1
+    00:00 — the mints of the day before, dated as the daily reader dates them: the day they were read. The first
+    read's own day gets its stored cumulative − the counter at 00:00 of the day before, so the rows sum to that
+    cumulative exactly. NO ROW ON THE CUTOVER DAY: it holds the legacy Minter's last weekly row (the flip that paid at
+    2026-10-22 00:00), and two measuring points on one day would be an overlap. issuer_mint_tokens is each x teamRate
+    at the later block. A day already holding a row (`have_days`) is never written; a day that cannot be read stops
+    the pass and is named (unknown, never 0). Returns (rows, why it ended)."""
+    name = project["name"]
+    st = state if state is not None else config.aerodrome_migration_state()
+    rdr = reader or AeroV3(state=st)
+    a = {k: v.lower() for k, v in (st.get("addresses") or {}).items()}
+    cut = pd.Timestamp(config.AERODROME_MIGRATION["cutover_utc"]).normalize()
+    first_day, first_cum = pd.Timestamp(first_read[0]).normalize(), float(first_read[1])
+    rows, why = [], f"reached the first v3 read ({first_day.date()})"
+    src = config.mark_source(config.mark_source(f"{SOURCE}:minter.emissionsMinted", "delta"), "archive")
+    day, prev_cum, team = cut + pd.Timedelta(days=1), 0.0, None
+    while day < first_day:
+        key = str(day.date())
+        try:
+            blk = rdr._block_at(int(day.tz_localize("UTC").timestamp()))
+            cum = rdr.call(a["minter"], "emissionsMinted", block=blk)[0] / WAD
+            team = rdr.call(a["minter"], "teamRate", block=blk)[0]
+        except Exception as e:  # noqa: BLE001 — unknown, never 0
+            return rows, f"stopped at {key}: Minter.emissionsMinted is not readable at its first block ({str(e)[:160]})"
+        _mint_row(rows, name, day, cum - prev_cum, team, src, have_days, write)
+        prev_cum = cum
+        day += pd.Timedelta(days=1)
+    if team is None:                                     # the first read is the day after the cutover: one row, its own
+        try:
+            team = rdr.call(a["minter"], "teamRate", block=rdr._block_at(int(first_day.tz_localize("UTC").timestamp())))[0]
+        except Exception as e:  # noqa: BLE001
+            return rows, f"stopped at {first_day.date()}: Minter.teamRate is not readable ({str(e)[:160]})"
+    _mint_row(rows, name, first_day, first_cum - prev_cum, team, src, have_days, write)
+    return rows, why
+
+
+def _mint_row(rows: list, name: str, day, minted: float, team: int, src: str, have_days: set, write) -> None:
+    if str(day.date()) in have_days or minted < 0:
+        return
+    new = [point(name, "gross_issuance_tokens", minted, src, TIER, day).iloc[0],
+           point(name, "issuer_mint_tokens", minted * team / 1_000_000,
+                 src + f"[x teamRate {team}/1e6, Minter.sol L162]", TIER, day).iloc[0]]
+    rows += new
+    if write is not None:
+        write(new)
+
