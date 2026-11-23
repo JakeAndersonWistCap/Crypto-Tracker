@@ -51,6 +51,7 @@ def _selector(signature: str) -> str:
 SEL_GET_REWARD_BUCKETS = _selector("getRewardBuckets()")
 SEL_TYPE_AND_VERSION = _selector("typeAndVersion()")
 SEL_TOTAL_PRINCIPAL = _selector("getTotalPrincipal()")
+SEL_STAKER_PRINCIPAL = _selector("getStakerPrincipal(address)")
 BUCKETS = ("operatorBase", "communityBase", "operatorDelegated")
 SECONDS_PER_YEAR = 31_557_600             # 365.25 days
 JUELS = 10 ** 18
@@ -63,6 +64,21 @@ def decode_buckets(hexdata: str) -> dict:
     if len(words) != 9:
         raise ValueError(f"getRewardBuckets returned {len(h) // 64} word(s), expected 9")
     return {b: tuple(words[3 * i: 3 * i + 3]) for i, b in enumerate(BUCKETS)}
+
+
+def insider_principal(call, pools, wallets, block) -> int:
+    """R18 (Chainlink decision 5): Σ getStakerPrincipal(wallet) over EVERY declared issuer-side wallet in EVERY pool,
+    in Juels, at one block. `call(to, data, block)` returns the eth_call result as hex. ALL OR NOTHING: a failed or
+    empty answer raises — a partial sum is never a figure (unknown is never 0)."""
+    total = 0
+    for pool in pools:
+        for w in wallets:
+            raw = str(call(pool, SEL_STAKER_PRINCIPAL + w.lower().replace("0x", "").rjust(64, "0"), block))
+            h = raw[2:] if raw.startswith("0x") else raw
+            if len(h) != 64:
+                raise ValueError(f"getStakerPrincipal({w}) on {pool} returned {len(h) // 2} byte(s), expected 32")
+            total += int(h, 16)
+    return total
 
 
 def _utc(ts) -> str:
@@ -143,6 +159,25 @@ class RewardVaultRates:
                             f"staker_yield_community_pool={rate:.4%} (communityBase "
                             f"{buckets['communityBase'][0] * SECONDS_PER_YEAR / JUELS:,.0f} LINK/yr ÷ principal "
                             f"{principal / JUELS:,.0f} LINK, block {block['number']:,})", TIER)
+            # R18 (Chainlink decision 5): the issuer-side wallets' own stake in both pools, same block — all or no row
+            ins = spec.get("insider_stake")
+            if ins:
+                try:
+                    juels = insider_principal(
+                        lambda to, data, b: w3.eth.call({"to": self.reader.checksum(to), "data": data}, b).hex(),
+                        ins["pools"], ins["wallets"], block["number"])
+                except Exception as e:  # noqa: BLE001 — a failed source must not kill the run
+                    out.fail(SOURCE, name, f"{ins['metric']}: {e}", TIER)
+                    out.gap(name, ins["metric"],
+                            reason=f"getStakerPrincipal could not be read for every issuer-side wallet in every pool: "
+                                   f"{e} — no row is stored (a partial sum is not a figure)",
+                            tiers_attempted="2", suggestion="Check the Ethereum RPC and re-run.")
+                else:
+                    out.add(point(name, ins["metric"], juels / JUELS,
+                                  f"{SOURCE}:getStakerPrincipal[{len(ins['wallets'])} wallets x {len(ins['pools'])} "
+                                  f"pools]", TIER, when), SOURCE, name,
+                            f"{ins['metric']}={juels / JUELS:,.2f} LINK staked by the {len(ins['wallets'])} issuer-side "
+                            f"wallets on file in {len(ins['pools'])} pools (block {block['number']:,}) — a floor", TIER)
             ends = min(v[1] for v in active.values()) if active else max(v[1] for v in buckets.values())
             out.add(point(name, "reward_rate_ends_unix", float(ends), src, TIER, when), SOURCE, name,
                     f"reward_rate_ends_unix={ends} ({_utc(ends)})"

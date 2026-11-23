@@ -47697,3 +47697,401 @@ NEARBLOCKS_BILLING = {
     "v1_v2": "switched off 2026-11-22 (api.nearblocks.io/api-docs/migration; /v1/plans answers HTTP 410) — every "
              "path here has been /v3 since 2026-10-13",
 }
+
+
+# =====================================================================================================================
+# ===== R18 — CHAINLINK: decisions 1-8 of docs/r15_chainlink_pack.md, wired AS RECOMMENDED (Jake 2026-11-24) =====
+# Every figure below was re-read 2026-11-23 12:01-12:20 UTC from a primary source: Ethereum block 26,477,750
+# (ethereum-rpc.publicnode.com, eth_call: balances, getTotalPrincipal, getStakerPrincipal, getRewardBuckets), Blockscout
+# (eth.blockscout.com tokentx + token-transfer metadata), supply.chain.link/supply, metrics.chain.link/api/reserve/latest,
+# chain.link/blog/quarterly-review-q1/q2/q3-2026, chain.link/blog/build-program-evolution (2026-06-26).
+#   33 wallets 233,150,029.58 | Reserve 6,804,760.10 | RewardVault 3,093,999.14 | 0xD50f074E… 9,822,500.00 |
+#   0x9d6A86Fa… 900,576.13 | 0x6781a24C… 31,465.48 | pools' principal 40,875,000.00 + 1,694,261.49 = 42,569,261.49 |
+#   getStakerPrincipal over the 33 + 9 issuer-side wallets, both pools: 0 | reward buckets end 2027-03-17 04:55 UTC.
+# Nothing here changes a frozen project: every table is keyed "Chainlink", and the generic knobs added in code
+# (RULE_IN reference_minus; RELEASE_PAID_LATER; reward_vault_rates insider_stake) are read only where declared.
+# =====================================================================================================================
+_R18 = "2026-11-23"
+_R18_DECIDED = "Jake 2026-11-24 (R18: docs/r15_chainlink_pack.md decisions 1-8, as recommended)"
+_CL18 = PROJECT_BY_NAME["Chainlink"]
+_LINK = "0x514910771AF9Ca656af840dff83E8264EcF986CA"
+_CL_RESERVE = "0x9A709B7B69EA42D5eeb1ceBC48674C69E1569eC6"
+_CL_PAL = "0x5680681ED3767B96914CE741a308155C7fB9171d"          # "Reserves 1.0.0", the Payment Abstraction contract
+_CL_FWD_EXCHANGE = "0x9B1c1752B6B6eAF62a8c491A8681B32C1F7ecDE9"  # receives only from the 33; forwards the same day
+_CL_BINANCE_HOT = "0x28C6c06298d514Db089934071355E5743bf21d60"
+_CL_NC33 = tuple(c["address"] for c in _CL18["contracts"].values()
+                 if c.get("metric_override") == "noncirculating_holding_tokens" and c.get("chain") == "ethereum")
+assert len(_CL_NC33) == 33
+
+# ----- DECISIONS 1-3: CHAINLINK ON THE RULE. Circulating = totalSupply() = 1,000,000,000 (no mint, nothing burned).
+# 1 (a) the 33 non-circulating wallets (27 Safes 3-of-5, four legacy multisigs, two EOAs holding 0): their signers can
+#       move them, so "nobody can move it" fails -> IN circulating, OFF the float;
+# 2 (a) the Reserve (RBACTimelock; the bypasser multisig executes with no delay; "no withdrawals for multiple years" is
+#       a statement, not a contract) -> IN circulating, OFF the float (a held buyback);
+# 3 (a) the RewardVault (PUBLISHED) and the three path wallets (INFERRED: each funded only by the 33 or by each other)
+#       -> OFF the float as issuer-held. They were never out of circulating, so circulating does not move for them; they
+#       join the off-float sum at their first stored row (off_float_from), and `archive_backfill.py --run --project
+#       Chainlink` moves that seam back.
+# On the dump (2026-10-13): circulating 760,645,318 -> 1,000,000,000; the float is unchanged (718,120,127) until the
+# two new balance series hold a row. On 2026-11-23: float 703,627,408 (70.4%).
+CHAINLINK_PATH_WALLETS = (
+    ("release_hop", "0xD50f074Ec5c7997cE1DaacB513Ec194C480878Af", 9_822_500.00,
+     "first hop of the releases that do not go to the exchange deposit address (staking / node-payment path); Safe "
+     "4-of-7. INFERRED: funded only by the 33 non-circulating wallets (Blockscout, full LINK history)"),
+    ("node_payments", "0x9d6A86FaCdCF24859a38e6b9A2Ef87610a4fC157", 900_576.13,
+     "node-operator payments wallet; Safe 3-of-8. INFERRED: funded by the forwarder 0x7A28b8cF… (from 0xD50f074E…) and "
+     "earlier by 0xb9b012ca… (one of the 33) and 0x6781a24c…; pays the Payment Abstraction contract 0x5680681E… "
+     "directly and through RBACTimelock 0x08558d8b… and Safe 0x77dd1a9b…"),
+    ("distribution_2021", "0x6781a24Ccc819941b7a4c9CC7B0Dc32666e587E4", 31_465.48,
+     "2021 distribution Safe (54.5M from the legacy genesis wallets). INFERRED"))
+for _k, _a, _bal, _why in CHAINLINK_PATH_WALLETS:
+    _CL18["contracts"][f"issuer_path_{_k}"] = _contract(
+        _a, "ethereum", "treasury_holding", "LINK", "https://eth.blockscout.com/address/" + _a, verified=_R18,
+        provenance=f"INFERRED (docs/r15_chainlink_pack.md (a), (f); Blockscout trace re-read {_R18}): {_why}; "
+                   f"balanceOf {_bal:,.2f} LINK at block 26,477,750",
+        metric_override="issuer_path_holding_tokens", holder_has_code=False,
+        required_component=True,          # all three wallets or no row: the off-float sum is never stored narrower
+        purpose=f"issuer-side path wallet, INFERRED — in circulating, off the float (R18 decision 3 (a)): {_why}")
+_CL18["contracts"]["reward_vault_balance"] = _contract(
+    "0x996913c8c08472f584ab8834e925b06D0eb1D813", "ethereum", "treasury_holding", "LINK",
+    "https://github.com/smartcontractkit/chainlink-staking-v0.2-public-guide", verified=_R18,
+    provenance="PUBLISHED: smartcontractkit's staking v0.2 public guide (the RewardVault); balanceOf 3,093,999.14 LINK at "
+               "block 26,477,750 — rewards not yet emitted (admin timelock 0xf5df3d27…) and rewards accrued, unclaimed",
+    metric_override="reward_vault_balance_tokens", holder_has_code=True,
+    purpose="LINK held by the staking RewardVault — issuer-funded, off the float until claimed (R18 decision 3 (a))")
+METRICS["issuer_path_holding_tokens"] = {
+    "label": "LINK in Chainlink's three issuer-side path wallets (0xD50f074E… release hop, 0x9d6A86Fa… node-operator "
+             "payments, 0x6781a24C… 2021 distribution Safe) — INFERRED issuer wallets: in circulating, off the float "
+             "(R18 decision 3)",
+    "kind": "stock", "unit": "tokens", "archetypes": [1, 2, 3, 4], "tiers": [2], "sanity_min": 0, "sanity_max": 1e9,
+    "only_projects": ("Chainlink",)}
+METRICS["reward_vault_balance_tokens"] = {
+    "label": "LINK held by the staking v0.2 RewardVault 0x996913c8… (not yet emitted + accrued, unclaimed) — PUBLISHED; "
+             "in circulating, off the float (R18 decision 3)",
+    "kind": "stock", "unit": "tokens", "archetypes": [1, 2, 3, 4], "tiers": [2], "sanity_min": 0, "sanity_max": 1e8,
+    "only_projects": ("Chainlink",)}
+CHAINLINK_RULE_READ = {
+    "read_on": _R18, "block": 26_477_750, "total": 1_000_000_000.0, "burned": 0.0,
+    "noncirculating_33": 233_150_029.58, "reserve": 6_804_760.10, "reward_vault": 3_093_999.14,
+    "path_wallets": {a: b for _k, a, b, _w in CHAINLINK_PATH_WALLETS},
+    "staked_principal": 42_569_261.49,
+    "off_float": 253_803_330.43, "float": 703_627_408.08,
+    "who_can_move": {
+        "33 wallets": "27 Safes 3-of-5 (no owner set repeats), four legacy multisigs (6 owners each), two EOAs holding 0",
+        "Reserve": "RBACTimelock: proposer MCMS 0x20d64e2a… (22 signers) + 2-day delay; bypasser MCMS 0x177a2884… (22 "
+                   "signers) executes with NO delay",
+        "RewardVault": "admin timelock 0xf5df3d27… (adding rewards has no delay); stakers claim the accrued part",
+        "path wallets": "Safes 4-of-7, 3-of-8 and 2-of-n"},
+    "chainlink_api": {"url": "https://supply.chain.link/supply", "read": "2026-11-23T12:01Z",
+                      "circulating": 766_849_970.42, "total": 1_000_000_000.0, "wallets": 33,
+                      "is": "1,000,000,000 − the 33 listed wallets (233,150,029.58) — to the token"},
+    "coingecko": 766_849_970.42,
+    "decided": _R18_DECIDED + " — decisions 1 (a), 2 (a), 3 (a)"}
+declare_rule_in(
+    "Chainlink", ("buyback_fund_balance", "noncirculating_holding_tokens"),
+    "config.CHAINLINK_RULE_READ (docs/r15_chainlink_pack.md (b); re-read 2026-11-23 at block 26,477,750): the 33 "
+    "non-circulating wallets are Safes 3-of-5 / legacy multisigs / EOAs — their signers can move them; the Reserve is an "
+    "RBACTimelock whose bypasser multisig executes with no delay; none stakes (getStakerPrincipal 0 in both pools) — so "
+    "none meets all three tests: IN circulating, off the float. The RewardVault (PUBLISHED) and the three path wallets "
+    "(INFERRED: funded only by the 33 or by each other) are issuer-held: off the float",
+    off_float=("buyback_fund_balance", "noncirculating_holding_tokens", "reward_vault_balance_tokens",
+               "issuer_path_holding_tokens"),
+    # the two legs that were never out of circulating JOIN the off-float sum at their first stored row
+    off_float_from={"reward_vault_balance_tokens": "2017-09-16", "issuer_path_holding_tokens": "2017-09-16"},
+    circulating=(760_645_318, 1_000_000_000),
+    references={"chainlink_api": (766_849_970.42, {"the 33 wallets supply.chain.link/supply lists": 233_150_029.58}),
+                "coingecko": (766_849_970.42, {"the 33 wallets supply.chain.link/supply lists (CoinGecko relays "
+                                               "Chainlink's API figure)": 233_150_029.58}),
+                "coinmarketcap": (748_099_970.42, {
+                    "the 33 wallets": 233_150_029.58,
+                    "the 2026-10-09 release (CoinMarketCap's figure is one release stale; read 2026-11-20)": 18_750_000.0})},
+    # the references (Chainlink's own API, CoinGecko) leave out ONLY the 33 wallets — they count the Reserve, the vault
+    # and the path wallets — so the like-for-like comparison takes off ours the 33 wallets alone, not the whole
+    # off-float sum (credibility._rule_minus)
+    reference_minus=("noncirculating_holding_tokens",),
+    float_answer="circulating rises by the Reserve and the 33 wallets (to the total); the float loses the same two and, "
+                 "from their first stored row, the RewardVault (3.09M) and the three path wallets (10.75M): "
+                 "703,627,408 on 2026-11-23 (70.4% of total)",
+    restated="the whole stored series: circulating_supply_onchain = the stored total on every day it is held (the two "
+             "legs are no longer subtracted); one basis, never two")
+RULE_IN["Chainlink"].update({"read_on": _R18, "decided": CHAINLINK_RULE_READ["decided"]})
+CIRCULATING_ONCHAIN["Chainlink"]["decision"] = (
+    "THE RULE (R18, Jake 2026-11-24, decisions 1-3 (a)): circulating = totalSupply() = 1,000,000,000; the 33 "
+    "non-circulating wallets and the Reserve are in circulating, off the float; the RewardVault and the three INFERRED "
+    "path wallets off the float. Was (2026-10-07 / D2-4a 2026-10-26): 1B − the Reserve − the 33 wallets")
+CIRCULATING_ONCHAIN["Chainlink"]["handover"] = {
+    "on": "2026-11-24", "decided": CHAINLINK_RULE_READ["decided"],
+    "from": "total − buyback_fund_balance − noncirculating_holding_tokens (760,645,318 on the dump, 2026-10-13)",
+    "to": "total (1,000,000,000); the two legs leave the float",
+    "how": RULE_IN["Chainlink"]["restated"]}
+CIRCULATING_POLICY["Chainlink"].update({
+    "now": "THE RULE (Jake 2026-11-17), R18 (2026-11-24): circulating = totalSupply() = 1,000,000,000",
+    "source": "LINK.totalSupply() on Ethereum. Beside it: Chainlink's own figure, supply.chain.link/supply (766,849,970.42 "
+              "on 2026-11-23 = 1B − the 33 wallets it lists, to the token; stored daily as "
+              "circulating_supply_chainlink_api) and CoinGecko, which relays it (766,849,970.42); CoinMarketCap "
+              "748,099,970.42 is one release (18,750,000 on 2026-10-09) stale",
+    "definition": "total supply; the 33 non-circulating wallets, the Reserve, the RewardVault and the three path wallets "
+                  "(INFERRED) off the free float, with the staked principal",
+    "staked": "included in circulating, off the float (both v0.2 pools)",
+    "previous": "1B − the Reserve − the 33 wallets (2026-10-07 to 2026-11-24)"})
+METRICS["circulating_supply_chainlink_api"] = {
+    "label": "Chainlink's own circulating supply (supply.chain.link/supply circulatingSupply = 1B − its 33 listed "
+             "wallets) — REFERENCE only, shown beside ours under the rule (R18 decision 1)",
+    "kind": "stock", "unit": "tokens", "archetypes": [1, 2, 3, 4], "tiers": [3], "sanity_min": 0, "sanity_max": 1e9,
+    "only_projects": ("Chainlink",), "view_only": True}
+SOURCE_REGISTER["supply.chain.link"] = {
+    "used_for": "circulating_supply_chainlink_api — Chainlink's own published circulating supply (sources.yaml, method "
+                "json), a reference beside ours",
+    "paths": ["/supply"],
+    "robots": "checked per run by the pipeline's RFC 9309 reader before the GET",
+    "terms": {"url": "https://chain.link/terms", "status": "NOT READ for this endpoint — the 'Link to API' on "
+                                                           "chain.link/circulating-supply; Jake to read before any "
+                                                           "public use"},
+    "licence": "the project's own figure, used as its own figure; INTERNAL until terms are read",
+    "key": "none"}
+
+# ----- DECISION 5 (a): INSIDER SHARE OF STAKE = a MEASURED 0% on the issuer-side wallets on file — A FLOOR. Read on
+# every run by fetch/reward_vault.py: getStakerPrincipal(wallet) on BOTH pools for every wallet below, at one block;
+# ALL OR NO ROW. 2026-11-23, block 26,477,750: 0 for all 42. No source ties a node operator to Chainlink Labs, so the
+# operator pool's stakers (1,694,261.49 LINK) are not counted: the share is a floor.
+CHAINLINK_INSIDER_WALLETS = tuple(
+    [(a, "PUBLISHED: non-circulating wallet (supply.chain.link/supply)") for a in _CL_NC33]
+    + [(_CL_RESERVE, "PUBLISHED: the Reserve"),
+       *[(a, "INFERRED: " + k.replace("_", " ") + " path wallet") for k, a, _b, _w in CHAINLINK_PATH_WALLETS],
+       ("0x7A28b8cFeb73b45626f521dE928d0DD2D25C14a3", "INFERRED: same-day forwarder (Safe 3-of-6)"),
+       ("0x1661f9284137769E0B78cE131c80DEBA8F037CFf", "INFERRED: staking hop (Safe 3-of-5)"),
+       ("0x8716F86F9880AD39C276fC892FE35b7c197EeDd8", "INFERRED: staking hop (Safe 3-of-6)"),
+       ("0x7e10A625710ce59D9039B25d3D7D4a7DD5891c68", "INFERRED: RewardVault funder, owner of staking v0.1 (Safe 5-of-9)"),
+       (_CL_FWD_EXCHANGE, "INFERRED: receives only from the 33; a Binance-tagged deposit address")])
+assert len(CHAINLINK_INSIDER_WALLETS) == 42 and len({a.lower() for a, _ in CHAINLINK_INSIDER_WALLETS}) == 42
+METRICS["insider_stake_principal_tokens"] = {
+    "label": "LINK staked (getStakerPrincipal, both v0.2 pools) by the 42 issuer-side wallets on file (33 PUBLISHED "
+             "non-circulating wallets, the Reserve, 8 INFERRED path wallets) — the insider share's numerator; a FLOOR "
+             "(no source ties a node operator to Chainlink Labs) (R18 decision 5)",
+    "kind": "stock", "unit": "tokens", "archetypes": [1, 2, 3, 4], "tiers": [2], "sanity_min": 0, "sanity_max": 1e8,
+    "only_projects": ("Chainlink",)}
+_CL18["reward_vault_rates"]["insider_stake"] = {
+    "metric": "insider_stake_principal_tokens",
+    "pools": ("0xBc10f2E862ED4502144c7d632a3459F49DFCDB5e", "0xA1d76A7cA72128541E9FCAcafBdA3a92EF94fDc5"),
+    "wallets": tuple(a for a, _ in CHAINLINK_INSIDER_WALLETS),
+    "read": {"on": _R18, "block": 26_477_750, "principal": 0.0}}
+INSIDER_LOCK["Chainlink"] = (
+    "insider_stake_principal_tokens", "locked_tokens_principal",
+    "LINK staked by the 42 issuer-side wallets on file (33 PUBLISHED non-circulating wallets, the Reserve, 8 INFERRED "
+    "path wallets; getStakerPrincipal on both v0.2 pools) ÷ the pools' total principal. A MEASURED 0 (block 26,477,750, "
+    "2026-11-23) and A FLOOR: no source ties a node operator to Chainlink Labs, so the operator pool's stakers are not "
+    "counted (Jake 2026-11-24, decision 5 (a))")
+# Leakage (i) = insider share x distributed ÷ credited: a quarter whose credited holder value was ALL retired (held in
+# the Reserve) reads 0 whatever the share — as it did before the share was wired (Round G 2.11)
+LEAKAGE_I_ALL_RETIRED_IS_ZERO = ("Chainlink",)
+INSIDER_SHARE_ROUTES["Chainlink"]["r18"] = (
+    "WIRED (R18 decision 5 (a)): config.INSIDER_LOCK['Chainlink'] — a measured 0% floor; the `cell` text above is no "
+    "longer what the cell shows")
+
+# ----- DECISIONS 4 AND 7: THE THREE REVENUE LINES (S13).
+#   FEES            7 (b): the repo's customer_revenue_usd — the fee aggregator's receipts (CCIP 1.6 / 2.0, Payment
+#                   Abstraction invoices) + the lines that bypass it (requests, CCIP 1.2 / 1.5, VRF v2.5, Automation v2.3
+#                   premium; 5 chains). Cross-check: DefiLlama's parent `chainlink` dailyFees ($14.70M, 90 days to
+#                   2026-11-19).
+#   REVENUE         the Reserve's inflow from the Payment Abstraction contract x that day's price, on chain
+#                   (actual_buyback_usd): $14,202,208 over 2026-08-22..11-19 (1,223,041.53 LINK); DefiLlama's revenue
+#                   $14,150,084 on the same days (0.4%).
+#   HOLDER REVENUE  4 (a): that same inflow — HELD BY THE ISSUER (the Reserve), NOT DISTRIBUTED. Strict reading beside
+#                   it (4 (b)): $0 of revenue reaches holders — stakers are paid from released supply (the RewardVault's
+#                   only funder traces to the 33 wallets), and the Build token rewards to stakers ended (claims closed
+#                   2026-07-07, chain.link/blog/build-program-evolution).
+#   HOLDER SHARE    100% BY CONSTRUCTION (the two lines are one series): it measures nothing about a split.
+REVENUE_SPLIT["Chainlink"] = {
+    "round": "R18 (Jake 2026-11-24; docs/r15_chainlink_pack.md decisions 4 (a) and 7 (b))",
+    "fees": {"metric": "customer_revenue_usd", "primary": True,
+             "route": "ON CHAIN (decision 7 (b)): what customers pay — the fee aggregator 0xd6e39d42…'s receipts (CCIP "
+                      "1.6 / 2.0, Payment Abstraction invoices) + the lines that bypass it: request payments, CCIP 1.2 / "
+                      "1.5 fees, VRF v2.5, Automation v2.3 premium (5 chains). NOT measured: Data Streams (billed "
+                      "off-chain), SVR's share by month, off-chain enterprise revenue not yet converted, BNB / Avalanche. "
+                      "CROSS-CHECK: DefiLlama's parent 'chainlink' dailyFees on the same days ($14,701,698 over "
+                      "2026-08-22..11-19)"},
+    "revenue": {"metric": "actual_buyback_usd", "primary": True,
+                "route": "ON CHAIN: LINK the Payment Abstraction contract 0x5680681E… pays into the Reserve 0x9A709B7B… "
+                         "x that day's price — every revenue stream converted to LINK (fee tokens swapped on the "
+                         "Uniswap V3 LINK/WETH pool and, from 2026 Q3, the GPV2-compatible auction). $14,202,208 over "
+                         "2026-08-22..11-19 (1,223,041.53 LINK). Misses revenue not yet converted. CROSS-CHECK: "
+                         "DefiLlama's 'chainlink' dailyRevenue, $14,150,084 on the same days (0.4%)"},
+    "holder_revenue": {"metric": "holder_value_revenue_usd", "primary": True,
+                       "route": "HELD BY THE ISSUER (THE RESERVE), NOT DISTRIBUTED (decision 4 (a)): the same Reserve "
+                                "inflow — revenue-funded LINK taken off the market and held in an RBACTimelock ('We do "
+                                "not expect any withdrawals from the Reserve for multiple years'; one LINK has ever "
+                                "left, a test). STRICT READING BESIDE IT (4 (b)): $0 — no revenue-funded LINK is paid "
+                                "to holders; stakers are paid from released supply (emissions, outflow (a)), and the "
+                                "Build-project token rewards to stakers ended (claims closed 2026-07-07)"},
+    "holder_share": {"route": "holder revenue ÷ revenue per covered day = 100% BY CONSTRUCTION: both lines are the "
+                              "Reserve's inflow, so the share measures nothing about a split; under the strict reading "
+                              "(decision 4 (b)) it is 0%"},
+    "other_recipients": "node operators: request payments (inside FEES) and, NOT fees, the payments from released supply "
+                        "through the Payment Abstraction contract (outflow (b), decision 6); stakers: paid from "
+                        "released supply (outflow (a))",
+    "crosscheck": "FEES beside DefiLlama's parent fees (fees_usd); REVENUE and HOLDER REVENUE beside DefiLlama's "
+                  "revenue_usd / holders_revenue_usd (the same Reserve inflow valued by DefiLlama); the Reserve's own "
+                  "page (metrics.chain.link/api/reserve/latest: 6,804,760.10 LINK, 98 inflows, read 2026-11-23) beside "
+                  "the balance",
+    "strict_holder_revenue_usd": 0.0}
+
+# ----- DECISION 6 (a): NODE-OPERATOR PAYMENTS FROM RELEASED SUPPLY ARE OUTFLOW (b), OUT OF (e). The Payment Abstraction
+# contract 0x5680681E… pays out two streams: converter output to the Reserve (the buyback) and LINK it is handed by
+# 0x9d6A86Fa… (directly 3,276,012; through RBACTimelock 0x08558d8b… 1,242,495 — every LINK that timelock ever received,
+# 1,307,309, came from 0x9d6A86Fa…; through Safe 0x77dd1a9b… 613,880 — 87% of whose LINK came from 0x9d6A86Fa…) to 63
+# other addresses: 5,132,390.40 LINK since 2025-03-13 (2026 Q1 1,087,126; Q2 1,366,130; Q3 1,462,067; Q4 to 11-19
+# 601,753; Blockscout tokentx, read 2026-11-23). In = out each quarter. THE 63 RECIPIENTS ARE LABELLED NODE OPERATORS,
+# INFERRED (Jake 2026-11-24): no Chainlink document names them; the inference is the amounts, the weekly timing and the
+# payer. 0x9d6A86Fa… is fed by released supply (0x7A28b8cF… <- 0xD50f074E… <- the 33).
+#   (b)  = LINK the Payment Abstraction contract pays to anyone but the Reserve, on the day it is paid.
+#   (e)  loses the same LINK: each payment is matched FIFO to the lumps the 33 wallets sent to 0xD50f074E… from
+#        2025-03-14 (the first lump after the contract's first payment), after the staking part of each lump is out, and
+#        taken out of the release on the lump's day (build_workbook._paid_later_split; the FIFO convention Jake accepted
+#        2026-10-14 for the staking funding). Total dilution over the whole history is unchanged; nothing is counted twice.
+# NOT IN (b): Safe 0x77dd1a9b…'s DIRECT payments to the same recipient addresses (2,082,892 LINK all time, read
+# 2026-11-23) — they do not pass the contract; put to Jake.
+CHAINLINK_NODE_PAYMENTS = {
+    "payer": _CL_PAL, "not_counted_to": (_CL_RESERVE,),
+    "recipients": 63, "recipients_label": "node operators, INFERRED",
+    "label_basis": "INFERRED (Jake 2026-11-24): no Chainlink document names the 63 addresses; the amounts, the weekly "
+                   "timing and the payer (the node-operator payments Safe 0x9d6A86Fa…, fed by released supply) are the "
+                   "evidence",
+    "read": {"on": _R18, "source": "https://eth.blockscout.com/api?module=account&action=tokentx (LINK; 0x5680681E…, "
+                                   "0x08558d8b…, 0x77dd1a9b…)",
+             "paid_all_time": 5_132_390.40, "first": "2025-03-13",
+             "by_quarter": {"2025Q2": 6_056, "2025Q3": 80_512, "2025Q4": 528_744, "2026Q1": 1_087_126,
+                            "2026Q2": 1_366_130, "2026Q3": 1_462_067, "2026Q4 to 11-19": 601_753},
+             "funded_by": {"0x9d6A86Fa… direct": 3_276_012.19,
+                           "RBACTimelock 0x08558d8b… (all from 0x9d6A86Fa…)": 1_242_495.28,
+                           "Safe 0x77dd1a9b… (87% from 0x9d6A86Fa…)": 613_880.12},
+             "safe_77dd_direct_not_counted": 2_082_892.0},
+    "decided": _R18_DECIDED + " — decision 6 (a); the 63 recipients labelled node operators, INFERRED"}
+_CL18["log_scans"].append({
+    "key": "node_payments_out", "metric": "node_operator_payments_tokens", "chain": "ethereum", "token": _LINK,
+    "holders": [_CL_PAL], "direction": "out", "store": True, "attribution": "dedicated_wallet",
+    "exclude_counterparties": [_CL_RESERVE, "0x0000000000000000000000000000000000000000"],
+    "attribution_sources": [CHAINLINK_NODE_PAYMENTS["read"]["source"] + f", read {_R18}"],
+    "wired_on": "2026-11-24", "own_tier": scan_tier("Chainlink", {}),
+    "label": "LINK the Payment Abstraction contract 0x5680681E… pays to addresses other than the Reserve — 63 "
+             "recipients, labelled node operators, INFERRED (R18 decision 6: outflow (b), supply-side incentive paid from "
+             "released supply)"})
+METRICS["node_operator_payments_tokens"] = {
+    "label": "LINK paid from released supply to node operators (INFERRED: the 63 recipients of the Payment Abstraction "
+             "contract's non-Reserve stream), per day — outflow (b), supply-side incentive (R18 decision 6)",
+    "kind": "flow", "unit": "tokens", "archetypes": [1, 2, 3, 4], "tiers": [2], "sanity_min": 0, "sanity_max": 1e8,
+    "only_projects": ("Chainlink",)}
+METRICS["node_payments_release_tokens"] = {
+    "label": "The part of each release lump (33 wallets -> 0xD50f074E…) later paid to node operators — taken out of "
+             "unlocks (e) on the lump's day, FIFO (an attribution convention; R18 decision 6)",
+    "kind": "flow", "unit": "tokens", "archetypes": [1, 2, 3, 4], "tiers": [2], "sanity_min": 0, "sanity_max": 1e9,
+    "only_projects": ("Chainlink",), "view_only": True}
+# RELEASE_PAID_LATER (generic): a flow counted in ANOTHER category on the day it is paid, whose tokens left the release
+# stock earlier as a lump — matched FIFO to the lumps (after `after`'s part of each lump is out) and taken out of the
+# release on the lump's day. No lump or payment rows stored: nothing is taken (the release reads as before).
+RELEASE_PAID_LATER = {
+    "Chainlink": {"lumps": "staking_path_in_tokens", "paid": "node_operator_payments_tokens",
+                  "out": "node_payments_release_tokens", "after": "staking_funding_release_tokens",
+                  "from": "2025-03-14",
+                  "why": "decision 6 (a): node-operator payments are outflow (b); the LINK left the 33 wallets as a lump "
+                         "to 0xD50f074E… and (e) counted it then"}}
+OUTFLOW_CATEGORIES["Chainlink"]["b"] = ("node_operator_payments_tokens",)
+OUTFLOW_CATEGORIES["Chainlink"]["basis"] += (
+    ". (b) SUPPLY-SIDE INCENTIVE (R18, Jake 2026-11-24, decision 6 (a)): LINK from released supply paid through the "
+    "Payment Abstraction contract 0x5680681E… to 63 recipients — labelled node operators, INFERRED — on the day it is "
+    "paid, and taken out of (e) on the day its lump left the 33 wallets (FIFO, an attribution convention)")
+for _c in ("tokens", "usd"):
+    METRICS[f"outflow_b_{_c}"]["only_projects"] = tuple(dict.fromkeys(
+        (*METRICS[f"outflow_b_{_c}"]["only_projects"], "Chainlink")))
+FLOW_LINE_EVIDENCE.pop(("Chainlink", "Incentives paid beside: supply side (b)"), None)   # it has its own series now
+LUMPY_FLOWS[("Chainlink", "node_operator_payments_tokens")] = {
+    "underlying_cadence": "weekly", "observed_cadence": "daily",
+    "why": "paid in weekly batches (Thursdays): a day-on-day change is the schedule, not a signal",
+    "source": "Blockscout tokentx of 0x5680681E…, read 2026-11-23",
+    "evidence": "4,231 LINK transfers of the contract since 2025-03-13; the payouts fall on one day a week",
+    "recorded_on": "2026-11-24"}
+
+# ----- DECISION 8 (a): THE EXCHANGE LEG IS A NAMED FLOAT OUTFLOW, AND THE FINANCIAL-THEATRE FLAG (Jake 2026-11-24:
+# "exchange sends while the Reserve buys"). 86% of every release goes the same day from the 33 wallets to
+# 0x9B1c1752… — an address that has only ever received LINK from the 33 (253,800,000 since 2022-08-26) and forwarded
+# every token the same day to 0x28C6c062…. Blockscout's token-transfer metadata (read 2026-11-23 12:18 UTC) tags
+# 0x9B1c1752… "Binance: Deposit Address" and 0x28C6c062… "Binance: Hot Wallet" / "Binance 14" — A LABEL IS EVIDENCE, NOT
+# PROOF; the purpose (sale, OTC, custody, collateral) is not established.
+# WINDOW: from the Reserve's first inflow, 2025-08-07 (its launch day; metrics.chain.link/api/reserve/latest and the
+# chain agree). SCORED: the standard's wording — tokens RETIRED by buyback (the Reserve HOLDS all it buys, so retired =
+# bought and the two readings coincide).
+# LIVE READ 2026-11-23 (Blockscout tokentx, NOT the store): 77,600,000 LINK sent (2025-10-10 18,750,000; 2025-12-19
+# 9,225,000; 2026-04-03 14,375,000; 2026-06-19 18,375,000; 2026-10-09 16,875,000) while 6,804,737.24 LINK was retired
+# into the Reserve (to 2026-11-19): size 11.40x = 1,140%. To the dump's as-of (2026-10-13): 77,600,000 ÷ 6,204,658.94 =
+# 12.51x. The dump holds no row of the outflow series (the scan is new) and starts 2025-09-08: NOT TESTABLE there.
+THEATRE_FLAG["Chainlink"] = {
+    "window": {"from": "2025-08-07", "to": None,
+               "why": "the Reserve's first inflow (its launch day): 'exchange sends while the Reserve buys' (Jake "
+                      "2026-11-24); open to the as-of"},
+    "outflow_metric": "issuer_exchange_outflow_tokens",
+    "retired_metric": "retired_buyback_tokens",
+    "bought_metrics": ("actual_buyback_tokens",),
+    "wallets": {a: "non-circulating wallet (PUBLISHED: supply.chain.link/supply)" for a in _CL_NC33},
+    "destinations": {
+        _CL_FWD_EXCHANGE: {
+            "tag": "Binance (deposit address)", "label": "Binance: Deposit Address",
+            "evidence": "received LINK only from the 33 non-circulating wallets (253,800,000 since 2022-08-26) and "
+                        "forwarded every token the same day to 0x28C6c06298d514Db089934071355E5743bf21d60",
+            "label_source": "Blockscout eth.blockscout.com token-transfer metadata, read 2026-11-23"},
+        _CL_BINANCE_HOT: {
+            "tag": "Binance", "label": "Binance: Hot Wallet / Binance 14",
+            "label_source": "Blockscout eth.blockscout.com token-transfer metadata, read 2026-11-23"}},
+    "label_caveat": "an explorer label is evidence, not proof: Binance publishes neither address here; who owns the "
+                    "account behind the deposit address and what happens to the LINK there (sale, OTC, custody, "
+                    "collateral) is not established",
+    "research_read": {"read_on": _R18,
+                      "source": "Blockscout's free API (eth.blockscout.com/api tokentx): every LINK transfer of "
+                                "0x9B1c1752… and of the Reserve",
+                      "sent": 77_600_000.0,
+                      "by_sender": {"the 33 non-circulating wallets": 77_600_000.0},
+                      "by_destination": {"Binance": 77_600_000.0},
+                      "by_day": {"2025-10-10": 18_750_000.0, "2025-12-19": 9_225_000.0, "2026-04-03": 14_375_000.0,
+                                 "2026-06-19": 18_375_000.0, "2026-10-09": 16_875_000.0},
+                      "retired_in_window": 6_804_737.24, "retired_to": "2026-11-19", "size": 11.4038,
+                      "at_dump_asof": {"asof": "2026-10-13", "sent": 77_600_000.0, "retired": 6_204_658.94,
+                                       "size": 12.5067},
+                      "purpose": "not established (sale, OTC, custody or collateral)"},
+    "decided": _R18_DECIDED + " — decision 8 (a): a NAMED FLOAT OUTFLOW, purpose not established; the flag wired",
+    "scored": "as_written",
+    "scored_decided": "Scored reading: the standard's wording (retired = held in the Reserve; the two readings "
+                      "coincide). Window from the Reserve's first inflow: Jake 2026-11-24."}
+_CL18["log_scans"].append({
+    "key": "exchange_leg_out", "metric": "issuer_exchange_outflow_tokens", "chain": "ethereum", "token": _LINK,
+    "holders": list(_CL_NC33), "direction": "out", "store": True, "attribution": "dedicated_wallet",
+    "count_to": list(THEATRE_FLAG["Chainlink"]["destinations"]),
+    "attribution_sources": [d["label_source"] for d in THEATRE_FLAG["Chainlink"]["destinations"].values()],
+    # the same 66 streams the two labels-only scans read: its own tier's budget (explorer_noncirc@Chainlink)
+    "wired_on": "2026-11-24", "own_tier": f"explorer_noncirc{PROJECT_TIER_SEP}Chainlink",
+    "label": "LINK sent by the 33 non-circulating wallets to the Binance-tagged deposit address 0x9B1c1752… (and "
+             "0x28C6c062…) — a named float outflow, purpose not established (R18 decision 8); the financial-theatre "
+             "flag's outflow"})
+METRICS["issuer_exchange_outflow_tokens"] = {
+    "label": "LINK sent by Chainlink's 33 non-circulating wallets to exchange-tagged addresses (0x9B1c1752… 'Binance: "
+             "Deposit Address', 0x28C6c062… 'Binance: Hot Wallet'; Blockscout labels) — a NAMED FLOAT OUTFLOW, purpose "
+             "not established (R18 decision 8)",
+    "kind": "flow", "unit": "tokens", "archetypes": [1, 2, 3, 4], "tiers": [2], "sanity_min": 0, "sanity_max": 1e9,
+    "only_projects": ("Chainlink",)}
+LUMPY_FLOWS[("Chainlink", "issuer_exchange_outflow_tokens")] = {
+    "underlying_cadence": "quarterly", "observed_cadence": "daily",
+    "why": "one day a quarter (the release day): a day-on-day change is the schedule, not a signal",
+    "source": "Blockscout tokentx of 0x9B1c1752…, read 2026-11-23",
+    "evidence": "17 release days since 2022-08-26, each sent and forwarded on one day",
+    "recorded_on": "2026-11-24"}
+# THE RELEASE ITSELF stays on the statement as a memo (it no longer moves circulating): the 33 wallets' fall, gross —
+# the line the 18.75M-a-quarter reference (independent_references.csv quarterly_release) is read against.
+CHAINLINK_RELEASE_MEMO = ("memo: released from the 33 non-circulating wallets (in circulating before and after — the "
+                          "rule; it dilutes the float: unlocks (e))")
+FLOW_TOKEN_MEMO["Chainlink"] = (
+    (CHAINLINK_RELEASE_MEMO, "pool_release_tokens",
+     "R18 (Jake 2026-11-24, decision 1 (a)): the fall of the 33 wallets' summed balanceOf; under the rule a release is "
+     "an issuer-held -> float (or -> issuer path wallet) move, not a circulating change — not in the expected closing"),
+    ("memo: named float outflow — the 33 non-circulating wallets to the Binance-tagged deposit address (purpose not "
+     "established)", "issuer_exchange_outflow_tokens",
+     "decision 8 (Jake 2026-11-24): 86% of each release goes the same day to 0x9B1c1752… (Blockscout: 'Binance: "
+     "Deposit Address') and on to 0x28C6c062… ('Binance: Hot Wallet'); labels are evidence, not proof "
+     "(config.THEATRE_FLAG); in circulating before and after — an issuer-held -> float move, not in the expected "
+     "closing; it stays inside unlocks (e)"),)

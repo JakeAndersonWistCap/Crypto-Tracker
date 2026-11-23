@@ -6847,11 +6847,16 @@ def _evidence_views(groups: dict, usd: bool) -> None:
                      f"CHECK: {chk}")}
 
 
+PAID_LATER_NOT_READ: dict = {}   # (project, category) -> why (R18): the category's only leg is netted out of the release
+                                 # (config.RELEASE_PAID_LATER) and holds no row in this build — still inside (e)
+
+
 def _outflow_views(groups: dict) -> None:
     """THE FIVE OUTFLOW CATEGORIES (Jake 2026-10-12, Phase 2 amendment 3): per project and category (config
     OUTFLOW_CATEGORIES), outflow_<c>_tokens = the category's series summed per day — a day only where EVERY series in
     the category has a row (a missing leg is a gap, never a smaller outflow) — and outflow_<c>_usd = that x the day's
     price. Read-time views; the source names the series and the category's basis is on Config & Sources / METRICS.md."""
+    PAID_LATER_NOT_READ.clear()
     for p in scoped_projects():
         name = p["name"]
         price = _daily(groups.get((name, "price_usd")))
@@ -6860,6 +6865,11 @@ def _outflow_views(groups: dict) -> None:
             if not ms:
                 continue
             legs = [_daily(groups.get((name, m))) for m in ms]
+            pl = (getattr(config, "RELEASE_PAID_LATER", {}) or {}).get(name) or {}
+            if tuple(ms) == (pl.get("paid"),) and legs[0].empty and (name, ms[0]) not in _VIEW_BLOCKS:
+                PAID_LATER_NOT_READ[(name, cat)] = (
+                    f"{ms[0]} holds no row yet (its log scan stores it on the next run): the tokens are still inside "
+                    f"unlocks (e) — nothing is netted out — so total dilution is complete without category ({cat})")
             # A LEG THAT IS BLOCKED OR EMPTY BLOCKS THE CATEGORY, WITH ITS REASON (Jake's run on 3500042, item 24: CP
             # NET HOLDER YIELD read a bare n/a for Hyperliquid and NEAR while holder value was ok — a missing outflow
             # leg left no outflow row, so the formula errored silently). The outflow rows now say which leg and why.
@@ -7714,6 +7724,9 @@ def _unlock_release_view(groups: dict, name: str, metric: str, legs: tuple) -> N
     split_src = ""
     if metric == "unlock_release_tokens" and (sp := config.STAKING_FUNDING_SPLIT.get(name)):
         total, split_src = _staking_funding_split(groups, name, sp, total, cols)
+    if metric == "unlock_release_tokens" and (pl := (getattr(config, "RELEASE_PAID_LATER", {}) or {}).get(name)):
+        total, _pl_src = _paid_later_split(groups, name, pl, total, cols)     # R18: Chainlink's node-operator payments
+        split_src += _pl_src
     # A LEG COUNTED ELSEWHERE (config.RELEASE_LESS, round 3 W7): taken out on its day or the next stored day, never < 0
     less_legs, less_required = config.release_less(name) if metric == "unlock_release_tokens" else ((), False)
     for m in less_legs:
@@ -7847,6 +7860,65 @@ def _staking_funding_split(groups: dict, name: str, sp: dict, total: pd.Series, 
         {"date": ser.index, "project": name, "metric": sp["out"], "value": ser.values, "tier": 2,
          "source": f"derived:fifo[{sp['lumps']}|{sp['forwarded']}|{sp['funding']}] — {FIFO_CONVENTION}"}), cols)
     return total, f"-{sp['out']} ({FIFO_CONVENTION})"
+
+
+def _paid_later_split(groups: dict, name: str, pl: dict, total: pd.Series, cols) -> tuple[pd.Series, str]:
+    """R18 (config.RELEASE_PAID_LATER; Chainlink's node-operator payments, decision 6): tokens that left the release
+    stock as a LUMP and are counted in another outflow category on the day they are PAID are taken out of the release
+    on the lump's day. Each day's payment draws FIFO on the lumps dated on or before it (from the declared first lump),
+    each lump first reduced by what `after`'s split already took out of it (the staking part) — so a token is never
+    taken out twice. Taken out of the release on the lump's day or the next stored day, never below 0, and written as
+    its own series. No lump or payment rows: nothing is taken. A payment no lump covers is not attributed."""
+    def daily(m):
+        g = groups.get((name, m))
+        if g is None or g.empty:
+            return None
+        return (g.assign(date=pd.to_datetime(g["date"]).dt.normalize()).groupby("date")["value"].sum().astype(float)
+                .sort_index())
+    lumps, paid = daily(pl["lumps"]), daily(pl["paid"])
+    if lumps is None or paid is None:
+        return total, ""
+    before = daily(pl["after"]) if pl.get("after") else None
+    frm = pd.Timestamp(pl.get("from") or "1900-01-01")
+    queue = []
+    for d, v in lumps.items():
+        if v <= 0 or d < frm:
+            continue
+        gone = 0.0 if before is None else float(before.get(d, 0.0)) + float(before.get(d + pd.Timedelta(days=1), 0.0))
+        queue.append([d, max(0.0, float(v) - gone)])
+    attrib: dict = {}
+    for d, v in paid.items():
+        left = float(v)
+        for q in queue:
+            if left <= 1e-9:
+                break
+            if q[0] > d or q[1] <= 0:
+                continue
+            take = min(q[1], left)
+            q[1] -= take
+            left -= take
+            attrib[q[0]] = attrib.get(q[0], 0.0) + take
+    if not attrib:
+        return total, ""
+    total = total.copy()
+    taken: dict = {}
+    for d, v in sorted(attrib.items()):
+        left = v
+        for day in (d, d + pd.Timedelta(days=1)):
+            if left <= 1e-9 or day not in total.index:
+                continue
+            t = min(left, float(total.loc[day]))
+            total.loc[day] -= t
+            taken[day] = taken.get(day, 0.0) + t
+            left -= t
+    if not taken:
+        return total, ""
+    first = min(taken)
+    ser = pd.Series({d: float(taken.get(d, 0.0)) for d in total.index if d >= first}, dtype=float).sort_index()
+    groups[(name, pl["out"])] = _as_stored(pd.DataFrame(
+        {"date": ser.index, "project": name, "metric": pl["out"], "value": ser.values, "tier": 2,
+         "source": f"derived:fifo[{pl['lumps']}|{pl['paid']}] — {FIFO_CONVENTION}"}), cols)
+    return total, f"-{pl['out']} ({FIFO_CONVENTION})"
 
 
 def _net_common_views(groups: dict) -> None:
@@ -13935,6 +14007,10 @@ def _cp_cats(p: dict, cats=CP_DILUTION_CATS) -> list[str]:
         # R11.5: a category published with a lag is not summed into dilution / net holder yield (declared, said on
         # the outflow basis) — it keeps its own cells (SUBSIDY COVER, Flows)
         out = [c for c in out if (p["name"], c) not in config.DILUTION_LEAVES_OUT]
+        # R18 (config.RELEASE_PAID_LATER): a category whose tokens are NETTED OUT OF the release, with no row stored
+        # yet (its scan has not run), is still wholly inside unlocks (e) — nothing was netted — so total dilution is
+        # complete without it and is not blocked by it; its own cells (SUBSIDY COVER) say it is not stored
+        out = [c for c in out if (p["name"], c) not in PAID_LATER_NOT_READ]
     return out
 
 
@@ -14593,6 +14669,13 @@ def _cp_cols(R: Refs, data_by_key: dict) -> list[tuple]:
             dist = f"ROUND({cr}-{num(rt)}-{num(bu)},2)"
             return (f'=IF(NOT(ISNUMBER({cr})),{NA},IF({cr}<=0,"n/a — no credited holder value in Q0",'
                     f'IF({dist}<=0,0,IF(AND(ISNUMBER({n}),ISNUMBER({d}),{d}>0),({n}/{d})*{dist}/{cr},{NA}))))')
+        if p["name"] in getattr(config, "LEAKAGE_I_ALL_RETIRED_IS_ZERO", ()):
+            # R18 (Chainlink, decision 5): the share is wired, and a quarter whose credited value was ALL retired (held
+            # in the Reserve) is 0 whatever the share — as it read before the share was wired (Round G 2.11); only a
+            # distributing quarter takes the share
+            return (f'=IF(NOT(ISNUMBER({cr})),{NA},IF({cr}<=0,"n/a — no credited holder value in Q0",'
+                    f'IF({cr}-{num(rt)}<=0,0,IF(AND(ISNUMBER({n}),ISNUMBER({d}),{d}>0),({n}/{d})*({cr}-{num(rt)})/{cr},'
+                    f'{NA}))))')
         return (f'=IF(AND(ISNUMBER({n}),ISNUMBER({d}),{d}>0,ISNUMBER({cr})),IF({cr}>0,({n}/{d})*MAX(0,{cr}-{num(rt)})/'
                 f'{cr},"n/a — no credited holder value in Q0"),{NA})')
 
@@ -15379,8 +15462,11 @@ def write_a3(ws, R: Refs, data_by_key: dict):
          lambda r, p: calc(
              f"({circ(r, p)})"
              f"-IF(ISNUMBER({R.D(r, 'locked_tokens', 'now')}),{_stake_inside(R, r, p)},0)"
-             f"-IF(AND({R.C(r, 'Destination effect on float')}=\"locked_supply\","
-             f"ISNUMBER({R.D(r, 'buyback_fund_balance', 'now')})),{R.D(r, 'buyback_fund_balance', 'now')},0)"
+             # R18: a held reserve the rule counts IN circulating and takes off the float through RULE_IN's off_float
+             # (Chainlink's Reserve) leaves the effective float there — once, never here as well
+             + ("" if "buyback_fund_balance" in ((config.RULE_IN.get(p["name"]) or {}).get("off_float") or ()) else
+                f"-IF(AND({R.C(r, 'Destination effect on float')}=\"locked_supply\","
+                f"ISNUMBER({R.D(r, 'buyback_fund_balance', 'now')})),{R.D(r, 'buyback_fund_balance', 'now')},0)")
              + _effective_float_held(R, r, p)),
          FMT_NUM, "calc"),
         ("Destination effect on float", lambda r, p: pull(R.C(r, "Destination effect on float")), FMT_TEXT, "pull"),

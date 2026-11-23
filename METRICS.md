@@ -1098,7 +1098,7 @@ Funding: revenue (the default: the programme documented base)
 | Flow | Category | Series |
 |---|---|---|
 | into circulating | (a) security emissions | `emissions_tokens` |
-| into circulating | (b) supply-side incentives | **NO SERIES** |
+| into circulating | (b) supply-side incentives | `node_operator_payments_tokens` |
 | into circulating | (c) demand-side incentives | **NO SERIES** |
 | into circulating | (d) ecosystem / grant spend | **NO SERIES** |
 | into circulating | (e) unlocks | `unlock_release_tokens` |
@@ -1106,7 +1106,7 @@ Funding: revenue (the default: the programme documented base)
 | out of circulating | retirement (bought, burned + held) | `retired_buyback_tokens` |
 | out of circulating | burn (every burn) | **NO SERIES** |
 
-Basis: staking rewards (v0.2 pools, paid for securing feeds) are security; non-circulating wallet releases are unlocks (the 18.75M tranches stay in (e), Jake C23)
+Basis: staking rewards (v0.2 pools, paid for securing feeds) are security; non-circulating wallet releases are unlocks (the 18.75M tranches stay in (e), Jake C23). (b) SUPPLY-SIDE INCENTIVE (R18, Jake 2026-11-24, decision 6 (a)): LINK from released supply paid through the Payment Abstraction contract 0x5680681E… to 63 recipients — labelled node operators, INFERRED — on the day it is paid, and taken out of (e) on the day its lump left the 33 wallets (FIFO, an attribution convention)
 
 **Value flow statement**
 

@@ -1058,3 +1058,27 @@
   change_threshold_pct: 10
   added: 2026-10-07
   note: "Credibility reference only (Morpho in_circ). The body is a bare JSON number, so json_path is $ (the whole payload). robots.txt checked per run; terms not read from here."
+
+
+# ---- CHAINLINK's OWN CIRCULATING SUPPLY (R18, 2026-11-24; docs/r15_chainlink_pack.md decision 1). supply.chain.link/supply
+# (the "Link to API" on chain.link/circulating-supply) answers {"totalSupply": "1000000000000000000000000000",
+# "circulatingSupply": "766849970424883961240529443", "balances": [33 wallets]} — wei strings. Read 2026-11-23 12:01 UTC:
+# 766,849,970.42 = 1,000,000,000 − the 33 listed wallets, to the token. A REFERENCE shown beside ours (under the rule
+# ours is the total); never the figure in use. supply.chain.link/robots.txt answers 404 (nothing disallowed).
+- project: Chainlink
+  metric: circulating_supply_chainlink_api
+  tier: 3
+  enabled: true
+  url: https://supply.chain.link/supply
+  method: json
+  url_contains: /supply
+  json_path: circulatingSupply
+  decimals: 18
+  units_source: "the payload's totalSupply is 1000000000000000000000000000 = 1,000,000,000 x 1e18 (LINK has 18 decimals), read 2026-11-23"
+  needs_first_run_check: false
+  first_run_confirmed: {by: "Claude Code", date: "2026-11-23", value: 766849970.42, evidence: "GET supply.chain.link/supply answered circulatingSupply 766849970424883961240529443 (HTTP 200); 1e9 minus the 33 balances it lists (233,150,029.58), and equal to CoinGecko's 766,849,970.42 the same day"}
+  sanity_min: 500000000
+  sanity_max: 1000000000
+  change_threshold_pct: 10
+  added: 2026-11-24
+  note: "Reference only (Chainlink's own figure beside ours under the rule, R18 decision 1). robots.txt is checked by the run before the GET; terms not read for this endpoint."

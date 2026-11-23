@@ -204,7 +204,12 @@ ROUTES: dict[tuple[str, str], tuple] = {
     ("Chainlink", "staking_blended_rate"): ("ratio", "reward_emission_rate_annual", "locked_tokens_principal"),
     # V5 (Jake's round-2 run): the Flows tab's own release line and Q0 window — read 0 on calendar Q3 while Flows
     # showed the 18.75M tranche in Q0
-    ("Chainlink", "quarterly_release"): ("flows", "+ released from issuer wallets", "Q0"),
+    # R18: under the rule the release no longer moves circulating — it is the statement's memo line (same series, the
+    # 33 wallets' fall); was "+ released from issuer wallets"
+    # (the label is config.CHAINLINK_RELEASE_MEMO; tests/test_r18_chainlink.py holds the two equal)
+    ("Chainlink", "quarterly_release"): (
+        "flows", "memo: released from the 33 non-circulating wallets (in circulating before and after — the rule; it "
+                 "dilutes the float: unlocks (e))", "Q0"),
     # Round G 2.6: fee inflows arrive as RECEIPTS (intents.near withdrawals), which NearBlocks' account txns do not list
     # (fefundsadmin's newest "transaction" there is 2026-03-27) — the route is BigQuery receipt_actions + wNEAR ft_events
     # (sql/near/bigquery_wallet_inflows.sql), dry-run in check_offline_items near_settlement_routes; Jake decides the bytes

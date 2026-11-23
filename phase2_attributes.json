@@ -105,9 +105,9 @@
     "lock_length": "none (eligibility from staking); claims unlock linearly 90d from 2025-12-16 (Season 1)",
     "unstake_days": "n/a",
     "liquid_wrapper": "n",
-    "payout_currency": "other tokens: Build-project tokens (e.g. SXT in Season Genesis)",
-    "source": "https://chain.link/blog/chainlink-rewards-season-1",
-    "read_on": "2026-10-12"
+    "payout_currency": "other tokens: Build-project tokens (e.g. SXT in Season Genesis) \u2014 ENDED: Season 1 was the last; claims closed 2026-07-07 (about $20M of Build tokens were made available in all)",
+    "source": "https://chain.link/blog/chainlink-rewards-season-1 ; https://chain.link/blog/build-program-evolution (2026-06-26)",
+    "read_on": "2026-11-23"
    }
   ],
   "destination": {
@@ -144,6 +144,11 @@
     "date": "2025-11-11",
     "event": "Chainlink Rewards Season 1 starts (9 Build projects)",
     "source": "https://chain.link/blog/chainlink-rewards-season-1"
+   },
+   {
+    "date": "2026-06-26",
+    "event": "Build program ends payments in project tokens: Season 1 is the last Build-token reward to LINK stakers (claims closed 2026-07-07); new deals pay fees in LINK or assets converted to LINK, expected to go to programs such as the Reserve",
+    "source": "https://chain.link/blog/build-program-evolution"
    }
   ],
   "holding_demand": [

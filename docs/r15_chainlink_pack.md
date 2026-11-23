@@ -321,3 +321,31 @@ Built from the repo's 15 dumps (as of 2026-10-13); `done_check.py --verbose` giv
 - DefiLlama: https://api.llama.fi/summary/fees/chainlink (and `chainlink-staking`, `chainlink-requests`; dataType dailyFees, dailyRevenue, dailyHoldersRevenue, dailySupplySideRevenue); prices https://coins.llama.fi/chart/coingecko:chainlink
 - Not readable: metrics.chain.link/reserve (JavaScript), Token Terminal (JavaScript), etherscan.io (bot check); publicnode and the free tiers of other RPCs refuse wide `eth_getLogs` ranges
 - Repo: `config.py` (`PROJECT_BY_NAME["Chainlink"]`, `CIRCULATING_ONCHAIN`, `_NONCIRC_WALLETS`, `_NONCIRC_WALLETS_FIRST_PARTY`, `CL_STAKING_PATH`, `STAKING_FUNDING_SPLIT`, `INSIDER_SHARE_ROUTES`, `HOLDING_CAPS`, `REVENUE_TIER`), `SPEC.md`, `done_check.py`, `project_freeze._build`
+
+## Round 18 check against Chainlink's 2026 announcements (read 2026-11-23, 12:01–12:20 UTC)
+
+Nothing below changes a decision. Decisions 1–8 were wired as recommended (SPEC "Round 18 — Chainlink"; `config.py` "R18 — CHAINLINK").
+
+| Source (fetched 2026-11-23) | What it says | Against the pack |
+|---|---|---|
+| https://supply.chain.link/supply | circulating 766,849,970.42; total 1,000,000,000; 33 wallets | unchanged, to the token |
+| https://chain.link/economics | "767 M+" circulating, "42 M+" staked, "5 M+ LINK in Reserve" (the page lags: 6.80M on chain); lists Reserve, Payment Abstraction, Staking, Scale, SVR — Build is no longer listed | no change |
+| https://chain.link/economics/staking | emissions-based rewards "will eventually trend toward zero as external sources … such as user fees, grow"; 28-day cooldown, 7-day claim window | unchanged: stakers are paid from released supply |
+| https://chain.link/blog/quarterly-review-q1-2026 (2026-04-28) | "The Chainlink Reserve added 1,473,379 LINK in Q1, bringing the total now to 3.06M LINK" | Q1 inflow matches the chain to the token (1,473,379.36); "3.06M" is the balance at the review's date, not at quarter end (2,795,468) |
+| https://chain.link/blog/quarterly-review-q2-2026 (2026-07-24) | "accumulated 1.44M+ LINK in Q2, bringing total Reserve holdings to 4.5M LINK"; "The Build program is evolving" | the total matches (4,504,145 on chain at 06-30); the chain's calendar-Q2 inflow is 1,708,676.65 — Chainlink's "1.44M+" is 4.50M less the Q1 review's 3.06M. The pack's on-chain figure stands |
+| https://chain.link/blog/quarterly-review-q3-2026 (2026-10-21) | "accumulated 1,543,330.47 LINK in Q3, bringing total Reserve holdings to 6,047,498.3150 LINK"; SVR $24.4M+ recaptured in total | matches the chain to the token |
+| https://metrics.chain.link/api/reserve/latest (the Reserve page's own API; the page itself renders in JavaScript) | balance 6,804,760.0955 LINK; 98 inflows, every one from 0x5680681E…; first 2025-08-07; cost basis $11.2044 a LINK | equals `balanceOf` at block 26,477,750. The pack's "first inflow 2025-07-31" is wrong: the first is 2025-08-07 (the flag's window start) |
+| https://chain.link/blog/build-program-evolution (2026-06-26) | Build payments in project tokens end; "the most recent season of Chainlink Rewards will mark the conclusion of Build-related token rewards, with claims ending on July 7, 2026"; about $20M of Build tokens were made available to stakers in all; new agreements pay "fees paid in LINK or other liquid assets that can be readily converted to LINK", proceeds "expected to be programmatically converted to LINK and used to support the growth of the network through programs such as the Chainlink Reserve" | strengthens decision 4's strict reading (nothing but released LINK now reaches stakers). On chain no LINK has reached the Reserve except through 0x5680681E… (6,804,737.24) and 24.8 LINK of dust from 17 senders, so deals paid in LINK are inside the measured inflow or have not arrived. "Expected" and "such as" commit no share |
+| https://chain.link/circulating-supply | "Token release schedule is currently 7% of the total supply per year" | unchanged |
+
+Could not be fetched: https://chain.link/blog/quarterly-review-q4-2025 (404), https://chain.link/reserve (404; the link is reserve.chain.link → metrics.chain.link/reserve), chain.link/economics/build, /economics/scale, /economics/payment-abstraction (404).
+
+On chain the same day (block 26,477,750, 2026-11-23 12:11 UTC): the 33 wallets 233,150,029.58; Reserve 6,804,760.10; RewardVault 3,093,999.14; 0xD50f074E… 9,822,500.00; 0x9d6A86Fa… 900,576.13; 0x6781a24C… 31,465.48; principal 42,569,261.49; free float 703,627,408 (70.4%); `getStakerPrincipal` 0 for the 33 and nine other issuer-side wallets; reward buckets end 2027-03-17.
+
+Three "not established" items of the pack that are now read:
+
+- **0x9B1c1752… and 0x28C6c062….** Blockscout's token-transfer metadata tags 0x9B1c1752… "Binance: Deposit Address" and 0x28C6c062… "Binance: Hot Wallet" / "Binance 14". A label is evidence, not proof; whose Binance account it is and what happens to the LINK is still not established.
+- **Where RBACTimelock 0x08558d8b… gets its LINK.** All of it (1,307,309.20) from 0x9d6A86Fa…; it has paid 1,242,495.28 into 0x5680681E…. Safe 0x77dd1a9b… took 2,412,435 of its 2,762,902 LINK from 0x9d6A86Fa… and, beside the 613,880 it paid into 0x5680681E…, paid 2,082,892 directly to the same recipient addresses (not in outflow (b); a decision for Jake).
+- **The Reserve page.** Readable through its API (above).
+
+Still not established: that the 63 recipients are node operators (labelled INFERRED); 0x9d6A86Fa…'s full outflow history (Blockscout's account API stops at 10,000 rows: 2021-08..2022-08 only).
