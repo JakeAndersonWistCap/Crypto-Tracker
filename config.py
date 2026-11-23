@@ -50224,3 +50224,30 @@ DECLARED_NA_REASONS.setdefault("Aethir", []).append(
              "staking emission schedule plus partner tokens (docs.aethir.com Staking Pools Emission Schedule; "
              "Aethir's own APR 12.4% / 13.8% on 2026-11-23, staking_apr_ai / staking_apr_gaming), emissions-funded; "
              "from 2026-11-02 the fee burn reaches every holder alike"})
+
+
+# ===== R20 (lead) — ETHEREUM'S A4 TAB: the same declared "no unlock wallets" covers the tab's emissions + unlocks cell =====
+# Ethereum joined A4 this round (Jake's tags); the A-tab's "Total dilution" is emissions + unlocks and read "Not formed on
+# this tab ... no non-circulating wallet set". Jake declared that Ethereum genuinely has none (R20 Part 4.2).
+DECLARED_NA_REASONS["Ethereum"] = (*DECLARED_NA_REASONS["Ethereum"], {
+    **{k: v for k, v in DECLARED_NA_REASONS["Ethereum"][0].items() if k not in ("cols", "match", "text")},
+    "cols": (), "match": "Not formed on this tab: its total dilution is emissions + unlocks"})
+
+
+# ===== R20 — FROZEN MOVES OF THE ROUND (tests/fixtures/frozen_moves_r20.json; the table: docs/moves_r20.md) =====
+def _load_r20_moves() -> int:
+    import json as _json
+    from pathlib import Path as _Path
+    p = _Path(__file__).resolve().parent / "tests" / "fixtures" / "frozen_moves_r20.json"
+    if not p.exists():
+        return 0
+    n = 0
+    for proj, cells in _json.loads(p.read_text(encoding="utf-8")).items():
+        for key, steps in cells.items():
+            for st in steps:
+                declare_later_move(proj, key, st["to"], st["why"], st["date"])
+                n += 1
+    return n
+
+
+R20_MOVES_DECLARED = _load_r20_moves()
