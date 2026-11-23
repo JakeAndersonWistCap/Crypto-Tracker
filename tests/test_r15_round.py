@@ -78,7 +78,8 @@ def test_5_the_named_outflow_is_category_f_taken_out_of_e_from_the_stock_senders
     assert config.outflow_metrics(EF, "f") == ("etherfi_named_float_outflow_tokens",)
     assert config.release_less(EF)[0] == ("etherfi_named_float_outflow_tokens",)
     assert "f" in bw.CP_DILUTION_CATS and "f" in bw._cp_cats(config.PROJECT_BY_NAME[EF])
-    assert all(not config.outflow_metrics(p["name"], "f") for p in config.PROJECTS if p["name"] != EF)
+    # R20 (Jake 2026-11-24): Chainlink's exchange leg is category (f) too, "as for Ether.fi" (was: Ether.fi alone)
+    assert {p["name"] for p in config.PROJECTS if config.outflow_metrics(p["name"], "f")} == {EF, "Chainlink"}
     scan = next(s for s in config.PROJECT_BY_NAME[EF]["log_scans"] if s["key"] == "named_float_outflow")
     holders = {h.lower() for h in scan["holders"]}
     assert "0x9eac7114d1a1eabc4732a886795cfd9e6e35843f" not in holders        # the deployer EOA: already in the float

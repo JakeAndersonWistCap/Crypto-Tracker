@@ -88,7 +88,7 @@ class AeroLeafEpochs:
     TIER = TIER
 
     def __init__(self, stored_long=None, rpc=None, prices=None, now: int | None = None, clock=time.monotonic,
-                 budget_s: float | None = None, state: dict | None = None, workers: int = 4, **_ignored):
+                 budget_s: float | None = None, state: dict | None = None, workers: int = 1, **_ignored):
         self.http = Http(min_interval=0.25, retries=2)       # tenderly gateways answer 429 to bursts (read 2026-11-23)
         self.stored = stored_long
         self._rpc = rpc                  # tests: (chain, method, params) -> result
@@ -97,6 +97,8 @@ class AeroLeafEpochs:
         self._clock = clock
         self.budget_s = budget_s
         self.state = state
+        # one call at a time by default (the shared Http paces per host; measured 2026-11-23: one epoch on the seven
+        # chains = 1,650 calls in 323 s — Elysium 663 calls / 122 s at 5,000 blocks a call)
         self.workers = max(1, int(workers))
         self.deadline = None
         self._ts: dict = {}

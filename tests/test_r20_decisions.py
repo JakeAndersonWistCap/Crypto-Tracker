@@ -500,7 +500,7 @@ def test_leaf_budget_stops_between_chain_epochs_and_the_next_run_continues(monke
     f = out.frame()
     assert f["date"].nunique() == 1 and pd.to_datetime(f["date"]).iloc[0] == TS(E0, unit="s")   # newest first, whole
     assert any(e.status == "warn" and "still owed" in e.message for e in out.log)
-    assert fetch.TIER_BUDGET_S["aero_leaf"] == config.AERO_LEAF_TIER_BUDGET_S > config.AERO_LEAF_CHAINS["budget_s"] or True
+    assert fetch.TIER_BUDGET_S["aero_leaf"] == config.AERO_LEAF_TIER_BUDGET_S == 600 > 540        # the tier outlives its own stop
     assert any(t[0] == "aero_leaf" for t in fetch.TIER_ORDER)
 
 

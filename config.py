@@ -49246,3 +49246,19 @@ PENDLE_BERACHAIN_RECONCILED = {
     "read_on": "2026-11-23", "endpoint": "rpc.berachain.com", "block": 29_219_000, "calls": 5_844, "seconds": 418,
     "out_events": 742_058, "out_tokens": 72_018.934818643, "last_out_block": 16_206_151,
     "in_events": 1, "in_tokens": 500_000.0, "balance_of": 427_981.065181357, "difference_wei": 0}
+
+# ----- R20 LIVE CHECKS OF THE NEW AERODROME READS (2026-11-23, public RPCs; recorded, nothing reads them) -----
+# fetch/aero_leaf.py, the epoch of 2026-11-12 on the seven chains: 1,650 calls, 323 s, one call at a time. Six chains
+# reproduce the R19 scratch read to the dollar; Robinhood reads 164,297.36 against 171,401 with ONE token now unpriced
+# by DefiLlama's coins API (0 on the R19 read) — counted (aero_leaf_unpriced_count_robinhood), left out of the $.
+AERO_LEAF_CHAINS["live_check"] = {
+    "read_on": "2026-11-23", "epoch": "2026-11-12", "calls": 1_650, "seconds": 323,
+    "usd": {"arc": 5_833.63, "ink": 4_805.44, "ethereum": 94_890.95, "optimism": 21_598.91, "robinhood": 164_297.36,
+            "arbitrum": 23_037.92, "elysium": 26_192.23},
+    "unpriced": {"robinhood": 1, "elysium": 1}}
+# aero_v3.surplus_history, 2026-10-22..11-22 (32 days, every pot at each day's first block): 0 at the cutover, rising to
+# 12,680,522.51 at the first block of 11-19, 2,894,486.22 at 11-20 (the 10,000,000 spent), 3,227,908.14 at 11-22.
+AERO_GAUGE_CAPS["surplus_history_read"] = {
+    "read_on": "2026-11-23", "days": 32,
+    "tokens": {"2026-10-22": 0.0, "2026-10-29": 4_608_458.07, "2026-11-05": 7_951_283.18, "2026-11-12": 11_108_555.07,
+               "2026-11-19": 12_680_522.51, "2026-11-20": 2_894_486.22, "2026-11-22": 3_227_908.14}}
