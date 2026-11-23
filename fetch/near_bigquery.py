@@ -668,6 +668,63 @@ class NearBigQuery:
         if prog.done:
             prog.flush(final=True)
 
+    def history_chunk(self, client, spec, st, out, name, d0, d1, hard_cap: int) -> dict | None:
+        """R18 (Jake 2026-11-24): ONE CHUNK OF P2P HISTORY BEFORE THE STORED RUN — the same SQL and token list as the
+        daily read, over [d0, d1], as a BACKFILL (the month's budget, the per-query cap and the top-up reserve apply)
+        under `hard_cap`, the bytes the month's approval allows. NEVER CALLED BY run(): only near_p2p_history.py's
+        explicit command calls it, after config.NEAR_P2P_HISTORY_APPROVAL is checked.
+        NO DAY TWICE: a chunk holding a day already held is refused before any query. NO PARTIAL DAY, NO PARTIAL
+        CHUNK: the days are kept only if EVERY day of the chunk came back with its native-NEAR row and no row falls
+        outside it; otherwise nothing is kept (the bytes are still on the ledger) and the chunk is asked again.
+        Returns {"days", "billed", "d0", "d1"} or None with the reason logged. The days are valued and stored by the
+        next token_metrics run (_value reads every held day), a day only where the store holds NEAR's price."""
+        days = [str(d.date()) for d in pd.date_range(pd.Timestamp(d0), pd.Timestamp(d1), freq="D")]
+        what = f"p2p HISTORY {days[0]}..{days[-1]}" if days else "p2p HISTORY"
+        if not days:
+            out.skipped(SOURCE, name, f"{what}: no day in the chunk — NOT RUN", TIER)
+            return None
+        twice = [d for d in days if d in st.get("days", {})]
+        if twice:
+            out.skipped(SOURCE, name, f"{what}: {len(twice)} day(s) are already held ({twice[0]}..{twice[-1]}) — NOT "
+                                      f"RUN: a day is never read twice", TIER)
+            return None
+        toks = (st.get("tokens") or {}).get("list")
+        if not toks:
+            out.skipped(SOURCE, name, f"{what}: no token census in the state — NOT RUN (the daily run's P2P read "
+                                      f"makes it; run `python token_metrics.py --project Near` first)", TIER)
+            return None
+        before = self._run_bytes
+        rows = self._run(client, what, _sql("bigquery_p2p_daily.sql"),
+                         {"d0": pd.Timestamp(d0).date(), "d1": pd.Timestamp(d1).date(), "tokens": toks}, spec, st, out,
+                         name, backfill=True, hard_cap=int(hard_cap))
+        if rows is None:
+            return None
+        billed = self._run_bytes - before
+        got: dict = {}
+        for r in rows:
+            got.setdefault(str(pd.Timestamp(r["day"]).date()), {})[r["token"]] = str(r["amount"])
+        want = set(days)
+        outside = sorted(k for k in got if k not in want)
+        short = [d for d in days if NATIVE not in got.get(d, {})]
+        if outside or short:
+            out.fail(SOURCE, name, f"{what}: NOTHING KEPT — "
+                     + (f"{len(short)} day(s) came back without a native-NEAR row ({', '.join(short[:5])}"
+                        f"{'…' if len(short) > 5 else ''})" if short else "")
+                     + ("; " if short and outside else "")
+                     + (f"{len(outside)} row day(s) outside the chunk ({', '.join(outside[:5])})" if outside else "")
+                     + f" — a chunk is kept whole or not at all; {billed / 1e9:,.2f} GB billed. Ask it again (a repeat "
+                       f"within a day is served from BigQuery's cache).", TIER)
+            return None
+        for d in days:
+            st["days"][d] = got[d]
+        rec = {"month": str(today().date())[:7], "on": str(today().date()), "d0": days[0], "d1": days[-1],
+               "days": len(days), "billed_bytes": int(billed)}
+        st.setdefault("history", {}).setdefault("runs", []).append(rec)
+        self._save(st)
+        out.skipped(SOURCE, name, f"{what}: {len(days)} day(s) kept, {billed / 1e9:,.2f} GB billed; the next "
+                                  f"`python token_metrics.py --project Near` values and stores them", TIER)
+        return {"days": len(days), "billed": int(billed), "d0": days[0], "d1": days[-1]}
+
     def _activity_ex(self, client, spec, st, out, name) -> None:
         """NEAR transactions per day with Kai-Ching's signers counted apart (Jake's probes7, 2026-10-02).
         The daily top-up first (days newer than the newest held), then the rest of the year in ONE backfill
