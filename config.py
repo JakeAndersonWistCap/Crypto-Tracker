@@ -47624,7 +47624,6 @@ REVENUE_SPLIT["GEODNET"] = {
     "other_recipients": "the GEODNET Foundation: the other 20% of data revenue (declared; no wallet or report is "
                         "published for it)",
     "crosscheck": "DefiLlama's holdersRevenue for 'geodnet' (holders_revenue_usd) is the same burn valued by DefiLlama"}
-=======
 
 # =====================================================================================================================
 # ===== R17 — ETHEREUM'S STAKED ETH AND NEAR'S NEARBLOCKS READS (Jake's store of 2026-11-23; SPEC "Round 17") =====
