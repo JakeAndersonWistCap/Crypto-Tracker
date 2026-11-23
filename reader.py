@@ -519,6 +519,31 @@ def price_change(s: pd.Series, days: int, asof: pd.Timestamp, excluded=()) -> tu
     return float(s.loc[end]) / p0 - 1, f"{then.date()} to {end.date()}"
 
 
+SETTLEMENT_LIVE_DAYS = 7     # R17: a settlement series whose last day is within this of circulating's is still read
+
+
+def _settlement_forms_on(groups: dict, project: str, circ: pd.Series) -> str:
+    """R17: for a project with NO 365-day settlement sum yet — the dates on which it and its 1-year change first form,
+    from the daily settlement series as stored: held without a hole from day r0 to its last day, the 365-day sum first
+    holds all 365 days on r0 + 364 and its 1-year change on r0 + 729. '' when there is no daily series, when it has
+    stopped (its last day more than SETTLEMENT_LIVE_DAYS before circulating's — nothing forms from a series that is
+    no longer read), or when there is no circulating series to judge that by: no date is ever guessed."""
+    import config                                                  # noqa: PLC0415
+    d = _series(groups, project, (getattr(config, "ARTEMIS_SETTLEMENT", {}) or {}).get("metric",
+                                                                                       "settlement_volume_usd"))
+    if d.empty or circ.empty or (circ.index.max() - d.index.max()).days > SETTLEMENT_LIVE_DAYS:
+        return ""
+    days = d.index.sort_values()
+    r0 = days[-1]
+    for prev in reversed(days[:-1]):
+        if (r0 - prev).days != 1:
+            break
+        r0 = prev
+    return (f": the daily settlement series is held without a hole from {r0.date()}, so the 365-day sum first forms "
+            f"on {(r0 + pd.Timedelta(days=364)).date()} and its 1-year change (two years of history) on "
+            f"{(r0 + pd.Timedelta(days=729)).date()} — earlier only if the days before {r0.date()} are backfilled")
+
+
 def settlement_key(groups: dict, project: str, back_days: int = 0) -> tuple[float | None, str]:
     """A1's key (P1-6): (S365 ÷ circulating, now) ÷ (the same a year earlier) − 1. back_days > 0 (P2e-2, the key's
     trajectory): the same 1-year change measured `back_days` before the series' last date — the one formula, its end
@@ -526,7 +551,7 @@ def settlement_key(groups: dict, project: str, back_days: int = 0) -> tuple[floa
     s = _series(groups, project, "settlement_volume_365d_usd")
     c = _series(groups, project, "circulating_supply_used")
     if s.empty:
-        return None, "no trailing-365-day settlement volume series"
+        return None, "no trailing-365-day settlement volume series" + _settlement_forms_on(groups, project, c)
     if c.empty:
         return None, "no circulating supply series"
     end = s.index.max() - pd.Timedelta(days=back_days)
@@ -535,8 +560,16 @@ def settlement_key(groups: dict, project: str, back_days: int = 0) -> tuple[floa
                       f"{s.index.min().date()}")
     then = end - pd.Timedelta(days=365)
     if then not in s.index:
+        # R17: WHEN IT FORMS, SAID AS A DATE — the 365-day sum is held from its first day, so its 1-year change first
+        # exists 365 days after that day; said only for the key as of now (back_days 0) and only while the sum is
+        # still being read (its last day within SETTLEMENT_LIVE_DAYS of the circulating series' last day): a series
+        # that has stopped has no date on which it forms
+        forms = ""
+        if back_days == 0 and (c.index.max() - s.index.max()).days <= SETTLEMENT_LIVE_DAYS:
+            forms = (f" — its 1-year change first forms on {(s.index.min() + pd.Timedelta(days=365)).date()} as the "
+                     f"daily series runs on (earlier only if the days before are backfilled)")
         return None, (f"needs the trailing-365-day settlement volume on {then.date()} (two years of history); held "
-                      f"from {s.index.min().date()}")
+                      f"from {s.index.min().date()}{forms}")
     cn, ct = c.asof(end), c.asof(then)
     if pd.isna(cn) or pd.isna(ct) or ct <= 0 or cn <= 0:
         return None, f"no circulating supply on {then.date()} or {end.date()}"

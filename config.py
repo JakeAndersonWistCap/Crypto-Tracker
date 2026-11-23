@@ -47474,8 +47474,7 @@ def _load_r17_moves() -> int:
 
 R17_MOVES_DECLARED = _load_r17_moves()
 
-# =====================================================================================================================
-# ===== R17 — GEODNET ON THE RULE; PLUME'S RWA READ (Jake 2026-11-23) =====
+# ==============================================================================================================# ===== R17 — GEODNET ON THE RULE; PLUME'S RWA READ (Jake 2026-11-23) =====
 # GEODNET (Jake's store 2026-11-23: on-chain circulating 524,985,588 against CoinGecko 754,193,399, -30%). Every wallet
 # the repo subtracted was read live on 2026-11-23 (Polygon block 97,814,124; Solana mainnet-beta) and tested against the
 # rule (Jake 2026-11-17: out of circulating only if not yet released AND nobody can move it AND it earns nothing):
@@ -47625,3 +47624,77 @@ REVENUE_SPLIT["GEODNET"] = {
     "other_recipients": "the GEODNET Foundation: the other 20% of data revenue (declared; no wallet or report is "
                         "published for it)",
     "crosscheck": "DefiLlama's holdersRevenue for 'geodnet' (holders_revenue_usd) is the same burn valued by DefiLlama"}
+=======
+
+# =====================================================================================================================
+# ===== R17 — ETHEREUM'S STAKED ETH AND NEAR'S NEARBLOCKS READS (Jake's store of 2026-11-23; SPEC "Round 17") =====
+# ETHEREUM. beacon_chain_eth held nothing after 2026-10-25 on Jake's store: validatorqueue.com's history stopped that
+# day and the declared handover to beacon_chain_eth_primary waits for its overlap (the BigQuery rebuild, P5-1.12). The
+# route is unchanged — no new metric, no new rule, the handover and its ±1% overlap stand exactly as declared. What is
+# added is the node read's own checking (fetch/staked_eth.py, "R17"):
+#   max_age_hours  a finalized state older than this is REFUSED (a node that stopped following the chain);
+#   cross_check    ultrasound.money's Σ balances (eth-supply-parts.beaconBalancesSum) at a slot within max_slot_gap of
+#                  the node's must agree within tolerance_pct, else the node read is REFUSED; a cross-check that could
+#                  not be made is said in the row's source.
+# WHAT EACH SOURCE MEASURES, read live 2026-11-23 09:39-09:55 UTC (finalized slot 15716896, epoch 491153):
+#   Σ ACTUAL balances, ALL validators      44,714,369 ETH  publicnode /eth/v1/beacon/states/finalized/validator_balances
+#                                          44,714,251 ETH  ultrasound.money eth-supply-parts.beaconBalancesSum, slot
+#                                                          15716976 (−0.0003%)            <- beacon_chain_eth_primary
+#   Σ EFFECTIVE balance, ACTIVE validators 44,435,398 ETH  lighthouse validator_inclusion current_epoch_active_gwei
+#                                          44,435,401 ETH  ultrasound.money effective-balance-sum (the base the
+#                                                          issuance curve pays on; beaconcha.in v1 `eligibleether`)
+#   Σ effective balance that ATTESTED      44,357,984 ETH  lighthouse previous_epoch_target_attesting_gwei
+#                                                          (beaconcha.in `votedether` — validatorqueue's staked_amount)
+#   PENDING DEPOSITS (in no balance yet)      731,489 ETH  publicnode .../states/finalized/pending_deposits, 8,866
+#                                                          entries — OUT of all three figures above
+#   the deposit contract's lifetime deposits 93,060,476 ETH ultrasound beaconDepositsSum — NOT staked ETH (withdrawals
+#                                                          never leave the contract)
+# So the actual-balance sum reads +0.63% above the active effective balance and +0.80% above validatorqueue's
+# definition (rewards not yet swept, and validators exited or exiting whose balance is not yet withdrawn); pending
+# deposits are a further +1.64% that none of them counts.
+# NO KEYLESS HISTORY ROUTE EXISTS (searched 2026-11-23): publicnode serves the head and the finalized state only (a
+# past slot answers 403; lighthouse validator_inclusion for any epoch but the finalized one answers 404);
+# ultrasound.money's daily history (supply-projection-inputs inBeaconValidatorsByDay) ends 2024-06-22; beaconcha.in
+# answers 401 without a key and is in its declared cooldown until 2026-12-01; validatorqueue's file still ends
+# 2026-10-25; ChainSafe's public Lodestar node answers the finalized state but timed out / refused (HTTP 500
+# QUEUE_ERROR_QUEUE_MAX_LENGTH) on every past slot asked. The days 2026-10-26..the first node row therefore come only
+# from staked_eth_rebuild.py (BigQuery, Jake's login) — the route P5-1.12 declared.
+PROJECT_BY_NAME["Ethereum"]["staked_eth_node"].update({
+    "max_age_hours": 6.0,
+    "cross_check": {
+        "label": "ultrasound.money beaconBalancesSum",
+        "url": "https://ultrasound.money/api/v2/fees/eth-supply-parts",
+        "field": "beaconBalancesSum", "slot_field": "slot",
+        # 0.1%: at the spec churn (256 ETH an epoch each way) plus issuance the sum moves < 0.14% a DAY; within
+        # max_slot_gap (900 slots, 3 hours) it moves < 0.02% — 0.1% is five times that, and a truncated answer or a
+        # wrong unit misses by far more. Measured 2026-11-23: −0.0003% at 80 slots.
+        "tolerance_pct": 0.1, "max_slot_gap": 900,
+        "measures": "Σ balances (gwei) of every validator at `slot` — the same Beacon API sum, by ultrasound.money's "
+                    "own node (ultrasoundmoney/eth-analysis-rs)",
+        "read": "2026-11-23: 44,714,251.11 ETH at slot 15716976 vs the node's 44,714,369.44 at 15716896 (−0.0003%)",
+    },
+    "checked": "SPEC Round 17 (2026-11-23)",
+})
+SOURCE_REGISTER["ultrasound.money"] = dict(
+    SOURCE_REGISTER["ultrasound.money"],
+    paths=list(SOURCE_REGISTER["ultrasound.money"].get("paths") or []) + ["/api/v2/fees/eth-supply-parts"])
+
+# NEAR. THE NEARBLOCKS TIER TIMED OUT because the pacer counted one credit a call while NearBlocks bills v3 `limit`
+# (1 credit per 25 rows, up to 10; validators 1 — its API reference and rateLimiter.ts, read 2026-11-23): a run spent
+# ~70 credits against 6 a minute and 333 a day, was answered 429, waited each out and was abandoned at its budget.
+# fetch/nearblocks.py now bills as NearBlocks does, asks only the owed days, never re-reads a history that is held,
+# asks only the receipts the payer sent, stops before the tier's budget and makes no further call after a 429 that
+# survived its wait. A NORMAL DAY: three stats paths, three revenue wallets, validators, /stats — one credit each —
+# and the payer's receipts (4): 12 credits, two minute windows, inside the 180 s budget.
+NEARBLOCKS_BILLING = {
+    "rule": "1 credit per 25 rows asked with `limit` (or per_page), rounded up, from 1 up to 10; a validators path 1",
+    "free_plan": {"per_minute": 6, "per_day": 333, "per_month": 10_000},
+    "keyless_vs_key": "a keyless caller (counted by IP, no monthly window) and a free key (counted by user) are both on "
+                      "the free plan; only a paid plan (nearblocks.io/apis) lifts the limits — a free key does not "
+                      "fix a timeout",
+    "sources": ("https://api.nearblocks.io/openapi.json (info.description, \"Credits\")",
+                "https://github.com/Nearblocks/nearblocks/blob/main/apps/api/src/middlewares/rateLimiter.ts"),
+    "read": "2026-11-23",
+    "v1_v2": "switched off 2026-11-22 (api.nearblocks.io/api-docs/migration; /v1/plans answers HTTP 410) — every "
+             "path here has been /v3 since 2026-10-13",
+}

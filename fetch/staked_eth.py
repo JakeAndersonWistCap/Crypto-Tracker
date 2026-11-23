@@ -354,6 +354,46 @@ def slot_time(slot: int) -> pd.Timestamp:
     return pd.Timestamp(GENESIS_UNIX + int(slot) * 12, unit="s")
 
 
+def _utcnow() -> pd.Timestamp:
+    """The read's own clock (UTC, naive) — module-level so a test can set it."""
+    return pd.Timestamp.now("UTC").tz_localize(None)
+
+
+# ===== R17 (Jake's store 2026-11-23): THE NODE READ IS CHECKED — A STALENESS RULE AND A SECOND SOURCE. =====
+# STALENESS: finality trails the head by two epochs (~13 minutes). A "finalized" state older than the declared
+# max_age_hours is a node that has stopped following the chain: REFUSED, nothing stored (the row would be dated a
+# past day and read as that day's stake).
+# THE SECOND SOURCE: ultrasound.money's own beacon node sums the same quantity,
+#     GET https://ultrasound.money/api/v2/fees/eth-supply-parts -> {"beaconBalancesSum": "<gwei>", "slot": N, ...}
+# (Σ balances of every validator at `slot`; its open-source backend, ultrasoundmoney/eth-analysis-rs, reads
+# /eth/v1/beacon/states/{slot}/validator_balances — the same Beacon API call). Read live 2026-11-23: publicnode
+# 44,714,369.44 ETH at finalized slot 15716896, ultrasound 44,714,251.11 ETH at slot 15716976 (80 slots later):
+# −0.0003%. Within the declared slot gap the two must agree within the declared tolerance, else the node read is
+# REFUSED (a truncated or wrong sum is never stored); when ultrasound does not answer, or its slot is too far from the
+# node's, the node's sum is stored and the row's source says the cross-check was not made — never silently.
+def cross_check_sum(node_gwei: int, node_slot: int, body, spec: dict) -> dict:
+    """{"status": "agrees" | "DISAGREES" | "not comparable" | "not read", "text", "gap_pct"} for the node's Σ gwei at
+    node_slot against a second source's answer `body` (spec: field, slot_field, tolerance_pct, max_slot_gap)."""
+    what = spec.get("label", "second source")
+    if not isinstance(body, dict):
+        return {"status": "not read", "gap_pct": None, "text": f"cross-check NOT MADE: {what} did not answer"}
+    raw, slot = body.get(spec["field"]), body.get(spec["slot_field"])
+    if isinstance(slot, bool) or not isinstance(slot, int) or not isinstance(raw, (str, int)) \
+            or isinstance(raw, bool) or not _WEI.match(str(raw)) or int(raw) <= 0:
+        return {"status": "not read", "gap_pct": None,
+                "text": f"cross-check NOT MADE: {what} carried no {spec['field']} / {spec['slot_field']}"}
+    gap_slots = int(slot) - int(node_slot)
+    if abs(gap_slots) > int(spec["max_slot_gap"]):
+        return {"status": "not comparable", "gap_pct": None,
+                "text": f"cross-check NOT MADE: {what} is at slot {slot}, {gap_slots:+,} slots from the node's "
+                        f"(more than {int(spec['max_slot_gap']):,})"}
+    gap = (int(raw) / node_gwei - 1.0) * 100.0
+    ok = abs(gap) <= float(spec["tolerance_pct"])
+    return {"status": "agrees" if ok else "DISAGREES", "gap_pct": gap,
+            "text": f"cross-check {'agrees' if ok else 'DISAGREES'}: {what} {int(raw) / 1e9:,.0f} ETH at slot {slot} "
+                    f"({gap_slots:+,} slots), {gap:+.4f}% (tolerance ±{float(spec['tolerance_pct']):g}%)"}
+
+
 class BeaconNodeStakedEth:
     """ETH staked (Σ actual balances of all validators at the finalized state) from a public beacon node (P5-1.12)."""
     SOURCE = "beacon_api"
@@ -412,6 +452,25 @@ class BeaconNodeStakedEth:
                 return s0, total, n, nz
         raise RuntimeError("the finalized slot moved during the read twice — refused (the sum may straddle two states)")
 
+    def cross_check(self, spec: dict, gwei: int, slot: int) -> dict | None:
+        """The node's sum against the declared second source (R17); None when none is declared. A second source that
+        does not answer is said in the row's source, never an error of the read."""
+        cc = spec.get("cross_check")
+        if not cc:
+            return None
+        try:
+            from .scrape import robots_verdict
+            allowed, why = robots_verdict(cc["url"])
+            if not allowed:
+                return {"status": "not read", "gap_pct": None,
+                        "text": f"cross-check NOT MADE: robots.txt disallows {cc.get('label', 'the second source')} "
+                                f"({str(why)[:60]})"}
+            body = self._get(cc["url"]).json()
+        except Exception as e:  # noqa: BLE001 — the cross-check's own failure is said, the node read stands
+            log.info("staked_eth: cross-check %s did not answer: %s", cc.get("label"), str(e)[:160])
+            body = None
+        return cross_check_sum(gwei, slot, body, cc)
+
     def run(self, projects: list[dict], window_days, out):
         for p in projects:
             spec = p.get("staked_eth_node")
@@ -438,11 +497,23 @@ class BeaconNodeStakedEth:
                                 f"{hi:,.0f} ETH, at least {int(spec.get('min_entries', 100_000)):,} entries)")
                     continue
                 when = slot_time(slot)
-                src = f"{spec['point']}[finalized slot {slot}, {when:%H:%M} UTC; {nz:,} of {n:,} non-zero]"
+                # R17: a finalized state older than max_age_hours is a node that stopped following the chain
+                age_h = (_utcnow() - when).total_seconds() / 3600.0
+                if spec.get("max_age_hours") is not None and age_h > float(spec["max_age_hours"]):
+                    errs.append(f"{mask_url(node)}: refused — its finalized slot {slot} is {when:%Y-%m-%d %H:%M} UTC, "
+                                f"{age_h:,.1f} h old (finality trails the head by ~13 minutes; more than "
+                                f"{float(spec['max_age_hours']):g} h is a node that has stopped following the chain)")
+                    continue
+                chk = self.cross_check(spec, gwei, slot)
+                if chk and chk["status"] == "DISAGREES":
+                    errs.append(f"{mask_url(node)}: refused — Σ {eth:,.0f} ETH at slot {slot}; {chk['text']}")
+                    continue
+                note = f"; {chk['text']}" if chk else ""
+                src = f"{spec['point']}[finalized slot {slot}, {when:%H:%M} UTC; {nz:,} of {n:,} non-zero{note}]"
                 out.add(tidy([(when.normalize(), eth)], name, metric, src, TIER), self.SOURCE, name,
                         f"{metric}: {eth:,.0f} ETH — Σ actual balances of all validators at finalized slot {slot} "
                         f"({when:%Y-%m-%d %H:%M} UTC), {n:,} entries ({nz:,} non-zero), public beacon node "
-                        f"{mask_url(node)}", TIER)
+                        f"{mask_url(node)}{note}", TIER)
                 self.daily.done(dkey, day)
                 break
             else:

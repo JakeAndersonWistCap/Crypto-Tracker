@@ -112,7 +112,9 @@ TIER_ORDER = [
     # Plume's own explorer stats service (Blockscout), full daily history (2026-09-30).
     ("blockscout_stats", 1, lambda ctx: BlockscoutStats(last_dates=ctx["last_dates"])),
     # NEAR's daily transactions and active accounts — keyed (NEARBLOCKS_API_KEY).
-    ("nearblocks", 1, lambda ctx: NearBlocks(last_dates=ctx["last_dates"])),
+    ("nearblocks", 1, lambda ctx: NearBlocks(
+        last_dates=ctx["last_dates"], stored_long=ctx.get("stored_long"),
+        deadline_s=_budget("nearblocks") - 10.0)),
     # beaconcha.in was DROPPED ENTIRELY 2026-10-01 (Jake): a zero allowance in the new month
     # (config Ethereum.beaconchain_dropped).
     # Ethereum's cumulative burn and protocol supply (Etherscan stats/ethsupply2, A9).
@@ -2200,8 +2202,9 @@ def refresh_changed_adapters(daily=None, root=None, say=None) -> list:
 
 
 def nearblocks_daily_calls() -> int:
-    """The NearBlocks calls one run makes on a normal day (one credit each): the validators read, one per distinct
-    v3 stats path, and one balance read per declared revenue / Foundation account."""
+    """The NearBlocks calls one run makes on a first read: the validators read, one per distinct v3 stats path, and one
+    balance read per declared revenue / Foundation account. R17: a call is billed by its rows (fetch.nearblocks
+    .call_credits); on a normal day the run asks only what is owed — 12 credits, two minute windows."""
     import config                                                 # noqa: PLC0415
     n = 0
     for p in config.PROJECTS:
