@@ -1900,6 +1900,23 @@ def _lag_matched_views(groups: dict, asof) -> None:
 S13_STATE: dict = {}     # project -> what the last build's S13 views cover (R9.4 / R9.5)
 
 
+def _s13_inferred_views(groups: dict) -> None:
+    """R18 (config.S13_INFERRED — GEODNET, Jake 2026-11-24): an S13 line INFERRED from another line's series — that
+    series x a declared factor, ROW FOR ROW (the same dates, tiers and span markers, so every window and coverage
+    count of the inferred line is the base line's). REVENUE = the measured burn ÷ 0.8, FEES = the measured burn ÷ 0.4.
+    The base series is untouched; a project without an entry is untouched; no base series, no inferred line."""
+    for name, views in (getattr(config, "S13_INFERRED", {}) or {}).items():
+        for view, (base, factor) in views.items():
+            g = groups.get((name, base))
+            if g is None or g.empty:
+                groups.pop((name, view), None)
+                continue
+            groups[(name, view)] = _as_stored(g.assign(
+                metric=view, value=pd.to_numeric(g["value"], errors="coerce") * float(factor), tier=2,
+                source="derived:s13_inferred[" + base + f" x {float(factor):g}] <- " + g["source"].astype(str)),
+                g.columns)
+
+
 def _s13_views(groups: dict) -> None:
     """R9.4 / R9.5 — the three revenue lines on THE SAME COVERED DAYS.
     (1) config.S13_ONCHAIN (Aerodrome): the lines' source of record is the on-chain voter-epoch read. One row per
@@ -8296,6 +8313,7 @@ def aggregate(long: pd.DataFrame, fetch_status: pd.DataFrame, asof: pd.Timestamp
     _daily_twin_views(groups, asof)   # G11 D3: a "daily" series that IS its monthly twin in every window is dropped
     _LAST_GROUPS.clear()
     _subsidy_common_views(groups, asof)   # G13 6: subsidy cover over the days every leg covers once (b) is complete
+    _s13_inferred_views(groups)           # R18: an S13 line inferred from another's series (GEODNET: burn ÷ 0.8, ÷ 0.4)
     _s13_views(groups)                    # R9.4 / R9.5: the three revenue lines on the same covered days
     _s13_component_views(groups, asof)    # R11.3a: each line's gas / Intents parts on the line's own days (Near)
     _s13_share_basis_views(groups, asof)  # R13: the holder share on one basis (Uniswap: UNI burned ÷ UNI released)

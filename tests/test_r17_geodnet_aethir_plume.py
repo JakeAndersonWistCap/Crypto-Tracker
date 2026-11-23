@@ -224,12 +224,13 @@ def test_5_geodnets_lines_are_series_already_on_file_and_say_what_is_inferred():
     s = config.revenue_split(G)
     assert s and {s["fees"]["metric"], s["revenue"]["metric"], s["holder_revenue"]["metric"]} <= set(config.METRICS)
     assert s["holder_revenue"]["primary"] is True                            # the burn, measured on chain
-    assert s["fees"]["primary"] is False and s["revenue"]["primary"] is False   # the burn ÷ 0.8: inferred, an aggregator's
+    # R18 (Jake 2026-11-24): revenue = the burn ÷ 0.8, fees = the burn ÷ 0.4 — both inferred (tests/test_r18_geodnet.py)
+    assert s["fees"]["primary"] is False and s["revenue"]["primary"] is False
     assert config.REVENUE_TIER[G][0] == "revenue"                            # the existing cell's line is unchanged
     assert G in config.REVENUE_IMPLIED                                        # still labelled implied from the burn
 
 
-def test_5_the_holder_share_is_the_declared_80_percent_by_construction():
+def test_5_defillamas_own_three_series_restate_the_declared_80_percent():     # R18: the cross-check, not the lines
     from real_dump import load
     rows = pd.DataFrame(load(G)["metrics"])
     rows = rows[rows["source"] == "defillama"]
