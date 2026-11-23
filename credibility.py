@@ -1407,7 +1407,8 @@ def _free_float_now(p, rows, long, asof, add_back=(), minus_released=False, **_)
             return None, None, f"no {fr['metric']} figure"
         lock += v
         parts.append(f"{fr['metric']} {v:,.0f} (released, held: out of the float)")
-    if p in config.RULE_IN:                   # R9.2: the issuer-side stock the rule counts in circulating, off the float
+    # R18: not while every leg joins from a declared date and is not read yet (config.RULE_IN_PENDING, set by the build)
+    if p in config.RULE_IN and p not in config.RULE_IN_PENDING:   # R9.2: the rule's issuer-side stock, off the float
         v, _d = now("rule_in_off_float_tokens")
         if v is None:
             return None, None, "no rule_in_off_float_tokens figure"

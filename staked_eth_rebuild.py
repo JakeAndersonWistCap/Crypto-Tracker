@@ -19,8 +19,14 @@ client, guard, dry run and monthly budget as the Ethereum P2P leg). Reads metric
    ±1%. Printed: days compared, mean and worst gap, every day outside. The consensus-reward model is printed against
    the stored Eth2Staking deltas where both exist.
 5. --apply AND PASSED: beacon_chain_eth_primary rows for the overlap days and from 2026-10-26 to the day before the
-   first beacon-node row (never on a day the node holds), source bigquery_eth:staked_rebuild[...]. Otherwise nothing.
-Exit code: 0 passed (and stored with --apply), 1 not passed / refused, 2 a usage or setup problem.
+   first beacon-node row (never on a day the node holds), source bigquery_eth:staked_rebuild[...].
+6. --apply AND NOT PASSED (R18, Jake 2026-11-24): no rebuilt day is stored; ONE row beacon_chain_eth_seam_step_pct is —
+   the DECLARED CHANGE OF QUANTITY: the series switches to the beacon node's actual balances at the seam, the row's
+   value the measured step (first node row ÷ validatorqueue's last row − 1, %), its source the test's result. The
+   ±1% test itself is unchanged. Without --apply the declaration is printed, nothing stored. A test that could not
+   run (BigQuery refused, the dataset behind the anchor) declares nothing.
+Exit code: 0 passed (and stored with --apply), 1 not passed / refused and nothing stored, 2 a usage or setup problem,
+3 not passed and the declared change of quantity stored (--apply).
 """
 from __future__ import annotations
 
@@ -52,13 +58,63 @@ def stored(db: Path) -> dict:
         q = "SELECT substr(date,1,10), value, source FROM metrics WHERE project='Ethereum' AND metric=?"
         vq = {pd.Timestamp(d): float(v) for d, v, s in con.execute(q, ("beacon_chain_eth",))
               if _measuring_point(str(s)) == VQ_POINT}
-        node = [pd.Timestamp(d) for d, _v, s in con.execute(q, ("beacon_chain_eth_primary",))
-                if _measuring_point(str(s)) == config.BEACON_NODE_POINT]
+        node = {pd.Timestamp(d): float(v) for d, v, s in con.execute(q, ("beacon_chain_eth_primary",))
+                if _measuring_point(str(s)) == config.BEACON_NODE_POINT}
         es = config.PROJECT_BY_NAME["Ethereum"].get("etherscan_supply") or {}
         eth2 = {pd.Timestamp(d): float(v) for d, v, _s in con.execute(q, (es.get("consensus_metric", ""),))}
     finally:
         con.close()
-    return {"vq": vq, "first_node_day": min(node) if node else None, "eth2": eth2}
+    return {"vq": vq, "first_node_day": min(node) if node else None, "eth2": eth2, "node": node}
+
+
+def seam_declaration(have: dict, anc: dict, test: dict, balance: dict | None = None, sp: dict | None = None):
+    """R18 (Jake 2026-11-24): what a NOT PASSED overlap test declares — ONE row of the marker series
+    (beacon_chain_eth_seam_step_pct), or (None, why). The series switches from validatorqueue's quantity (effective
+    balance that attested) to the node's (Σ actual balances of all validators) at the seam; the row is dated the first
+    day on actual balances and its value is the MEASURED STEP there: the first beacon-node row after validatorqueue's
+    last row (this run's anchor read when the store holds none yet) ÷ validatorqueue's last row − 1, in %. The days
+    between the two are part of that step and are said. Refused — nothing declared — when the test passed, when
+    validatorqueue holds no row, or when the step is outside the declared bound (a unit or read error, not a seam)."""
+    sp = sp or spec()
+    fb = sp.get("fallback")
+    if not fb:
+        return None, "no fallback is declared (config staked_eth_rebuild.fallback)"
+    if test.get("passed"):
+        return None, "the overlap test passed — the rebuild is adopted, no change of quantity"
+    vq = have.get("vq") or {}
+    if not vq:
+        return None, "validatorqueue holds no stored row — there is no seam to declare"
+    d0 = max(vq)
+    v0 = vq[d0]
+    after = {d: v for d, v in (have.get("node") or {}).items() if d > d0}
+    if after:
+        d1 = min(after)
+        v1, how = after[d1], "the first stored beacon-node row"
+    else:
+        d1 = pd.Timestamp(anc["time"]).normalize()
+        v1, how = float(anc["balance_eth"]), "this run's anchor read (the store holds no beacon-node row yet)"
+    if d1 <= d0 or not v0:
+        return None, f"the first actual-balance day {d1.date()} is not after validatorqueue's last row {d0.date()}"
+    step = (v1 / v0 - 1.0) * 100.0
+    if abs(step) > float(fb["max_step_pct"]):
+        return None, (f"the step {step:+.2f}% ({v1:,.0f} on {d1.date()} vs {v0:,.0f} on {d0.date()}) is outside "
+                      f"±{float(fb['max_step_pct']):g}% — a read or unit error, not a seam; nothing declared")
+    same_day = ""
+    if balance and d0 in balance:
+        same_day = (f"; the rebuild on {d0.date()} reads {balance[d0]:,.0f} ETH ({(balance[d0] / v0 - 1) * 100:+.2f}% — "
+                    f"not adopted)")
+    outside = len(test.get("outside") or ())
+    src = (f"{fb['point']}[OVERLAP TEST NOT PASSED: {test.get('compared', 0)} of {test.get('min_days')} day(s) compared, "
+           + (f"worst {test['worst_gap']:+.2f}% on {test['worst_day']}, " if test.get("worst_day") else "")
+           + f"{outside} outside ±{test.get('tolerance_pct', 0):g}%"
+           + (f", {len(test['missing'])} with no rebuild" if test.get("missing") else "")
+           + f" — DECLARED CHANGE OF QUANTITY ({fb['decided']}): validatorqueue {v0:,.0f} ETH on {d0.date()} (effective "
+             f"balance that attested) -> {v1:,.0f} ETH on {d1.date()} (Σ actual balances, {how}), {(d1 - d0).days} "
+             f"day(s) apart{same_day}; {fb['reference']}]")
+    row = pd.DataFrame({"date": [d1], "project": "Ethereum", "metric": fb["marker_metric"], "value": [step],
+                        "source": [src], "tier": 1})
+    return row, (f"validatorqueue {v0:,.0f} ETH on {d0.date()} -> actual balances {v1:,.0f} ETH on {d1.date()} "
+                 f"({how}): {step:+.2f}% over {(d1 - d0).days} day(s)")
 
 
 def anchor(reader=None) -> dict:
@@ -229,8 +285,30 @@ def main(argv=None, reader=None, bq_rows=None) -> int:
              + (" ..." if len(test["outside"]) > 20 else "") if test["outside"] else "")
           + (f"; {len(test['missing'])} validatorqueue day(s) with no rebuild" if test["missing"] else ""))
     if not test["passed"]:
-        print("NOT ADOPTED — nothing stored (SPEC P5-1.12: the rebuild is used only within ±1% on the overlap).")
-        return 1
+        print("NOT ADOPTED — no rebuilt day is stored (SPEC P5-1.12: the rebuild is used only within ±1% on the "
+              "overlap).")
+        # R18 (Jake 2026-11-24): a failed test switches the series to actual balances at the seam as a DECLARED CHANGE
+        # OF QUANTITY — one marker row; the build reads it (build_workbook._handover_continuation_views). No question.
+        row, what = seam_declaration(have, anc, test, rb["balance"], sp)
+        if row is None:
+            print(f"NO CHANGE OF QUANTITY DECLARED — {what}. Nothing stored.")
+            return 1
+        print(f"DECLARED CHANGE OF QUANTITY at the seam ({sp['fallback']['decided']}): {what}. beacon_chain_eth reads "
+              f"the beacon node's actual balances from {pd.Timestamp(row['date'].iloc[0]).date()}; no trend reads across "
+              f"the seam; the days between the two legs stay holes.")
+        if not a.apply:
+            print("TEST ONLY — nothing stored. Run with --apply to store the declaration (1 row, "
+                  f"{sp['fallback']['marker_metric']}).")
+            return 1
+        import store as sm
+        st = sm.Store(db)
+        try:
+            n = st.upsert(row)
+        finally:
+            st.close()
+        print(f"STORED {n} row(s) as {sp['fallback']['marker_metric']} ({sp['fallback']['point']}): the next build "
+              f"hands beacon_chain_eth over to actual balances, labelled.")
+        return 3
     out = rows_to_store(rb["balance"], have["first_node_day"], anc, test, sp)
     after = out[pd.to_datetime(out["date"]) > pd.Timestamp(sp["overlap"][1])]
     print(f"ROWS: {len(out)} ({len(out) - len(after)} overlap day(s), {len(after)} backfilled day(s)"

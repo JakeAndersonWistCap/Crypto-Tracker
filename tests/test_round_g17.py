@@ -40,7 +40,8 @@ def test_2a_a_route_waiting_on_a_wallet_list_is_missing_e_and_no_route_is_not_wi
     texts = [v["cell"] for v in config.INSIDER_SHARE_ROUTES.values()] + \
             [v["not_wired"] for v in config.INSIDER_SHARE_MONITOR.values()]
     # R11.4 (2026-11-19): Near's insider share is a number now (INSIDER_LOCK, the Foundation set) — was >= 11
-    assert len(texts) >= 10
+    # R18 (2026-11-24): Ethereum's too (INSIDER_LOCK, the Foundation's validators) — was >= 10
+    assert len(texts) >= 9
     for t in texts:
         assert len(t) <= 255
         st, why = ca.classify("x", t, None)

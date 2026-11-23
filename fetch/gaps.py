@@ -725,8 +725,19 @@ def _tier_note(project: dict, metric: str, scrape_entries: dict) -> tuple[str, s
                 "P5-1.12) stored nothing this run; the node serves today only, so a missed day is rebuilt from BigQuery "
                 "(staked_eth_rebuild.py)",
                 f"Read the beacon_api line in the Run Log for {name}: it names the endpoint's refusal. Past days: run "
-                f"python staked_eth_rebuild.py (test only) — it stores nothing unless the ±1% overlap with "
-                f"validatorqueue passes and --apply is given.")
+                f"python staked_eth_rebuild.py (test only); with --apply it stores the rebuilt days when the ±1% overlap "
+                f"with validatorqueue passes, and when it does not, one row declaring the change of quantity at the "
+                f"seam (R18).")
+    efw = project.get("ef_wallets") or {}
+    if metric in {efw.get("held_metric"), efw.get("inferred_metric"), (efw.get("stake") or {}).get("metric")} - {None}:
+        return ("the Ethereum Foundation's wallets (ETH + WETH at one finalized block; its validators' balances by "
+                "public key) are read once a day, keyless (fetch/ef_wallets.py, R18) — nothing stored this run",
+                f"Read the ef_wallets lines in the Run Log for {name}: each names the endpoint or the wallet that was "
+                f"not read. Past days of the held series: python -m fetch.ef_wallets --backfill.")
+    if metric == ((project.get("staked_eth_rebuild") or {}).get("fallback") or {}).get("marker_metric"):
+        return ("no change of quantity is declared for staked ETH: the row is stored only by staked_eth_rebuild.py "
+                "--apply when its ±1% overlap test did not pass (R18)",
+                "Nothing to do unless validatorqueue's series is stale: then run python staked_eth_rebuild.py --apply.")
     if metric in {(project.get("staked_eth_primary") or {}).get(k) for k in ("metric", "count_metric")} - {None}:
         return ("the validator count was read from beaconcha.in's v2 epoch endpoint (P4-Q4), RETIRED by P5-1.12 "
                 "(free-trial quota spent; beaconcha.in in a declared cooldown, config.HOST_COOLDOWN) — not read",

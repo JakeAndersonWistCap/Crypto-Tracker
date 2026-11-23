@@ -345,11 +345,14 @@ def test_the_script_refuses_when_one_day_is_outside_and_stores_nothing(tmp_path,
     truth = r.rebuild(a, flows, partial)["balance"]
     bad = pd.Timestamp("2026-01-15")
     db = _db(tmp_path, vq_value=lambda d: truth[d] * (0.985 if d == bad else 1.0))
-    assert r.main(["--db", str(db), "--apply"], reader=anc, bq_rows=lambda _a: rows) == 1
+    # R18 (Jake 2026-11-24): a failed test under --apply stores no rebuilt day and ONE row declaring the change of
+    # quantity at the seam (exit code 3; was: nothing at all, exit code 1). The ±1% test is the same test.
+    assert r.main(["--db", str(db), "--apply"], reader=anc, bq_rows=lambda _a: rows) == 3
     out = capsys.readouterr().out
-    assert "OVERLAP TEST NOT PASSED" in out and "2026-01-15" in out and "NOT ADOPTED — nothing stored" in out
+    assert "OVERLAP TEST NOT PASSED" in out and "2026-01-15" in out and "NOT ADOPTED" in out
     con = sqlite3.connect(db)
     assert con.execute("SELECT COUNT(*) FROM metrics WHERE metric='beacon_chain_eth_primary'").fetchone()[0] == 0
+    assert con.execute("SELECT COUNT(*) FROM metrics WHERE metric='beacon_chain_eth_seam_step_pct'").fetchone()[0] == 1
     con.close()
 
 
