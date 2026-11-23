@@ -585,7 +585,9 @@ class LogScan:
             if b is None:
                 return ins_h, outs_h, "failed", trace + ["no divergent block found — nothing to re-read"]
             state = {"from": int(b), "to": int(to_block), "next": int(b), "in": [], "out": [],
-                     "chunk": int(spec.get("repair_chunk_blocks") or REPAIR_CHUNK)}
+                     # R20: a chain whose public endpoint serves fewer blocks a call asks that from the start
+                     "chunk": int(spec.get("repair_chunk_blocks")
+                                  or (getattr(config, "REPAIR_CHUNK_BLOCKS", {}) or {}).get(chain) or REPAIR_CHUNK)}
             trace.append(f"a gap remains after {len(holes)} single-block repair(s): re-reading blocks {b:,}..{to_block:,} "
                          f"from the chain (resumable)")
         t0 = time.monotonic()

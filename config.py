@@ -48836,3 +48836,413 @@ FLOW_TOKEN_MEMO["Chainlink"] = (
      "Deposit Address') and on to 0x28C6c062… ('Binance: Hot Wallet'); labels are evidence, not proof "
      "(config.THEATRE_FLAG); in circulating before and after — an issuer-held -> float move, not in the expected "
      "closing; it stays inside unlocks (e)"),)
+
+
+# =====================================================================================================================
+# ===== R20 — DECISIONS: AERODROME, CHAINLINK, GEODNET; THE TOKENJAR BUDGET (Jake 2026-11-24; SPEC "Round 20 —
+# decisions"). One block; every table is keyed by project. Tests: tests/test_r20_decisions.py.
+# =====================================================================================================================
+_R20_DECIDED = "Jake 2026-11-24 (R20 Part 3)"
+
+# ----- AERODROME (1): NONE OF THE 10,000,000 MINTED 11-19 AND BURNED 11-20 IS A BURNED BUYBACK. Jake: "none of the
+# 19-20 Nov 10M surplus mint-then-burn counts as a buyback (burned buybacks this quarter = 407,816). The 18 Nov 503,341
+# is bought and held." Was (R17/R18): the burn counted as a burned buyback up to the purchases since 2026-08-25 not yet
+# burned (1,818,679.81) and 8,181,320.19 sat on the destroyed line. BY EVIDENCE, NOT BY AMOUNT: a burn of a stake that
+# was FUNDED BY A MINT to the same wallet is no buyback. The declared record (AERO_MINT_THEN_BURN_2026_11) carries the
+# proof read on chain in R18 — the SurplusSpent events to the buyer Safe (8M + 2M), the Safe's stake #27243 of exactly
+# that amount, and the burn of that stake whole. mint_funded_burns() admits a record only where those figures agree.
+# The burned AERO then sits whole on "− destroyed by a Foundation wallet, not a burned buyback"; the purchases stay
+# HELD (buyback_held_tokens is not reduced by it): 503,340.91 of 11-18, the legacy 243,612.23 + 294,003.10 of 11-04 /
+# 11-11 and the 777,723.57 of 08-26..09-23 — all liquid in the Fund's wallet (docs/r19_aerodrome_research.md).
+MINT_FUNDED_BURNS = {"Aerodrome": (AERO_MINT_THEN_BURN_2026_11,)}
+
+
+def mint_funded_burns(project_name: str) -> dict:
+    """{burn day 'YYYY-MM-DD': tokens} — destructions of a stake that a MINT to the same wallet funded (never a
+    buyback). A record counts only where its own evidence closes: the mechanism says it is no buyback, the mint events
+    sum to what the wallet received, and the stake burned is that amount (so no purchased token was in it)."""
+    out: dict = {}
+    for rec in MINT_FUNDED_BURNS.get(project_name, ()):
+        mech = rec.get("mechanism") or {}
+        minted, burned = float(rec["mint"]["to_buyer_safe"]), float(rec["burn"]["burned"])
+        stake = float((mech.get("stake") or {}).get("amount") or 0.0)
+        events = sum(float(e[2]) for e in mech.get("events") or ())
+        if mech.get("is_buyback") is not False or abs(events - minted) > 1e-6 or abs(stake - burned) > 1e-6 \
+                or burned > minted + 1e-6:
+            continue
+        day = str(rec["burn"]["utc"])[:10]
+        out[day] = out.get(day, 0.0) + burned
+    return out
+
+
+assert mint_funded_burns("Aerodrome") == {"2026-11-20": 10_000_000.0}
+PROJECT_BY_NAME["Aerodrome"]["foundation_buyback"]["burn_leg"]["mint_funded"] = "MINT_FUNDED_BURNS"
+AERO_MINT_THEN_BURN_2026_11["decided"] = (
+    _R20_DECIDED + ": none of the 10M counts as a buyback; burned buybacks 2026Q4 = 174,600.64 + 233,215.20 = "
+    "407,815.83; the 503,340.91 bought 11-18 is bought and held")
+METRICS["foundation_aero_burned_other_tokens"]["label"] = (
+    "AERO a Foundation wallet destroyed out of the escrow that is NOT a burned buyback — a stake funded by a mint to "
+    "the wallet (the 10,000,000 of Gauge Caps surplus minted 2026-11-19 and burned 11-20, whole), not its own stake of "
+    "that transaction, or its own stake beyond what it bought since the purchase-day basis — out of the supply (R13; "
+    "R17; R20)")
+
+# ----- AERODROME (2): THE GAUGE CAPS' UNMINTED SURPLUS, STORED, AND NETTED OUT OF ACCRUED EMISSIONS. Jake: "Store the
+# Gauge Caps' unminted surplus and net it out of accrued emissions, so dilution counts only what mints."
+# R16's accrual counts the CAP (Minter.emissionRate x 86,400 a day). Part of the cap never mints: each chain's SURPLUS
+# pot (Voter.spendableSurplus(chainId) — entitlement the caps held back; it mints only if governance calls
+# Voter.spendSurplus). Read 2026-11-23 on Base (Voter 0x49d7d4f1…): Voter.chains() = 8453, 10, 1, 42161, 57073, 4663,
+# 5042, 99901 (eight registered chains, Elysium among them) + CHAIN0 (idle voting power) = NINE pots, 3,601,871 AERO
+# in all (Base 1,338,661; Ethereum 903,031; Robinhood 474,906; CHAIN0 269,644; Arbitrum 238,534; OP 204,383; Arc
+# 73,496; Ink 53,939; Elysium 45,277). R18 read two of the nine.
+#   gauge_caps_surplus_tokens (STOCK)  Σ spendableSurplus over CHAIN0 + every chain Voter.chains() lists, at ONE block,
+#                                      ALL OR NO ROW (fetch/aero_v3.AeroV3._surplus; history 10-22..today at each day's
+#                                      first block by archive eth_call: aero_v3.surplus_history, run by
+#                                      archive_backfill.py — the pattern of R17's minted_opening_history).
+#   gross_issuance_accrued_tokens      from the surplus series' first stored day: the day's cap accrual LESS the rise of
+#                                      the surplus since the previous stored reading (dated the later reading). A FALL
+#                                      of the surplus is a spendSurplus MINT and ADDS: it counts when it mints.
+#                                      A day's figure is never below 0 — a rise larger than the day's accrual is carried
+#                                      to the following days (the window's sum is exact). Until a surplus row is stored
+#                                      nothing is netted: the accrual is the cap, as R16 (said in the row's source).
+# THE 10,000,000 OF 11-19: it MINTED (Minter.mint through spendSurplus), so it is issuance — in "+ minted"
+# (gross_issuance_tokens) and, on accrual, in dilution on the day the surplus fell. Its burn the next day is on the
+# statement's destroyed line and takes it out of the supply again; dilution (a gross outflow measure) is not reduced
+# by a burn, as for every other project. The 500,000 team share stays in the supply.
+AERO_EMISSIONS_ACCRUAL["Aerodrome"].update({
+    "surplus_metric": "gauge_caps_surplus_tokens",
+    "surplus_decided": _R20_DECIDED + ": the unminted surplus is netted out of accrued emissions"})
+METRICS["gauge_caps_surplus_tokens"] = {
+    "label": "Gauge Caps' unminted surplus (AERO): Σ Voter.spendableSurplus over CHAIN0 and every registered chain, at "
+             "one block — emission entitlement the caps held back; it mints only if governance spends it "
+             "(Voter.spendSurplus). Netted out of accrued emissions (R20)",
+    "kind": "stock", "unit": "tokens", "archetypes": [3], "tiers": [2], "sanity_min": 0, "sanity_max": 1e9,
+    "only_projects": ("Aerodrome",)}
+METRICS["gross_issuance_accrued_tokens"]["label"] = (
+    "AERO emissions AS THEY ACCRUE — before the v3 activation (2026-10-22) the mints (gross issuance); from it "
+    "Minter.emissionRate() x 86,400 a day (the cap) LESS the day's rise of the Gauge Caps' unminted surplus "
+    "(gauge_caps_surplus_tokens; a surplus spent is a mint and adds) — dilution and net holder yield read this; supply "
+    "keeps the mints (R16; R20)")
+OUTFLOW_CATEGORIES["Aerodrome"]["basis"] += (
+    "; R20: the Gauge Caps' unminted surplus is netted out of the accrual from its first stored day, so (b) counts "
+    "what can mint, and a surplus governance spends counts on the day it mints")
+AERO_GAUGE_CAPS["surplus_pots"] = {
+    "read_on": "2026-11-23", "chains": (8453, 10, 1, 42161, 57073, 4663, 5042, 99901), "chain0": 0,
+    "source": "Voter 0x49d7d4f1… chains() and spendableSurplus(chainId) on Base (mainnet.base.org, latest)",
+    "tokens": {0: 269_643.74, 8453: 1_338_661.29, 10: 204_383.44, 1: 903_030.56, 42161: 238_533.56, 57073: 53_939.39,
+               4663: 474_906.40, 5042: 73_495.62, 99901: 45_277.47}, "total": 3_601_871.47}
+
+# ----- AERODROME (3): HOLDER VALUE FROM THE MERGER. Jake: "Holder value: all-chain on-chain staker revenue; until the
+# other seven chains are stored, DefiLlama's holder revenue; drop the separate bribe add-on (double count)."
+# Was: DefiLlama REVENUE (revenue_usd) + our Base liquid incentives. From 2026-10-22 DefiLlama's revenue already holds
+# the incentives (adapter dexs/aero-v2: addBribes -> dailyRevenue) and the legacy pools' locked gauge fees that reach
+# no holder (docs/r19_aerodrome_research.md D) — wk 11-12: credited ~2,109,982 against 2,065,570 paid to stakers.
+#   before 2026-10-22   unchanged: revenue_usd (Aerodrome alone, R18.A3) + the liquid incentives of Base from 2026-07-02.
+#   from 2026-10-22     ONE series, no add-on:
+#     (i)  the ALL-CHAIN ON-CHAIN staker revenue (voter_rewards_allchain_usd: Base's stored epoch read + the seven
+#          other chains' epoch reads, fetch/aero_leaf.py, each epoch spread over its seven days) — from the build in
+#          which every chain holds every complete epoch of the window (hole-free: build_workbook.allchain_ready);
+#     (ii) until then DefiLlama's holders revenue of the parent aero-protocol (holders_revenue_usd: all eight chains,
+#          incentives inside, the locked legacy fees outside).
+# A declared handover of holder_value_revenue_usd at 2026-10-22 (and a second one the day (i) takes over).
+AERO_LEAF_CHAINS = {
+    "locator": "0x8E6a9FCd1d638CC760Ffba397605Fe3355dE76D2",       # .factoryRegistry() on every chain (R19 read)
+    "from_epoch": "2026-10-22",
+    "chains": {
+        "ethereum": {"chain_id": 1, "llama": "ethereum", "span": 20_000, "start_block": 26_222_892,
+                     "rpc": ("https://mainnet.gateway.tenderly.co", "https://ethereum-rpc.publicnode.com")},
+        "optimism": {"chain_id": 10, "llama": "optimism", "span": 100_000, "start_block": 158_384_611,
+                     "rpc": ("https://optimism.gateway.tenderly.co", "https://mainnet.optimism.io")},
+        "arbitrum": {"chain_id": 42161, "llama": "arbitrum", "span": 500_000, "start_block": 516_123_543,
+                     "rpc": ("https://arbitrum.gateway.tenderly.co", "https://arb1.arbitrum.io/rpc")},
+        "ink": {"chain_id": 57073, "llama": "ink", "span": 9_000, "start_block": 58_869_589,
+                "rpc": ("https://rpc-qnd.inkonchain.com",)},
+        "robinhood": {"chain_id": 4663, "llama": "robinhood", "span": 1_000_000, "start_block": 92_177_714,
+                      "rpc": ("https://robinhood-chain.gateway.tenderly.co", "https://rpc.mainnet.chain.robinhood.com")},
+        "arc": {"chain_id": 5042, "llama": "arc", "span": 200_000, "start_block": 26_684_462,
+                "rpc": ("https://arc.gateway.tenderly.co", "https://rpc.mainnet.arc.io")},
+        # Elysium joined on 2026-11-08 (docs/r19): its first epoch with rewards is the one of 2026-11-05
+        "elysium": {"chain_id": 99901, "llama": "elysium", "span": 5_000, "start_block": 1_945_557,
+                    "from_epoch": "2026-11-05", "rpc": ("https://rpc.elysium.kinetiq.xyz",)},
+    },
+    "budget_s": 540, "epochs_back": 8,
+    "method": "the same events and programme proration as fetch/aero_v3's Base read (NotifyFeesAmount on each chain's "
+              "reward managers, found through its FactoryRegistry; IncentiveStreaming programmes x their overlap with "
+              "the epoch), priced by DefiLlama's coins API at the epoch end",
+    "scratch_read": {"read_on": "2026-11-23", "epochs": {
+        "2026-11-05": {"robinhood": 122_877, "ethereum": 105_092, "arbitrum": 39_051, "optimism": 22_839,
+                       "elysium": 18_957, "ink": 6_539, "arc": 5_615, "seven": 320_970},
+        "2026-11-12": {"robinhood": 171_401, "ethereum": 94_891, "arbitrum": 23_038, "optimism": 21_599,
+                       "elysium": 26_192, "ink": 4_805, "arc": 5_834, "seven": 347_760}},
+        "source": "docs/r19_aerodrome_research.md D (scratch read with this method)"}}
+AERO_LEAF_TIER_BUDGET_S = 600
+for _lc in AERO_LEAF_CHAINS["chains"]:
+    for _kind, _what in (("fees", "trading fees pushed to stakers (NotifyFeesAmount)"),
+                         ("incentives", "incentive programmes (rate x overlap with the epoch)")):
+        METRICS[f"aero_leaf_{_kind}_usd_{_lc}"] = {
+            "label": f"Aero on {_lc}: {_what} of one voter epoch on that chain's reward managers, priced at the epoch "
+                     f"end, dated the epoch's start (fetch/aero_leaf.py; R20)",
+            "kind": "flow", "unit": "usd", "archetypes": [3], "tiers": [2], "sanity_min": 0, "sanity_max": 1e9,
+            "only_projects": ("Aerodrome",)}
+    METRICS[f"aero_leaf_unpriced_count_{_lc}"] = {
+        "label": f"Aero on {_lc}: reward tokens of the epoch with no price (left out of the $; counted)",
+        "kind": "flow", "unit": "count", "archetypes": [3], "tiers": [2], "sanity_min": 0, "sanity_max": 1e5,
+        "only_projects": ("Aerodrome",)}
+METRICS["voter_rewards_allchain_usd"] = {
+    "label": "Aero staker revenue on ALL EIGHT CHAINS, read on chain: fees + incentives of each complete epoch on Base "
+             "(voter_rewards_onchain_usd) and on the seven other chains (aero_leaf_*), each epoch spread over its seven "
+             "days — formed only for an epoch every chain holds (R20)",
+    "kind": "flow", "unit": "usd", "archetypes": [3], "tiers": [2], "sanity_min": 0, "sanity_max": 1e9,
+    "only_projects": ("Aerodrome",), "view_only": True}
+HOLDER_VALUE["Aerodrome"]["bribes"]["until"] = "2026-10-22"
+HOLDER_VALUE["Aerodrome"]["extra_switch"] = {
+    "from": "2026-10-22", "replaces": "revenue_usd", "stand_in": "holders_revenue_usd",
+    "onchain": "voter_rewards_allchain_usd", "base": "voter_rewards_onchain_usd",
+    "leaf": tuple(AERO_LEAF_CHAINS["chains"]),
+    "points": ("derived:holder_value_all_chains_defillama", "derived:holder_value_all_chains_onchain"),
+    "decided": _R20_DECIDED + ": all-chain on-chain staker revenue; DefiLlama's holders revenue until the other seven "
+                              "chains are stored; no separate bribe add-on",
+    "issuer_incentives": "left in, as before (docs/r19 decision 4 was not taken)"}
+HOLDER_VALUE["Aerodrome"]["extra_why"] += (
+    ". R20: from 2026-10-22 the staker revenue of all eight Aero chains in ONE series — read on chain once every chain "
+    "is stored hole-free, DefiLlama's holders revenue until then; the separate incentive add-on ended that day (it "
+    "counted Base's incentives twice)")
+PROJECT_BY_NAME["Aerodrome"]["series_handover"]["holder_value_revenue_usd"] = {
+    "ordered_points": ("derived:holder_value", "derived:holder_value_with_liquid_bribes",
+                       "derived:holder_value_all_chains_defillama", "derived:holder_value_all_chains_onchain"),
+    "why": "credited holder value: fees only until the on-chain bribe series begins (2026-07-02), then fees + liquid "
+           "bribes (Jake 2026-10-12, decision 4); from the merger (2026-10-22) the staker revenue of all eight chains — "
+           "DefiLlama's holders revenue, then the all-chain on-chain read once it is stored hole-free (" + _R20_DECIDED
+           + ")",
+    "composition_change": "2026-07-02 WIDENS (liquid bribes join); 2026-10-22: one all-chain staker-revenue series, "
+                          "the separate bribe add-on and the legacy pools' locked fees out",
+    "declared": "2026-10-22"}
+
+# ----- CHAINLINK. Jake: "theatre flag RAISED at 11.4x with the long wording in docs/r19_chainlink_research.md. Of the
+# 2.08M second payment path, 1,351,928 is node payments and 730,964 stays in unlocks. Exchange leg in its own category,
+# as for Ether.fi."
+# (a) THE FLAG'S CELL: wording W1 of docs/r19_chainlink_research.md, every figure filled from the build's own series
+#     (sent, bought, their ratio and share) — never typed. Where the series are not stored the cell keeps NOT TESTABLE.
+THEATRE_FLAG["Chainlink"]["cell_wording"] = (
+    "{state} — {size:.1f}x. Since the Reserve began ({since}) Chainlink's published non-circulating wallets sent "
+    "{sent_m:.1f}M LINK to a Binance deposit address; the Reserve bought {bought_m:.1f}M ({share:.0%} of that). The "
+    "sends are the scheduled 7%-a-year release, quarterly since Aug 2022 and unchanged by the Reserve. Chainlink has "
+    "not said what the exchange leg is for.")
+THEATRE_FLAG["Chainlink"]["cell_comment"] = (
+    "Sent: 33 wallets listed at supply.chain.link -> 0x9B1c1752… (Blockscout: 'Binance: Deposit Address'; gas paid by "
+    "'Binance: Deposit Funder 1'; receives from these wallets only) -> 0x28C6c062… ('Binance 14'). Bought: LINK into "
+    "the Reserve from revenue, held. Whose Binance account, and whether the LINK is sold, is not established. Labels "
+    "are evidence, not proof. The same tokens are in total dilution (category (f)).")
+THEATRE_FLAG["Chainlink"]["decided"] += "; R20 (" + _R20_DECIDED + "): RAISED as scored, the long wording W1"
+# (d) LABELS. The deposit address: gas paid by Binance's deposit funder; receives only from the 33.
+THEATRE_FLAG["Chainlink"]["destinations"][_CL_FWD_EXCHANGE].update({
+    "tag": "Binance (deposit address; gas paid by Binance's deposit funder; receives only from the 33)",
+    "gas_payer": {"address": "0x9430801EBAf509Ad49202aaBC5F5Bc6fd8A3dAf8",
+                  "label": "Binance: Deposit Funder 1 / Binance Gas Supplier 1 (Blockscout)",
+                  "payments": (("2022-08-26", 0.02), ("2023-12-16", 0.04)), "read_on": "2026-11-23"},
+    "senders": {"count": 19, "all_among_the_33": True, "received_all_time": 253_800_000.0}})
+#     The node operators: the PATH is published, the addresses are not.
+CHAINLINK_NODE_PAYMENTS["recipients_label"] = (
+    "node operators — path PUBLISHED (Payment Abstraction post 2025-03-31), addresses not named")
+CHAINLINK_NODE_PAYMENTS["label_basis"] = (
+    "path PUBLISHED: chain.link/blog/payment-abstraction-svr-fee-conversion (2025-03-31) — 'By using the Reserves "
+    "contract on Ethereum mainnet introduced by Payment Abstraction, node operators can accrue oracle rewards on a "
+    "single blockchain'; 0x5680681E… is 'Reserves 1.0.0'. The 63 recipient addresses are NOT named by any Chainlink "
+    "document (" + _R20_DECIDED + "; was: INFERRED)")
+# (b) THE SECOND PAYMENT PATH: Safe 0x77dd1a9b…'s DIRECT payments. Read 2026-11-23 (Blockscout tokentx, all 3,281 LINK
+#     transfers of the Safe, 2025-05-14..2026-11-04): 1,351,928 LINK in 428 payments to 43 of the 63 recipients of the
+#     Reserves contract — node payments, outflow (b); 730,964 LINK in 2,751 small payments to 532 OTHER addresses —
+#     not node payments on the evidence, they stay in unlocks (e); 613,880 to the Reserves contract itself (already in
+#     (b) when the contract pays it on). THE SPLIT RULE: a transfer out of the Safe counts only where its recipient is
+#     one of the 63 (count_to); anything else stays where it was.
+CHAINLINK_NODE_RECIPIENTS = (
+    "0x001e0d294383d5b4136476648acc8d04a6461ae3", "0x039fdfdb14911608a34ebcda6009a80ef5d16e50",
+    "0x0921e157b690c4f89f7c2a210cfd8bf3964f6776", "0x14f94049397c3f1807c45b6f854cb5f36bc4393b",
+    "0x183a96629ff566e7aa8afa38980cd037eb40a59a", "0x1b17eb8fae3c28cb2463235f9d407b527ba4e6dd",
+    "0x1d24d6cb2bc9e2ed6b826eadfa793247dcb9cf95", "0x21f1db6e4b5e1df5c68bc1dfb58c28942ed4737d",
+    "0x237dee529a47750becdfa8a59a1d766e3e7b5f91", "0x243e9a0d1c503cea25f0219b8bab835d38b09643",
+    "0x29fc5aacd613410b68c9c08d4e1656e3c890e482", "0x333d2e1cdf0b795ff63591994621effdb8428c24",
+    "0x3615fa045f00ae0ed60dc0141911757c2adc5e03", "0x3705fca6d4474bfc6293f6e8826a4d5efc607665",
+    "0x3df4808483c93458e94c5545fd4fd3fa0d9f1171", "0x3f44c324bd76e031171d6f2b87c4fef00d4294c2",
+    "0x3fb4600736d306ee2a89edf0356d4272fb095768", "0x41edd305eabfd3497c98341f8d0849f3c520b896",
+    "0x4564a9c6061f6f1f2eadb954b1b3c241d2dc984e", "0x47044ee2f23001f8a03fb2f7d2ce6645ada4d12a",
+    "0x4dc81f63cb356c1420d4620414f366794072a3a8", "0x55ab744a77f8b1daca1b7d22d5112165bcc77d4c",
+    "0x579e190ad0f6d6d4ff921a8ca26abbef4b3b18ca", "0x5823d12ad85ef11f4e5508ab3559a37d87cf507a",
+    "0x59ecf48345a221e0731e785ed79ed40d0a94e2a5", "0x6cdc3efa3baa392faf3e5c1ca802e15b6185e0e8",
+    "0x6ef38c3d1d85b710a9e160ad41b912cb8cac2589", "0x7a30e4b6307c0db7aef247a656b44d888b23a2dc",
+    "0x7c9998a91aea813ea8340b47b27259d74896d136", "0x7cc60c9c24e9a290db55b1017af477e5c87a7550",
+    "0x7d0f8dd25135047967ba6c50309b567957dd52c3", "0x8694db3c9c22ff48b399aa9a95df8c9c67279f0f",
+    "0x87bcd34b45784081fda93a10797e2db51b8466aa", "0x89177b9c203ba0a9294aecf2f3806d98907bec6f",
+    "0x95c98112bd9635a3159518401ae227d5a296e994", "0x98c84800e2062ae566c3914d35a873c4f41df405",
+    "0x9ad6699bed1725b49676aeefefd2b50800206be1", "0x9ccbfd17fa284f36c2ff503546160b256d1cd3d1",
+    "0x9d219125a0ce10241b4ec1280c2f880475f172f1", "0x9dc4573f23b87ad2ea1bb1efc35c03eae17194ba",
+    "0x9e788de47d7bcfa3e6f4ef1ceca3161a5339594c", "0x9efa0a617c0552f1558c95993aa8b8a68b3e709c",
+    "0xa0181758b14efb2dadfec66d58251ae631e2b942", "0xa06b89b08f038aff4f81ce0a45c5acb040477c3b",
+    "0xa68f8e34b775aa1f0c0e9028b13bdb481ecf486c", "0xa8e987876e15589a169b3166100348fda28198e2",
+    "0xab35418fb9f8b13e3e6857c36a0769b9f94a87ec", "0xab5176dd2891dc01f5f8ec786263d85ee0690ec2",
+    "0xba8bcb4eb9a90d5a0eae0098496703b49f909cb2", "0xbf17ce6bab86445c6ed68dcce397c289ecd4e8f2",
+    "0xc51d3470693bc049809a1c515606124c7c75908d", "0xcb3396ee80f304f979d7305731ff9264d60298b3",
+    "0xcc3f2fb70b5941fbdb9f97fd6df6997a01229ece", "0xd8bdbaa5632e917fc5cfe903f567735b3f5dd073",
+    "0xda80050ed4f50033949608208f79ee43ab91df55", "0xdd4bc51496dc93a0c47008e820e0d80745476f22",
+    "0xdd831352762e9de7ad5a264990e1bb9f87a6fc21", "0xdf812b91d8bf6df698bfd1d8047839479ba63420",
+    "0xe6b12850b3979c50d221fb84d40fb94aefbab867", "0xfa3430d84324abc9ac8aaf30b2d26260f5172ad0",
+    "0xfae26207ab74ee528214ee92f94427f8cdbb6a32", "0xfaf014362e72a0e80718dd094d889299c37695ab",
+    "0xfdc770353dc0bfce80a17ab8a6a2e7d80590f1ba",
+)
+assert len(CHAINLINK_NODE_RECIPIENTS) == 63 and len(set(CHAINLINK_NODE_RECIPIENTS)) == 63
+_CL_SAFE_77DD = "0x77dd1a9b170e2f8976c20c10c8d9c27886181077"
+assert _CL_PAL.lower() not in CHAINLINK_NODE_RECIPIENTS and _CL_RESERVE.lower() not in CHAINLINK_NODE_RECIPIENTS
+CHAINLINK_NODE_PAYMENTS["second_path"] = {
+    "safe": _CL_SAFE_77DD, "metric": "node_operator_payments_safe_tokens",
+    "read": {"on": "2026-11-23", "source": "https://eth.blockscout.com/api?module=account&action=tokentx (LINK; "
+                                           "0x77dd1a9b…), 3,281 transfers 2025-05-14..2026-11-04",
+             "to_the_63": 1_351_928.0, "recipients_of_the_63": 43, "payments": 428,
+             "to_others": 730_964.0, "other_recipients": 532, "other_payments": 2_751,
+             "to_reserves_contract": 613_880.0,
+             "by_quarter_to_the_63": {"2025Q2": 198_767, "2025Q3": 346_886, "2025Q4": 499_736, "2026Q1": 200_004,
+                                      "2026Q2": 106_532, "2026Q3": 2}},
+    "others": "730,964 LINK to 532 other addresses: purpose not established (INFERRED: grants, bounties, community "
+              "rewards) — NOT node payments; stays in unlocks (e)",
+    "decided": _R20_DECIDED + ": 1,351,928 is node payments and 730,964 stays in unlocks"}
+CHAINLINK_NODE_PAYMENTS["read"].pop("safe_77dd_direct_not_counted", None)
+_CL18["log_scans"].append({
+    "key": "node_payments_safe_out", "metric": "node_operator_payments_safe_tokens", "chain": "ethereum",
+    "token": _LINK, "holders": [_CL_SAFE_77DD], "direction": "out", "store": True, "attribution": "dedicated_wallet",
+    "count_to": list(CHAINLINK_NODE_RECIPIENTS),
+    "attribution_sources": [CHAINLINK_NODE_PAYMENTS["second_path"]["read"]["source"] + ", read 2026-11-23"],
+    "wired_on": "2026-11-24", "own_tier": scan_tier("Chainlink", {}),
+    "label": "LINK the Safe 0x77dd1a9b… pays DIRECTLY to the recipients of the Reserves contract (43 of the 63; node "
+             "operators, path PUBLISHED, addresses not named) — outflow (b); its payments to any other address are "
+             "not counted and stay in unlocks (e) (R20)"})
+METRICS["node_operator_payments_safe_tokens"] = {
+    "label": "LINK paid by the Safe 0x77dd1a9b… directly to recipients of the Reserves contract (the second payment "
+             "path; 1,351,928 all time to 43 of the 63), per day — outflow (b), supply-side incentive (R20)",
+    "kind": "flow", "unit": "tokens", "archetypes": [1, 2, 3, 4], "tiers": [2], "sanity_min": 0, "sanity_max": 1e8,
+    "only_projects": ("Chainlink",)}
+METRICS["node_operator_payments_tokens"]["label"] = (
+    "LINK paid from released supply to node operators (path PUBLISHED — Payment Abstraction post 2025-03-31; the 63 "
+    "recipient addresses are not named), per day — outflow (b), supply-side incentive (R18 decision 6; R20)")
+OUTFLOW_CATEGORIES["Chainlink"]["b"] = ("node_operator_payments_tokens", "node_operator_payments_safe_tokens")
+RELEASE_PAID_LATER["Chainlink"]["paid"] = ("node_operator_payments_tokens", "node_operator_payments_safe_tokens")
+OUTFLOW_CATEGORIES["Chainlink"]["basis"] += (
+    ". R20: (b) also holds the Safe 0x77dd1a9b…'s direct payments to the same recipients (1,351,928 LINK all time; its "
+    "730,964 to 532 other addresses stays in (e)). (f) NAMED FLOAT OUTFLOW: the LINK the 33 wallets send to the "
+    "Binance-tagged deposit address, taken out of (e) on its day — total dilution unchanged")
+LUMPY_FLOWS[("Chainlink", "node_operator_payments_safe_tokens")] = dict(
+    LUMPY_FLOWS[("Chainlink", "node_operator_payments_tokens")],
+    why="paid in batches (428 payments on a few days a month; none of size since 2026-05-29): a day-on-day change is "
+        "the schedule, not a signal",
+    source="Blockscout tokentx of 0x77dd1a9b…, read 2026-11-23",
+    evidence="428 payments to 43 of the 63 recipients, 2025-05-14..2026-11-04")
+# (c) THE EXCHANGE LEG IS ITS OWN DILUTION CATEGORY (f), AS ETHER.FI'S (R15): taken out of the release (e) on its day
+#     (RELEASE_LESS), so total dilution is unchanged and (e) falls by what (f) holds. Every sender is inside the
+#     release stock (the 33), so no sender is left out. A category NETTED OUT OF THE RELEASE whose scan holds no row yet
+#     is still wholly inside (e): total dilution is complete without it and is not blocked (NETTED_NOT_READ_OK — the
+#     same reading R18 gave (b)).
+OUTFLOW_CATEGORIES["Chainlink"]["f"] = ("issuer_exchange_outflow_tokens",)
+RELEASE_LESS["Chainlink"] = ("issuer_exchange_outflow_tokens",)
+NETTED_NOT_READ_OK = {"Chainlink": {"f": ("issuer_exchange_outflow_tokens",)}}
+PROJECT_BY_NAME["Chainlink"].setdefault("series_handover", {})["unlock_release_tokens"] = {
+    "ordered_points": ("derived:unlock_release", "derived:unlock_release-issuer_exchange_outflow_tokens"),
+    "declared": "2026-11-24",
+    "why": _R20_DECIDED + ": the exchange leg is category (f), taken out of the release (e)",
+    "composition_change": "from R20 the release excludes the 33 wallets' sends to the Binance-tagged deposit address "
+                          "(category (f)); the whole series is restated on that basis once the scan is stored"}
+FLOW_LESS_LINE["Chainlink"] = {
+    "label": "+ sent to the Binance-tagged deposit address from the 33 wallets (f) — netted out of (e)",
+    "series": "the named float outflow netted out of unlock_release_tokens (config.RELEASE_LESS: "
+              "issuer_exchange_outflow_tokens)"}
+for _c in ("tokens", "usd"):
+    METRICS[f"outflow_f_{_c}"]["only_projects"] = tuple(dict.fromkeys(
+        (*METRICS[f"outflow_f_{_c}"]["only_projects"], "Chainlink")))
+FLOW_TOKEN_MEMO["Chainlink"] = tuple(
+    (lab, m, why.replace("it stays inside unlocks (e)", "dilution category (f), taken out of unlocks (e) (R20)"))
+    for lab, m, why in FLOW_TOKEN_MEMO["Chainlink"])
+
+# ----- GEODNET. Jake: "FEES = REVENUE = burn / 0.8, HOLDER REVENUE = burn; INFERRED, citing the Blockworks filing and
+# the $4M ARR match (May 2025). Uniformity: declare n/a."
+# Was (R18): FEES = burn ÷ 0.4 (the filing read as: the Foundation receives 50% of what subscribers pay). GEODNET's own
+# one dated revenue figure decides the reading: "$4M of ARR" (2025-05-27) against its feed's May 2025 burn $265,235 x 12
+# ÷ 0.8 = $3,978,525 (−0.5%); ÷ 0.4 would be $7,957,050 (+98.9%). So the revenue GEODNET reports IS the burn ÷ 0.8, and
+# no source shows a fee line above it: FEES = REVENUE. Holder share 0.80 of both, BY CONSTRUCTION.
+GEODNET_FOUNDATION_SHARE_OF_FEES = 1.0     # R20 (was 0.50): no fee line above revenue is evidenced
+S13_INFERRED["GEODNET"]["s13_fees_inferred_usd"] = ("actual_buyback_usd", 1.0 / GEODNET_BURN_SHARE_OF_REVENUE)
+_GEOD_R20 = ("INFERRED — our measured on-chain burn ($, the holder revenue line) ÷ 0.8, row for row. Sources: (1) "
+             "Blockworks token-transparency filing (GEOD, B2 v1.0, filed 19 Aug 2025, question 02; read 2026-11-23): "
+             "'80% of this revenue is used for buy-back and burning GEOD tokens off the open market'; (2) the $4M ARR "
+             "match: GEODNET's own '$4M of ARR' (its Medium blog, 2025-05-27) against its feed's May 2025 burn "
+             "$265,235 x 12 ÷ 0.8 = $3,978,525 (−0.5%). ")
+METRICS["s13_fees_inferred_usd"]["label"] = (
+    "S13 FEES — INFERRED: the measured on-chain burn ($) ÷ 0.8, the same figure as REVENUE (Blockworks filing, 19 Aug "
+    "2025, question 02; GEODNET's own $4M ARR of May 2025 = its burn x 12 ÷ 0.8) (R20; was ÷ 0.4)")
+REVENUE_SPLIT["GEODNET"]["round"] = "R20 (" + _R20_DECIDED + "; was R18: FEES = burn ÷ 0.4)"
+REVENUE_SPLIT["GEODNET"]["fees"] = {
+    "metric": "s13_fees_inferred_usd", "primary": False, "inferred": True,
+    "route": _GEOD_R20 + "FEES = REVENUE: no source shows a fee line above the revenue GEODNET reports (the filing's "
+             "'50% of the subscription revenue is shared with the GEODNET Foundation' is not read as a second halving "
+             "— on that reading fees would be twice any figure GEODNET has published). SECONDARY"}
+REVENUE_SPLIT["GEODNET"]["revenue"]["route"] = (
+    _GEOD_R20 + "CROSS-CHECK beside it: DefiLlama 'geodnet' dailyRevenue (revenue_usd) = DefiLlama's own read of the "
+    "burn ÷ 0.8. SECONDARY")
+REVENUE_SPLIT["GEODNET"]["holder_share"] = {
+    "route": "holder revenue ÷ revenue per covered day. 0.80 BY CONSTRUCTION (of revenue and of fees, which are the "
+             "same figure): revenue here is the measured burn ÷ 0.8, so the share restates the filing's 80% and "
+             "measures nothing about the split"}
+REVENUE_SPLIT["GEODNET"]["other_recipients"] = (
+    "of REVENUE (= FEES): the Foundation keeps 20% (declared; no wallet or report is published for it)")
+REVENUE_SPLIT["GEODNET"]["first_party"]["reads"] = (
+    "GEODNET's own reported revenue = its burn ÷ 0.8 — the reading wired for REVENUE and FEES (" + _R20_DECIDED + ")")
+PROJECT_BY_NAME["GEODNET"]["metric_labels"]["fees_usd"] += (
+    ". R20: S13 FEES = S13 REVENUE = the burn ÷ 0.8 — the same basis as this cell (the R18 sentence on ÷ 0.4 no longer "
+    "holds)")
+# UNIFORMITY: DECLARED n/a (Jake). The fact stays in the text: a +20% staker bonus exists; no yield series is wired.
+for _e in DECLARED_NA_REASONS["GEODNET"]:
+    if "UNIFORMITY" in _e.get("cols", ()):
+        _e.update({"match": "no staker yield series is wired",
+                   "source": GEODNET_STAKER_BONUS["source"], "read_on": GEODNET_STAKER_BONUS["read_on"],
+                   "decided": _R20_DECIDED + ": uniformity declared n/a"})
+
+# ----- THE TOKENJAR TIER (Uniswap). Jake's run fix: "tokenjar timed out again (CODE - the work doesn't fit 300s); give
+# it the time it needs." MEASURED 2026-11-23 from the build machine, keyless (scratch r20_decisions/tj): ONE day on the
+# twelve readable chains = 870 calls, 231 s (Base 470 calls / 113 s — its keyless log route serves 1,000 blocks a call;
+# BNB 207 / 44 s; Ethereum 24 / 27 s with one Blockscout 429 wait; the other nine 2-13 s each) + the balance reads 48
+# calls / 10 s. The adapter stopped STARTING chain-days at 240 s, but a chain-day in flight ran on, yesterday's balance
+# reads ran after the stop with no limit, an HTTP retry could wait 65 s, and the rows are emitted only at the end: past
+# 300 s the tier was abandoned with NOTHING stored. A day the run missed doubles the work.
+#   budget_s          780   new chain-days start until here (three days owed fit)
+#   balance_budget_s  60    the balance reads' own slice after it
+#   hard stop         840   = the two: NO network call starts after it and no retry waits past it, so the rows of
+#                           every day read are emitted before the tier's 900 s
+# Held days are not read again: a balance day keeps each chain's read while the tokens seen on that chain are unchanged.
+TOKENJAR_INFLOWS["Uniswap"].update({"budget_s": 780, "balance_budget_s": 60})
+TOKENJAR_TIER_BUDGET_S = 900
+TOKENJAR_MEASURED = {"read_on": "2026-11-23", "day": "2026-11-22", "chains": 12, "calls": 870, "seconds": 231.1,
+                     "base": (470, 112.7), "bsc": (207, 44.4), "ethereum": (24, 26.7),
+                     "balances": (48, 9.8), "keyless": True}
+assert TOKENJAR_INFLOWS["Uniswap"]["budget_s"] + TOKENJAR_INFLOWS["Uniswap"]["balance_budget_s"] + 60 \
+    <= TOKENJAR_TIER_BUDGET_S
+
+# ----- PENDLE'S BERACHAIN GAUGE SCAN (Jake's run fix: "still doesn't reconcile (-11.68 tokens); fix it or say what it
+# affects"). REPRODUCED 2026-11-23 on rpc.berachain.com (scratch r20_decisions/bera.py): every PENDLE Transfer in and
+# out of the gaugeController 0x704478Dd… by eth_getLogs, blocks 0..29,219,000 — 742,058 out (72,018.934818643 PENDLE,
+# the last at block 16,206,151) and 1 in (500,000) — closes to balanceOf TO THE WEI (427,981.065181357). No
+# fee-on-transfer, no rebase, no self or zero-value transfer: THE CHAIN'S RECORD IS COMPLETE; the gap is in what the
+# routes return. Two faults, both in the history repair that should have closed it (fetch/chain.dated_logs):
+#   (1) rpc.berachain.com refuses a range over 10,000 blocks with HTTP 413 "Request Entity Too Large" — not one of the
+#       "range too wide" phrases, so the range was not halved and the request went to the next endpoint;
+#   (2) berachain-rpc.publicnode.com is a PRUNED node: it answers eth_getLogs with [] for past ranges (0 logs for
+#       blocks 9,000,000..9,039,999, where the chain holds 1,420 in the first 10,000) and refuses past state — and its
+#       empty answer was returned as the chain's record, so the span re-read REPLACED real payouts with nothing and the
+#       scan "still does not reconcile". Reproduced with the repo's own reader before the fix.
+# Fixed: the 413 narrows; a declared pruned endpoint is not asked for past logs; an empty answer no longer ends the
+# search while another endpoint is to be asked; Berachain's repair asks 10,000 blocks a call from the start.
+# WHAT THE ALCHEMY TRANSFERS ROUTE ITSELF MISSES (the 11.68 PENDLE) COULD NOT BE READ HERE (no key): the repair finds
+# it by bisecting balanceOf on Jake's machine and re-reads from the chain.
+RPC_PRUNED_LOGS = {
+    "berachain-rpc.publicnode.com": "read 2026-11-23: eth_getLogs answers [] for blocks 9,000,000..9,039,999 (the chain "
+                                    "holds 1,420 Transfers of PENDLE out of 0x704478Dd… in the first 10,000) and "
+                                    "eth_call at a past block answers 'state … is pruned'"}
+REPAIR_CHUNK_BLOCKS = {"berachain": 10_000}     # rpc.berachain.com's eth_getLogs limit (HTTP 413 above it)
+PENDLE_BERACHAIN_RECONCILED = {
+    "read_on": "2026-11-23", "endpoint": "rpc.berachain.com", "block": 29_219_000, "calls": 5_844, "seconds": 418,
+    "out_events": 742_058, "out_tokens": 72_018.934818643, "last_out_block": 16_206_151,
+    "in_events": 1, "in_tokens": 500_000.0, "balance_of": 427_981.065181357, "difference_wei": 0}

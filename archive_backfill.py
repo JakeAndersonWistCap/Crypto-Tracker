@@ -226,6 +226,32 @@ def _work(a) -> int:
             mrows, mwhy = aero_v3.minted_opening_history(p, (str(first[0])[:10], float(first[1])), held, write=_land)
             print(f"  Aerodrome issuance before the first v3 read {p['name']}: {wrote[0]} row(s) written over "
                   f"{len({str(r['date'])[:10] for r in mrows})} day(s) (gross_issuance_tokens, issuer_mint_tokens) — {mwhy}")
+        # R20 (Jake 2026-11-24): the Gauge Caps' unminted surplus at each day's first block, from the cutover to
+        # yesterday (all pots or no row) — what the accrued emissions are netted by. A stored day is never rewritten.
+        if aero_v3.SURPLUS_METRIC in config.METRICS:
+            sheld = {str(r[0])[:10] for r in st.conn.execute(
+                "SELECT date FROM metrics WHERE project=? AND metric=?", (p["name"], aero_v3.SURPLUS_METRIC)).fetchall()}
+            wrote[0] = 0
+            srows, swhy = aero_v3.surplus_history(p, sheld, deadline=time.monotonic() + a.budget_min * 60, write=_land)
+            print(f"  Aerodrome Gauge Caps surplus {p['name']}: {wrote[0]} row(s) written over "
+                  f"{len({str(r['date'])[:10] for r in srows})} day(s) ({aero_v3.SURPLUS_METRIC}) — {swhy}")
+        # R20: the staker revenue of the seven chains other than Base, every complete epoch since the merger the store
+        # does not hold (the daily tier reads the newest ones inside its own budget; this pass has the run's)
+        if getattr(config, "AERO_LEAF_CHAINS", None):
+            from fetch import aero_leaf
+            from fetch.base import FetchOutput as _FO
+            lstored = pd.read_sql_query(
+                "SELECT date, project, metric, value, source, tier FROM metrics WHERE project=? AND metric LIKE "
+                "'aero_leaf_fees_usd_%'", st.conn, params=(p["name"],))
+            lo = _FO()
+            aero_leaf.AeroLeafEpochs(stored_long=lstored, budget_s=a.budget_min * 60).run([p], None, lo)
+            lf = lo.frame()
+            ln = ar._write_new(st, lf) if len(lf) else 0
+            print(f"  Aerodrome staker revenue on the other chains {p['name']}: {ln} row(s) written over "
+                  f"{lf['date'].nunique() if len(lf) else 0} epoch(s)")
+            for e in lo.log:
+                if getattr(e, "status", "") in ("failed", "warn"):
+                    print(f"    {e.message[:400]}")
         # R10.A2 THE VOTER EPOCHS, FINISHED HERE: the daily tier stops its log scan at 200 s (it stood at block
         # 53,523,726 of 56,256,121 on 2026-11-18); this pass continues the SAME saved scan with the run's budget and
         # writes every complete epoch it reads. An epoch the store holds is never read or written again.

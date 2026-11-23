@@ -34,20 +34,21 @@ def test_revenue_is_the_burn_over_0_8_and_fees_the_burn_over_0_4_row_for_row():
     burn, rev, fees = (g[(G, m)] for m in ("actual_buyback_usd", "s13_revenue_inferred_usd", "s13_fees_inferred_usd"))
     assert list(burn["value"]) == [754_542.0, 24_000.0, 0.0, 16_000.0]                  # the measured line is untouched
     assert list(rev["value"]) == pytest.approx([943_177.5, 30_000.0, 0.0, 20_000.0])    # B ÷ 0.8
-    assert list(fees["value"]) == pytest.approx([1_886_355.0, 60_000.0, 0.0, 40_000.0])  # B ÷ 0.4
+    # R20 (Jake 2026-11-24): FEES = REVENUE = B ÷ 0.8 (was B ÷ 0.4: 1,886,355 / 60,000 / 0 / 40,000)
+    assert list(fees["value"]) == pytest.approx([943_177.5, 30_000.0, 0.0, 20_000.0])
     for v in (rev, fees):                                   # the same rows: dates, and the span marker a month carries
         assert list(v["date"]) == list(burn["date"]) and "[span=31d]" in v["source"].iloc[0]
         assert v["source"].str.startswith("derived:s13_inferred[actual_buyback_usd x ").all()
     b, r, f = burn["value"].sum(), rev["value"].sum(), fees["value"].sum()
-    assert b == 794_542.0 and r == pytest.approx(993_177.5) and f == pytest.approx(1_986_355.0)
-    assert b / r == pytest.approx(0.80) and b / f == pytest.approx(0.40) and r / f == pytest.approx(0.50)
+    assert b == 794_542.0 and r == pytest.approx(993_177.5) and f == pytest.approx(993_177.5)   # R20: f was 1,986,355
+    assert b / r == pytest.approx(0.80) and b / f == pytest.approx(0.80) and r / f == pytest.approx(1.0)  # was 0.40, 0.50
 
 
 def test_the_factors_are_the_filings_two_shares():
     v = config.S13_INFERRED[G]
     assert v["s13_revenue_inferred_usd"] == ("actual_buyback_usd", pytest.approx(1.25))    # 1 ÷ 0.8
-    assert v["s13_fees_inferred_usd"] == ("actual_buyback_usd", pytest.approx(2.5))        # 1 ÷ (0.8 x 0.5)
-    assert config.GEODNET_BURN_SHARE_OF_REVENUE == 0.80 and config.GEODNET_FOUNDATION_SHARE_OF_FEES == 0.50
+    assert v["s13_fees_inferred_usd"] == ("actual_buyback_usd", pytest.approx(1.25))       # R20: 1 ÷ 0.8 (was 2.5)
+    assert config.GEODNET_BURN_SHARE_OF_REVENUE == 0.80 and config.GEODNET_FOUNDATION_SHARE_OF_FEES == 1.0   # was 0.50
     assert config.PROJECT_BY_NAME[G]["fee_split"]["share_to_buyback"] == 0.80              # the declared split, unchanged
 
 
@@ -72,10 +73,10 @@ def test_the_lines_say_inferred_cite_the_filing_and_say_its_wording_is_ambiguous
     for role in ("revenue", "fees"):
         leg = s[role]
         assert leg["primary"] is False and leg["inferred"] is True
-        assert leg["route"].startswith("INFERRED") and "AMBIGUOUS" in leg["route"]
+        assert leg["route"].startswith("INFERRED")            # R20: the wording pin on "AMBIGUOUS" is dropped
         assert "Blockworks token-transparency filing" in leg["route"] and "19 Aug 2025" in leg["route"]
         _suffix, note = config.revenue_tier_label(G, bw.CP_FEES_LINE_HEAD if role == "fees" else bw.CP_REV_LINE_HEAD)
-        assert "INFERRED" in note and "AMBIGUOUS" in note                      # carried onto the cell's comment
+        assert "INFERRED" in note                                              # carried onto the cell's comment
     f = s["filing"]
     assert f["filed"] == "2025-08-19" and f["read_on"] == "2026-11-23"
     assert "50% of the subscription revenue is shared with the GEODNET Foundation" in f["quote"]
@@ -98,7 +99,8 @@ def test_geodnets_own_arr_equals_its_burn_over_0_8_and_is_half_of_the_fees_line(
 def test_the_uniformity_cell_no_longer_says_nothing_is_paid_to_stakers_and_declares_nothing():
     t = config.declared_na_text(G, "UNIFORMITY = whole-token yield ÷ staker yield")
     assert t.startswith("n/a") and "+20% GEOD" in t and "nothing is paid to stakers" not in t
-    assert config.declared_na_reason(G, t) is None            # not an accepted reason: done_check judges it as before
+    # R20 (Jake 2026-11-24: "Uniformity: declare n/a"): now an accepted declared reason (was: None, judged as before)
+    assert config.declared_na_reason(G, t) is not None
     sb = config.GEODNET_STAKER_BONUS
     assert sb["rate"] == 0.20 and sb["phase_1_rate"] == 0.10
     assert sb["staked_read"]["tokens"] * sb["rate"] == pytest.approx(328_400)      # the most +20% can cost in a year
@@ -141,9 +143,10 @@ def test_the_dump_reads_burn_2_210_124_revenue_2_762_655_fees_5_525_310(cells):
     burn = cells("CP", bw.CP_HREV_LINE_HEAD)
     assert burn == pytest.approx(2_210_123.83, abs=0.01)
     assert cells("CP", bw.CP_REV_LINE_HEAD) == pytest.approx(burn / 0.8, abs=0.01) == pytest.approx(2_762_654.79, abs=0.01)
-    assert cells("CP", bw.CP_FEES_LINE_HEAD) == pytest.approx(burn / 0.4, abs=0.01) == pytest.approx(5_525_309.57, abs=0.01)
+    # R20: FEES = burn ÷ 0.8 = 2,762,654.79 (was burn ÷ 0.4 = 5,525,309.57)
+    assert cells("CP", bw.CP_FEES_LINE_HEAD) == pytest.approx(burn / 0.8, abs=0.01) == pytest.approx(2_762_654.79, abs=0.01)
     assert cells("CP", bw.CP_HSHARE_HEAD) == pytest.approx(0.80, abs=1e-9)
-    assert burn / cells("CP", bw.CP_FEES_LINE_HEAD) == pytest.approx(0.40, abs=1e-9)
+    assert burn / cells("CP", bw.CP_FEES_LINE_HEAD) == pytest.approx(0.80, abs=1e-9)      # R20: was 0.40
 
 
 def test_the_headline_cells_are_where_they_were(cells):

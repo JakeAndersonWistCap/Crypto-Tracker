@@ -81,6 +81,7 @@ from .hl_stats import HlStats
 from .share_price import SharePrice
 from .ve_managed import VeManaged
 from .aero_v3 import AeroV3
+from .aero_leaf import AeroLeafEpochs
 from .aero_voter import AeroVoter
 from .near_bigquery import NearBigQuery
 from .plume_staking import PlumeStaking
@@ -203,6 +204,9 @@ TIER_ORDER = [
     # must not take the day's supply rows (circulating read n/a from 2026-10-29) with it.
     ("aero_v3", 2, lambda ctx: AeroV3(prior_values=ctx["prior_delta"], prior_dates=ctx["prior_dates"], part="state")),
     ("aero_v3_epoch", 2, lambda ctx: AeroV3(part="epoch", stored_long=ctx.get("stored_long"))),
+    # R20 (Jake 2026-11-24): Aero's staker revenue on the seven chains other than Base, per complete epoch — its own
+    # tier and budget (it stops itself at config.AERO_LEAF_CHAINS budget_s; a stored chain-epoch is never read again)
+    ("aero_leaf", 2, lambda ctx: AeroLeafEpochs(stored_long=ctx.get("stored_long"))),
     # Figures a dashboard draws in the browser, once permitted and pinned (2026-10-02).
     ("browser_capture", 3, lambda ctx: BrowserCapture(stored_long=ctx.get("stored_long"))),
     # NEAR from Google's public BigQuery dataset: its own circulating supply, and the P2P leg of the
@@ -2136,7 +2140,12 @@ TIER_BUDGET_S = {
     "boros": 480,
     "pendle_maturity": 150,
     "ccip_value": 330,
-    "tokenjar": 300,                   # PR1B.9: the adapter stops itself at 240 s (config TOKENJAR_INFLOWS budget_s)
+    # R20 (Jake 2026-11-24: "tokenjar timed out again — the work doesn't fit 300s; give it the time it needs"): one day
+    # on the twelve chains measured 870 calls / 231 s keyless, so 300 s held barely one day and nothing was stored when
+    # it ran over. 900 s: new chain-days start until 780 s, the balance reads have 60 s, NO call starts after 840 s
+    # (config TOKENJAR_INFLOWS budget_s / balance_budget_s). Was 300 (the adapter stopped itself at 240 s)
+    "tokenjar": 900,
+    "aero_leaf": 600,                  # R20: stops itself at 540 s (config AERO_LEAF_CHAINS budget_s)
     # Base calls spaced 1 s (mainnet.base.org 429s bursts): ~60-85 s an Aerodrome epoch; a first read of 4 epochs
     # takes 2-4 runs, then one epoch a week
     "subsidy_targeting": 300,          # G9 A1: Pendle's nine-chain sample (90 s) first, then Aerodrome (150 s)

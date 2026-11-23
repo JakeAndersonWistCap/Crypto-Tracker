@@ -287,11 +287,13 @@ def test_4_every_burn_on_chain_reconciles_to_the_token():
 
 
 def test_4_the_cap_on_the_burned_buyback_stands():
-    """Jake: keep the 8.18M cap. The burn is a burned buyback only up to the purchases since the basis not yet burned;
-    the rest is the 'destroyed, not a burned buyback' line."""
+    """R18: Jake kept the 8.18M cap (1,818,679.81 of the 10M a burned buyback, 8,181,320.19 destroyed) until the 10M was
+    explained. R20 (Jake 2026-11-24): NONE of the 10M is a buyback — burned buyback of it 0 (was 1,818,679.81), the
+    destroyed line 10,000,000 (was 8,181,320.19); the cap itself still applies to every other burn
+    (tests/test_r20_decisions.py)."""
     assert config.RULE_IN[A]["flow_destroyed"][0][1] == "foundation_aero_burned_other_tokens"
     assert config.RULE_IN[A]["flow_burn"] == "buyback_burned_tokens"
-    assert 10_000_000.0 - 1_818_679.81 == pytest.approx(8_181_320.19)
+    assert config.mint_funded_burns(A) == {"2026-11-20": 10_000_000.0}
 
 
 def test_4_gauge_caps_the_cap_rate_and_what_it_let_through():

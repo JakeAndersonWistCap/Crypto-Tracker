@@ -1074,11 +1074,21 @@ class ChainReader:
                 seen.add(u)
                 urls.append(u)
         span = max(1, int(chunk))
+        # R20 (Pendle's Berachain gauge): A PRUNED NODE ANSWERS [] FOR A PAST RANGE, NOT AN ERROR. Read 2026-11-23:
+        # berachain-rpc.publicnode.com answered 0 logs for blocks 9,000,000..9,039,999 where rpc.berachain.com holds
+        # 1,420 in the first 10,000 — and this reader returned that empty answer as the chain's record, so the history
+        # repair replaced real payouts with nothing. (1) an endpoint declared pruned (config.RPC_PRUNED_LOGS) is not
+        # asked; (2) an EMPTY answer does not end the search while another endpoint is still to be asked (as
+        # logs_in_block): the first endpoint with logs is the answer, [] only when every endpoint asked says so.
+        pruned = getattr(config, "RPC_PRUNED_LOGS", {}) or {}
         while True:
             upper = min(lo + span - 1, hi)
             flt = {"address": self.checksum(address), "topics": topics, "fromBlock": int(lo), "toBlock": int(upper)}
-            narrowed, said = False, []
+            narrowed, said, empty_from = False, [], None
             for u in urls:
+                if rpc_host(u) in pruned:
+                    said.append(f"{rpc_host(u)}: not asked — a pruned node (answers [] for past ranges)")
+                    continue
                 # D4-2a: never a range over an endpoint's known per-call limit
                 cap = self.getlogs_cap(u)
                 if cap is not None and upper - lo + 1 > cap:
@@ -1106,11 +1116,18 @@ class ChainReader:
                                    for t in ts):
                     said.append(f"{rpc_host(u)}: {len(got)} log(s) UNDATED (blockTimestamp 0) — passed over")
                     continue
+                if not got:
+                    said.append(f"{rpc_host(u)}: 0 logs")
+                    empty_from = empty_from or u
+                    continue
                 trace.append(f"{rpc_host(u)} eth_getLogs {lo:,}..{upper:,} -> {len(got)} dated log(s)")
                 return got, upper
             if narrowed:
                 span = max(1, span // 2)
                 continue
+            if empty_from is not None:
+                trace.append(f"{rpc_host(empty_from)} eth_getLogs {lo:,}..{upper:,} -> 0 dated log(s)")
+                return [], upper
             raise RuntimeError(f"blocks {lo:,}..{upper:,}: no endpoint served dated logs — " + "; ".join(said))
 
     def erc20_supply_at(self, chain: str, token: str, block) -> int:
@@ -1289,7 +1306,10 @@ class ChainReader:
                            # arb1.arbitrum.io's own words (run review D1, read 2026-10-14): "logs matched by query
                            # exceeds limit of 10000", "log query timed out", "... only 10000000 are allowed for this
                            # request; narrow the block range"
-                           "exceeds limit", "log query timed out", "narrow the block range")
+                           "exceeds limit", "log query timed out", "narrow the block range",
+                           # R20: rpc.berachain.com refuses a range over 10,000 blocks with HTTP 413 "Request Entity Too
+                           # Large" (read 2026-11-23) — its own limit: the range is halved, not passed to the next node
+                           "request entity too large")
     # ===== ** THE FLOOR IS NOT A TUNING KNOB. Confirmed the hard way 2026-09-23. ** =====
     # Alchemy's free tier caps eth_getLogs at TEN blocks, from its own error body: "Under the
     # Free tier plan, you can make eth_getLogs requests with up to a 10 block range." The

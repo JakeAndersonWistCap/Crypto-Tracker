@@ -128,6 +128,15 @@ OBSERVED_CALLS = {
                  "(read at block 58,376,623, 2026-11-17)"),
 }
 PENDING_GETTERS = ("pendingDeposits", "deposits")       # tried in this order, per queue entry
+# R20 (Jake 2026-11-24): THE GAUGE CAPS' UNMINTED SURPLUS. Voter (root, Base) — verified source on Sourcify chain 8453,
+# V3/src/interfaces/voter/IVoter.sol: chains() L1082, CHAIN0() L874, spendableSurplus(uint256) L1060 ("Surplus
+# currently spendable for a chain via `spendSurplus`"). Read live 2026-11-23: eight registered chains + CHAIN0.
+SURPLUS_CALLS = {
+    "chains": ("chains()", "V3/src/interfaces/voter/IVoter.sol:1082"),
+    "CHAIN0": ("CHAIN0()", "V3/src/interfaces/voter/IVoter.sol:874"),
+    "spendableSurplus": ("spendableSurplus(uint256)", "V3/src/interfaces/voter/IVoter.sol:1060"),
+}
+SURPLUS_METRIC = "gauge_caps_surplus_tokens"
 MULTICALL3 = "0xca11bde05977b3631167028862be2a173976ca11"
 # R8 item 2: THE SUPPLY SERIES (what circulating_supply_onchain is built from), written by the live read and by the
 # archive backfill (supply_history). The two aero_* legs are stored only once config.METRICS declares them.
@@ -483,6 +492,10 @@ class AeroV3:
                 self._state_reads(name, a, out)
             except Exception as e:  # noqa: BLE001 — a failed source must not kill the run
                 out.fail(SOURCE, name, f"state reads: {e}", TIER)
+            try:                                           # R20: the Gauge Caps' unminted surplus — all pots or no row
+                self._surplus(name, a, out)
+            except Exception as e:  # noqa: BLE001
+                out.fail(SOURCE, name, f"{SURPLUS_METRIC}: {e} — NOT written (unknown, never 0)", TIER)
             try:
                 self._supply(name, a, out, st)
             except Exception as e:  # noqa: BLE001
@@ -549,6 +562,34 @@ class AeroV3:
         out.add(point(name, "voter_total_weight_tokens", w, f"{SOURCE}:voter.totalPoint[resolved]", TIER, when),
                 SOURCE, name, f"voter_total_weight_tokens={w:,.4f}", TIER)
         self.voter, self.weight = voter, w
+
+    # ---------------------------------------------------------------- the Gauge Caps' unminted surplus (R20)
+    def surplus_at(self, a: dict, block="latest") -> tuple[float, dict]:
+        """(Σ spendable surplus in AERO, {chain id: AERO}) at ONE block: Voter.spendableSurplus for CHAIN0 (idle voting
+        power) and for every chain Voter.chains() lists. Any failed read raises — a pot is never assumed 0, so the sum
+        is every pot or nothing. A block before the Voter knew a chain answers that chain's pot as 0 (its own state)."""
+        tag = hex(block) if isinstance(block, int) else block
+        voter = getattr(self, "voter", None) or self.call(a["voting_escrow"], "VOTER", block=block)[0]
+        raw = lambda sig, arg="": self.rpc("eth_call", [{"to": voter, "data": _keccak(sig)[:10] + arg}, tag])  # noqa: E731
+        w = _words_of(raw(SURPLUS_CALLS["chains"][0]))
+        if len(w) < 2 or len(w) < 2 + w[1]:
+            raise RuntimeError(f"Voter.chains() answered {len(w)} word(s) — not a uint256[]")
+        chain0 = _words_of(raw(SURPLUS_CALLS["CHAIN0"][0]))[0]
+        pots = {}
+        for cid in [chain0] + [c for c in w[2:2 + w[1]] if c != chain0]:
+            res = raw(SURPLUS_CALLS["spendableSurplus"][0], f"{cid:064x}")
+            if not res or res == "0x":
+                raise RuntimeError(f"Voter.spendableSurplus({cid}) answered nothing at block {block}")
+            pots[int(cid)] = _words_of(res)[0] / WAD
+        return sum(pots.values()), pots
+
+    def _surplus(self, name: str, a: dict, out) -> None:
+        if SURPLUS_METRIC not in config.METRICS:
+            return
+        total, pots = self.surplus_at(a)
+        out.add(point(name, SURPLUS_METRIC, total, f"{SOURCE}:voter.spendableSurplus[{len(pots)} pots]", TIER, today()),
+                SOURCE, name, f"{SURPLUS_METRIC}={total:,.4f} AERO over {len(pots)} pot(s): "
+                + ", ".join(f"{c} {v:,.0f}" for c, v in pots.items()), TIER)
 
     # ---------------------------------------------------------------- supply
     def _supply_terms(self, name: str, a: dict, blk: int) -> dict:
@@ -1149,3 +1190,37 @@ def _mint_row(rows: list, name: str, day, minted: float, team: int, src: str, ha
     if write is not None:
         write(new)
 
+
+def surplus_history(project: dict, have_days: set, deadline: float | None = None, reader=None,
+                    state: dict | None = None, write=None, clock=time.monotonic) -> tuple[list, str]:
+    """R20 (Jake 2026-11-24): THE GAUGE CAPS' UNMINTED SURPLUS ON PAST DAYS — gauge_caps_surplus_tokens at the FIRST
+    block of every UTC day from the migration cutover to yesterday (archive eth_calls on Base: Voter.chains(), CHAIN0
+    and spendableSurplus of each pot at that one block), oldest day first so the series has no hole behind its newest
+    row. A day the store holds (`have_days`) is never read or written again; a day that cannot be read STOPS the pass
+    and is named (all pots or no row — unknown, never 0). Stops at `deadline` (monotonic); re-run to continue.
+    Returns (rows, why it ended). The pattern of minted_opening_history (R17)."""
+    name = project["name"]
+    st = state if state is not None else config.aerodrome_migration_state()
+    rdr = reader or AeroV3(state=st)
+    a = {k: v.lower() for k, v in (st.get("addresses") or {}).items()}
+    cut = pd.Timestamp(config.AERODROME_MIGRATION["cutover_utc"]).normalize()
+    last = pd.Timestamp(today()).normalize() - pd.Timedelta(days=1)
+    rows, why = [], f"reached yesterday ({last.date()})"
+    src = config.mark_source(f"{SOURCE}:voter.spendableSurplus", "archive")
+    day = cut
+    while day <= last:
+        key = str(day.date())
+        if key not in have_days:
+            if deadline is not None and clock() > deadline:
+                return rows, f"time budget spent at {key}; re-run to continue"
+            try:
+                blk = rdr._block_at(int(day.tz_localize("UTC").timestamp()))
+                total, pots = rdr.surplus_at(a, block=blk)
+            except Exception as e:  # noqa: BLE001 — unknown, never 0
+                return rows, f"stopped at {key}: the surplus pots are not readable at its first block ({str(e)[:160]})"
+            new = [point(name, SURPLUS_METRIC, total, src + f"[{len(pots)} pots]", TIER, day).iloc[0]]
+            rows += new
+            if write is not None:
+                write(new)
+        day += pd.Timedelta(days=1)
+    return rows, why
