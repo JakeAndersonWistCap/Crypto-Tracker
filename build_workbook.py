@@ -2003,6 +2003,47 @@ def _s13_inferred_views(groups: dict) -> None:
                 g.columns)
 
 
+def _s13_fee_rate_views(groups: dict) -> None:
+    """R20 (config.S13_FEE_RATE — Aethir, Jake 2026-11-24): a REVENUE line = the FEES series x the protocol fee rate
+    published for that row's week, ROW FOR ROW (the fees row's date, tier and span). The rate of a fees row dated d is
+    1 − the host share in force that week: the latest stored share row dated in (d + slack − 7 days, d + slack]; with
+    no such row, the declared FIXED rate where d is on or before `fixed_until`; otherwise the row is left out — a week
+    whose rate is not published has no revenue (unknown is never 0). No fees series, no revenue line."""
+    for name, spec in (getattr(config, "S13_FEE_RATE", {}) or {}).items():
+        g = groups.get((name, spec["base"]))
+        if g is None or g.empty:
+            groups.pop((name, spec["view"]), None)
+            continue
+        share = _daily(groups.get((name, spec["host_share_metric"])))
+        slack = pd.Timedelta(days=int(spec.get("share_slack_days", 0)))
+        until = pd.Timestamp(spec["fixed_until"])
+        rates, notes = [], []
+        for d in pd.to_datetime(g["date"]).dt.normalize():
+            held = share[(share.index <= d + slack) & (share.index > d + slack - pd.Timedelta(days=7))]
+            if not held.empty:
+                rates.append(1.0 - float(held.iloc[-1]) / 100.0)
+                notes.append(f"1 - host share {float(held.iloc[-1]):g}% of {held.index[-1].date()}")
+            elif d <= until:
+                rates.append(float(spec["fixed_rate"]))
+                notes.append(f"fixed {float(spec['fixed_rate']):g} to {until.date()}")
+            else:
+                rates.append(None)
+                notes.append("")
+        keep = [r is not None for r in rates]
+        if not any(keep):
+            groups.pop((name, spec["view"]), None)
+            continue
+        v = g[keep].assign(
+            metric=spec["view"],
+            value=pd.to_numeric(g["value"][keep], errors="coerce") * [r for r in rates if r is not None], tier=3)
+        # ONE measuring point for the view (the fees series' own declared handover — monthly then weekly, one
+        # quantity — is the fees series' business): the fees row's source is named inside the brackets
+        v["source"] = ["derived:s13_fee_rate[" + spec["base"] + " x (" + n + ") <- "
+                       + str(s_).replace("[", "(").replace("]", ")") + "]"
+                       for n, s_, k in zip(notes, g["source"], keep) if k]
+        groups[(name, spec["view"])] = _as_stored(v, g.columns)
+
+
 def _s13_views(groups: dict) -> None:
     """R9.4 / R9.5 — the three revenue lines on THE SAME COVERED DAYS.
     (1) config.S13_ONCHAIN (Aerodrome): the lines' source of record is the on-chain voter-epoch read. One row per
@@ -4293,6 +4334,8 @@ def _declared_zero_views(groups: dict, asof) -> None:
             if not have or pd.Timestamp(spec["record_date"]) < min(have):   # programme began on or after it
                 continue
             hi = min(have) - pd.Timedelta(days=1)
+        if spec.get("until"):                        # R20: a mechanism that did not exist up to a recorded day — the
+            hi = min(hi, pd.Timestamp(spec["until"]))   # declared 0 stops there; later days are measured or unknown
         days = [d for d in pd.date_range(lo, hi) if d not in have]
         if not days:
             continue
@@ -8487,6 +8530,7 @@ def aggregate(long: pd.DataFrame, fetch_status: pd.DataFrame, asof: pd.Timestamp
     _LAST_GROUPS.clear()
     _subsidy_common_views(groups, asof)   # G13 6: subsidy cover over the days every leg covers once (b) is complete
     _s13_inferred_views(groups)           # R18: an S13 line inferred from another's series (GEODNET: burn ÷ 0.8, ÷ 0.4)
+    _s13_fee_rate_views(groups)           # R20: a revenue line = the fees series x the published fee rate (Aethir)
     _s13_views(groups)                    # R9.4 / R9.5: the three revenue lines on the same covered days
     _s13_component_views(groups, asof)    # R11.3a: each line's gas / Intents parts on the line's own days (Near)
     _s13_share_basis_views(groups, asof)  # R13: the holder share on one basis (Uniswap: UNI burned ÷ UNI released)

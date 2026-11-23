@@ -734,6 +734,16 @@ def _tier_note(project: dict, metric: str, scrape_entries: dict) -> tuple[str, s
                 "public key) are read once a day, keyless (fetch/ef_wallets.py, R18) — nothing stored this run",
                 f"Read the ef_wallets lines in the Run Log for {name}: each names the endpoint or the wallet that was "
                 f"not read. Past days of the held series: python -m fetch.ef_wallets --backfill.")
+    ach = project.get("aethir_chain") or {}
+    if metric in {ach.get("unvested_metric"), ach.get("vester_metric"), ach.get("held_metric"), ach.get("inferred_metric"),
+                  (ach.get("stake") or {}).get("metric"), (ach.get("stake") or {}).get("eath_metric"),
+                  (ach.get("burn") or {}).get("metric"), (ach.get("burn") or {}).get("stock_metric")} - {None}:
+        return ("Aethir's vesting stock, issuer wallets and issuer stake (Ethereum, one finalized block; the past days "
+                "from the ATH Transfer logs) and its daily fee burn (Arbitrum, the burn contract's transfers to 0x…dEaD) "
+                "are read once a day, keyless (fetch/aethir_chain.py, R20) — nothing stored this run",
+                f"Read the aethir_chain lines in the Run Log for {name}: each names the endpoint, the wallet or the "
+                f"check that refused the read (a re-scheduled vesting; logs that do not sum to a balance). The live "
+                f"tables: python -m fetch.aethir_chain.")
     if metric == ((project.get("staked_eth_rebuild") or {}).get("fallback") or {}).get("marker_metric"):
         return ("no change of quantity is declared for staked ETH: the row is stored only by staked_eth_rebuild.py "
                 "--apply when its ±1% overlap test did not pass (R18)",

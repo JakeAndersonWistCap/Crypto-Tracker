@@ -65,6 +65,7 @@ from .chainlink_fees import ChainlinkFees
 from .xref import CrossRefs
 from .staked_eth import BeaconNodeStakedEth, BeaconStakedEth, StakedEth  # noqa: F401
 from .ef_wallets import EFWallets  # noqa: F401
+from .aethir_chain import AethirChain  # noqa: F401
 from .treasury import TreasuryBills
 from .sky_msc import SkyMsc
 from .fluid_buybacks import FluidBuybacks
@@ -185,6 +186,9 @@ TIER_ORDER = [
     # R18 (Jake 2026-11-24): the Ethereum Foundation's wallets — ETH + WETH held (published and INFERRED, apart) and the
     # ETH its validators stake, once a day, keyless (a public RPC at one finalized block; the public beacon node by key)
     ("ef_wallets", 1, lambda ctx: EFWallets()),
+    # R20 (Jake 2026-11-24): Aethir's vesting stock, issuer wallets, issuer stake and the daily fee burn, once a day,
+    # keyless (public RPC: Ethereum at one finalized block + the Transfer logs for the past days; Arbitrum burn logs)
+    ("aethir_chain", 2, lambda ctx: AethirChain()),
     # The 3-month US T-bill, the risk-free benchmark (Phase 3, 2026-10-12 night): Treasury's own daily bill rates, FRED
     # DTB3 the cross-check; stored under the pseudo-project Macro.
     ("treasury_bills", 1, lambda ctx: TreasuryBills()),
@@ -2118,6 +2122,7 @@ TIER_BUDGET_S = {
     # the L2 chain tiers (explorer_l2:<chain>, G3 item 1) take config.L2_TIER_BUDGET_S, set below
     # one epoch a week: ~10 Multicall3 batches + one DefiLlama price call; the daily totalWeight is one eth_call
     "aero_voter": 180,
+    "aethir_chain": 180,               # R20: ~45 eth_calls + ~30 eth_getLogs pieces (two chains), measured ~25 s
     "aero_v3": 240,
     "aero_v3_epoch": 240,              # R8 item 2: stops itself at 200 s (fetch.aero_v3.EPOCH_BUDGET_S), scan saved
     "scrape": 240, "dune": 420, "ultrasound": 60, "plume_staking": 180, "plume_claims": 180, "blockscout_stats": 90,

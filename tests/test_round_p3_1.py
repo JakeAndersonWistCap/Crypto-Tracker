@@ -61,8 +61,9 @@ HVY, NHY = "HOLDER VALUE YIELD", "NET HOLDER YIELD"
 
 
 # ===================================================================================================== R1: holder value
-@pytest.mark.parametrize("name,source", [("Morpho", "docs.morpho.org"), ("Aethir", "docs.aethir.com"),
-                                         ("Plume", "docs.plume.org")])
+# R20 (Jake 2026-11-24): Aethir left this list — was ("Aethir", "docs.aethir.com"). Its fee burn went live 2026-11-02, so
+# its holder value is the burn x the price (0 before the burn by a dated declared zero), no longer "no mechanism".
+@pytest.mark.parametrize("name,source", [("Morpho", "docs.morpho.org"), ("Plume", "docs.plume.org")])
 def test_r1_holder_value_yield_is_a_measured_zero_naming_the_absent_mechanism(built, name, source):
     v, comment = _cell(built, "audit", CP, name, HVY)
     assert _num(v) and v == 0, f"{name} holder value yield {v!r}"
@@ -84,7 +85,7 @@ def test_r1_net_holder_yield_no_longer_waits_on_holder_value(built, name):
 
 def test_r1_the_holder_value_zero_is_the_declared_zero_path_and_only_where_the_record_agrees():
     zeros = sorted(n for (n, m) in config.DECLARED_ZERO if m == "holder_value_revenue_usd")
-    assert zeros == ["Aethir", "Morpho", "Plume"]
+    assert zeros == ["Morpho", "Plume"]            # was ["Aethir", "Morpho", "Plume"] before R20 (Aethir's fee burn)
     for n in zeros:
         fs = config.PROJECT_BY_NAME[n]["fee_split"]
         assert fs["share_to_buyback"] == 0.0 and fs["source_url"]
