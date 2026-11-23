@@ -47381,3 +47381,156 @@ def _load_r16_moves() -> int:
 
 
 R16_MOVES_DECLARED = _load_r16_moves()
+
+
+# =====================================================================================================================
+# ===== R17 — GEODNET ON THE RULE; PLUME'S RWA READ (Jake 2026-11-23) =====
+# GEODNET (Jake's store 2026-11-23: on-chain circulating 524,985,588 against CoinGecko 754,193,399, -30%). Every wallet
+# the repo subtracted was read live on 2026-11-23 (Polygon block 97,814,124; Solana mainnet-beta) and tested against the
+# rule (Jake 2026-11-17: out of circulating only if not yet released AND nobody can move it AND it earns nothing):
+#   Mining               0xfa5fEd5c…  89,000,000.00   Safe 1.3.0, 2-of-3, nonce 162 — it pays the distribution wallet
+#   Mining distribution  0x8FB9dd00…   1,063,344.64   an externally owned account (62,711 transactions): one key
+#   Ecosystem            0x3A6906E4…  43,022,654.00   Safe 1.3.0, 2-of-3, nonce 25
+#   Team                 0xca3E874B… 245,000,000.00   Safe 1.3.0, 2-of-3, nonce 2 (5,000,000 sent out at block 51,789,428)
+#   Investor             0x48655989…   1,183,290.81   Safe 1.3.0, 2-of-3, nonce 31
+#   Vendor / Marketing   0x82146CF0…   1,961,185.50   Safe 1.3.0, 2-of-3, nonce 28
+#   Public sale          0xcEcccB3e…  20,000,000.00   Safe 1.3.0, 2-of-3, nonce 1
+# The six Safes share ONE owner set (0x61257c07…, 0x3ef952fb…, 0x612f8f63…): two keys move any of them, and no vesting
+# or timelock contract holds a token (docs.geodnet.com/geod-token/tokenomics: "Each wallet will adhere to its own
+# unlocking schedule" — a schedule the signers keep, not one the chain enforces). "Nobody can move it" fails for all
+# seven, so the rule counts them IN circulating, OFF the float. GEOD pays nothing to a holding wallet (no staking of
+# these wallets; the issuer's filing Q11), so they are idle — which alone does not take them out.
+# BURNED (out of circulating and of total): Polygon 0x…dEaD 40,826,932.49 + the Solana burn token account 5SBf…GnED
+# 32,957,005.00 = 73,783,937.49.
+# Circulating 524,985,588 -> 926,216,062.51 (= total 1,000,000,000 - burned); the float does not move.
+# COINGECKO (api.coingecko.com/api/v3/coins/geodnet, 2026-11-23 09:38 UTC): total 926,216,062.51 (= ours to the token),
+# circulating 754,193,398.51 — it leaves out 172,022,664.00 = Mining 89,000,000 + Ecosystem 43,022,654 + the wallet
+# 0x47c8ebecfa390a59b0e127c9178e936a4ada907d 40,000,010 (an externally owned account: 40,000,000 received from the
+# Investor Safe in one transfer at block 66,634,093, and 10 before it) — exact to the token. Each of the three can be
+# moved, so CoinGecko's figure is a rule-basis difference, named by wallet; it is not stale (its total follows the burn
+# to the day). Against the OLD figure the same reads name the whole gap of 229,207,811: CoinGecko counts Team
+# 245,000,000 + Public sale 20,000,000 + Vendor 1,961,185.50 + Investor 1,183,290.81 + Mining distribution 1,063,344.64
+# (269,207,820.95, which the repo subtracted) and leaves out 0x47c8ebec… 40,000,010 (which the repo counted).
+GEODNET_RULE_READ = {
+    "read_on": "2026-11-23", "polygon_block": 97_814_124, "total": 1_000_000_000.0,
+    "burned": {"polygon 0x000000000000000000000000000000000000dEaD": 40_826_932.49,
+               "solana burn token account 5SBfxBdqsCM1SJZGQkf9Y74EFmUfzs8LGDjBZUjZGnED": 32_957_005.0},
+    "safe_owners": ("0x61257c071ed39f3cdadf775d4b4bd6cddbc4f59f", "0x3ef952fb1d1656ac2b30acf3601e85b0e8f29673",
+                    "0x612f8f638cf2c488f616a145165deb36419cdf47"),
+    # (role, address, GEOD, who can move it, the series it is read into)
+    "wallets": (
+        ("Mining", "0xfa5fEd5cc2b6DD8F370651D17242C52Ed711B14F", 89_000_000.0, "Safe 1.3.0, 2-of-3",
+         "treasury_holding_tokens"),
+        ("Mining distribution", "0x8FB9dd00B9a3D893dA96d444817d0b77330d5478", 1_063_344.64,
+         "externally owned account, one key", "treasury_holding_tokens"),
+        ("Ecosystem", "0x3A6906E4239F9860C81035c54198Df58D892653b", 43_022_654.0, "Safe 1.3.0, 2-of-3",
+         "treasury_holding_tokens"),
+        ("Team", "0xca3E874Bc4e830796d822F529C29Df30302324b2", 245_000_000.0, "Safe 1.3.0, 2-of-3",
+         "noncirculating_holding_tokens"),
+        ("Investor", "0x486559899e96981DFE55C4E6EBF5101A76BfAdfa", 1_183_290.81, "Safe 1.3.0, 2-of-3",
+         "noncirculating_holding_tokens"),
+        ("Vendor / Marketing", "0x82146CF0f350C241757660Fd803c73313b06D75C", 1_961_185.5, "Safe 1.3.0, 2-of-3",
+         "noncirculating_holding_tokens"),
+        ("Public sale", "0xcEcccB3ee2C208Fb58A5a02499E97D4BF041Ff6f", 20_000_000.0, "Safe 1.3.0, 2-of-3",
+         "noncirculating_holding_tokens")),
+    "ours_before": 524_985_588.0, "ours": 926_216_062.51,
+    "coingecko": {"read": "2026-11-23T09:38:55Z", "total": 926_216_062.51, "circulating": 754_193_398.51,
+                  "leaves_out": {"Mining 0xfa5fEd5c…": 89_000_000.0, "Ecosystem 0x3A6906E4…": 43_022_654.0,
+                                 "0x47c8ebecfa390a59b0e127c9178e936a4ada907d (EOA; 40,000,000 from the Investor Safe at "
+                                 "block 66,634,093)": 40_000_010.0}},
+    # the gap Jake's store showed (ours before − CoinGecko = −229,207,811), wallet by wallet
+    "old_gap": {"coingecko_counts_we_subtracted": {"Team": 245_000_000.0, "Public sale": 20_000_000.0,
+                                                   "Vendor / Marketing": 1_961_185.5, "Investor": 1_183_290.81,
+                                                   "Mining distribution": 1_063_344.64},
+                "coingecko_leaves_out_we_counted": {"0x47c8ebecfa390a59b0e127c9178e936a4ada907d": 40_000_010.0}},
+    # INFERRED issuer-side wallets found by the same reads — NOT wired (no docs name them; Jake's decision):
+    "inferred_not_wired": {
+        "0x47c8ebecfa390a59b0e127c9178e936a4ada907d": "polygon, EOA, 40,000,010 — funded only by the Investor Safe; "
+                                                      "CoinGecko leaves it out",
+        "0xcdfd8ec577217df0a577cc64a64eca71bb28d954": "polygon, Safe 3-of-4 (two of GEODNET's three signers + two "
+                                                      "others), 17,000,000 — 18,750,000 from the Investor Safe",
+        "8eznVreusXAyh4HZirLWNjMxgoQdxzqfTi9Uw8gEL2RE": "solana, 1,117,072.83 — recipient of 21,500,000 bridged by "
+                                                        "the signer 0x61257c07… (27 NTT transfers)",
+        "BXsYXwka9KwGQ9CbbhcqN5Co3L2nPjkdJLaVjeGpU1YE": "solana, 7,864,385.00 — 9,000,000 bridged by 0x61257c07…",
+        "GopdKjKgVsbL3nHMrQBtSKcZYn1tH8QrzrwD6rcxU5T3": "solana, 4,478,027.80 — 6,000,100 bridged by 0x61257c07…",
+        "97kWvMT9QPZXqHAmMirYrpcnA3SAnFtG45BrfKgPmJZo": "solana, 1,478,028.90 — 3,000,100 bridged by 0x61257c07…"},
+    "decided": "Jake 2026-11-17 (the rule), applied to GEODNET 2026-11-23 (R17)"}
+declare_rule_in(
+    "GEODNET", ("treasury_holding_tokens", "noncirculating_holding_tokens"),
+    "config.GEODNET_RULE_READ (read 2026-11-23, Polygon block 97,814,124): Mining, Ecosystem, Team, Investor, Vendor / "
+    "Marketing and Public sale are Safes 1.3.0, 2-of-3 with one owner set (0x61257c07…, 0x3ef952fb…, 0x612f8f63…); the "
+    "Mining distribution wallet is an externally owned account — each can be moved, no vesting or timelock contract "
+    "holds a token, so none is out of circulating; all seven are issuer-held: off the float",
+    circulating=(524_985_588, 926_216_062.51),
+    references={"coingecko": (754_193_398.51, {"Mining 0xfa5fEd5c…": 89_000_000,
+                                               "Ecosystem 0x3A6906E4…": 43_022_654,
+                                               "0x47c8ebec… (EOA funded by the Investor Safe; not in our set)": 40_000_010})},
+    restated="the whole stored series: circulating_supply_onchain = total_supply_gross − burn_address_balance on every "
+             "day both are held (the two wallet legs are no longer subtracted); one basis, never two")
+RULE_IN["GEODNET"].update({"read_on": "2026-11-23", "decided": GEODNET_RULE_READ["decided"],
+                           # the daily CoinGecko check sets CoinGecko's figure against ours under the rule less the
+                           # three wallets named above (fetch.circulating.rule_basis_difference); same tolerance
+                           "reference_check": "declared"})
+CIRCULATING_ONCHAIN["GEODNET"]["decision"] = (
+    "THE RULE (Jake 2026-11-17), applied R17 (2026-11-23): circulating = total − burned (Polygon dead address + the "
+    "Solana burn account). The seven wallets of GEODNET's tokenomics page are Safes 2-of-3 / a keyed wallet: in "
+    "circulating, off the float. Was (2026-10-07 evening): total − burned − those seven wallets")
+CIRCULATING_ONCHAIN["GEODNET"]["handover"] = {
+    "on": "2026-11-23", "decided": GEODNET_RULE_READ["decided"],
+    "from": "total − burned − treasury_holding_tokens − noncirculating_holding_tokens (524,985,588 on 2026-11-23)",
+    "to": "total − burned (926,216,062.51 on 2026-11-23); the two wallet legs leave the float",
+    "how": RULE_IN["GEODNET"]["restated"]}
+CIRCULATING_POLICY["GEODNET"].update({
+    "now": "THE RULE (Jake 2026-11-17), R17 (2026-11-23): circulating = total − burned; the seven wallets of GEODNET's "
+           "tokenomics page are in circulating (Safes 2-of-3 with one owner set, and a keyed wallet), off the float",
+    "source": "GEOD totalSupply() on Polygon − the Polygon dead address − the Solana burn token account. CoinGecko "
+              "(754,193,399 on 2026-11-23) is the cross-check: its total equals ours and it leaves out Mining "
+              "89,000,000 + Ecosystem 43,022,654 + 0x47c8ebec… 40,000,010 — wallets that can be moved "
+              "(config.GEODNET_RULE_READ)",
+    "definition": "total − burned; the seven issuer-held wallets of GEODNET's tokenomics page are in circulating and off "
+                  "the free float",
+    "previous": "total − burned − the seven wallets docs.geodnet.com/geod-token/tokenomics names (2026-10-07 to "
+                "2026-11-23)"})
+
+# PLUME's rwa_defillama_usd (+52% week on week on Jake's store, 2026-11-23): a READ ERROR. DefiLlama's /protocol history
+# carries one point a day at 00:00 UTC plus a last 'current' point; the history build summed both (fetch/llama
+# _daily_tvl). Read 2026-11-23: harvest-flow on Plume Mainnet 2026-11-22 00:00 514,217 and 21:03 514,109, so
+# 2026-11-22 read 473,910 + 1,028,326 + 1,128 + 9 = 1,503,373 against 989,156 (+52.0%). The rows the old build stored
+# inside the routine window are restated by ONE rebuild (fetch/llama.rwa; a daily-checks mark keeps it to one).
+RWA_REREAD_ONCE = {"Plume": {"why": "the history build summed a protocol's 'current' point onto its 00:00 point of the "
+                                    "same day (R17)", "read_on": "2026-11-23"}}
+
+
+# ----- R17 GEODNET'S THREE REVENUE LINES (S13, Jake 2026-11-05: each project's lines in its own round). Nothing new is
+# measured: the lines are the series already on file, said as what they are (REVENUE_TIER["GEODNET"], fee_split).
+#   HOLDER REVENUE  the burn, measured on chain: GEOD sent to the Polygon dead address and the Solana burn account, at
+#                   each day's price (actual_buyback_usd — the buyback IS the burn, row for row). PRIMARY.
+#   REVENUE / FEES  DefiLlama's GEODNET 'fees' = 'revenue' = that burn ÷ 0.8 (its adapter fees/geodnet.ts; GEODNET's own
+#                   statement: 80% of data revenue buys and burns GEOD, 20% to the Foundation). ONE series, INFERRED
+#                   from the holder revenue — not an independent measurement of what customers pay (GEODNET publishes
+#                   no revenue figure: config.REVENUE_IMPLIED). Nothing is paid to suppliers out of fees (miners are
+#                   paid in GEOD from the mining wallets: outflow (b)), so revenue = fees. SECONDARY.
+#   HOLDER SHARE    0.80 BY CONSTRUCTION of the two lines above (burn ÷ (burn ÷ 0.8)); its distance from 0.80 is the
+#                   day boundary and the price each side uses. It measures nothing about the split.
+REVENUE_SPLIT["GEODNET"] = {
+    "round": "R17 (2026-11-23; S13 of 2026-11-05 applied — for Jake to confirm)",
+    "fees": {"metric": "fees_usd", "primary": False,
+             "route": "DefiLlama 'geodnet' dailyFees = the on-chain GEOD burn valued ÷ 0.8 (its adapter fees/geodnet.ts: "
+                      "'80% of the fees are used to repurchase GEOD tokens from the open market and remove them from "
+                      "circulation'). INFERRED from the burn, not a measurement of what customers pay; GEODNET publishes "
+                      "no revenue figure. SECONDARY"},
+    "revenue": {"metric": "revenue_usd", "primary": False,
+                "route": "DefiLlama 'geodnet' dailyRevenue — the SAME series as its fees (burn ÷ 0.8): nothing is paid "
+                         "to suppliers out of fees (miners are paid in GEOD from the mining wallets, outflow (b)), so "
+                         "revenue = fees. INFERRED from the burn. SECONDARY"},
+    "holder_revenue": {"metric": "actual_buyback_usd", "primary": True,
+                       "route": "ON CHAIN: GEOD burned — the rise of the Polygon dead address and of the Solana burn "
+                                "token account (gross_burn_tokens) — at each day's price. The buyback is the burn, row "
+                                "for row (80% of data revenue buys GEOD on the market and burns it: GEODNET's own "
+                                "statement, fee_split)"},
+    "holder_share": {"route": "holder revenue ÷ revenue per covered day. 0.80 BY CONSTRUCTION: revenue here is the burn "
+                              "÷ 0.8, so the share restates the declared 80% and measures nothing about the split; its "
+                              "distance from 0.80 is the day boundary and the price each side uses"},
+    "other_recipients": "the GEODNET Foundation: the other 20% of data revenue (declared; no wallet or report is "
+                        "published for it)",
+    "crosscheck": "DefiLlama's holdersRevenue for 'geodnet' (holders_revenue_usd) is the same burn valued by DefiLlama"}

@@ -26980,7 +26980,9 @@ def test_circulating_policy_project_figure_first_with_the_onchain_set_as_cross_c
     assert pd.Timestamp("2026-10-06") not in mc.dropna().index
     # 3. the credibility row: GEODNET's figure against our partial on-chain set (5%)
     spec = cred.circulating_input("GEODNET")     # the set primary; judged by the bridge reconciliation (probes15)
-    assert spec["ours"]["metric"] == "circulating_supply_onchain"
+    # R17 (Jake 2026-11-23): GEODNET is on the rule — the row is the like-for-like figure, ours less the stock the rule
+    # counts in (was: spec["ours"]["metric"] == "circulating_supply_onchain")
+    assert spec["ours"]["args"] == {"metrics": ("circulating_supply_onchain",), "minus": ("rule_in_off_float_tokens",)}
     assert spec["ref"]["formula"] == "bridge_reconciled"
     # probes16: ours (on-chain + the liquid filing wallets CoinGecko counts) vs CoinGecko on our basis
     assert cred.circulating_input("Aerodrome")["ref"]["formula"] == "now_combo"
