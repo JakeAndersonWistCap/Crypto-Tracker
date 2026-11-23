@@ -47591,39 +47591,137 @@ RWA_REREAD_ONCE = {"Plume": {"why": "the history build summed a protocol's 'curr
                                     "same day (R17)", "read_on": "2026-11-23"}}
 
 
-# ----- R17 GEODNET'S THREE REVENUE LINES (S13, Jake 2026-11-05: each project's lines in its own round). Nothing new is
-# measured: the lines are the series already on file, said as what they are (REVENUE_TIER["GEODNET"], fee_split).
-#   HOLDER REVENUE  the burn, measured on chain: GEOD sent to the Polygon dead address and the Solana burn account, at
+# ----- R17 GEODNET'S THREE REVENUE LINES (S13, Jake 2026-11-05: each project's lines in its own round) — RESTATED R18.
+# R17 read: fees = revenue = DefiLlama's burn ÷ 0.8 (one series), holder revenue = the burn, holder share 0.80.
+# R18 (Jake 2026-11-24): "per the Blockworks token-transparency filing (Q2, 19 Aug 2025), 50% of subscription revenue
+# goes to the Foundation and 80% of that buys back and burns GEOD. Wire HOLDER REVENUE = measured burn, REVENUE = burn /
+# 0.8, FEES = burn / 0.4. Label REVENUE and FEES INFERRED, cite the filing, note its wording is ambiguous."
+#   HOLDER REVENUE  the burn, MEASURED on chain: GEOD sent to the Polygon dead address and the Solana burn account, at
 #                   each day's price (actual_buyback_usd — the buyback IS the burn, row for row). PRIMARY.
-#   REVENUE / FEES  DefiLlama's GEODNET 'fees' = 'revenue' = that burn ÷ 0.8 (its adapter fees/geodnet.ts; GEODNET's own
-#                   statement: 80% of data revenue buys and burns GEOD, 20% to the Foundation). ONE series, INFERRED
-#                   from the holder revenue — not an independent measurement of what customers pay (GEODNET publishes
-#                   no revenue figure: config.REVENUE_IMPLIED). Nothing is paid to suppliers out of fees (miners are
-#                   paid in GEOD from the mining wallets: outflow (b)), so revenue = fees. SECONDARY.
-#   HOLDER SHARE    0.80 BY CONSTRUCTION of the two lines above (burn ÷ (burn ÷ 0.8)); its distance from 0.80 is the
-#                   day boundary and the price each side uses. It measures nothing about the split.
+#   REVENUE         that burn ÷ 0.8 — what reaches the GEODNET Foundation. INFERRED (s13_revenue_inferred_usd).
+#   FEES            that burn ÷ 0.4 — what subscribers pay (the Foundation receives 50% of it). INFERRED
+#                   (s13_fees_inferred_usd).
+#   HOLDER SHARE    0.80 of revenue (0.40 of fees) BY CONSTRUCTION; it measures nothing about the split.
+# Both inferred lines are OUR measured burn scaled, row for row (config.S13_INFERRED; build_workbook
+# _s13_inferred_views), so the three lines cover the same days at the same prices. DefiLlama's fees = revenue (its own
+# burn ÷ 0.8) stays stored as the cross-check of REVENUE; it is no longer the line.
+# THE FILING, read 2026-11-23 at https://blockworks.com/token-transparency/filing/geodnet (Geodnet · GEOD · B2 v1.0 ·
+# "Filed 19 Aug 2025"), question 02 "Disclosure of Revenue Streams", the whole answer:
+#   "Precise localization Data Streams and Subscriptions are sold by more than 50 enterprise clients. 50% of the
+#    subscription revenue is shared with the GEODNET Foundation. 80% of this revenue is used for buy-back and burning
+#    GEOD tokens off the open market"
+# and question 03: "Revenue flows back to the token thru the 80% buy back and burn mechanism".
+# ITS WORDING IS AMBIGUOUS: "this revenue" can be the Foundation's 50% (burn = 40% of what subscribers pay — the reading
+# wired) or the subscription revenue (burn = 80% of it — GEODNET's X post of 2026-07-02, "80% of GEODNET data revenue
+# going toward buying and burning GEOD", and DefiLlama's adapter). The filing does not say who keeps the other 50%.
+# GEODNET'S OWN REVENUE FIGURES (searched 2026-11-23: geodnet.com/geod and its data feed, docs.geodnet.com, its Medium
+# blog, Messari's project page, the filing): NO revenue series is published. Its feed carries the burn only (burn-daily /
+# -weekly / -monthly in GEOD and $) and one unlabelled all-time number (miner-stats total_usage_revenue 11,371,707.70 on
+# 2026-11-23: no unit, no period, shown nowhere on the page — not used). The one dated first-party figure found:
+# "GEODNET has scaled revenue 4X over the last year to $4M of ARR and growing" (GEODNET's Robotics Roadmap, its Medium
+# blog, 2025-05-27). Its own feed's burn for May 2025 is $265,235: x 12 ÷ 0.8 = $3,978,525 (−0.5% from $4M); x 12 ÷ 0.4
+# = $7,957,050 (+98.9%). So the revenue GEODNET itself reports is the burn ÷ 0.8 — our REVENUE line — and FEES (burn ÷
+# 0.4) is twice any figure GEODNET has published. Recorded below (first_party); not a judge of a stored window (May 2025
+# is before the stored series). The "$2.8 million in Q3" in the press (Crypto Briefing 2026-10-02) is DefiLlama's burn
+# ÷ 0.8 (Jul–Sep 2026: 919,387 + 944,302 + 913,882 = $2,777,571), not a first-party figure.
+GEODNET_BURN_SHARE_OF_REVENUE = 0.80      # of what the Foundation receives (the filing; GEODNET's X post)
+GEODNET_FOUNDATION_SHARE_OF_FEES = 0.50   # of subscription revenue (the filing, question 02) — the ambiguous step
+# AN S13 LINE INFERRED FROM ANOTHER LINE'S SERIES: view metric -> (the stored / built series, the factor it is
+# multiplied by). Row for row, so the inferred line holds exactly the days, spans and prices of the series it restates.
+S13_INFERRED = {
+    "GEODNET": {
+        "s13_revenue_inferred_usd": ("actual_buyback_usd", 1.0 / GEODNET_BURN_SHARE_OF_REVENUE),
+        "s13_fees_inferred_usd": ("actual_buyback_usd",
+                                  1.0 / (GEODNET_BURN_SHARE_OF_REVENUE * GEODNET_FOUNDATION_SHARE_OF_FEES))}}
+METRICS["s13_revenue_inferred_usd"] = {
+    "label": "S13 REVENUE — INFERRED: the measured on-chain burn ($) ÷ 0.8 (80% of what the GEODNET Foundation "
+             "receives buys back and burns GEOD: Blockworks token-transparency filing, 19 Aug 2025, question 02)",
+    "kind": "flow", "unit": "usd", "archetypes": [2, 3, 4], "tiers": [2], "sanity_min": 0, "sanity_max": 1e10,
+    "only_projects": ("GEODNET",), "view_only": True}
+METRICS["s13_fees_inferred_usd"] = {
+    "label": "S13 FEES — INFERRED: the measured on-chain burn ($) ÷ 0.4 (50% of subscription revenue goes to the "
+             "GEODNET Foundation and 80% of that is burned: Blockworks token-transparency filing, 19 Aug 2025, "
+             "question 02 — its wording is ambiguous)",
+    "kind": "flow", "unit": "usd", "archetypes": [2, 3, 4], "tiers": [2], "sanity_min": 0, "sanity_max": 1e10,
+    "only_projects": ("GEODNET",), "view_only": True}
+# UNIFORMITY (R18). The cell read "nothing is paid to stakers" — untrue: docs.geodnet.com (Staking FAQs / Stake GEODs /
+# SuperHex, read 2026-11-23) say "At the end of the 1-year producing period, the staker receives an additional 20% of
+# GEOD tokens" (Phase I: 10%; nothing where no station shows within 180 days). The cell now says what is true: a staker
+# bonus exists and no yield series is wired for it (rules frozen — no new metric). NO `match`: nothing is declared to
+# done_check, the cell stays a code it judges as before, until Jake decides (R18 report: 1,642,000 GEOD staked on
+# 2026-11-23, so +20% is at most 328,400 GEOD a year).
+GEODNET_STAKER_BONUS = {
+    "rate": 0.20, "phase_1_rate": 0.10, "period_days": 365,
+    "quote": "At the end of the 1-year producing period, the staker receives an additional 20% of GEOD tokens",
+    "source": "https://docs.geodnet.com/geod-console-advanced/staking-faqs ; "
+              "https://docs.geodnet.com/geod-console-advanced/superhex (Phase I 10%, Phase II 20%)",
+    "read_on": "2026-11-23",
+    "staked_read": {"tokens": 1_642_000, "block": 97_820_192, "on": "2026-11-23",
+                    "how": "GEOD.balanceOf(0x682BA846eed9934CC89ed89a350EA98781256B6F) on Polygon (locked_tokens)"},
+    "funded_by": "not stated in the docs (no wallet named) — NOT VERIFIED"}
+DECLARED_NA_REASONS.setdefault("GEODNET", []).append(
+    {"cols": ("UNIFORMITY",),
+     "text": "n/a — no staker yield series is wired: SuperHex stakers receive +20% GEOD at the end of the one-year "
+             "producing period (Phase I: 10%; docs.geodnet.com Staking FAQs, read 2026-11-23), paid once at the end, "
+             "funding wallet not published"})
+# The headline 'Fees Q0 ($)' cells (Master, A3, A4) still read DefiLlama's fees_usd — its burn ÷ 0.8. Under the filing's
+# reading that is the REVENUE line; said on the cell, not repointed (repointing moves the payout ratio and every
+# fee-based cell: Jake's decision, R18 report).
+PROJECT_BY_NAME["GEODNET"]["metric_labels"]["fees_usd"] += (
+    ". R18 (Jake 2026-11-24): on the Blockworks filing's reading (50% of subscription revenue reaches the Foundation, 80% "
+    "of that is burned) this burn ÷ 0.8 is the S13 REVENUE line; S13 FEES = the burn ÷ 0.4 (CP), twice this cell")
+_GEOD_FILING = ("Blockworks token-transparency filing (GEOD, B2 v1.0, filed 19 Aug 2025, question 02; read 2026-11-23): "
+                "'50% of the subscription revenue is shared with the GEODNET Foundation. 80% of this revenue is used for "
+                "buy-back and burning GEOD tokens off the open market'. THE WORDING IS AMBIGUOUS — 'this revenue' is read "
+                "here as the Foundation's 50%; read as the subscription revenue, the burn is 80% of fees and fees = "
+                "revenue")
 REVENUE_SPLIT["GEODNET"] = {
-    "round": "R17 (2026-11-23; S13 of 2026-11-05 applied — for Jake to confirm)",
-    "fees": {"metric": "fees_usd", "primary": False,
-             "route": "DefiLlama 'geodnet' dailyFees = the on-chain GEOD burn valued ÷ 0.8 (its adapter fees/geodnet.ts: "
-                      "'80% of the fees are used to repurchase GEOD tokens from the open market and remove them from "
-                      "circulation'). INFERRED from the burn, not a measurement of what customers pay; GEODNET publishes "
-                      "no revenue figure. SECONDARY"},
-    "revenue": {"metric": "revenue_usd", "primary": False,
-                "route": "DefiLlama 'geodnet' dailyRevenue — the SAME series as its fees (burn ÷ 0.8): nothing is paid "
-                         "to suppliers out of fees (miners are paid in GEOD from the mining wallets, outflow (b)), so "
-                         "revenue = fees. INFERRED from the burn. SECONDARY"},
+    "round": "R18 (Jake 2026-11-24; was R17: fees = revenue = DefiLlama's burn ÷ 0.8)",
+    "fees": {"metric": "s13_fees_inferred_usd", "primary": False, "inferred": True,
+             "route": "INFERRED — our measured on-chain burn ($, the holder revenue line) ÷ 0.4, row for row: what "
+                      "subscribers pay, of which the Foundation receives 50% and burns 80% of that. " + _GEOD_FILING
+                      + ". Not a measurement of what customers pay: GEODNET publishes no revenue series, and the one "
+                        "figure it has published ($4M of ARR, its Medium blog 2025-05-27) equals its burn ÷ 0.8, half "
+                        "of this line. SECONDARY"},
+    "revenue": {"metric": "s13_revenue_inferred_usd", "primary": False, "inferred": True,
+                "route": "INFERRED — our measured on-chain burn ($, the holder revenue line) ÷ 0.8, row for row: what "
+                         "reaches the GEODNET Foundation, 80% of which buys back and burns GEOD. " + _GEOD_FILING
+                         + ". CROSS-CHECK beside it: DefiLlama 'geodnet' dailyRevenue (revenue_usd) = DefiLlama's own "
+                           "read of the burn ÷ 0.8; and GEODNET's own '$4M of ARR' (2025-05-27) against its feed's May "
+                           "2025 burn x 12 ÷ 0.8 = $3,978,525. SECONDARY"},
     "holder_revenue": {"metric": "actual_buyback_usd", "primary": True,
-                       "route": "ON CHAIN: GEOD burned — the rise of the Polygon dead address and of the Solana burn "
-                                "token account (gross_burn_tokens) — at each day's price. The buyback is the burn, row "
-                                "for row (80% of data revenue buys GEOD on the market and burns it: GEODNET's own "
-                                "statement, fee_split)"},
-    "holder_share": {"route": "holder revenue ÷ revenue per covered day. 0.80 BY CONSTRUCTION: revenue here is the burn "
-                              "÷ 0.8, so the share restates the declared 80% and measures nothing about the split; its "
-                              "distance from 0.80 is the day boundary and the price each side uses"},
-    "other_recipients": "the GEODNET Foundation: the other 20% of data revenue (declared; no wallet or report is "
+                       "route": "MEASURED ON CHAIN: GEOD burned — the rise of the Polygon dead address and of the Solana "
+                                "burn token account (gross_burn_tokens) — at each day's price. The buyback is the burn, "
+                                "row for row (GEODNET's own statement, fee_split; the filing above)"},
+    "holder_share": {"route": "holder revenue ÷ revenue per covered day. 0.80 BY CONSTRUCTION (0.40 of fees): revenue "
+                              "here is the measured burn ÷ 0.8, so the share restates the filing's 80% and measures "
+                              "nothing about the split"},
+    "other_recipients": "of FEES: 50% does not reach the Foundation (the filing does not say who keeps it; no wallet or "
+                        "report is published). Of REVENUE: the Foundation keeps 20% (declared; no wallet or report is "
                         "published for it)",
-    "crosscheck": "DefiLlama's holdersRevenue for 'geodnet' (holders_revenue_usd) is the same burn valued by DefiLlama"}
+    "crosscheck": "REVENUE beside DefiLlama's 'geodnet' fees = revenue (fees_usd / revenue_usd: its burn ÷ 0.8); HOLDER "
+                  "REVENUE beside DefiLlama's holdersRevenue (holders_revenue_usd) and GEODNET's own monthly burn report "
+                  "(Credibility in_burn_report_months)",
+    "filing": {"url": "https://blockworks.com/token-transparency/filing/geodnet", "filed": "2025-08-19",
+               "question": "02 Disclosure of Revenue Streams", "read_on": "2026-11-23",
+               "quote": "Precise localization Data Streams and Subscriptions are sold by more than 50 enterprise "
+                        "clients. 50% of the subscription revenue is shared with the GEODNET Foundation. 80% of this "
+                        "revenue is used for buy-back and burning GEOD tokens off the open market",
+               "ambiguous": "'this revenue' = the Foundation's 50% (wired: burn = 40% of fees) or the subscription "
+                            "revenue (burn = 80% of fees)"},
+    # THE ONE FIRST-PARTY REVENUE FIGURE FOUND (searched 2026-11-23). A single dated statement, not a series: recorded
+    # and compared, not the line and not a judge of a stored window.
+    "first_party": {"figure_usd_annualised": 4_000_000,
+                    "said": "GEODNET has scaled revenue 4X over the last year to $4M of ARR and growing",
+                    "source": "GEODNET's Robotics Roadmap, medium.com/geodnet (GEODNET's own blog), 2025-05-27",
+                    "url": "https://medium.com/geodnet/geodnets-robotics-roadmap-b33f043cd061", "read_on": "2026-11-23",
+                    "burn_usd_month": 265_235, "burn_month": "2025-05",
+                    "burn_source": "GEODNET's own feed burn-monthly (usd_burned + sol_usd_burned), read 2026-11-23",
+                    "implied_revenue_annualised": 3_978_525,     # 265,235 x 12 ÷ 0.8: −0.5% from $4M
+                    "implied_fees_annualised": 7_957_050,        # 265,235 x 12 ÷ 0.4: +98.9%
+                    "reads": "GEODNET's own reported revenue = its burn ÷ 0.8 (our REVENUE line); FEES (burn ÷ 0.4) is "
+                             "twice it — consistent with the filing only if GEODNET's 'ARR' is the Foundation's half"},
+}
 
 # =====================================================================================================================
 # ===== R17 — ETHEREUM'S STAKED ETH AND NEAR'S NEARBLOCKS READS (Jake's store of 2026-11-23; SPEC "Round 17") =====
