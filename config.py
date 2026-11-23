@@ -47723,7 +47723,6 @@ for _k in ("in_locked", "in_arr"):
 if CREDIBILITY["Aethir"]["a2_customer_revenue"].get("fresh_label") == "MATURING (until 2026-10-17; first-party only)":
     CREDIBILITY["Aethir"]["a2_customer_revenue"]["fresh_label"] = "MATURING (until 2026-12-31; first-party only)"
     R18_AETHIR_EXTENDED["items"].append("CREDIBILITY Aethir a2_customer_revenue")
-=======
 # ===== R18 — NEAR: THE P2P HISTORY BEFORE THE STORED YEAR, IN MONTHLY CHUNKS (Jake 2026-11-24; SPEC "Round 18 — Near") ==
 # Jake: "the archetype key and rank must not wait until late 2027 ... a backfill that runs in monthly chunks from
 # 2026-12-01 within the 900 GB budget (stage 2 never automatic)". No new metric and no new rule: the same SQL
