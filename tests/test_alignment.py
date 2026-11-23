@@ -162,9 +162,9 @@ def test_ratios_are_in_range(built):
                 x = _num(v)
                 if x is None:
                     continue
-                if h.startswith(("Staking rate", "Lock rate", "Holding demand — lock rate", "Tradeable float ÷ circ")):
+                if h.startswith(("Staking rate", "Lock rate", "Holding demand — lock rate", "Free float ÷ circ")):
                     assert -1e-9 <= x <= 1 + 1e-9, (project, tab, h, x)
-                if h.startswith(("TRADEABLE FLOAT", "Resulting float", "FREE FLOAT = ", "Effective float")):
+                if h.startswith(("FREE FLOAT (tokens)",)):         # R20: one float (was four headers)
                     assert x >= 0, (project, tab, h, x)
                 if h.startswith(("Issuer releases", "Gross issuance Q0", "UNLOCK DILUTION Q0", "Dilution (")):
                     assert x >= -1e-9, (project, tab, h, x)

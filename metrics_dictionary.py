@@ -220,12 +220,30 @@ ENTRIES = {
         decided=[(J, "2026-10-12", "Phase 2 amendment 1: fee-market burns (ETH, NEAR gas, Tron, Solana, Canton, HyperEVM "
                                    "gas) come off A4 entirely and feed net issuance on A1")]),
     # ===== CP — the comparability layer (Jake 2026-10-12, Phase 2) =====
-    "TRADEABLE FLOAT": dict(
-        what="The tokens that can trade: circulating (our convention) less staked / locked tokens. Protocol- and "
-             "treasury-held tokens are already outside circulating under the convention, so they are subtracted there.",
-        formula="circulating_supply_used − the lock inside it (A2's free-float lock; Ethereum: beacon_chain_eth, "
-                "config.CP_STAKE_METRIC)", window="now", unit="tokens",
-        inputs=["circulating_supply_used", "locked_tokens"], decided=[(J, "2026-10-12", "Phase 2 item 1")]),
+    # R20 (Jake 2026-11-24): ONE free float, one header on A1 / A2 / A3 / CP. Was "TRADEABLE FLOAT" (CP), "FREE FLOAT =
+    # circulating − locked (tokens)" (A2), "Resulting float" (A1), "Effective float" (A3) — four computations.
+    "FREE FLOAT (tokens)": dict(
+        what="The tokens that can trade: circulating less everything staked, locked or earning, less what the issuer, "
+             "foundation and treasury hold, less held buybacks. One series per project per day; every tab reads it.",
+        formula="free_float_tokens = circulating_supply_used − free_float_staked_locked_tokens − "
+                "free_float_issuer_treasury_tokens − free_float_held_buybacks_tokens (free_float.views — the one "
+                "place it is formed); a day a component is not read holds no value",
+        window="now", unit="tokens",
+        inputs=["circulating_supply_used", "free_float_staked_locked_tokens", "free_float_issuer_treasury_tokens",
+                "free_float_held_buybacks_tokens"],
+        decided=[(J, "2026-11-24", "R20 Part 2 item 1: one float, the other versions deleted")]),
+    "NET FLOAT PRESSURE": dict(
+        what="Revenue-funded buying that is burned or held, less new supply — both as % of the free float a year.",
+        formula="BUYING PRESSURE ON FLOAT − TOTAL DILUTION ÷ free float (float_buying_tokens annualised − outflows "
+                "a+b+c+d+e+f annualised, ÷ free_float_tokens)",
+        window="Q0 → year / now", unit="%", inputs=["float_buying_tokens", "free_float_tokens"],
+        decided=[(J, "2026-11-24", "R20 Part 2 item 5")]),
+    "DILUTION, % OF MARKET CAP": dict(
+        what="Every outflow a year at each day's price, as a share of the average market cap over the window — the term "
+             "net holder yield subtracts, on net holder yield's own base.",
+        formula="(outflow_a..f_usd annualised) ÷ market_cap_usd (Q0 mean)",
+        window="Q0 → year", unit="%", inputs=["market_cap_usd"],
+        decided=[(J, "2026-11-24", "R20 Part 2 item 5: both sides of net holder yield on market cap")]),
     "HOLDER VALUE YIELD": dict(
         what="Value delivered to holders out of REVENUE, per year, as a share of market cap.",
         formula="holder_value_revenue_usd (each day's buyback $ where its programme was revenue-funded that day, plus "
@@ -348,11 +366,6 @@ ENTRIES = {
                                                          "that day's price; PR1B.3); BLOCKED on short coverage",
         window="Q0", unit="x", inputs=["fees_usd", "gross_issuance_tokens", "price_usd"]),
     # ------------------------------------------------------------------ A2
-    "FREE FLOAT = circulating − locked (tokens)": dict(
-        what="Circulating supply not locked or staked.",
-        formula="circulating used − the locked tokens INSIDE it (config.free_float_lock_metrics)", window="now",
-        unit="tokens", inputs=["circulating_supply_used", "locked_tokens"],
-        decided=[(J, "2026-09-30", "locked tokens already out of circulating are subtracted once")]),
     "FREE FLOAT ÷ ARR (x)": dict(
         what="Free-float market cap ÷ annual recurring customer revenue.",
         formula="free float × spot ÷ the project's own ARR where published, else customer revenue annualised",
@@ -499,14 +512,15 @@ ENTRIES = {
                 "unlock_release_tokens"],
         decided=[(J, "2026-11-03", "P4-Q5a: replaces retired ÷ emissions (P1-6) and its P3-2b fallback")]),
     "BUYING PRESSURE ON FLOAT, % a year": dict(
-        what="Every market buyback a year, whatever its destination (burned, held, distributed), ÷ the tradeable float.",
-        formula="actual_buyback_tokens annualised over its covered days ÷ tradeable float (circulating − staked / "
-                "locked − a held buyback inside circulating, P4-Q5b); 0 where no buyback mechanism exists; n/a where "
-                "no buyback is measured",
-        window="Q0 → year / now", unit="%", inputs=["actual_buyback_tokens", "circulating_supply_used"],
-        decided=[(J, "2026-11-03", "P4-Q5c")]),
+        what="Revenue-funded buying that is burned or held, a year, ÷ the free float — the demand side of net float "
+             "pressure (R20). Was (P4-Q5c): every market buyback whatever its destination ÷ the tradeable float.",
+        formula="float_buying_tokens (retired_buyback_tokens on the days the buyback was revenue-funded) annualised "
+                "over its covered days ÷ free_float_tokens; 0 where no buyback mechanism exists; n/a where no buyback "
+                "is measured",
+        window="Q0 → year / now", unit="%", inputs=["float_buying_tokens", "free_float_tokens"],
+        decided=[(J, "2026-11-03", "P4-Q5c"), (J, "2026-11-24", "R20 Part 2 item 5: revenue-funded, burned or held")]),
     "Held buyback inside circulating (tokens)": dict(
-        what="A buyback held in a treasury inside the circulating figure — out of the tradeable float while held.",
+        what="A buyback held in a treasury inside the circulating figure — off the free float while held.",
         formula="config.HELD_BUYBACK_FLOAT: the held stock now (Maple ssf_holdings_tokens, NEAR buyback_fund_balance); 0 "
                 "where the held stock is already out of circulating (Sky, Chainlink, Fluid)",
         window="now", unit="tokens", inputs=["ssf_holdings_tokens", "buyback_fund_balance"],

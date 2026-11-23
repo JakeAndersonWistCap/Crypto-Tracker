@@ -17,7 +17,7 @@ Each rule reads the EVALUATED workbook (the numbers a reader sees) and returns (
   headline_starved      a headline reads n/a while the series it reads is stored across the whole Q0 window (the
                         input row is withheld or its window blanked) — the continuity guard misses it when the
                         previous run was n/a too (Jake's review of the ef6dc86 run, item 7: GEODNET's A4 gross burn)
-  float_outside_circ    CP's tradeable float < 0 or > the circulating supply it is taken from (Phase 2, 2026-10-12)
+  float_outside_circ    CP's free float < 0 or > the circulating supply it is taken from (Phase 2, 2026-10-12)
   discretionary_above_total CP's discretionary supply > total supply
 
 Only the projects in portfolio.txt are checked (parked ones are skipped; with no portfolio.txt, every project).
@@ -167,10 +167,10 @@ def hits(wb, value) -> list[tuple[str, str, str]]:
             def cv(prefix):
                 loc = next((v for h, v in cols.items() if h.startswith(prefix)), None)
                 return _num(value("CP Comparability", *loc)) if loc else None
-            flt, circ, tot = cv("TRADEABLE FLOAT"), cv("Circulating supply (tokens)"), cv("Total supply (tokens)")
+            flt, circ, tot = cv("FREE FLOAT (tokens)"), cv("Circulating supply (tokens)"), cv("Total supply (tokens)")
             disc = cv("Discretionary supply (tokens)")
             if flt is not None and circ is not None and (flt < 0 or flt > circ):
-                found.append((p, "float_outside_circ", f"tradeable float {flt:,.0f} outside 0..circulating {circ:,.0f}"))
+                found.append((p, "float_outside_circ", f"free float {flt:,.0f} outside 0..circulating {circ:,.0f}"))
             if disc is not None and tot is not None and disc > tot:
                 found.append((p, "discretionary_above_total", f"discretionary supply {disc:,.0f} > total supply "
                                                               f"{tot:,.0f}"))

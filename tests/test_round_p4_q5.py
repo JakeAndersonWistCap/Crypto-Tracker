@@ -186,24 +186,40 @@ def test_no_new_supply_ranks_first_and_ties_are_broken_by_net_holder_yield(monke
 
 
 # ============================================================================================== Q5b: float
-def test_tradeable_float_leaves_out_the_held_buyback_and_takes_it_back_when_it_moves_out():
-    maple = P["Maple"]
+def _float_now(monkeypatch, name: str, now: dict):
+    """R20: the one free float (free_float.views — where it is formed since Round 20) on one day from hand-set
+    readings {series: value}; None where a component is not read. Was: the CP cell's own formula, evaluated."""
+    import free_float
+    d = pd.Timestamp("2026-10-13")
+    groups = {(name, m): pd.DataFrame({"date": [d], "project": name, "metric": m, "value": [float(v)],
+                                       "source": "test:read", "tier": 1, "fetched_at": "2026-10-13T00:00:00Z"})
+              for m, v in now.items()}
+    monkeypatch.setattr(bw, "scoped_projects", lambda: [P[name]])
+    monkeypatch.setattr(config, "RULE_IN_PENDING", {})
+    free_float.views(groups, d)
+    g = groups.get((name, config.FREE_FLOAT_METRIC))
+    return None if g is None or g.empty else float(g["value"].iloc[-1])
+
+
+def test_tradeable_float_leaves_out_the_held_buyback_and_takes_it_back_when_it_moves_out(monkeypatch):
+    import free_float
     assert config.held_buyback_float_metric("Maple") == "ssf_holdings_tokens"
     # PR3.3 (Jake 2026-11-11): the Fund's chart counts its Safe 0x58BE…, which circulating already subtracts — the
     # float subtracts the chart LESS the Safe (it took the Safe out twice: 1,176,793,290 - 78,035,331)
     # R9.2 (the rule): the DAO multisig and the registry wallets are IN circulating (1,267,875,000) and leave the float
     # as the rule's stock (91,081,710 on the dumps) — the float is what it was
-    vals = {("circulating_supply_used", "now"): 1_267_875_000.0, ("ssf_holdings_tokens", "now"): 78_035_331.0,
-            ("maple_ssf_safe_tokens", "now"): 48_624_987.59, ("rule_in_off_float_tokens", "now"): 91_081_710.0}
-    R = FakeRefs(vals)
-    f = "=" + bw._cp_float(R, 5, maple)
-    assert evaluate(f, vals, R) == pytest.approx(1_176_793_290.0 - (78_035_331.0 - 48_624_987.59))
-    out = {**vals, ("ssf_holdings_tokens", "now"): 70_035_331.0}            # 8M moved out of the Fund
-    assert evaluate(f, out, R) - evaluate(f, vals, R) == pytest.approx(8_000_000.0)
-    gone = {k: v for k, v in vals.items() if k[0] != "ssf_holdings_tokens"}
-    assert evaluate(f, gone, R) == "n/a"                                      # the held stock unknown: float unknown
-    # where the held stock is already out of circulating (Sky's Pause Proxy, Chainlink's Reserve, Fluid's treasury) it
-    # is not subtracted twice: the declared leg is one circulating subtracts
+    vals = {"circulating_supply_used": 1_267_875_000.0, "ssf_holdings_tokens": 78_035_331.0,
+            "maple_ssf_safe_tokens": 48_624_987.59, "rule_in_off_float_tokens": 91_081_710.0}
+    less = (78_035_331.0 - 48_624_987.59) if config.held_buyback_less_applies("Maple") else 78_035_331.0
+    base = _float_now(monkeypatch, "Maple", vals)
+    assert base == pytest.approx(1_176_793_290.0 - less)
+    out = {**vals, "ssf_holdings_tokens": 70_035_331.0}                      # 8M moved out of the Fund
+    assert _float_now(monkeypatch, "Maple", out) - base == pytest.approx(8_000_000.0)
+    gone = {k: v for k, v in vals.items() if k != "ssf_holdings_tokens"}
+    assert _float_now(monkeypatch, "Maple", gone) is None                    # the held stock unknown: float unknown
+    assert "ssf_holdings_tokens" in free_float.MISSING["Maple"]
+    # where the held stock is already out of circulating (Chainlink's Reserve, Fluid's treasury) it is not subtracted
+    # twice: the declared leg is one circulating subtracts, and the float's held component does not read it
     for n, h in config.HELD_BUYBACK_FLOAT.items():
         sh = config.buyback_destination_shares(n) or {}
         rows = config.BUYBACK_DESTINATION_SHARES.get(n) or []
@@ -211,39 +227,32 @@ def test_tradeable_float_leaves_out_the_held_buyback_and_takes_it_back_when_it_m
         if h["how"] == "outside":
             assert h["leg"] in (config.CIRCULATING_ONCHAIN[n].get("subtract") or ()), n
             assert config.held_buyback_float_metric(n) is None
-            assert "ISNUMBER(V!" in bw._cp_float(FakeRefs({}), 5, P[n])
+            assert free_float.parts(P[n])["held"]["add"] == ()
         else:
             assert h["how"] == "subtract" and h["held"] not in (config.CIRCULATING_ONCHAIN[n].get("subtract") or ()), n
             assert h["held"] in config.metrics_for_project(P[n]), n
+            assert free_float.parts(P[n])["held"]["add"] == (h["held"],)
 
 
 # ============================================================================================== Q5c: buying pressure
 def test_buying_pressure_is_every_market_buyback_annualised_over_tradeable_float():
+    """R20 (Jake 2026-11-24): buying pressure is the REVENUE-FUNDED buying that is burned or held (float_buying_tokens)
+    ÷ the one free float — net float pressure's demand side. Was (P4-Q5c): every market buyback, any destination
+    (actual_buyback_tokens), ÷ the tradeable float formed in the cell."""
     hl = P["Hyperliquid"]
     col = bw._buying_pressure_col(FakeRefs({}))
     assert col[0] == bw.BUYING_PRESSURE_HEAD and col[2] == bw.FMT_PCT
-    vals = {("actual_buyback_tokens", "q0"): 2_000_000.0, **days("actual_buyback_tokens"),
-            ("circulating_supply_used", "now"): 330_000_000.0, ("locked_tokens", "now"): 400_000_000.0,
-            ("rule_in_off_float_tokens", "now"): 100_000.0}       # R9.2: the rule's issuer-held stock, off the float
-    for m in config.locked_excluded_metrics("Hyperliquid"):
-        vals[(m, "now")] = 300_000_000.0
+    flt = 330_000_000.0 - (400_000_000.0 - 300_000_000.0) - 100_000.0        # the float the series holds that day
+    vals = {("float_buying_tokens", "q0"): 2_000_000.0, **days("float_buying_tokens"),
+            (config.FREE_FLOAT_METRIC, "now"): flt}
     R = FakeRefs(vals)
     f = bw._buying_pressure_col(R)[1](5, hl)
     v = evaluate(f, vals, R)
-    flt = evaluate("=" + bw._cp_float(R, 5, hl), vals, R)
-    assert isinstance(flt, float) and v == pytest.approx(2_000_000.0 * 365 / 90 / flt, rel=1e-12)
-    # Maple: the whole buyback (all of it held) counts, and the float leaves the Fund out; its monthly buyback is
-    # annualised by events (12 a year)
-    mv = {("actual_buyback_tokens", "q0"): 4_029_134.43, ("actual_buyback_tokens", "q0_events"): 3.0,
-          # R9.2 (the rule): circulating counts the DAO multisig and registry wallets (91,081,710), off the float
-          **days("actual_buyback_tokens", 92.0), ("circulating_supply_used", "now"): 1_267_875_000.0,
-          ("rule_in_off_float_tokens", "now"): 91_081_710.0,
-          ("ssf_holdings_tokens", "now"): 78_035_331.0, ("maple_ssf_safe_tokens", "now"): 48_624_987.59}
-    R = FakeRefs(mv)
-    v = evaluate(bw._buying_pressure_col(R)[1](5, P["Maple"]), mv, R)
-    assert config.events_per_year("Maple", "actual_buyback_tokens") == 12.0
-    flt = 1_176_793_290.0 - (78_035_331.0 - 48_624_987.59)                  # PR3.3: the Fund's Safe out once
-    assert v == pytest.approx(4_029_134.43 / 3 * 12 / flt, rel=1e-12)
+    assert {m for m, _c in R.cells} == {"float_buying_tokens", config.FREE_FLOAT_METRIC}    # nothing else is read
+    assert v == pytest.approx(2_000_000.0 * 365 / 90 / flt, rel=1e-12)
+    # the float not formed that day: no buying pressure, never the buying over circulating
+    gone = {k: x for k, x in vals.items() if k[0] != config.FREE_FLOAT_METRIC}
+    assert not isinstance(evaluate(f, gone, R), float)
     # no buyback mechanism (Morpho: a declared, checked absence) is a measured 0; no buyback measured is a code
     assert bw._buying_pressure_col(FakeRefs({}))[1](5, P["Morpho"]) == "=0"
     assert bw._buying_pressure_col(FakeRefs({}))[1](5, P["Ethereum"]).startswith("n/a — no market buyback")
@@ -406,23 +415,25 @@ def test_fixture_float_buying_pressure_and_holder_value_unchanged(built):
         # (config.RULE_IN["Near"]: rule_in_off_float_tokens). treasury.near's balance is a new read
         # (near_treasury_tokens — the dumps predate it), so on the dumps the float is n/a naming the missing stock,
         # never the float without it (was: == circ - lock - h, 708,547,659.5 on the dump)
-        assert "rule_in_off_float_tokens" in str(XA.value(CP, crow[n], fc)), n
+        assert "rule_in_off_float_tokens" in str(XA.value(CP, crow[n], fc)), n      # R20: free_float.MISSING names it
         assert "near_treasury_tokens" in config.RULE_IN[n]["off_float"]
-        assert "out of the tradeable float while held" in cp.cell(crow[n], fc).comment.text.lower()
+        assert "out of the free float while held" in cp.cell(crow[n], fc).comment.text.lower()
     # PR3.3 (Jake 2026-11-11): Maple's float needs the Fund's Safe on the day (maple_ssf_safe_tokens, new — the dumps
     # predate it): n/a naming it, never the old figure that took the Safe out twice
     assert "maple_ssf_safe_tokens" in str(XA.value(CP, crow["Maple"], fc))
     assert "less maple_ssf_safe_tokens" in cp.cell(crow["Maple"], fc).comment.text
     # R6.3 (Jake 2026-11-16): Sky's Pause Proxy is a held buyback IN circulating, out of the float while held
     sky_note = cp.cell(crow["Sky"], fc).comment.text
-    assert "out of the tradeable float while held" in sky_note.lower() and "treasury_holding_tokens" in sky_note
+    assert "out of the free float while held" in sky_note.lower() and "treasury_holding_tokens" in sky_note
     # buying pressure, same figure on A3 and CP (one builder): every buyback annualised ÷ the float
     pa, pc = _col(ws, lambda h: h == bw.BUYING_PRESSURE_HEAD), _col(cp, lambda h: h == bw.BUYING_PRESSURE_HEAD)
     arows = _rows(ws)
     for n in ("Sky", "Hyperliquid", "Pendle", "GEODNET"):        # Maple: its float waits on the Safe's series (PR3.3)
+        # R20: the numerator is the revenue-funded buying that is burned or held (was every market buyback)
         v = XA.value(A3, arows[n], pa)
         assert isinstance(v, float) and v == pytest.approx(XA.value(CP, crow[n], pc), rel=1e-12), n
-    tot, cov = _data(built, "Sky|actual_buyback_tokens", "Q0 ("), _data(built, "Sky|actual_buyback_tokens", "Q0: days")
+    # R20: Sky 2.368% (float_buying_tokens: the burned + held share; was 6.518% on every buyback, actual_buyback_tokens)
+    tot, cov = _data(built, "Sky|float_buying_tokens", "Q0 ("), _data(built, "Sky|float_buying_tokens", "Q0: days")
     sky = XA.value(A3, arows["Sky"], pa)
     assert sky == pytest.approx(tot * 365 / 90 / XA.value(CP, crow["Sky"], fc), rel=1e-9) and cov == 90
     assert XA.value(A3, arows["Fluid"], pa) == 0.0                         # halted: no buyback in the window
@@ -488,22 +499,24 @@ def test_the_held_buyback_column_maps_to_float_and_reads_only_listed_inputs():
     flt = spec.concepts()["float"]
     ins = set(flt["inputs"])
     # the original inputs stay; the held stocks are added, nothing else
+    # R20: + the one series and its three components (the cells read those; the old inputs are what they are formed from)
     assert ins == {"circulating_supply_used", "locked_tokens", "staked_noncirculating_tokens",
-                   "ssf_holdings_tokens", "buyback_fund_balance", "buyback_held_tokens", "treasury_holding_tokens"}
-    assert "held" in flt["definition"] and "held_buyback_inside" in flt["formula"]
+                   "ssf_holdings_tokens", "buyback_fund_balance", "buyback_held_tokens", "treasury_holding_tokens",
+                   "free_float_tokens", "free_float_staked_locked_tokens", "free_float_issuer_treasury_tokens",
+                   "free_float_held_buybacks_tokens"}
+    # R20: the float's formula names its stored held-buybacks component (was "held_buyback_inside")
+    assert "held" in flt["definition"] and "free_float_held_buybacks_tokens" in flt["formula"]
     for n, held in (("Maple", "ssf_holdings_tokens"), ("Near", "buyback_fund_balance"),
                     ("Sky", "treasury_holding_tokens")):                # R6.3: Sky's held buyback is inside now
         assert config.held_buyback_float(n)["how"] == "subtract"
         assert config.held_buyback_float_metric(n) == held
-        reads = {held}                                   # the column's metric_fn: held_buyback_float_metric(n)
+        reads = {held}                                   # the held stock the float's held component is formed from
         assert reads <= ins and ca._matches(reads, ins), n
-        R = FakeRefs({})
-        bw._cp_float(R, 5, P[n])
-        assert held in {m for m, _c in R.cells}, n      # the float subtracts the held stock once
+        import free_float                                # R20: the float is formed in free_float.views, not in the cell
+        assert free_float.parts(P[n])["held"]["add"] == (held,), n      # the float subtracts the held stock once
     for n in ("Chainlink", "Fluid"):
         h = config.held_buyback_float(n)
         assert h["how"] == "outside" and config.held_buyback_float_metric(n) is None, n
         assert h["leg"] in (config.CIRCULATING_ONCHAIN[n].get("subtract") or ()), n
-        R = FakeRefs({})
-        bw._cp_float(R, 5, P[n])
-        assert h["leg"] not in {m for m, _c in R.cells}, n   # already out of circulating: not subtracted twice
+        import free_float
+        assert h["leg"] not in free_float.parts(P[n])["held"]["add"], n   # not read as a held component a second time

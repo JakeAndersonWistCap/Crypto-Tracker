@@ -55,11 +55,11 @@ def test_cp_on_the_real_aerodrome_dump(tmp_path, monkeypatch, dumps_20261009):
     X = xlcalc.Workbook(wb)
     o = _row(wb, X, CP, "Aerodrome")
     circ, lock, flt = (_get(o, "Circulating supply (tokens)"), _get(o, "Staked / locked inside"),
-                       _get(o, "TRADEABLE FLOAT"))
+                       _get(o, "FREE FLOAT (tokens)"))
     # R9.2 (the rule): the issuer-side stock is inside circulating and comes off the float beside the lock
     held = _data(wb, X, "Aerodrome|rule_in_off_float_tokens", "now")
     assert flt == pytest.approx(circ - lock - held) and 0 < flt < circ and held > 0
-    assert _get(o, "Tradeable float ÷ circulating") == pytest.approx(flt / circ)
+    assert _get(o, "Free float ÷ circulating") == pytest.approx(flt / circ)
     # every retirement and dilution rate on both bases: same numerator, two denominators
     # alignment round C1: the veAERO rebase is its own line in (c) (PROPOSED), the gauge emissions (b); no (a)
     assert _get(o, "Dilution (a) security emissions (annualised) ÷ circ") in (None, "")
@@ -121,7 +121,7 @@ def test_cp_net_holder_yield_and_whole_token_yield_on_the_real_pendle_dump(tmp_p
     assert all(h in config.TRAJECTORY["rows"] for h in hids)
     cw = wb["Credibility"]
     whats = [str(cw.cell(i, 4).value or "") for i in range(1, cw.max_row + 1) if cw.cell(i, 1).value == "Pendle"]
-    assert any(w.startswith("HOLDER VALUE YIELD") for w in whats) and any(w.startswith("TRADEABLE FLOAT") for w in whats)
+    assert any(w.startswith("HOLDER VALUE YIELD") for w in whats) and any(w.startswith("FREE FLOAT (tokens)") for w in whats)
 
 
 def test_cp_ethereum_float_takes_the_beacon_stake_and_a4_additions_evaluate(tmp_path, monkeypatch):
@@ -133,7 +133,7 @@ def test_cp_ethereum_float_takes_the_beacon_stake_and_a4_additions_evaluate(tmp_
     X = xlcalc.Workbook(wb)
     o = _row(wb, X, CP, "Ethereum")
     circ, stake = _get(o, "Circulating supply (tokens)"), _data(wb, X, "Ethereum|beacon_chain_eth", "now")
-    assert _get(o, "TRADEABLE FLOAT") == pytest.approx(circ - stake)
+    assert _get(o, "FREE FLOAT (tokens)") == pytest.approx(circ - stake)
     assert _get(o, "Whole-token yield — validator") == pytest.approx(_get(o, "Staker yield — validator") * stake / circ)
     # P3-1c, DEFINITION R2 (Jake 2026-11-02): Ethereum's protocol revenue is its fee burn and IS holder value (was:
     # "n/a — a fee-market burn is not holder value")
@@ -217,4 +217,4 @@ def test_metrics_doc_has_the_flow_statements_and_flags_flows_with_no_series():
     assert "## Token flow and value flow statements" in text and "## CP — Comparability" in text
     uni = text.split("### Uniswap")[-1].split("### ")[0]
     assert "(d) ecosystem / grant spend | `growth_budget_release_tokens`" in uni
-    assert "TRADEABLE FLOAT" in text and "SUBSIDY COVER" in text
+    assert "FREE FLOAT (tokens)" in text and "SUBSIDY COVER" in text

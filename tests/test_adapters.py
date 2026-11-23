@@ -14875,7 +14875,7 @@ def test_archetype_tabs_open_on_the_valuation_headlines():
     a3, a4, a2, a1 = (heads(t) for t in ("A3 Revenue Buyback", "A4 Permanent Burn", "A2 Coordination", "A1 Infrastructure"))
     assert a3[:4] == head and a3[4].startswith("CIRCULATING RETIREMENT") and a3[5].startswith("FDV RETIREMENT")
     assert a4[:4] == head and a4[4].startswith("PERMANENT BURN YIELD") and a4[5] == "Issuance basis for the crossover"
-    assert a2[:4] == head and a2[4].startswith("FREE FLOAT =") and a2[6].startswith("FREE FLOAT ÷ ARR")
+    assert a2[:4] == head and a2[4].startswith("FREE FLOAT (tokens)") and a2[6].startswith("FREE FLOAT ÷ ARR")
     assert a1[:4] == head and a1[4].startswith("VALIDATOR STAKING YIELD")
     # moved, not duplicated
     for gone in ("Burn as % of supply (annualised)", "Burn ÷ issuance (x)"):
@@ -17535,12 +17535,15 @@ def test_morpho_free_float_is_circulating_and_fluid_a3_reads_zero_since_the_halt
         def D(self, r, m, w):
             return f"D[{m}]"
     rows = {spec[0]: spec for spec in bw._a2_headline(R())}
-    ff = rows["FREE FLOAT = circulating − locked (tokens)"][1](5, morpho)
+    ff = rows[bw.FREE_FLOAT_HEAD][1](5, morpho)      # R20: was "FREE FLOAT = circulating − locked (tokens)"
     # circulating = the series used (2026-10-11) — Morpho's on-chain set since decision 1 on 6f8c86c, CoinGecko's
     # where none: free float = that − 0, no lock
     # (_circ is IFERROR-wrapped since the alignment round: its error reads as the cell's reasoned n/a)
-    assert 'D[circulating_supply])),"n/a")-0' in ff and "circulating_supply_onchain" in ff and "circulating_supply_used" in ff \
-        and "locked_tokens" not in ff, ff
+    # R20 (Jake 2026-11-24): the cell reads the ONE free float series; "no lock" is in what the series is formed from
+    # (free_float.parts: nothing staked / locked). Was: the cell's own formula, circulating − 0
+    import free_float
+    assert "D[free_float_tokens]" in ff and "locked_tokens" not in ff and "circulating_supply" not in ff, ff
+    assert free_float.parts(morpho)["lock"] == {"add": (), "less": (), "const": 0.0}
 
 
 def test_pendle_hub_amounts_are_scaled_from_wei_and_the_yield_base_is_real_plus_virtual_spendle(monkeypatch):
