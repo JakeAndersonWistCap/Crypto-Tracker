@@ -31,6 +31,9 @@ ACTION_FLAGGED = "stored_flagged"
 
 
 _SPAN = __import__("re").compile(r"\[span=(\d+)d\]")
+# the price-history tier's source spellings: the tier's first (`price_history:`) and the declared older leg of price_usd
+# it has written since G2 addendum A1 (fetch.price_history.HISTORY_POINT, the same literal — pinned by a test)
+_PRICE_BACKFILL_POINTS = ("price_history:", "defillama_coins:history")
 
 
 def _span_days(source) -> int:
@@ -133,7 +136,11 @@ def validate_frame(df: pd.DataFrame, prior_values: dict[tuple[str, str], float],
         g = g.sort_values("date")
         # (a2) A BACKFILL OF PAST DAYS (Round G 2.1: price_history fills the days before the first stored price) is not
         # comparable with the latest stored value, which is a later date's
-        if str(g["source"].iloc[-1] or "").startswith("price_history:"):
+        # R17.4 (Jake 2026-11-23: Chainlink's price_usd row dated 2025-06-13 flagged against today's price): the tier has
+        # written its rows as `defillama_coins:history[...]` since G2 addendum A1 (fetch.price_history.HISTORY_POINT), so the
+        # old `price_history:` prefix matched nothing and the newest back-filled day — the day before CoinGecko's first
+        # stored price — was compared with the store's newest row. Both spellings of the same tier are skipped.
+        if str(g["source"].iloc[-1] or "").startswith(_PRICE_BACKFILL_POINTS):
             continue
         # (b) THE CURRENT DAY IS NOT A DAY YET. DefiLlama and CoinGecko publish it from the moment
         # it starts, so the newest point is a few hours against yesterday's twenty-four. Dropping
