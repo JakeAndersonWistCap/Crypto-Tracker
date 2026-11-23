@@ -49793,3 +49793,434 @@ CREDIBILITY["Ethereum"]["in_fees"] = _c_in_py(
              "days). Empty until 20 shared days are stored."},
     fmt=_C_USD)
 # =====================================================================================================================
+# ===== R20 — AETHIR (Jake 2026-11-24; SPEC "Round 20 — Aethir"). Research and piping: one run on the store fills it.
+# =====================================================================================================================
+# EVERYTHING BELOW WAS READ 2026-11-23 16:57-17:40 UTC FROM A PRIMARY SOURCE: docs.aethir.com (the .md pages listed in
+# its llms.txt), dashboard.aethir.com/protocol/{onchain,supply,demand}-metric (the server payload), Ethereum at finalized
+# block 26,479,161 and Arbitrum at block 526,866,599 (public RPC), Sourcify (verified source). x.com has a login wall:
+# nothing was read from it. Aethir's docs PUBLISH NO WALLET ADDRESS beside the token, bridge and burn contracts — every
+# issuer wallet below is tied to Aethir by what the chain shows, and is tagged by how directly.
+#
+# ----- 1. THE VESTING CONTRACTS AND THE ISSUER WALLETS (Ethereum, ATH 0xbe0Ed413…; 42,000,000,000 minted to the token
+# contract itself on 2024-06-07/09/12 and paid out from it).
+#   VestingWallet 0xf9d9f4ae…  Aethir's own contract (Sourcify: contracts/VestingWallet.sol, verified). Received
+#       25,591,527,401.7561 ATH from the token contract at block 20,072,976 (2024-06-12). owner() = the Safe
+#       0x3e7e6c3d…; ONE distribution, to that Safe: 85 dated tranches (DistributionAdded, block 21,027,578, tx
+#       0x3a8730b0…913d, 2024-10-23) summing to 25,591,527,408.39 — the schedule held below. release(wallet) is callable
+#       by anyone and pays only the beneficiary; nothing else moves the tokens (no withdraw function). The owner CAN
+#       re-schedule (updateDistribution / deleteDistribution) — the daily read refuses the series when the on-chain
+#       distribution stops matching the schedule on file. Released so far 13,787,427,408 (13 releases, last 2026-09-15)
+#       = Σ of the tranches dated up to then, exactly. Balance 11,804,099,993.76; NOT YET VESTED 11,065,600,000.39; the
+#       difference 738,499,993.37 is two vested tranches (2026-10-11, 2026-11-12) not yet released.
+#   MerkleVester x3  0xa02ba54a… (4,879,743,890), 0xe60e21ce… (1,052,474,500), 0x7d86e939… (159,840,293): the vesting
+#       distributor of a third-party vendor (Sourcify exact match: evm/src/distribution/src/MerkleVester.sol), every
+#       ATH in them funded by the Safe 0x612407de… (18 + 2 + 27 transfers, 2025-04-29..2026-09-13: 10.58bn + 1.14bn +
+#       0.80bn), claimed by 60 + 2 + 389 recipients. Each beneficiary's schedule is a Merkle leaf, NOT readable on
+#       chain: the balance is unvested + vested-but-unclaimed. The benefactor role can defund / revoke.
+#   THE CHECK THAT THIS IS THE WHOLE NON-CIRCULATING SET: 42,000,000,000 − 11,065,600,000 (VestingWallet, not vested) −
+#       6,092,058,683 (the three vesters) − 11,955,182 (burned) = 24,830,386,135 against Aethir's own circulating
+#       24,798,862,034 (dashboard athCirculatingSupply, read the same hour): +0.13%.
+#   ISSUER WALLETS — movable, so IN circulating and OFF the free float (the rule of 2026-11-17):
+#     DIRECT    Safe 0x3e7e6c3d…  3,451,450,629.89  owner() of the VestingWallet and its only beneficiary
+#     DIRECT    Safe 0x612407de…     53,219,115.75  received 13,566,733,397.74 ATH from the token contract (2024-06-12
+#                                                   / 13); the VestingWallet's first beneficiary (DistributionAdded
+#                                                   2024-06-12, moved to 0x3e7e… 2024-10-23); funds the three vesters
+#     DIRECT    VestingWallet, vested-unreleased 738,499,993.37 (payable only to the Safe 0x3e7e…)
+#     INFERRED  Safe 0xfc7825a2…  1,018,003,661.04  funded 4,135,145,196 by 0x612407de… (2025-04-30), returned
+#                                                   3,243,141,534 to it (2025-10-03); 3 senders, 2 recipients ever
+#     INFERRED  EOA  0xd5c3ee15…  2,462,540,823.71  887,130,921 from 0x612407de… (2025-10-03), 236,454,619 from
+#                                                   0x3e7e6c3d…; 2.4bn sent to and 2.37bn received back from one
+#                                                   address (0x7628294f…); nonce 17
+#   DIRECT 4,243,169,739.01; INFERRED 3,480,544,484.75; together 7,723,714,223.76 (31.1% of Aethir's circulating).
+#   CANDIDATES NOT INCLUDED (two hops from an issuer wallet, or the funder is not identified): 0x4e19698c… 599,999,900
+#   (600M from 0x65164129… on 2026-11-13; that address also paid 0x3e7e… and 0xd5c3…); 0x33548d42… 807,500,000 (funded
+#   by 0xbcff71e2…, not identified; sent 800M to the Safe 0xcc6fdc62…, which 0x3e7e… also funds). 0xaf8dcd50…
+#   2,482,950,094 is NOT an issuer wallet on the evidence: 3,677 inflows and 22.19bn passed through with three other
+#   top holders — an exchange's wallets. WHO each issuer wallet is for (team, foundation, ecosystem, treasury) is NOT
+#   VERIFIED: the docs' allocation is a chart image (Tokenomics3D.png) with no address.
+#   STAKE: locked(wallet) in the AI and Gaming pools is 0 for every listed wallet (a measured 0). The Safe 0x612407de…
+#   holds 168,450,044.98 eATH — the receipt of the EigenLayer pre-deposit vault (766,790,826.49 ATH deposited; 22.0%).
+#   The Safe 0x3e7e… itself deposited 810,000,000 ATH into that vault (2025-05-26) and holds no eATH now (eATH was the
+#   Season 2 airdrop's and the Checker NFT buyback's payment token). The vault is NOT in Aethir's totalStaked (its four
+#   pools sum to it exactly), so the eATH is stored beside the insider share, not inside it. Cloud Host (IDC) and Edge
+#   stakes are per operator on Arbitrum — who runs them is not on chain: the insider share is A FLOOR.
+_R20A = "2026-11-23"
+_R20A_DECIDED = "Jake 2026-11-24 (R20), the rule of 2026-11-17"
+_ATH_ETH = "0xbe0Ed4138121EcFC5c0E56B40517da27E6c5226B"
+_ATH_VW = "0xf9D9F4ae37d09d50A279058C008A4Fa98B6336b6"
+_ATH_SAFE_T = "0x3E7E6c3D084879837310D26B30e52D4B56A8C2F4"
+_ATH_SAFE_G = "0x612407dE56644E561B8E6bb797782A02F44aE4A6"
+AETHIR_VESTING_SCHEDULE = (            # (UNIX time the tranche vests, ATH) — the DistributionAdded event, in full
+    (1720738800, 100226142.00), (1723417200, 100226142.00), (1726095600, 255626142.00),
+    (1728687600, 264026142.00), (1731369600, 280826142.00), (1733961600, 297626142.00),
+    (1736640000, 318626142.00), (1739318400, 487676142.00), (1741737600, 1163876142.00),
+    (1744412400, 542276142.00), (1747004400, 567476142.00), (1749682800, 601076142.00),
+    (1752274800, 533876142.00), (1754953200, 559076142.00), (1757631600, 592676142.00),
+    (1760223600, 1814876142.00), (1762905600, 554876142.00), (1765497600, 554876142.00),
+    (1768176000, 504476142.00), (1770854400, 504476142.00), (1773273600, 504476142.00),
+    (1775948400, 504476142.00), (1778540400, 504476142.00), (1781218800, 504476142.00),
+    (1783810800, 390250000.00), (1786489200, 390250000.00), (1789167600, 390250000.00),
+    (1791759600, 369250000.00), (1794441600, 369250000.00), (1797033600, 369250000.00),
+    (1799712000, 335650000.00), (1802390400, 335650000.00), (1804809600, 335650000.00),
+    (1807484400, 335650000.00), (1810076400, 335650000.00), (1812754800, 335650000.00),
+    (1815346800, 309050000.00), (1818025200, 309050000.00), (1820703600, 309050000.00),
+    (1823295600, 296450000.00), (1825977600, 296450000.00), (1828569600, 296450000.00),
+    (1831248000, 275450000.00), (1833926400, 275450000.00), (1836432000, 275450000.00),
+    (1839106800, 275450000.00), (1841698800, 275450000.00), (1844377200, 275450000.00),
+    (1846969200, 233019230.80), (1849647600, 233019230.80), (1852326000, 233019230.80),
+    (1854918000, 224619230.80), (1857600000, 224619230.80), (1860192000, 93369230.77), (1862870400, 80769230.77),
+    (1865548800, 80769230.77), (1867968000, 80769230.77), (1870642800, 80769230.77), (1873234800, 80769230.77),
+    (1875913200, 80769230.77), (1878505200, 71400000.00), (1881183600, 71400000.00), (1883862000, 71400000.00),
+    (1886454000, 67200000.00), (1889136000, 67200000.00), (1891728000, 67200000.00), (1894406400, 58800000.00),
+    (1897084800, 58800000.00), (1899504000, 58800000.00), (1902178800, 58800000.00), (1904770800, 58800000.00),
+    (1907449200, 58800000.00), (1910041200, 49000000.00), (1912719600, 49000000.00), (1915398000, 49000000.00),
+    (1917990000, 49000000.00), (1920672000, 49000000.00), (1923264000, 49000000.00), (1925942400, 44800000.00),
+    (1928620800, 44800000.00), (1931040000, 44800000.00), (1933714800, 44800000.00), (1936306800, 44800000.00),
+    (1938985200, 44800000.00), (1941577200, 2155569231.00))
+assert len(AETHIR_VESTING_SCHEDULE) == 85 and abs(sum(a for _d, a in AETHIR_VESTING_SCHEDULE) - 25_591_527_408.39) < 0.01
+for _m, _lab in (
+        ("ath_vesting_unvested_tokens",
+         "ATH NOT YET VESTED in Aethir's VestingWallet 0xf9d9f4ae… (Σ of its on-chain schedule's tranches dated after "
+         "the read) — out of circulating: unvested, movable by nobody, earning nothing. Its releases go to the issuer's "
+         "Safe and leave it as emissions and grants, so it is NOT an unlock leg (R20)"),
+        ("ath_vester_balance_tokens",
+         "ATH in the three MerkleVester contracts (team / investor / advisor claims) — out of circulating; its fall is "
+         "the UNLOCK (claims). Unvested + vested-but-unclaimed: the schedules are Merkle leaves (R20)"),
+        ("ath_issuer_held_tokens",
+         "ATH held by the wallets tied to Aethir BY CONTRACT STATE (the VestingWallet's owner / beneficiary Safe, the "
+         "genesis allocation Safe, the VestingWallet's vested-unreleased tranche) — in circulating, OFF the free float "
+         "(R20). Aethir's docs publish no wallet"),
+        ("ath_issuer_inferred_held_tokens",
+         "ATH held by wallets INFERRED to be Aethir's (funded by the issuer Safes; the chain only) — in circulating, OFF "
+         "the free float, kept apart from the direct set (R20)"),
+        ("ath_insider_staked_tokens",
+         "ATH locked in the AI and Gaming pools by the issuer wallets on file (locked(wallet).amount) — the insider "
+         "share's numerator; a FLOOR (Cloud Host and Edge stakes are per operator, not attributable) (R20)"),
+        ("ath_issuer_eath_tokens",
+         "eATH (the EigenLayer pre-deposit vault's receipt, 1:1 ATH) held by the issuer wallets on file — beside the "
+         "insider share: the vault is not in Aethir's totalStaked (R20)")):
+    METRICS[_m] = {"label": _lab, "kind": "stock", "unit": "tokens", "archetypes": [1, 2, 3, 4], "tiers": [2],
+                   "sanity_min": 0, "sanity_max": 42e9, "only_projects": ("Aethir",)}
+PROJECT_BY_NAME["Aethir"]["aethir_chain"] = {
+    "decided": _R20A_DECIDED, "read_on": _R20A, "block": 26_479_161,
+    "token": _ATH_ETH, "token_first_block": 20_038_000,     # first mint: block 20,038,490 (2024-06-07)
+    "rpc": tuple(DEFAULT_RPC["ethereum"]), "rpc_env": "ETHEREUM_RPC_URL",
+    # the Transfer-log scan (served 2026-11-23, keyless, over 5,000,000 blocks with blockTimestamp); a keyed endpoint
+    # is asked LAST for logs (a free keyed plan caps eth_getLogs at a few blocks)
+    "log_rpc": tuple(LOG_RPC["ethereum"]), "log_step": 1_000_000, "history_days": 455,
+    "unvested_metric": "ath_vesting_unvested_tokens", "vester_metric": "ath_vester_balance_tokens",
+    "held_metric": "ath_issuer_held_tokens", "inferred_metric": "ath_issuer_inferred_held_tokens",
+    "vesting_wallet": {
+        "address": _ATH_VW, "beneficiary": _ATH_SAFE_T, "total": 25_591_527_408.39,
+        "schedule": AETHIR_VESTING_SCHEDULE, "added_block": 21_027_578, "added_ts": 1_729_677_947,
+        "added_tx": "0x3a8730b0517c9a98c1b02a000e9a6cc197afc679d87f62c3da960f253256913d",
+        "source": "https://sourcify.dev/server/v2/contract/1/" + _ATH_VW + " (contracts/VestingWallet.sol, verified; "
+                  "read 2026-11-23): owner() = 0x3e7e6c3d…; getDistribution(0x3e7e6c3d…) — the DistributionAdded event "
+                  "of block 21,027,578 carries the 85 tranches",
+        "read": {"balance": 11_804_099_993.7561, "unvested": 11_065_600_000.39, "distributed": 13_787_427_408.0}},
+    "vesters": (
+        {"key": "merkle_vester_1", "address": "0xA02ba54A0F9840bD286DdF1B4a9c5DE08d8D8bBe", "read": 4_879_743_890.0,
+         "source": "Sourcify exact match MerkleVester (chain 1); funded only by the Safe 0x612407de… (18 transfers, "
+                   "10,582,489,131 ATH, 2025-05-13..2026-09-13); 649 claims to 60 recipients"},
+        {"key": "merkle_vester_2", "address": "0xe60e21CEdb02BfF2e88cd328A6cD74324a67A737", "read": 1_052_474_500.0,
+         "source": "the same bytecode; funded only by 0x612407de… (2 transfers, 1,141,724,500 ATH, 2026-04-29, "
+                   "2026-06-02); 4 claims to 2 recipients"},
+        {"key": "merkle_vester_3", "address": "0x7D86e9396546B8B284aaD50020698E29be85640F", "read": 159_840_293.0,
+         "source": "the same bytecode; funded only by 0x612407de… (27 transfers, 798,108,627 ATH, 2025-05-01.."
+                   "2026-09-13); 3,132 claims to 389 recipients"}),
+    "wallets": (
+        {"key": "treasury_safe", "address": _ATH_SAFE_T, "tag": "DIRECT", "who": "Safe", "read": 3_451_450_629.89,
+         "source": "CONTRACT STATE (read 2026-11-23): VestingWallet.owner() and the only address with a distribution "
+                   "in it; received all 13 releases (13,787,427,408 ATH)"},
+        {"key": "genesis_allocation_safe", "address": _ATH_SAFE_G, "tag": "DIRECT", "who": "Safe",
+         "read": 53_219_115.75,
+         "source": "CHAIN RECORD (read 2026-11-23): received 12,146,394,490 + 1,420,338,907.74 ATH from the token "
+                   "contract itself (blocks 20,074,883 and 20,084,365, 2024-06-12 / 13); the VestingWallet's first "
+                   "beneficiary (DistributionAdded, block 20,073,235); the only funder of the three MerkleVesters"},
+        {"key": "inferred_safe_fc78", "address": "0xfc7825A20F5beeE34506698f7843278156E0BEA1", "tag": "INFERRED",
+         "who": "Safe", "read": 1_018_003_661.04,
+         "source": "INFERRED, on chain only (read 2026-11-23): funded 4,135,145,196 ATH by 0x612407de… on 2025-04-30 "
+                   "and returned 3,243,141,534 to it on 2025-10-03; three senders and two recipients ever"},
+        {"key": "inferred_eoa_d5c3", "address": "0xD5C3ee151560E1E5D423410b064bfb6ED3DB9C5d", "tag": "INFERRED",
+         "who": "an externally owned account, one key", "read": 2_462_540_823.71,
+         "source": "INFERRED, on chain only (read 2026-11-23): 887,130,921 ATH from 0x612407de… (2025-10-03) and "
+                   "236,454,619 from 0x3e7e6c3d…; sent 2,400,000,000 to 0x7628294f… (2026-04-29) and received "
+                   "2,367,751,017 back (2026-06-25 / 26); nonce 17"}),
+    "candidates_not_included": {
+        "0x4E19698C366f7dcD1cFAd4d7F621B4D275Bb1a6C": "599,999,900 ATH — funded 600M by 0x65164129… on 2026-11-13 (that "
+                                                      "address also paid 0x3e7e… and 0xd5c3…): two hops",
+        "0x33548D42afa567dBA29E0Da665D295e232166a43": "807,500,000 ATH — funded by 0xbcff71e2… (not identified); sent "
+                                                      "800M to the Safe 0xcc6fdc62…, which 0x3e7e… also funds",
+        "0xAF8DcD50fDc14e413e5eF4468D4D21A961A7dCFD": "2,482,950,094 ATH — NOT an issuer wallet on the evidence: 3,677 "
+                                                      "inflows, 22.19bn passed through with three other top holders"},
+    "stake": {
+        "metric": "ath_insider_staked_tokens", "eath_metric": "ath_issuer_eath_tokens",
+        "pools": {"ai_pool": PROJECT_BY_NAME["Aethir"]["aethir_staking"]["pools"]["ai_pool"],
+                  "gaming_pool": PROJECT_BY_NAME["Aethir"]["aethir_staking"]["pools"]["gaming_pool"]},
+        "eath": PROJECT_BY_NAME["Aethir"]["aethir_staking"]["eath_receipt"]["ethereum"],
+        "read": {"locked": 0.0, "eath": 168_450_044.98, "eath_holder": "genesis_allocation_safe",
+                 "vault_total_deposited": 766_790_826.49, "eath_supply_ethereum": 550_944_085.31}},
+    # ----- 3. THE DAILY FEE BURN (docs.aethir.com/aethir-tokenomics/ath-burn-mechanism, read 2026-11-23): "Aethir burns
+    # ATH every day. Each burn is funded by network fees and is sent to a public burn address"; "Burn destination:
+    # 0x000000000000000000000000000000000000dEaD"; "Burn contract on Arbitrum: arbiscan.io/address/0xf8ec8e8e…";
+    # "Go-live: November 2026"; "Burn amounts are determined by the published formula and its inputs - last month's
+    # revenue based on the prior 730 hours, and ATH price via 30-day TWAP" (the formula itself is not on the page).
+    # ON CHAIN (Arbitrum, read to block 526,866,599): 21 burns, 2026-11-03..2026-11-23, 11,955,182.09375163 ATH — each
+    # one transaction that pulls the ATH from AethirCore 0x226DC7D2… (the service-fee escrow) into the burn contract and
+    # on to 0x…dEaD. The dashboard's cumulativeBurnedAth is the same figure to the last digit ("11955182.09375163");
+    # ATH.balanceOf(0x…dEaD) = 11,955,182.10968844 (0.0159 ATH more: one stray transfer of 2026-10-21, not counted).
+    "burn": {
+        "chain": "arbitrum", "token": PROJECT_BY_NAME["Aethir"]["bridges"]["arbitrum_interchain"]["address"],
+        "burner": "0xf8Ec8E8ECdBfbBA4D073090152dfC6559C7eF531", "dead": "0x000000000000000000000000000000000000dEaD",
+        "funded_from": "0x226DC7D2AA1F9a565e82faf04772FDbBaF2da42d",
+        # served keyless 2026-11-23: arb1 answers eth_getLogs over at most 10,000,000 blocks, tenderly over 20,000,000;
+        # publicnode answers 403
+        "rpc": ("https://arb1.arbitrum.io/rpc", "https://arbitrum.gateway.tenderly.co"), "rpc_env": "ARBITRUM_RPC_URL",
+        # the scan starts before the burn contract existed (its first log is block 516,801,916, 2026-10-21; no code at
+        # block 516,000,000) — ATH.balanceOf(0x…dEaD) at block 516,000,000 was 0 (tenderly, archive, read 2026-11-23)
+        "from_block": 516_000_000, "dead_before": 0.0, "log_step": 10_000_000,
+        "launch": "2026-11-02",                                  # the dashboard's launchDate; the first burn is 11-03
+        "metric": "gross_burn_tokens", "stock_metric": "burn_address_balance",
+        "source": "https://docs.aethir.com/aethir-tokenomics/ath-burn-mechanism ; "
+                  "https://dashboard.aethir.com/protocol/onchain-metric (cumulativeBurnedAth, launchDate)",
+        "read": {"on": _R20A, "block": 526_866_599, "burns": 21, "total": 11_955_182.09375163,
+                 "dead_balance": 11_955_182.109688438, "dashboard_cumulative": "11955182.09375163",
+                 "dashboard_month_gross_emissions": 55_094_794.52, "dashboard_burned_pct_of_emissions": 21.7}},
+}
+# THE BURNS SO FAR (Arbitrum block time, UTC; Transfer(0xf8ec8e8e… -> 0x…dEaD) on ATH 0xc87B37a5…), read 2026-11-23:
+AETHIR_BURNS_READ = (
+    ("2026-11-03", 512_764.4675), ("2026-11-04", 513_372.4719), ("2026-11-05", 513_979.4906),
+    ("2026-11-06", 514_498.2852), ("2026-11-07", 514_758.9724), ("2026-11-08", 513_806.0564),
+    ("2026-11-09", 78_436.8900), ("2026-11-10", 573_280.8074), ("2026-11-11", 629_515.8847),
+    ("2026-11-12", 630_524.3576), ("2026-11-13", 631_673.3942), ("2026-11-14", 632_623.6544),
+    ("2026-11-15", 633_719.3568), ("2026-11-16", 633_730.1052), ("2026-11-17", 630_146.1345),
+    ("2026-11-18", 630_801.4894), ("2026-11-19", 631_375.0910), ("2026-11-20", 632_278.1371),
+    ("2026-11-21", 0.0), ("2026-11-22", 633_411.1116 + 635_228.7033), ("2026-11-23", 635_257.2326))
+PROJECT_BY_NAME["Aethir"]["extra_metrics"] = tuple(PROJECT_BY_NAME["Aethir"].get("extra_metrics") or ()) + (
+    "gross_burn_tokens", "burn_address_balance")
+SOURCE_REGISTER.setdefault("arb1.arbitrum.io", {
+    "used_for": "R20: Aethir's daily fee burn — eth_getLogs of ATH Transfers to 0x…dEaD and one balanceOf, once a day "
+                "(fetch/aethir_chain.py); arbitrum.gateway.tenderly.co is the second endpoint",
+    "paths": ["/rpc (JSON-RPC: eth_getBlockByNumber, eth_getLogs, eth_call)"],
+    "robots": "a JSON-RPC endpoint, about twenty small calls a day",
+    "terms": {"url": "https://docs.arbitrum.io/build-decentralized-apps/reference/node-providers",
+              "status": "the Arbitrum Foundation's public endpoint, rate-limited; not for production load"}})
+SOURCE_REGISTER.setdefault("mainnet.gateway.tenderly.co", {
+    "used_for": "R20: the ATH Transfer logs of Aethir's vesting contracts and issuer wallets since the token's first "
+                "block, once a day (fetch/aethir_chain.py; about fourteen eth_getLogs calls of 1,000,000 blocks)",
+    "paths": ["/ (JSON-RPC: eth_getLogs)"], "robots": "a JSON-RPC endpoint",
+    "terms": {"url": "https://docs.tenderly.co/node/public-rpc", "status": "Tenderly's public gateway, rate-limited"}})
+
+# ----- THE UNLOCK LEG: the three vesters' stock; its fall is the unlock (claims by team / investors / advisors).
+# CHOICE (reported to Jake): the VestingWallet is NOT an unlock leg. Its releases (369,250,000 ATH a month now) go to
+# the issuer's own Safe — in circulating, off the float — and leave it as checker / compute / staking rewards, which
+# are already emissions (a)/(b); counting its releases as unlocks too would count those tokens twice in "emissions +
+# unlocks" (GEODNET's mining wallets are kept out of its unlock stock for the same reason). Its unvested stock is
+# stored and is out of Aethir's own circulating figure. A funding day (the Safe tops a vester up: 47 since 2025-04)
+# shows a rise — a rise releases 0, so that day's claims are not counted (an understatement, one day per top-up).
+UNLOCK_STOCKS["Aethir"] = ("ath_vester_balance_tokens",)
+# ----- OFF THE FLOAT: Aethir's circulating is its own published figure (CIRCULATING_ONCHAIN status first_party) and
+# nothing is taken out of it here, so there are no `legs`; the two held series leave every float from their first stored
+# row (the first run stores the past 455 days from the Transfer logs, so the declared date is the token's listing day).
+declare_rule_in(
+    "Aethir", (),
+    "config.PROJECT_BY_NAME['Aethir']['aethir_chain'] (read 2026-11-23, Ethereum block 26,479,161): the Safe "
+    "0x3e7e6c3d… (owner and only beneficiary of Aethir's VestingWallet) and the Safe 0x612407de… (paid 13.57bn ATH by "
+    "the token contract at genesis; funds the vesters) — tied to Aethir by contract state, movable by their signers: in "
+    "circulating, off the float; a Safe and an EOA INFERRED from their funding, kept in their own series. Aethir's docs "
+    "publish no wallet address",
+    off_float=("ath_issuer_held_tokens", "ath_issuer_inferred_held_tokens"),
+    float_answer="circulating does not move (Aethir's own figure counts every vested token); the free float falls by "
+                 "7,723,714,224 ATH on 2026-11-23 (4,243,169,739 direct + 3,480,544,485 inferred)")
+RULE_IN["Aethir"].update({
+    "read_on": _R20A, "decided": _R20A_DECIDED,
+    "off_float_from": {"ath_issuer_held_tokens": "2024-06-12", "ath_issuer_inferred_held_tokens": "2024-06-12"},
+    "flow_rule": False,                 # no wallet moves in or out of circulating: the flow statement is unchanged
+    "reference_leaves_out": False})
+DISCRETIONARY_NA.pop("Aethir", None)
+DISCRETIONARY_SUPPLY["Aethir"] = (
+    ("ath_issuer_held_tokens", "ath_issuer_inferred_held_tokens"),
+    "the issuer wallets on file (two Safes tied to Aethir's VestingWallet and genesis allocation by contract state, "
+    "the VestingWallet's vested-unreleased tranche, and two wallets INFERRED from their funding) — no release schedule "
+    "is published for what they hold (R20)")
+# ----- INSIDER SHARE OF STAKE: the issuer wallets' locks in the AI and Gaming pools over Aethir's total stake.
+INSIDER_LOCK["Aethir"] = (
+    "ath_insider_staked_tokens", "locked_tokens",
+    "ATH locked in the AI and Gaming pools (locked(wallet).amount) by the four issuer wallets on file (two tied to "
+    "Aethir by contract state, two INFERRED) ÷ Aethir's totalStaked (its four pools). A MEASURED 0 (Ethereum block "
+    "26,479,161, 2026-11-23) and A FLOOR: Cloud Host and Edge stakes are per operator and not attributable, and the "
+    "EigenLayer pre-deposit vault — where the issuer holds 168,450,045 eATH of 766,790,826 deposited — is not in "
+    "totalStaked (ath_issuer_eath_tokens, beside)")
+INSIDER_SHARE_ROUTE_CLOSED["Aethir"] = dict(
+    INSIDER_SHARE_ROUTES.pop("Aethir"),
+    closed="R20 (2026-11-23): the issuer wallets are on file from the chain (the VestingWallet's owner / beneficiary, "
+           "the genesis allocation Safe, two inferred wallets); their locks in both pools are read daily "
+           "(fetch/aethir_chain.py, ath_insider_staked_tokens)")
+
+# ----- 2. THE CREDITED HOLDER VALUE: the fee burn. The "none" record (no revenue-to-ATH mechanism, read 2026-09-14)
+# was true until 2026-11-02; from the first burn (2026-11-03) ATH paid as network fees is destroyed.
+HOLDER_VALUE["Aethir"] = {
+    "burn_credited": {
+        "metric": "gross_burn_tokens", "share_of_revenue": 1.0,
+        "why": "Aethir's daily fee burn — ATH the network charged as fees (taken from AethirCore, the service-fee "
+               "escrow), sent to 0x…dEaD on Arbitrum by the burn contract 0xf8ec8e8e… (docs.aethir.com "
+               "ath-burn-mechanism, live 2026-11-02; read 2026-11-23): revenue-funded and destroyed, it reaches every "
+               "holder"}}
+# BEFORE THE BURN EXISTED the burn is a DECLARED 0, to 2026-11-01 (`until`: build_workbook._declared_zero_views) — the
+# day before go-live (docs: "Go-live: November 2026"; dashboard launchDate 2026-11-02; on chain the burn contract's
+# first log is 2026-10-21 and its first burn 2026-11-03, and the dead address held 0 ATH at block 516,000,000). From
+# 2026-11-02 every day is a measured row or unknown — never a filled 0. The old "no payout mechanism" zero on the
+# credited holder value (filled on every day, for ever) is withdrawn: the holder value is now the burn x the price.
+DECLARED_ZERO.pop(("Aethir", "holder_value_revenue_usd"), None)
+DECLARED_ZERO[("Aethir", "gross_burn_tokens")] = {
+    "since": "2024-06-12", "until": "2026-11-01",
+    "why": "no ATH burn mechanism existed before 2026-11-02 (docs.aethir.com ath-burn-mechanism: go-live November "
+           "2026; the dead address on Arbitrum held 0 ATH at block 516,000,000, 2026-10)"}
+# BUYING PRESSURE: Aethir's protocol buys no ATH on the market — the burn destroys ATH customers paid as fees. As for
+# Uniswap (P5-1.8), a by-design code, not a 0 and not "unknown" (CHOICE, reported to Jake).
+BUYING_PRESSURE_BY_DESIGN["Aethir"] = (
+    "by design — Aethir's protocol buys no ATH on the market: the daily burn destroys ATH that customers paid as "
+    "network fees (taken from the service-fee escrow), so that burn is on A4 and in holder value, not a market buyback")
+PROJECT_BY_NAME["Aethir"]["burn_split"] = {
+    "share_of_fees_burned": None, "source_url": "https://docs.aethir.com/aethir-tokenomics/ath-burn-mechanism",
+    "source_date": _R20A, "status": "active",
+    "note": "a daily burn funded by network fees, to 0x…dEaD on Arbitrum, live 2026-11-02. The share of the fee that "
+            "is burned FLOATS ('Weakening market: network fee falls, share of the fee that's burned rises') — no fixed "
+            "share is published, so none is declared; the burn itself is measured (gross_burn_tokens)"}
+PROJECT_BY_NAME["Aethir"]["fee_split"]["note"] += (
+    " R20 (read 2026-11-23): STILL NO BUYBACK — but from 2026-11-02 part of the network fee is BURNED daily "
+    "(burn_split; HOLDER_VALUE burn_credited): the 'no revenue reaches ATH holders' finding above ended that day.")
+
+# ----- THE THREE REVENUE LINES (S13).
+#   FEES            what customers pay for compute: Aethir's own Weekly Network Revenue (customer_revenue_usd, USD,
+#                   finished weeks from Monday; dashboard demand-metric). docs: "Service Fees are the cloud rendering
+#                   fees paid by tenants to cloud hosts … priced in fiat currency but settled in ATH". FIRST PARTY.
+#   REVENUE         the protocol's take of them = FEES x the protocol fee rate. To 2026-11-01 the FIXED fee: "The
+#                   platform will take a 20% fee on all service fees as a protocol fee" (docs, Service Fees for Cloud
+#                   Host). From 2026-11-02 the FLOATING network fee: 100% − "Current Cloud Host Revenue Share" ("The
+#                   share of compute revenue Cloud Hosts keep right now. It's 100% minus the protocol fee" —
+#                   dashboard supply-metric feeHistory, one figure a week: 90.05 / 89.13 / 88.84 / 88.58 for the weeks
+#                   of 2026-11-02 / 09 / 16 / 23, so the fee was 9.95% / 10.87% / 11.16% / 11.42%). INFERRED: a
+#                   published rate applied to a published revenue figure — Aethir publishes no fee-income series.
+#   HOLDER REVENUE  the fee burn at each day's price (holder_value_revenue_usd). MEASURED on chain.
+#   HOLDER SHARE    holder revenue ÷ revenue, per covered day: the share of the protocol fee that is burned.
+# Cloud Hosts keep the rest of the fees (80%, now about 89%) and are also paid emissions (compute rewards, outflow (b)).
+METRICS["cloud_host_revenue_share_pct"] = {
+    "label": "Cloud Host revenue share, % of compute revenue the hosts keep — 100 − the protocol (network) fee; "
+             "Aethir's dashboard supply-metric feeHistory, one figure a week (R20)",
+    "kind": "stock", "unit": "pct", "archetypes": [2], "tiers": [3], "sanity_min": 0, "sanity_max": 100.0,
+    "only_projects": ("Aethir",)}
+METRICS["s13_protocol_fee_usd"] = {
+    "label": "S13 REVENUE — INFERRED: Aethir's Weekly Network Revenue x the protocol fee rate of that week (20% fixed "
+             "to 2026-11-01, docs; 100% − the published Cloud Host revenue share from 2026-11-02, dashboard) (R20)",
+    "kind": "flow", "unit": "usd", "archetypes": [2, 3, 4], "tiers": [3], "sanity_min": 0, "sanity_max": 1e10,
+    "only_projects": ("Aethir",), "view_only": True}
+PROJECT_BY_NAME["Aethir"]["dashboard_pages"]["pages"]["protocol/supply-metric"]["arrays"]["feeHistory"] = {
+    "value_key": "share", "metric": "cloud_host_revenue_share_pct", "granularity": "weekly", "date_key": "date",
+    "label": "Current Cloud Host Revenue Share, by weekly fee period (the period's first day)"}
+PROJECT_BY_NAME["Aethir"].setdefault("manual_granularity", {})["s13_protocol_fee_usd"] = "weekly"
+# A REVENUE LINE = A FEES SERIES x A PUBLISHED RATE, ROW FOR ROW (build_workbook._s13_fee_rate_views): the rate of a
+# fees row is 1 − the stored host share in force that week (the latest share row dated at most `share_slack_days`
+# after the fees row's date and less than a week before that); with no such row, the declared fixed rate where the
+# fees row is dated on or before `fixed_until`; otherwise NO ROW (unknown is never 0).
+S13_FEE_RATE = {
+    "Aethir": {"view": "s13_protocol_fee_usd", "base": "customer_revenue_usd",
+               "host_share_metric": "cloud_host_revenue_share_pct", "share_slack_days": 3,
+               "fixed_rate": 0.20, "fixed_until": "2026-11-01",
+               "fixed_source": "docs.aethir.com Service Fees for Cloud Host: 'The platform will take a 20% fee on all "
+                               "service fees as a protocol fee' (read 2026-11-23)",
+               "floating_from": "2026-11-02"}}
+REVENUE_SPLIT["Aethir"] = {
+    "round": "R20 (Jake 2026-11-24)",
+    "fees": {"metric": "customer_revenue_usd", "primary": True,
+             "route": "WHAT CUSTOMERS PAY FOR COMPUTE: Aethir's own Weekly Network Revenue (dashboard.aethir.com "
+                      "demand-metric weeklyNetworkRevenue, USD, finished weeks). FIRST PARTY — Aethir's figure, not a "
+                      "chain read: service fees are priced in fiat and settled in ATH. DefiLlama's 'aethir' fees "
+                      "(deposits net of withdrawals into AethirCore, a prepayment measure) is the cross-check "
+                      "(customer_revenue_usd_defillama)"},
+    "revenue": {"metric": "s13_protocol_fee_usd", "primary": False, "inferred": True,
+                "route": "INFERRED — the fees line x the protocol fee rate of that week: 20% to 2026-11-01 (docs: 'The "
+                         "platform will take a 20% fee on all service fees as a protocol fee'); from 2026-11-02 the "
+                         "floating network fee = 100% − the Cloud Host revenue share Aethir's dashboard publishes "
+                         "for each weekly fee period (9.95% in the week of 2026-11-02, 11.42% in the week of "
+                         "2026-11-23). A published rate on a published figure: Aethir publishes no fee-income "
+                         "series. A week with no published share after 2026-11-01 holds no revenue row"},
+    "holder_revenue": {"metric": "holder_value_revenue_usd", "primary": True,
+                       "route": "MEASURED ON CHAIN: ATH the burn contract 0xf8ec8e8e… sent to 0x…dEaD on Arbitrum "
+                                "each UTC day (gross_burn_tokens) x that day's price. Funded by network fees "
+                                "(docs.aethir.com ath-burn-mechanism): each burn pulls the ATH from AethirCore, the "
+                                "service-fee escrow. Nothing before 2026-11-03: no mechanism existed"},
+    "holder_share": {"route": "holder revenue ÷ revenue, per covered day: the share of the protocol fee that is "
+                              "burned. It floats by design (the docs: when the market weakens the fee falls and the "
+                              "burned share of it rises)"},
+    "other_recipients": "Cloud Hosts keep fees − revenue (80% of compute revenue to 2026-11-01, about 89% since) and "
+                        "are also paid compute rewards from the emission pool (outflow (b)); the protocol fee that is "
+                        "not burned stays with Aethir (no wallet or report is published for it)",
+    "crosscheck": "FEES beside DefiLlama 'aethir' dailyFees (customer_revenue_usd_defillama); HOLDER REVENUE beside "
+                  "the dashboard's cumulativeBurnedAth (11,955,182.09375163 ATH on 2026-11-23 = the chain's sum)"}
+REVENUE_TIER["Aethir"] = (
+    "revenue", "DefiLlama's 'aethir' revenue = 20% of its fees (service-fee deposits net of withdrawals into AethirCore, "
+               "a prepayment measure; the fixed 20% protocol fee ended 2026-11-01). The three lines are Aethir's own "
+               "weekly revenue, that x the published protocol fee rate, and the on-chain fee burn "
+               "(REVENUE_SPLIT['Aethir'])")
+
+# ----- 5a. THE STAKING POOLS — what each pays, in which token, from where (read 2026-11-23).
+AETHIR_STAKING_POOLS = {
+    "read_on": _R20A,
+    "pools": {
+        "ai_pool": {
+            "contract": "0x784BC33B9f8fC8e8dE76Dbd3c7b393D747D60bc4 (Ethereum; a voting escrow locking veAethir, 1 week "
+                        "to 4 years)", "staked": 419_378_896.98, "apr": 0.1240,
+            "pays": "ATH, 1,000,000 a week (3,000,000 during the ten weeks from 2025-05-07), split by reward power; "
+                    "plus partner tokens", "funded_from": "EMISSIONS — the Staking Rewards Emission Schedule",
+            "source": "docs.aethir.com/aethir-staking/staking-pools-emission-schedule-for-ath ('each pool distributes "
+                      "1,000,000 ATH per week'); dashboard onchain-metric aiApr 12.40, emissionStakeRewardSchedule"},
+        "gaming_pool": {
+            "contract": "0x6F5c81fe067AE25AFD52218F140a73D51f0C6B31 (Ethereum; the same design)",
+            "staked": 376_590_651.73, "apr": 0.1381,
+            "pays": "ATH, 1,000,000 a week; plus partner tokens (CARV)",
+            "funded_from": "EMISSIONS — the same schedule; the partner tokens from the partner",
+            "source": "the same page; docs.aethir.com/aethir-ecosystem/carv-rewards-for-aethir-gaming-pool-stakers; "
+                      "dashboard gamingApr 13.81"},
+        "eigenlayer_ath_vault": {
+            "contract": "0x3cFc70a2999a6C35A6A908D634E9B1fb85B98Ab0 (Ethereum; receipt eATH 1:1; the ATH sits in the "
+                        "EigenLayer strategy 0x8cc88d61…: 773,539,420)", "staked": 766_790_826.49,
+            "pays": "BY DESIGN ATH from Cloud Host fees, by utilisation — NOT ACTIVE: nothing accrues. Pre-depositors "
+                    "were offered about 7.5% once at redemption (claim window 90 days from 2026-06-24); who funds it "
+                    "is not stated",
+            "funded_from": "DESIGN: FEES ('Rewards consist of Cloud Host fees, distributed proportionally based on "
+                           "eATH holdings'). ON CHAIN: never activated — isStakingEnabled() false, "
+                           "stakeBaseContract() the zero address, unactivatedPrincipal() = totalDeposited(); "
+                           "pre-deposits closed 2026-06-24 and redemption is open",
+            "source": "docs.aethir.com/aethir-staking/eigen-predeposit-faq, /predeposit-rewards ('Until then, eATH "
+                      "holders will not accrue any rewards'), /eath-vault-redemption-process; eth_call at block "
+                      "26,479,161"},
+        "cloud_host_idc": {
+            "contract": "per Cloud Host, on Arbitrum (dashboard idcStaked)", "staked": 867_153_616.52,
+            "pays": "nothing for the stake itself: it is the deposit a host must post (slashable). Hosts earn compute "
+                    "rewards (PoC / PoD, ATH) and the service fees less the protocol fee for the compute they supply",
+            "funded_from": "the rewards: EMISSIONS (compute rewards, outflow (b)). The fees: customers — a payment to "
+                           "a supplier for compute, not a yield on staked ATH",
+            "source": "docs.aethir.com/aethir-tokenomics/ath-tokens-utility-and-purpose ('Edge and IDC operators are "
+                      "required to stake ATH … the stake is needed as a deposit to slash'); Service Fees for Cloud Host"},
+        "edge": {
+            "contract": "per Edge device (dashboard edgeStaked)", "staked": 136_524_936.0,
+            "pays": "Edge rewards (earnings + stipend, ATH) for running the device", "funded_from": "EMISSIONS",
+            "source": "the same utility page; dashboard ecosystem page (edge reward pool)"},
+        "checker_nodes": {
+            "contract": "an NFT licence — NO stake ('Checker node holders are not required to stake ATH')",
+            "staked": 0.0, "pays": "checker rewards (ATH), four years linear", "funded_from": "EMISSIONS",
+            "source": "docs.aethir.com/aethir-tokenomics/token-vesting; ath-tokens-utility-and-purpose"}},
+    "a3_verdict": "NO CLEAR PRIMARY-SOURCE EVIDENCE that any staking pool is paid from fees TODAY. The AI and Gaming "
+                  "pools are paid a fixed ATH emission; Cloud Host and Edge stakes are deposits; the one pool DESIGNED "
+                  "to be fee-funded (the EigenLayer ATH vault: 'Rewards consist of Cloud Host fees') never activated "
+                  "and is redeeming. What the fees do fund since 2026-11-02 is the burn (A4), which reaches every "
+                  "holder, staked or not"}
+# UNIFORMITY. The cell read "nothing is paid to stakers" — untrue: the AI and Gaming pools pay 1,000,000 ATH a week
+# each. Declared text only (rules frozen — no new yield metric); NO `match`: done_check judges the cell as before.
+DECLARED_NA_REASONS.setdefault("Aethir", []).append(
+    {"cols": ("UNIFORMITY",),
+     "text": "n/a — no staker yield series is wired: the AI and Gaming pools pay 1,000,000 ATH a week each from the "
+             "staking emission schedule plus partner tokens (docs.aethir.com Staking Pools Emission Schedule; "
+             "Aethir's own APR 12.4% / 13.8% on 2026-11-23, staking_apr_ai / staking_apr_gaming), emissions-funded; "
+             "from 2026-11-02 the fee burn reaches every holder alike"})

@@ -310,12 +310,13 @@ def test_the_backfill_writes_only_the_keys_the_store_lacks(tmp_path, monkeypatch
 
 
 def test_no_other_projects_rule_in_stock_can_be_pending():
-    # the pending state exists only where EVERY leg joins from a declared date: Ethereum alone, no frozen project
+    # the pending state exists only where EVERY leg joins from a declared date: Ethereum and (R20) Aethir, no frozen
+    # project
     for name, spec in config.RULE_IN.items():
         legs = tuple(spec.get("off_float", spec["legs"]))
         all_from = bool(legs) and set(legs) <= set(spec.get("off_float_from") or {})
-        assert all_from == (name == "Ethereum"), name
-    assert "Ethereum" not in config.FROZEN_PROJECTS
+        assert all_from == (name in ("Ethereum", "Aethir")), name          # was: Ethereum alone (before R20)
+    assert "Ethereum" not in config.FROZEN_PROJECTS and "Aethir" not in config.FROZEN_PROJECTS
 
 
 def test_the_insider_share_of_stake_reads_the_foundations_validators():
