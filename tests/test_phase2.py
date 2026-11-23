@@ -72,8 +72,10 @@ def test_cp_on_the_real_aerodrome_dump(tmp_path, monkeypatch, dumps_20261009):
     assert config.holder_funding("Aerodrome", "2026-09-01")[0] == "treasury"
     # fees only (liquid bribes are holder income, not revenue — decision 4), less the illiquid fee leg: ~1
     assert _get(o, "Payout ratio — the project's own net basis") == pytest.approx(1.0, rel=1e-3)
-    assert _get(o, "Holder value RECORDED, NOT CREDITED") == pytest.approx(_get(o, "Flow demand")) and \
-        _get(o, "Holder value RECORDED, NOT CREDITED") > 0
+    # R17.A3: the recorded value divides by the window's AVERAGE market cap; flow demand still by today's — the same $
+    mc_now, mc_avg = (_data(wb, X, "Aerodrome|market_cap_usd", "now"), _data(wb, X, "Aerodrome|market_cap_usd", "q0"))
+    assert _get(o, "Holder value RECORDED, NOT CREDITED") * mc_avg == pytest.approx(_get(o, "Flow demand") * mc_now) \
+        and _get(o, "Holder value RECORDED, NOT CREDITED") > 0
     assert _get(o, "SUBSIDY COVER") == pytest.approx(_rate(wb, X, "Aerodrome|fees_usd")
                                                      / _rate(wb, X, "Aerodrome|outflow_b_usd"))
     # the rebase (c) joins the denominator of (b + c)

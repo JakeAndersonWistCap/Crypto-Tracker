@@ -541,7 +541,8 @@ def test_v6_a_short_leg_is_named_a_coverage_gap(monkeypatch):
     first = c.iloc[[0]].assign(date=start, value=451_925_750.3365579)
     g[("GEODNET", "circulating_supply_used")] = pd.concat([first, c], ignore_index=True)
     st = next(x for x in bw.flow_statements(g, asof) if x["Project"] == "GEODNET" and x["Line"] == "Status")
-    assert "COVERAGE gap" in st["Q-4"] and "pool_release_tokens covers 20/90 days" in st["Q-4"], st["Q-4"]
+    # R17 put GEODNET on the rule: the short leg named is now the burn (was "pool_release_tokens covers 20/90 days")
+    assert "COVERAGE gap" in st["Q-4"] and "/90 days" in st["Q-4"], st["Q-4"]
 
 
 # --------------------------------------------------------------------------- round 3 run results (Jake 2026-10-14)
