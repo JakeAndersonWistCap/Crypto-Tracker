@@ -85,5 +85,5 @@ def test_1_ether_fi_is_frozen_with_its_own_baseline_and_no_earlier_record():
     assert set(config.FROZEN_PROJECTS) == set(config.FROZEN_BEFORE_R16) | {"Ether.fi"}
     base = json.loads(pf.baseline_path("Ether.fi").read_text(encoding="utf-8"))
     assert len(base) > 250 and all(k.startswith(("audit|", "reader|")) for k in base)
-    assert config.FROZEN_MOVES["Ether.fi"] == {}                               # never frozen before: nothing to carry
+    # (R17, speed mode: the "no move declared yet" record pin is dropped — R17.A3 declared Ether.fi's first moves)
     assert "7a4b5b9" in config.FROZEN_PROJECTS["Ether.fi"]["why"]
