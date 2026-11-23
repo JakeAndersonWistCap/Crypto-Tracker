@@ -88,7 +88,8 @@ class AeroLeafEpochs:
     TIER = TIER
 
     def __init__(self, stored_long=None, rpc=None, prices=None, now: int | None = None, clock=time.monotonic,
-                 budget_s: float | None = None, state: dict | None = None, workers: int = 1, **_ignored):
+                 budget_s: float | None = None, state: dict | None = None, workers: int = 1,
+                 epochs_back: int | None = None, **_ignored):
         self.http = Http(min_interval=0.25, retries=2)       # tenderly gateways answer 429 to bursts (read 2026-11-23)
         self.stored = stored_long
         self._rpc = rpc                  # tests: (chain, method, params) -> result
@@ -96,6 +97,7 @@ class AeroLeafEpochs:
         self.now = now
         self._clock = clock
         self.budget_s = budget_s
+        self.epochs_back = epochs_back   # archive_backfill: every epoch since the merger, not the daily tier's last 8
         self.state = state
         # one call at a time by default (the shared Http paces per host; measured 2026-11-23: one epoch on the seven
         # chains = 1,650 calls in 323 s — Elysium 663 calls / 122 s at 5,000 blocks a call)
@@ -246,6 +248,8 @@ class AeroLeafEpochs:
         st = config.aerodrome_migration_state() if self.state is None else self.state
         if pd.Timestamp(today()) < pd.Timestamp(m["cutover_utc"]) or st.get("launched") is not True:
             return
+        if self.epochs_back:
+            spec = {**spec, "epochs_back": int(self.epochs_back)}
         self.spec = spec
         self.deadline = self._clock() + float(spec["budget_s"] if self.budget_s is None else self.budget_s)
         now = self.now or int(time.time())

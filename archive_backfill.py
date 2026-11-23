@@ -244,7 +244,7 @@ def _work(a) -> int:
                 "SELECT date, project, metric, value, source, tier FROM metrics WHERE project=? AND metric LIKE "
                 "'aero_leaf_fees_usd_%'", st.conn, params=(p["name"],))
             lo = _FO()
-            aero_leaf.AeroLeafEpochs(stored_long=lstored, budget_s=a.budget_min * 60).run([p], None, lo)
+            aero_leaf.AeroLeafEpochs(stored_long=lstored, budget_s=a.budget_min * 60, epochs_back=520).run([p], None, lo)
             lf = lo.frame()
             ln = ar._write_new(st, lf) if len(lf) else 0
             print(f"  Aerodrome staker revenue on the other chains {p['name']}: {ln} row(s) written over "
