@@ -15,6 +15,14 @@ import config  # noqa: E402
 
 
 # ================================================================= 4: Multicall3 refusals say their cause
+
+@pytest.fixture(autouse=True)
+def _r18_merged_basis_on(monkeypatch):
+    """R18 (Jake 2026-11-24) switched the merged-basis restatement OFF for the build (config.VELO_MERGED restate).
+    These tests check the mechanism's arithmetic, which stays in the code: they run it switched on."""
+    monkeypatch.setitem(config.VELO_MERGED["Aerodrome"], "restate", True)
+
+
 class _Resp:
     def __init__(self, status, text="", headers=None):
         self.status_code, self.text, self.headers = status, text, headers or {}

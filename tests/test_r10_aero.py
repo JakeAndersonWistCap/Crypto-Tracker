@@ -205,7 +205,7 @@ def test_a1d_the_statement_balances_across_the_migration_quarter_on_every_mint(m
          ("Aerodrome", "issuer_mint_tokens"): mk("issuer_mint_tokens", team),
          ("Aerodrome", "aero_merger_issuance_tokens"): _g("aero_merger_issuance_tokens", [(cut, 117e6, "derived:handover_step[x]")])}
     tf = {r["Line"]: r for r in bw.flow_statements(g, asof) if r["Statement"] == "Token flow"}
-    line = next(k for k in tf if "Velodrome merger" in k)
+    line = next(k for k in tf if "merger issuance" in k)
     assert tf[line]["Q0"] == 117e6 and tf[line]["Q-1"] == 0.0             # an event: 0 in a quarter without it
     for q in ("Q0", "Q-1"):
         assert abs(tf["Residual ÷ opening"][q]) < 1e-9 and tf["Status"][q].startswith("OK"), (q, tf["Status"][q])

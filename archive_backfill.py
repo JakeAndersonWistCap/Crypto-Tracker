@@ -248,6 +248,11 @@ def _work(a) -> int:
         spec = (getattr(config, "VELO_MERGED", {}) or {}).get(p["name"])
         if not spec:
             continue
+        if not spec.get("restate", True):
+            # R18 (Jake 2026-11-24): no Velodrome history in any figure — the VELO days are not read any more
+            print(f"  Velodrome VELO history {p['name']}: not read — before the merger the series are Aerodrome's alone "
+                  f"(config.VELO_MERGED restate off, R18)")
+            continue
         from fetch import velo_history
         have = {m: {d[:10] for (d,) in st.conn.execute(
             "SELECT date FROM metrics WHERE project=? AND metric=?", (p["name"], m))} for m in velo_history.METRICS}

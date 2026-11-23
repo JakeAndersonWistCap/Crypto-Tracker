@@ -15,6 +15,12 @@ import config  # noqa: E402
 
 BASIS = "derived:circulating_used[circulating_supply_first_party]"
 
+@pytest.fixture(autouse=True)
+def _r18_merged_basis_on(monkeypatch):
+    """R18 (Jake 2026-11-24) switched the merged-basis restatement OFF for the build (config.VELO_MERGED restate).
+    These tests check the mechanism's arithmetic, which stays in the code: they run it switched on."""
+    monkeypatch.setitem(config.VELO_MERGED["Aerodrome"], "restate", True)
+
 
 def _circ(name, days, values, sources=None):
     return pd.DataFrame({"date": pd.to_datetime(days), "project": name, "metric": "circulating_supply_used",

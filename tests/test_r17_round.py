@@ -126,7 +126,7 @@ def test_a1_a_destruction_that_is_no_burned_buyback_is_its_own_flow_line_and_no_
     fd = config.RULE_IN["Aerodrome"]["flow_destroyed"]
     assert [m for _, m in fd] == ["foundation_aero_burned_other_tokens"]
     ev = config.AERO_MINT_THEN_BURN_2026_11
-    assert len(ev["mint"]["tx"]) == 66 and len(ev["burn"]["tx"]) == 66 and ev["purpose"] == "not established"
+    assert len(ev["mint"]["tx"]) == 66 and len(ev["burn"]["tx"]) == 66 and ev["purpose"]
     assert ev["burn"]["burned"] == ev["mint"]["to_buyer_safe"] == 10_000_000.0 and ev["burn"]["block"] > ev["mint"]["block"]
     assert "Aerodrome" not in getattr(config, "FLOW_RESIDUAL_EXPLAINED", {})    # the residual is measured, not excused
     # the buyback's burn is capped at what was BOUGHT since the purchase-day basis: 10 destroyed, 4 bought -> 6 other

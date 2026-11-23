@@ -47697,3 +47697,172 @@ NEARBLOCKS_BILLING = {
     "v1_v2": "switched off 2026-11-22 (api.nearblocks.io/api-docs/migration; /v1/plans answers HTTP 410) — every "
              "path here has been /v3 since 2026-10-13",
 }
+
+
+# =====================================================================================================================
+# ===== R18 — AERODROME ACROSS THE MERGER (Jake 2026-11-24) =====
+# Jake: "before 2026-10-22, Aerodrome only; no Velodrome history in any figure. The AERO minted for VELO conversions is
+# a one-off merger issuance, on its own named line, kept out of yearly dilution and net holder yield. From 2026-10-22
+# the combined revenue counts." This REVERSES R11.2c / R12 / R13 (Velodrome's supply, locks and emissions x 0.044 inside
+# Aerodrome's series before the merger). Everything of the round is in this block; tests in tests/test_r18_aerodrome.py.
+#
+# (1) NO VELODROME HISTORY. The merged-basis restatement is switched off (build_workbook._velo_merged_views reads
+#     `restate`): before 2026-10-22 total supply, the locks, the issuer wallets' liquid holding and the weekly emission
+#     are Aerodrome's as stored; no Velodrome emission is formed; the statement's VELO line is gone. The stored velo_*
+#     rows stay in the store as a record and are read by nothing; archive_backfill no longer reads VELO days.
+VELO_MERGED["Aerodrome"]["restate"] = False
+VELO_MERGED["Aerodrome"]["restate_decided"] = (
+    "Jake 2026-11-24 (R18): before 2026-10-22 Aerodrome only, no Velodrome history in any figure — reverses R11.2c / "
+    "R12 / R13 (the merged basis)")
+VELO_MERGED["Aerodrome"]["verdict"] = (
+    "a one-off merger issuance on 2026-10-22 (117.0M AERO minted for VELO conversions): on its own line of the "
+    "token-flow statement, in the supply and in circulating, out of every dilution rate and of the net supply change")
+# (2) THE MERGER ISSUANCE, ITS OWN LINE. The new token's constructor minted 117,000,000 AERO to the Velodrome
+#     migration entrypoint 0x6daE95FE… (`_velodromeAllocation`; ratio 0.044, VelodromeMigration.sol _RATIO_PIPS 44_000).
+#     It is the step of the total across the handover (config.HANDOVER_STEP: the last legacy reading -> the first v3
+#     reading, 2,002,379,493.92 -> 2,119,379,492.92 at the cutover block), dated 2026-10-22. The whole allocation counts
+#     on that day (Jake 2026-11-19: all of it stays in circulating) — what has been PAID OUT against bridged VELO so far:
+#     106,399,244.24 (remaining 10,600,755.76 at Base block 61,224,885, 2026-11-23 12:02 UTC; 40.50M by 10-23, 70.67M by
+#     10-29, 85.86M by 11-05, 92.24M by 11-12, 106.29M by 11-19 — balanceOf at each day's first block, public RPC).
+#     It is in NO dilution rate (it is in no outflow category) and is LEFT OUT of the net supply change and its yearly
+#     rate (build_workbook._circulating_change_views), which would otherwise annualise a one-off.
+HANDOVER_STEP[("Aerodrome", "aero_merger_issuance_tokens")]["net_supply_change"] = "left out"
+AERO_MERGER_ISSUANCE = {
+    "date": AERODROME_MIGRATION["cutover_utc"][:10], "allocation": 117_000_000.0, "ratio": 0.044,
+    "holder": VELO_MERGED["Aerodrome"]["entrypoint"]["base"],
+    "paid": 106_399_244.24, "remaining": 10_600_755.76, "block": 61_224_885, "read_on": "2026-11-23",
+    "paid_by_day": {"2026-10-23": 40_498_779.63, "2026-10-29": 70_668_802.19, "2026-11-05": 85_864_885.72,
+                    "2026-11-12": 92_242_580.90, "2026-11-19": 106_286_695.95, "2026-11-23": 106_385_563.76},
+    "source": "new AERO balanceOf(VelodromeMigrationEntrypoint) at each day's first block, Base public RPC; "
+              "aero.xyz/aero-upgrade ('Velodrome: 5.5% = 117M AERO', '117M AERO / 2.66B VELO = 0.044', read 2026-11-23)",
+    "treatment": "one-off merger issuance: its own line of the token-flow statement; in total supply and circulating "
+                 "from 2026-10-22; out of yearly dilution, net holder yield and the net supply change (Jake 2026-11-24)"}
+METRICS["aero_merger_issuance_tokens"]["label"] = (
+    "MERGER ISSUANCE (one-off, 2026-10-22): the AERO minted for VELO conversions = the step of the total supply across "
+    "the handover (117.0M) — its own line of the token-flow statement; in no dilution rate, not in net holder yield, "
+    "left out of the net supply change (R18; was R10.A1d)")
+RULE_IN["Aerodrome"]["flow_in"] = tuple(
+    (("+ merger issuance: AERO minted for VELO conversions (one-off, 2026-10-22; in no yearly rate)",) + tuple(_x[1:]))
+    if _x[1] == "aero_merger_issuance_tokens" else _x
+    for _x in RULE_IN["Aerodrome"]["flow_in"] if _x[1] != "velo_merged_issuance_tokens")
+RULE_IN["Aerodrome"]["_flow_events"] = tuple(
+    _x for _x in RULE_IN["Aerodrome"]["_flow_events"] if _x != "velo_merged_issuance_tokens")
+# (3) REVENUE: AERODROME'S ALONE BEFORE THE MERGER, COMBINED FROM IT. The stored fee family is DefiLlama's parent
+#     `aero-protocol` (the slug `aerodrome` answers with it — read 2026-11-23: children Velodrome V1 / V2 / V3,
+#     Aerodrome V1, Aerodrome Slipstream, Aero Slipstream, Aero Basic; from 2022-06-01, Velodrome's first day). So
+#     Velodrome's own listings are stored beside it (three sums over its children, the whole history) and taken off
+#     every day before 2026-10-22 at read time (build_workbook._revenue_before_merger_views). Measured on DefiLlama's
+#     figures 2026-11-23: Velodrome was 2.74% of the parent's fees and 3.44% of its revenue over 2026-08-23..10-21,
+#     and 4.24% / 5.87% over the 365 days to 2026-10-21. Days before Aerodrome's first day hold no value.
+REVENUE_BEFORE_MERGER = {"Aerodrome": {
+    "until": AERODROME_MIGRATION["cutover_utc"][:10], "first_day": "2023-08-29", "sources": ("defillama",),
+    "legs": {"fees_usd": "velo_fees_usd", "revenue_usd": "velo_revenue_usd",
+             "holders_revenue_usd": "velo_holders_revenue_usd"},
+    "tag": "less Velodrome V1-V3: Aerodrome alone before 2026-10-22",
+    "what": "DefiLlama's Velodrome V1 + V2 + V3 listings, the predecessor's own fees",
+    "first_day_source": "DefiLlama's Aerodrome V1 listing starts 2023-08-29 (read 2026-11-23)",
+    "measured": {"read_on": "2026-11-23", "velo_share_of_fees_2026-08-23..10-21": 0.0274,
+                 "velo_share_of_revenue_2026-08-23..10-21": 0.0344, "velo_share_of_fees_365d_to_10-21": 0.0424,
+                 "velo_share_of_revenue_365d_to_10-21": 0.0587},
+    "decided": "Jake 2026-11-24 (R18)"}}
+for _m, _r18dt, _lab in (("velo_fees_usd", "dailyFees", "fees"), ("velo_revenue_usd", "dailyRevenue", "revenue"),
+                      ("velo_holders_revenue_usd", "dailyHoldersRevenue", "holders revenue")):
+    METRICS[_m] = {
+        "label": f"Velodrome's own {_lab} per day ($, DefiLlama Velodrome V1 + V2 + V3 {_r18dt}) — taken off Aerodrome's "
+                 f"{_lab} before the merger (2026-10-22); in no figure of its own (R18)",
+        "kind": "flow", "unit": "usd", "archetypes": [3], "tiers": [1], "sanity_min": 0, "sanity_max": 1e10,
+        "only_projects": ("Aerodrome",)}
+    FULL_HISTORY_SERIES[("Aerodrome", _m)] = "taken off the stored fee family on every day before 2026-10-22 (R18)"
+PROJECT_BY_NAME["Aerodrome"]["defillama_sum_slugs"] = tuple(
+    PROJECT_BY_NAME["Aerodrome"].get("defillama_sum_slugs") or ()) + tuple(
+    {"metric": _m, "data_type": _r18dt, "parent": "Velodrome", "parent_id": "parent#aero-protocol",
+     "include_names": ("velodrome",), "retired_after_days": 30,
+     "why": "Velodrome's own listings, taken off Aerodrome's fee family before the merger (R18)",
+     "read_on": "2026-11-23"}
+    for _m, _r18dt in (("velo_fees_usd", "dailyFees"), ("velo_revenue_usd", "dailyRevenue"),
+                    ("velo_holders_revenue_usd", "dailyHoldersRevenue")))
+REVENUE_SPLIT["Aerodrome"]["r18"] = (
+    "R18 (Jake 2026-11-24): before 2026-10-22 each line is Aerodrome's alone (the parent less DefiLlama's Velodrome "
+    "V1-V3 listings of the day); from 2026-10-22 the combined Aero revenue. Was (R8.3): the merged parent throughout")
+# (4) THE 10,000,000 AERO MINTED 2026-11-19 AND BURNED 2026-11-20 — WHAT IT IS (read 2026-11-23, verified source on
+#     Sourcify chain 8453 and state at the blocks). NOT merger-related. It is the GAUGE CAPS' SURPLUS:
+#       Voter 0x49d7d4f1… `spendSurplus(chainId, amount, recipient)` — GOVERNANCE_ROLE: "Mint accumulated surplus that
+#       would otherwise never be distributed … Surplus is entitlement that never minted, so leaving it alone keeps it
+#       deflationary and remains the default" (IVoter.sol L845-863); it calls Minter.mint, so the amount counts inside
+#       Minter.emissionsMinted and against the emissions cap, and the Minter adds the 5% team share on top.
+#       The mint transaction (a MultiSend of the 3-of-7 governance Safe 0x42255e3c…) emitted SurplusSpent(8453 [Base],
+#       buyer Safe, 8,000,000) and SurplusSpent(0 [CHAIN0, idle voting power], buyer Safe, 2,000,000) — the only two
+#       SurplusSpent events since deployment. spendableSurplus fell from 8,649,862.54 (Base) + 2,206,061.74 (CHAIN0) at
+#       the first block of 11-19 to 817,138.94 + 221,263.44 at the first block of 11-20.
+#       The Safe staked exactly the 10,000,000 as sAERO #27243 (block 59,987,522) and burned that stake whole
+#       (VoterPaymentsModule.depositIntoNFT -> VotingEscrow.burnFees, block 60,021,327): the burned tokens are the
+#       minted ones — no purchased AERO was in them. The 500,000 team share (5%) stays in the supply.
+#     WHY governance minted a surplus only to burn it is NOT stated in any primary source read (aero.xyz has no post;
+#     x.com/aeroxyz cannot be read from here — login wall; a web search found no announcement).
+#     THE 8.18M CAP STANDS (Jake: "keep the 8.18M cap until the 10M is explained"): of the 10,000,000 the build still
+#     counts 1,818,679.81 as a burned buyback (the purchases since 2026-08-25 not yet burned) and 8,181,320.19 on the
+#     "destroyed, not a burned buyback" line. With the explanation above the whole 10,000,000 is no buyback — Jake's
+#     decision (SPEC Round 18).
+AERO_MINT_THEN_BURN_2026_11["purpose"] = (
+    "the Gauge Caps' accumulated surplus (emission entitlement the caps held back): minted by governance with "
+    "Voter.spendSurplus (8M from Base's pot, 2M from CHAIN0's) and burned the next day — not merger-related, not a "
+    "buyback; why it was minted rather than left unminted is not stated by any primary source read")
+AERO_MINT_THEN_BURN_2026_11["mechanism"] = {
+    "function": "Voter.spendSurplus(uint256 _chainId, uint256 _amount, address _recipient)", "role": "GOVERNANCE_ROLE",
+    "voter": "0x49d7d4f17ec56ef8fa04e464af5d1a4942cc31e6", "caller": "0x42255e3c2d0b71a0b006243148fdf1a71d054ce0",
+    "events": (("SurplusSpent", 8453, 8_000_000.0), ("SurplusSpent", 0, 2_000_000.0)),
+    "surplus_before": {"base": 8_649_862.54, "chain0": 2_206_061.74, "block": 59_280_122},
+    "surplus_after": {"base": 817_138.94, "chain0": 221_263.44, "block": 59_712_122},
+    "stake": {"token_id": 27_243, "amount": 10_000_000.0, "block": 59_987_522,
+              "tx": "0x2bb79aaef5639734bfbd7441514879c8067b8f7705f71b8ff2acf5ab9e55d812"},
+    "merger_related": False, "is_buyback": False,
+    "source": "Sourcify chain 8453: V3/src/voter/Voter.sol L598-617, V3/src/interfaces/voter/IVoter.sol L845-863, "
+              "V3/src/minter/Minter.sol L155-174; eth_call / eth_getLogs on Base public RPC", "read_on": "2026-11-23"}
+# (5) EVERY BURN OF THE NEW TOKEN SINCE THE CUTOVER (Transfer -> 0x0 of 0x3f5bF3Ed…, blocks 52,880,070..61,224,885,
+#     read 2026-11-23): three, all out of the sAERO escrow. The supply identity closes to the token:
+#     2,127,000,000 + emissionsMinted x 1.05 − 10,407,815.83 = totalSupply (2,149,826,947.21 at block 61,008,122).
+AERO_BURNS_ONCHAIN = {
+    "token": "0x3f5bF3EdAc59d650D8fDf9657a71F2f904A3a4Ee", "blocks": (52_880_070, 61_224_885), "read_on": "2026-11-23",
+    "burns": (
+        {"date": "2026-10-28", "block": 53_215_285, "aero": 174_600.63624035532, "announced": "174k burned",
+         "tx": "0xe00ba4ce1a74b3bdbcf3c7210fae5cdf9ebce7a72e0be0d98f4791f09ba86a33", "what": "bought and burned"},
+        {"date": "2026-10-30", "block": 53_299_338, "aero": 233_215.197549, "announced": "233k burned",
+         "tx": "0xf800fc3185efe3eca12c908abafc250942660d350bb04a98abf16802f69bcaf8", "what": "bought and burned"},
+        {"date": "2026-11-20", "block": 60_021_327, "aero": 10_000_000.0, "announced": None,
+         "tx": "0x439ba89d39cdb2c1eef596afe24f8468bed91037e3777305c8723c53a307361e",
+         "what": "the Gauge Caps' surplus minted the day before (Voter.spendSurplus) — matches no announcement read"}),
+    "total": 10_407_815.83,
+    "identity": {"block": 61_008_122, "genesis": 2_127_000_000.0, "emissions_minted": 31_652_155.27993586,
+                 "team_rate": 0.05, "total_supply": 2_149_826_947.210143},
+    "not_matching": (
+        "2026-11-20: 10,000,000 burned — no announcement found (x.com/aeroxyz unreadable from here)",
+        "aero.xyz/economics/metrics (pulled 2026-11-23T07:18Z) says 911,157 AERO of the Momentum Fund was 'bought and "
+        "then burned' in 2026Q4 = 174,600.64 + 233,215.20 + 503,340.91: on chain the 503,340.91 bought on 2026-11-18 "
+        "was forwarded to the Fund's wallet 0x834C0DA0… (block 59,102,538) and is not in any burn — the burn of 11-20 "
+        "destroyed only the 10,000,000 minted to the Safe"),
+    # THE 11-04 PURCHASE ("243k staked on 4 Nov" as announced): on chain the buyer Safe bought 243,612.23 LEGACY AERO
+    # (three fills, blocks 53,505,822..53,505,938) and forwarded it to the Fund's wallet 0x834C0DA0… (block 53,506,024),
+    # where it has sat LIQUID since — legacy balance 243,612.23 at the first block of 11-05, 537,615.33 from 11-11 (with
+    # that day's 294,003.10) to block 61,224,885; the Fund's locked stake did not rise on 11-04. Not burned (as
+    # announced); a stake of it is NOT seen from the Fund's wallet (a stake by another route is not excluded).
+    "announced_staked": {"date": "2026-11-04", "aero": 243_612.23, "announced": "243k staked on 4 Nov",
+                         "on_chain": "legacy AERO, liquid in the Fund's wallet 0x834C0DA0… through block 61,224,885",
+                         "fund_legacy_balance": {53_523_727: 243_612.23, 56_256_122: 537_615.33, 61_224_885: 537_615.33},
+                         "matches": False}}
+# (6) EMISSIONS UNDER GAUGE CAPS (read 2026-11-23). Minter.emissionRate() = baseRate 13.489345 AERO/s (no dynamic
+#     module: dynamicRate 0) = 1,165,479.41 a day = 8,158,355.86 a week — the CAP the Minter accrues (aero.xyz/
+#     aero-upgrade: "The annual rate ceiling at launch is 20%"). What the cap lets through is less: at the first block
+#     of 2026-11-19 the cap had accrued 32,633,382.96, the Minter had minted 17,980,332.46 (+5% team), and
+#     10,855,924.28 sat as spendable surplus (Base + CHAIN0; other chains not read) — a third of the cap that mints
+#     only if governance spends it. R16 counts dilution at the cap rate (Jake 2026-11-20); that stands.
+AERO_GAUGE_CAPS = {
+    "rate_per_second": 13.489345, "per_day": 1_165_479.41, "per_week": 8_158_355.86, "team_rate": 0.05,
+    "at": {"day": "2026-11-19", "block": 59_280_122, "cap_accrued": 32_633_382.96, "minted": 17_980_332.46,
+           "surplus_base": 8_649_862.54, "surplus_chain0": 2_206_061.74},
+    "latest": {"day": "2026-11-23", "block": 61_008_122, "cap_accrued": 37_295_327.57, "minted": 31_652_155.28,
+               "surplus_base": 1_247_089.07, "surplus_chain0": 260_696.14},
+    "published_weekly": {"2026-10-22": 3_494_854, "2026-10-29": 4_794_737, "2026-11-05": 5_068_712,
+                         "2026-11-12": 6_583_937, "source": "aero.xyz/economics/metrics emissionsWeekly `lp` "
+                                                            "(pulled 2026-11-23T07:14Z)"},
+    "read_on": "2026-11-23", "source": "Minter 0x59268A34… emissionRate / emissionsCap / emissionsMinted, Voter "
+                                       "spendableSurplus(8453), spendableSurplus(0) at each day's first block"}
