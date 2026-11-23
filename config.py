@@ -47704,9 +47704,9 @@ NEARBLOCKS_BILLING = {
 # =====================================================================================================================
 # ----- 1. THE THREE REVENUE LINES (Jake: "FEES = all gas (base + priority), REVENUE = base fee burned, HOLDER REVENUE =
 # the same burn"). Nothing new is read: the series are on file.
-#   FEES            fees_usd_blockscout = Blockscout's txnsFee ("Sum of ETH spent on gas fees": Σ gas used x the price
-#                   paid per gas, base + priority, every transaction of the UTC day; blob gas is not gas and is not in
-#                   it) x that day's price. DefiLlama's fees_usd (base + priority + BLOB fees, its adapter
+#   FEES            fees_usd_blockscout = Blockscout's txnsFee (its chart's own words: "Sum of ETH spent on gas fees",
+#                   per UTC day — base + priority; NOT VERIFIED from its source whether the blob fee is inside or
+#                   outside it) x that day's price. DefiLlama's fees_usd (base + priority + BLOB fees, its adapter
 #                   fees/ethereum/index.ts read 2026-11-23) is the cross-check: on the 368 days both hold on the dumps
 #                   (2025-10-07..2026-10-12) Blockscout reads $207.30M against DefiLlama's $202.00M (+2.6%; the daily
 #                   gap's median is +0.6%).
