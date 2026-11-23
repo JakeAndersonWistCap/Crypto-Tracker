@@ -1419,29 +1419,60 @@ class DefiLlama:
             out.fail(SOURCE, name, f"{chain}:stablecoins: {e}", TIER)
 
     # ------------------------------------------------------------------ RWA category by chain
+    @staticmethod
+    def _daily_tvl(pts, before=None) -> dict:
+        """ONE VALUE PER UTC DAY from a /protocol chainTvls[...]['tvl'] list (R17, Jake 2026-11-23): DefiLlama's list
+        is one point per day at 00:00 UTC PLUS a last 'current' point stamped at the hour it was computed (read
+        2026-11-23: harvest-flow on Plume Mainnet 2026-11-22 00:00 514,217 and 2026-11-22 21:03 514,109). Summing every
+        point of a day counted that protocol twice on its last day (Plume's RWA figure read 1,503,373 against 989,156:
+        +52%). The day's value is its EARLIEST point (the 00:00 daily point; the current point only where the day has
+        no other); `before`: days on or after it are left out (today is not over)."""
+        first: dict = {}
+        for pt in pts or []:
+            try:
+                ts = int(pt["date"])
+                v = float(pt.get("totalLiquidityUSD") or 0.0)
+            except (KeyError, TypeError, ValueError):
+                continue
+            d = pd.Timestamp(ts, unit="s").normalize()
+            if before is not None and d >= before:
+                continue
+            if d not in first or ts < first[d][0]:
+                first[d] = (ts, v)
+        return {d: v for d, (_ts, v) in first.items()}
+
     def _build_rwa_by_chain(self, wanted: set[str]) -> pd.DataFrame:
-        protocols = self.http.get(f"{API}/protocols")
+        """Sum per chain and COMPLETE day of every RWA-category protocol's TVL on it. R17: one value per protocol and
+        day (_daily_tvl), today left out (the one-call sum of /protocols serves today), and a chain with a protocol that
+        could not be read is left out whole and named in self._rwa_unread (unknown is never 0)."""
+        protocols = getattr(self, "_protocols_read", None)     # the list rwa() read this run (one /protocols call)
+        if protocols is None:
+            protocols = self.http.get(f"{API}/protocols")
         rwa = [p for p in protocols if str(p.get("category", "")).lower() in ("rwa", "rwa lending")]
+        now = pd.Timestamp(self._today)
         frames = []
+        self._rwa_unread = {}
         for p in rwa:
-            if not (set(p.get("chains") or []) & wanted):
+            on = set(p.get("chains") or []) & wanted
+            if not on:
                 continue
             try:
                 j = self.http.get(f"{API}/protocol/{p['slug']}")
             except Exception as e:  # noqa: BLE001
                 log.warning("RWA protocol %s failed: %s", p["slug"], e)
+                for chain in on:
+                    self._rwa_unread.setdefault(chain, []).append(str(p["slug"]))
                 continue
             for chain, block in (j.get("chainTvls") or {}).items():
                 if chain not in wanted:
                     continue
-                pts = block.get("tvl") or []
-                if not pts:
+                daily = self._daily_tvl(block.get("tvl") or [], before=now)
+                if not daily:
                     continue
-                df = pd.DataFrame(pts)
-                df["date"] = pd.to_datetime(df["date"], unit="s").dt.normalize()
-                df = df.rename(columns={"totalLiquidityUSD": "value"})[["date", "value"]]
+                df = pd.DataFrame({"date": list(daily), "value": list(daily.values())})
                 df["chain"] = chain
                 frames.append(df)
+        frames = [f for f in frames if f["chain"].iloc[0] not in self._rwa_unread]
         if not frames:
             return pd.DataFrame(columns=["date", "chain", "value"])
         return pd.concat(frames).groupby(["chain", "date"], as_index=False)["value"].sum()
@@ -1508,12 +1539,10 @@ class DefiLlama:
             for ch, block in (j.get("chainTvls") or {}).items():
                 if "-" in ch or ch.lower() in self._NOT_CHAIN_TVL:
                     continue
-                for pt in block.get("tvl") or []:
-                    d = pd.Timestamp(int(pt["date"]), unit="s").normalize()
-                    if d < keep_from or d >= now:
-                        continue                      # older than the window, or today (not over)
+                for d, v in self._daily_tvl(block.get("tvl") or [], before=now).items():   # R17: one value a day
+                    if d < keep_from:
+                        continue                      # older than the window (today is left out by _daily_tvl)
                     k = str(d.date())
-                    v = float(pt.get("totalLiquidityUSD") or 0.0)
                     tot[k] = tot.get(k, 0.0) + v
                     if ch == spec["chain"]:
                         own[k] = own.get(k, 0.0) + v
@@ -1580,9 +1609,16 @@ class DefiLlama:
         from .base import catch_up_owed
         need_history = {c: n for c, n in wanted.items()
                         if not self._stored(n, "rwa_defillama_usd") or catch_up_owed(n, "rwa_defillama_usd")}
+        # R17: a chain whose rows of the routine window were stored by the history build while it summed a protocol's
+        # 'current' point onto its daily point (config.RWA_REREAD_ONCE) is rebuilt ONCE, so those days are restated
+        import config                                      # noqa: PLC0415
+        reread = {c: n for c, n in wanted.items() if n in getattr(config, "RWA_REREAD_ONCE", {})
+                  and self.daily.due(f"defillama:rwa:daily-points:{n}", "once")}
+        need_history.update(reread)
         today_rows = {}
         try:
             protocols = self.http.get(f"{API}/protocols")
+            self._protocols_read = protocols
             rwa = [q for q in protocols if str(q.get("category", "")).lower() in ("rwa", "rwa lending")]
             for chain in wanted:
                 on = [q for q in rwa if chain in (q.get("chains") or [])]
@@ -1591,9 +1627,10 @@ class DefiLlama:
             out.fail(SOURCE, None, f"RWA category (/protocols): {e}", TIER)
             return
         for chain, name in wanted.items():
-            if chain in need_history:
+            v, n = today_rows[chain]              # R17: today's one-call sum for EVERY chain (the history build stops
+            #                                       at yesterday: today is not over there)
+            if chain in need_history and not n:
                 continue
-            v, n = today_rows[chain]
             if not n:
                 out.add(None, SOURCE, name, f"{chain}: no RWA-category protocols on chain", TIER)
                 continue
@@ -1611,8 +1648,16 @@ class DefiLlama:
         except Exception as e:  # noqa: BLE001
             out.fail(SOURCE, None, f"RWA category: {e}", TIER)
             return
+        unread = getattr(self, "_rwa_unread", None) or {}
         for chain, name in wanted.items():
+            if chain in unread:
+                out.fail(SOURCE, name, f"{chain}: RWA category history — {', '.join(unread[chain][:6])} could not be "
+                                       f"read: the sum is incomplete, NOTHING STORED for the past days (the next run "
+                                       f"reads them again)", TIER)
+                continue
             sub = self._rwa_by_chain[self._rwa_by_chain["chain"] == chain]
+            if chain in reread and not sub.empty:
+                self.daily.done(f"defillama:rwa:daily-points:{name}", "once")
             if sub.empty:
                 out.add(None, SOURCE, name, f"{chain}: no RWA-category protocols on chain", TIER)
                 continue

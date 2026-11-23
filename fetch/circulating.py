@@ -80,6 +80,27 @@ def series(h: pd.DataFrame, name: str, rule: bool = True) -> pd.Series:
     return out[out >= 0]
 
 
+def rule_basis_difference(h: pd.DataFrame, name: str, cg: float, day) -> dict | None:
+    """R17: CoinGecko's circulating set against OUR RULE FIGURE less the wallets a project's rule declaration says
+    CoinGecko leaves out (config.RULE_IN[name]["references"]["coingecko"] = (figure, {wallet: tokens}), with
+    "reference_check": "declared"). {"ours_rule", "expected", "diff", "named"}, or None where no such declaration is
+    in force or our rule figure has no value on `day`. The amounts are the declaration's dated reads: when the wallets
+    move, the difference grows past the tolerance and the check is a review row again."""
+    rs = config.RULE_IN.get(name) or {}
+    ref = (rs.get("references") or {}).get("coingecko")
+    if rs.get("reference_check") != "declared" or not ref or not ref[1]:
+        return None
+    ours = series(h, name)
+    if ours.empty or day not in ours.index or cg <= 0:
+        return None
+    left = float(sum(ref[1].values()))
+    expected = float(ours.loc[day]) - left
+    if expected <= 0:
+        return None
+    return {"ours_rule": float(ours.loc[day]), "expected": expected, "diff": cg / expected - 1,
+            "named": "; ".join(f"{k} {v:,.0f}" for k, v in ref[1].items())}
+
+
 def check(out, h: pd.DataFrame, projects: list[dict]) -> None:
     """Latest on-chain (or first-party) circulating vs CoinGecko's, same day; beyond the
     tolerance, a Review Queue row with both figures and the exclusion set's status."""
@@ -193,6 +214,18 @@ def check(out, h: pd.DataFrame, projects: list[dict]) -> None:
                                     f"({static['who']}: {float(static['figure']):,.0f}; {static.get('why_static', '')}) "
                                     f"— ours {row['ours']:,.0f} ({diff:+.2%}) is judged by the bridge reconciliation",
                                     2))
+            continue
+        declared = rule_basis_difference(h, name, float(row["cg"]), day)
+        if abs(diff) > tol and declared and abs(declared["diff"]) <= tol:
+            # R17 (GEODNET): CoinGecko's figure is OUR RULE FIGURE less the wallets the project's declaration names
+            # (config.RULE_IN[...]["references"]["coingecko"]: wallets that can be moved, so the rule counts them) —
+            # a declared rule-basis difference, named by wallet: on the Run Log, not queued. The tolerance is the same;
+            # a CoinGecko figure that moves off that basis is reviewed again.
+            out.log.append(LogEntry(SOURCE, name, 0, "ok",
+                                    f"circulating vs CoinGecko on {day.date()}: CoinGecko {row['cg']:,.0f} = ours under "
+                                    f"the rule {declared['ours_rule']:,.0f} less the declared wallets it leaves out "
+                                    f"({declared['named']}) = {declared['expected']:,.0f} ({declared['diff']:+.2%}, "
+                                    f"within the ±{tol:.0%} tolerance) — a rule-basis difference, named by wallet", 2))
             continue
         if abs(diff) > tol:
             partial = f" The exclusion set is PARTIAL — {spec.get('missing')}, so ours reads high." \

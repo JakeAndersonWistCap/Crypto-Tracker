@@ -7781,7 +7781,9 @@ def geod_residual(days: int = 180):
             h = st.load_long()
         finally:
             st.close()
-        sr = circ_mod.series(h[h["project"] == "GEODNET"], "GEODNET")
+        # R17: the reconciliation is made on the wallet set the filing lists (the like-for-like figure, rule=False);
+        # under the rule those wallets are in circulating (geod_rule_read prints that figure)
+        sr = circ_mod.series(h[h["project"] == "GEODNET"], "GEODNET", rule=False)
         ours = (sr.index[-1], float(sr.iloc[-1])) if len(sr) else None
     except Exception as e:  # noqa: BLE001
         print(f"  (our on-chain set not read from metrics.db: {type(e).__name__}: {str(e)[:100]})")
@@ -15428,6 +15430,178 @@ def worldmobile_probe():
     return 0
 
 
+# ===== R17 (Jake 2026-11-23): GEODNET's wallets against the circulating rule; Plume's two week-on-week moves =====
+def _safe_state(addr: str, chain: str) -> str:
+    """Who can move a wallet, read from the chain: 'Safe <version>, <t>-of-<n> (owners …)', 'contract, not a Safe
+    (<n> bytes)', 'externally owned account (nonce <n>)' or 'UNREAD'."""
+    code = _raw_code(addr, chain)
+    if code is None:
+        return "UNREAD"
+    if len(code) <= 2:
+        n = None
+        for url in _rpcs_for(chain):
+            try:
+                n = int(rpc(url, "eth_getTransactionCount", [addr, "latest"])["result"], 16)
+                break
+            except Exception:  # noqa: BLE001
+                continue
+        return "externally owned account (one key" + (f"; nonce {n:,})" if n is not None else ")")
+    thr = _uint(addr, "0x" + _sel("getThreshold()"), chain)
+    own, _ = eth_call(addr, "0x" + _sel("getOwners()"), chain=chain)
+    if not thr or not own or len(own) < 130:
+        return f"contract, not a Safe ({(len(code) - 2) // 2} bytes)"
+    n = int(own[66:130], 16)
+    owners = ["0x" + own[130 + 64 * i + 24:130 + 64 * (i + 1)] for i in range(n)]
+    return f"Safe, {thr}-of-{n} (owners {', '.join(o[:10] + '…' for o in owners)})"
+
+
+def geod_rule_read():
+    """R17: every wallet GEODNET's circulating used to subtract, read live and set against the rule (out of circulating
+    only if unreleased AND nobody can move it AND it earns nothing), then CoinGecko's figure by wallet."""
+    import config                                          # noqa: PLC0415
+    import requests                                        # noqa: PLC0415
+    head("GEODNET — the wallets its circulating subtracted, against the rule; CoinGecko's gap by wallet (R17)")
+    rd = config.GEODNET_RULE_READ
+    total = _uint(GEOD_POLYGON, "0x" + _sel("totalSupply()"), "polygon")
+    dead = _bal(GEOD_POLYGON, "0x000000000000000000000000000000000000dEaD", "polygon")
+    if total is None or dead is None:
+        print("  UNREACHABLE — no Polygon RPC answered totalSupply() / balanceOf(dead).")
+        return 0
+    total, dead = total / 1e18, dead / 1e18
+    sol = None
+    try:
+        sol = float(rpc("https://api.mainnet-beta.solana.com", "getTokenAccountBalance",
+                        [GEODNET_SOL_BURN_ACCOUNT])["result"]["value"]["uiAmountString"])
+    except Exception as e:  # noqa: BLE001
+        print(f"  Solana burn account UNREAD — {str(e)[:120]}")
+    print(f"  total supply {total:,.2f}   burned: Polygon dead {dead:,.2f}" + (f" + Solana {sol:,.2f}" if sol is not None else ""))
+    legs = 0.0
+    bal = {}
+    for role, addr, was, _who, metric in rd["wallets"]:
+        b = _bal(GEOD_POLYGON, addr, "polygon")
+        b = None if b is None else b / 1e18
+        bal[role] = b
+        legs += b or 0.0
+        print(f"  {role:<20} {addr}  {('%15s' % f'{b:,.2f}') if b is not None else 'UNREAD':>15}  {_safe_state(addr, 'polygon')}"
+              f"  -> can be moved: IN circulating, off the float ({metric}; {was:,.2f} on {rd['read_on']})")
+    extra = "0x47c8ebecfa390a59b0e127c9178e936a4ada907d"
+    xb = _bal(GEOD_POLYGON, extra, "polygon")
+    xb = None if xb is None else xb / 1e18
+    print(f"  {'(not in our set)':<20} {extra}  {('%15s' % f'{xb:,.2f}') if xb is not None else 'UNREAD':>15}  {_safe_state(extra, 'polygon')}"
+          f"  -> CoinGecko leaves it out; INFERRED (funded by the Investor Safe), not wired")
+    if sol is None or None in bal.values():
+        print("  NOT COMPLETE — a read is missing; no figure is formed (unknown is never 0).")
+        return 0
+    rule = total - dead - sol
+    print(f"  circulating under the rule = total - burned = {rule:,.2f}   (the old basis, less the seven wallets: {rule - legs:,.2f})")
+    try:
+        j = requests.get("https://api.coingecko.com/api/v3/coins/geodnet",
+                         params={"localization": "false", "tickers": "false", "community_data": "false",
+                                 "developer_data": "false"}, headers={"User-Agent": "token-metrics-check/1.0"},
+                         timeout=30).json()["market_data"]
+        cg, cgt = float(j["circulating_supply"]), float(j["total_supply"])
+    except Exception as e:  # noqa: BLE001
+        print(f"  CoinGecko UNREAD — {str(e)[:120]} (retry in a minute: the free route throttles)")
+        return 0
+    named = (bal["Mining"] or 0.0) + (bal["Ecosystem"] or 0.0) + (xb or 0.0)
+    print(f"  CoinGecko: total {cgt:,.2f} (ours {rule:,.2f}: {cgt / rule - 1:+.4%}), circulating {cg:,.2f}")
+    print(f"  CoinGecko leaves out {cgt - cg:,.2f}; Mining + Ecosystem + {extra[:10]}… = {named:,.2f}; "
+          f"not named {cgt - cg - named:,.2f} ({abs(cgt - cg - named) / (rule - cg):.2%} of the gap)")
+    print(f"  ours under the rule vs CoinGecko: {rule / cg - 1:+.2%} — a rule-basis difference (three wallets that can be "
+          f"moved); the old basis vs CoinGecko: {(rule - legs) / cg - 1:+.2%}")
+    return 0
+
+
+def plume_rwa_points():
+    """R17: DefiLlama's RWA-category protocols on Plume — each /protocol TVL list's last points (a 00:00 daily point and
+    a 'current' point), and the day's sum read one value a protocol (fetch.llama._daily_tvl) beside every point summed."""
+    import config                                          # noqa: PLC0415
+    import pandas as pd                                    # noqa: PLC0415
+    import requests                                        # noqa: PLC0415
+    from fetch.llama import DefiLlama                      # noqa: PLC0415
+    head("Plume — rwa_defillama_usd: the last points of each RWA protocol, one value a day vs every point summed (R17)")
+    chain = config.PROJECT_BY_NAME["Plume"]["defillama_chain"]
+    hd = {"User-Agent": "token-metrics-check/1.0"}
+    try:
+        ps = requests.get("https://api.llama.fi/protocols", headers=hd, timeout=60).json()
+    except Exception as e:  # noqa: BLE001
+        print(f"  UNREACHABLE — {str(e)[:120]}")
+        return 0
+    rwa = [q for q in ps if str(q.get("category", "")).lower() in ("rwa", "rwa lending") and chain in (q.get("chains") or [])]
+    one, every = {}, {}
+    for q in rwa:
+        try:
+            pts = (requests.get(f"https://api.llama.fi/protocol/{q['slug']}", headers=hd, timeout=90).json()
+                   .get("chainTvls") or {}).get(chain, {}).get("tvl") or []
+        except Exception as e:  # noqa: BLE001
+            print(f"  {q['slug']}: UNREAD — {str(e)[:100]}: no sum is formed")
+            return 0
+        print(f"  {q['slug']:<22}" + "  ".join(f"{pd.Timestamp(int(p['date']), unit='s'):%m-%d %H:%M} {float(p['totalLiquidityUSD']):>10,.0f}"
+                                            for p in pts[-3:]))
+        for d, v in DefiLlama._daily_tvl(pts).items():
+            one[d] = one.get(d, 0.0) + v
+        for p in pts:
+            d = pd.Timestamp(int(p["date"]), unit="s").normalize()
+            every[d] = every.get(d, 0.0) + float(p["totalLiquidityUSD"])
+    for d in sorted(one)[-9:]:
+        flag = "" if abs(every[d] - one[d]) < 1 else f"   <- every point summed: {every[d]:,.0f} ({every[d] / one[d] - 1:+.0%})"
+        print(f"  {d.date()}  one value a protocol {one[d]:>12,.0f}{flag}")
+    print(f"  {len(rwa)} RWA-category protocol(s) on {chain}; today's row is the one-call /protocols sum "
+          f"{sum(float((q.get('chainTvls') or {}).get(chain) or 0) for q in rwa):,.0f}")
+    return 0
+
+
+def plume_payout_weeks(days: int = 24):
+    """R17: PLUME paid by the staking treasury (RewardDistributed, native) per UTC day through rpc.plume.org — an
+    independent read of emissions_claimed_tokens' events — and the last two complete weeks."""
+    import config                                          # noqa: PLC0415
+    import pandas as pd                                    # noqa: PLC0415
+    import requests                                        # noqa: PLC0415
+    head(f"Plume — emissions_claimed_tokens: the treasury's payouts by day, last {days} days, by RPC (R17)")
+    spec = config.PROJECT_BY_NAME["Plume"]["plume_staking"]
+    url, hd = spec["rpc"], {"User-Agent": "token-metrics-check/1.0", "Content-Type": "application/json"}
+
+    def call(m, p):
+        return requests.post(url, json={"jsonrpc": "2.0", "id": 1, "method": m, "params": p}, headers=hd, timeout=60).json()
+    try:
+        treasury = "0x" + call("eth_call", [{"to": spec["address"], "data": "0x" + _sel("getTreasury()")}, "latest"])["result"][-40:]
+        tip = int(call("eth_blockNumber", [])["result"], 16)
+        ts = lambda b: int(call("eth_getBlockByNumber", [hex(b), False])["result"]["timestamp"], 16)  # noqa: E731
+        rate = (ts(tip) - ts(tip - 2_000_000)) / 2_000_000
+    except Exception as e:  # noqa: BLE001
+        print(f"  UNREACHABLE — {str(e)[:120]}")
+        return 0
+    native = "0x" + spec["reward_token"][2:].lower().rjust(64, "0")
+    blk, span, by, n = tip - int(days * 86_400 / rate), 100_000, {}, {}
+    while blk <= tip:
+        hi = min(tip, blk + span - 1)
+        j = call("eth_getLogs", [{"address": treasury, "fromBlock": hex(blk), "toBlock": hex(hi),
+                                  "topics": [spec["payouts"]["topic0"], native]}])
+        if "result" not in j:
+            if span <= 1_000:
+                print(f"  stopped at block {blk:,}: {str(j.get('error'))[:120]} — NOT COMPLETE, no weekly figure")
+                return 0
+            span //= 2
+            continue
+        if j["result"]:
+            t0, t1 = ts(blk), ts(hi)
+            for x in j["result"]:
+                b = int(x["blockNumber"], 16)
+                d = str(pd.Timestamp(int(t0 + (t1 - t0) * (b - blk) / max(1, hi - blk)), unit="s").date())
+                by[d] = by.get(d, 0.0) + int(x["data"], 16) / 1e18
+                n[d] = n.get(d, 0) + 1
+        blk, span = hi + 1, min(100_000, span * 2)
+    for d in sorted(by):
+        print(f"  {d}  {by[d]:>12,.0f} PLUME  {n[d]:>4} payout(s)")
+    full = sorted(by)[1:-1]                                # the first and the last day are read in part
+    if len(full) >= 14:
+        w1, w0 = sum(by[d] for d in full[-7:]), sum(by[d] for d in full[-14:-7])
+        print(f"  treasury {treasury}: {full[-7]}..{full[-1]} {w1:,.0f} PLUME against {full[-14]}..{full[-8]} {w0:,.0f} "
+              f"({w1 / w0 - 1:+.0%}); days are dated by interpolating inside each block range (a payout near midnight "
+              f"can fall on the neighbouring day)")
+    return 0
+
+
 CHECKS = (
     sky_chainlog, sky, morpho_blue_api,
     sky_splitter, sky_splitter_params, sky_splitter_history,
@@ -15467,6 +15641,7 @@ CHECKS = (
     spot_checks,
     nearblocks_v3_parity,
     ethstore_check,
+    geod_rule_read, plume_rwa_points, plume_payout_weeks,
 )
 
 # The three that need a value off the command line. Kept beside the registry rather than folded

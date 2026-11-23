@@ -2917,6 +2917,12 @@ def circulating_input(name: str) -> dict:
     if spec.get("reference") == "bridge_reconciliation" and ours_m == "circulating_supply_onchain":
         # GEODNET (Jake's probes15, root A): the reconciliation is the judge; the static aggregator figure is its own
         # "N/A (recorded, stale)" row (in_circ_static)
+        rm = _rule_minus(name)
+        if rm:
+            # R17: the reconciliation recorded the figure on the wallet set the filing lists; under the rule those
+            # wallets are IN circulating, so it is judged like for like — ours less the stock the rule counts in
+            base = {**base, "what": base["what"] + _rule_what(name),
+                    "ours": {"py": "now_combo", "args": {"metrics": (ours_m,), "minus": rm}}}
         return {**base, "ref": {"formula": "bridge_reconciled", "args": {"key": spec.get("reconciliation_key", "")},
                                 "tol": 2.0,
                                 "note": "PASS needs both: the bridge custody backs the whole bridged supply and the "
