@@ -1131,15 +1131,15 @@ Funding: revenue (the default: the programme documented base)
 | Flow | Category | Series |
 |---|---|---|
 | into circulating | (a) security emissions | `emissions_tokens` |
-| into circulating | (b) supply-side incentives | `node_operator_payments_tokens` |
+| into circulating | (b) supply-side incentives | `node_operator_payments_tokens` + `node_operator_payments_safe_tokens` |
 | into circulating | (c) demand-side incentives | **NO SERIES** |
 | into circulating | (d) ecosystem / grant spend | **NO SERIES** |
 | into circulating | (e) unlocks | `unlock_release_tokens` |
-| into circulating | (f) named float outflow | **NO SERIES** |
+| into circulating | (f) named float outflow | `issuer_exchange_outflow_tokens` |
 | out of circulating | retirement (bought, burned + held) | `retired_buyback_tokens` |
 | out of circulating | burn (every burn) | **NO SERIES** |
 
-Basis: staking rewards (v0.2 pools, paid for securing feeds) are security; non-circulating wallet releases are unlocks (the 18.75M tranches stay in (e), Jake C23). (b) SUPPLY-SIDE INCENTIVE (R18, Jake 2026-11-24, decision 6 (a)): LINK from released supply paid through the Payment Abstraction contract 0x5680681E… to 63 recipients — labelled node operators, INFERRED — on the day it is paid, and taken out of (e) on the day its lump left the 33 wallets (FIFO, an attribution convention)
+Basis: staking rewards (v0.2 pools, paid for securing feeds) are security; non-circulating wallet releases are unlocks (the 18.75M tranches stay in (e), Jake C23). (b) SUPPLY-SIDE INCENTIVE (R18, Jake 2026-11-24, decision 6 (a)): LINK from released supply paid through the Payment Abstraction contract 0x5680681E… to 63 recipients — labelled node operators, INFERRED — on the day it is paid, and taken out of (e) on the day its lump left the 33 wallets (FIFO, an attribution convention). R20: (b) also holds the Safe 0x77dd1a9b…'s direct payments to the same recipients (1,351,928 LINK all time; its 730,964 to 532 other addresses stays in (e)). (f) NAMED FLOAT OUTFLOW: the LINK the 33 wallets send to the Binance-tagged deposit address, taken out of (e) on its day — total dilution unchanged
 
 **Value flow statement**
 
@@ -1195,7 +1195,7 @@ Funding: revenue (the default: the programme documented base)
 | into circulating | (e) unlocks | `insider_unlock_tokens` |
 | into circulating | (f) named float outflow | **NO SERIES** |
 | out of circulating | retirement (bought, burned + held) | **NO SERIES** |
-| out of circulating | burn (every burn) | **NO SERIES** |
+| out of circulating | burn (every burn) | `gross_burn_tokens` |
 
 Basis: checker and edge node rewards pay the compute / infrastructure SUPPLY side
 
@@ -1346,7 +1346,7 @@ Funding: none before 2025-12-27 (0 credited: before the fee switch executed on c
 | out of circulating | retirement (bought, burned + held) | `retired_buyback_tokens` |
 | out of circulating | burn (every burn) | **NO SERIES** |
 
-Basis: the Minter's gauge emissions pay LPs (supply side, b); the veAERO anti-dilution rebase (RewardsDistributor, emissions_tokens) is its own line — PROPOSED (c), paid to lockers of the token itself, not for securing anything, so not (a); filing-wallet releases are unlocks (e) (b) is counted AS IT ACCRUES from the v3 activation (gross_issuance_accrued_tokens, R16): the Minter's rate a day, not the claim batches it mints in
+Basis: the Minter's gauge emissions pay LPs (supply side, b); the veAERO anti-dilution rebase (RewardsDistributor, emissions_tokens) is its own line — PROPOSED (c), paid to lockers of the token itself, not for securing anything, so not (a); filing-wallet releases are unlocks (e) (b) is counted AS IT ACCRUES from the v3 activation (gross_issuance_accrued_tokens, R16): the Minter's rate a day, not the claim batches it mints in; R20: the Gauge Caps' unminted surplus is netted out of the accrual from its first stored day, so (b) counts what can mint, and a surplus governance spends counts on the day it mints
 
 **Value flow statement**
 
@@ -1500,7 +1500,7 @@ Funding: 2025-05-09..2025-11-03 treasury: April 2025 withdrawal-fee buyback (pai
 | Render | 2, 3, 4 | `circulating_supply` | CoinGecko first | burn | `gross_burn_tokens` | `gross_issuance_tokens` | `emissions_tokens` | — |
 | Bittensor | 2 | `circulating_supply` | CoinGecko first | none | `gross_burn_tokens` | `gross_issuance_tokens` | `emissions_tokens` | — |
 | OriginTrail | 2, 3 | `circulating_supply` | CoinGecko first | distribute | `gross_burn_tokens` | `gross_issuance_tokens` | `emissions_tokens` | — |
-| Aethir | 2, 4 | `circulating_supply_first_party` | on-chain first | none | `gross_burn_tokens` | `pool_release_tokens` | `emissions_tokens` | — |
+| Aethir | 2, 4 | `circulating_supply_first_party` | on-chain first | none | `gross_burn_tokens` | `pool_release_tokens` | `emissions_tokens` | `ath_vester_balance_tokens` |
 | Venice AI | 2, 3, 4 | `circulating_supply` | CoinGecko first | burn | `gross_burn_tokens` | `gross_issuance_tokens` | `emissions_tokens` | — |
 | Virtuals | 2 | `circulating_supply` | CoinGecko first | none | `gross_burn_tokens` | `gross_issuance_tokens` | `emissions_tokens` | — |
 | Maple | 3 | `circulating_supply_onchain` | on-chain first | treasury_inflow | `gross_burn_tokens` | `pool_release_tokens` | `emissions_tokens` | `treasury_holding_tokens_chain` + `noncirculating_holding_tokens` |

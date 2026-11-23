@@ -425,7 +425,7 @@ def test_the_one_float_on_the_dumps_is_the_issuer_free_figure(built):
     for name, want in FLOATS_20261013.items():
         assert rows[name][j] == pytest.approx(want, abs=1.0), name
     wb = openpyxl.load_workbook(built["audit"], data_only=True, read_only=True)
-    for tab, names in (("A1 Infrastructure", ("Chainlink", "Hyperliquid", "Ethereum")),
+    for tab, names in (("A1 Infrastructure", ("Hyperliquid", "Ethereum")),   # Chainlink left A1 (R20 tags)
                        ("A3 Revenue Buyback", ("Aerodrome", "Sky", "Pendle", "Chainlink"))):
         h, body = free_float._table(wb[tab])
         jj = next(i for i, x in enumerate(h) if x.startswith("FREE FLOAT (tokens)"))
