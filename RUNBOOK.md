@@ -548,7 +548,7 @@ others below as provisional.
 
 ```
 python -c "import config as c, reader_look as k; print(c.R17_MOVES_DECLARED, k.TAB_ORDER[:2], sorted(c.NOT_VERIFIED))"
-#   expect: the number of declared moves, ('Leaderboard', 'Highlights'), the projects with a "not verified" cell
+#   expect: 44, ('Leaderboard', 'Highlights'), the projects with a "not verified" cell
 python token_metrics.py --seed aero_buyback
 #   reads every buyback window day the store has missed (the 11-20 burn of 10,000,000 AERO among them)
 python archive_backfill.py --project Aerodrome --run
