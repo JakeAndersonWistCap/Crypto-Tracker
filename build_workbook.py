@@ -8477,6 +8477,7 @@ def aggregate(long: pd.DataFrame, fetch_status: pd.DataFrame, asof: pd.Timestamp
     _pendle_rate_check(groups)          # G9 N: each Pendle gauge chain's log scan against its sampled rates
     _revenue_from_fees_views(groups)    # G9 N: Plume's revenue = the fees its RewardDistributor receives
     _holder_value_views(groups)   # Phase 2: revenue-funded holder value, credited vs recorded (LITMUS A)
+    _revenue_to_holders_views(groups)   # R20: A3's numerator — credited holder value less the protocol-rule fee burn
     _gross_burn_day_priced_usd_views(groups, asof)    # PR1B.3: $ burn = each day's burn x that day's price, the holder-value basis
     _settlement_views(groups)
     _monthly_flow_views(groups)       # P2a D5b: complete-month flows from daily log scans (Maple's SSF Safe)
@@ -11537,8 +11538,10 @@ def _current_rate_cols(R: Refs) -> list[tuple]:
     ]
 
 
-A3_KEY_HEAD = ("BURNED ÷ (EMISSIONS + UNLOCKS) (x) = BURNED buyback ÷ (emissions + unlocks), per covered day, at the "
-               "emission rate IN FORCE — A3's rank key (P4-Q5a)")
+# R20 (Jake 2026-11-24): A3's rank key is REVENUE TO HOLDERS ÷ VALUE OF NEW SUPPLY (A3_KEY_HEAD, below). The burned
+# buyback ÷ (emissions + unlocks) figure, the key from P4-Q5a to Round 19, stays as an ordinary column.
+A3_BURNED_HEAD = ("BURNED ÷ (EMISSIONS + UNLOCKS) (x) = BURNED buyback ÷ (emissions + unlocks), per covered day, at the "
+                  "emission rate IN FORCE — a reference (A3's rank key until Round 20)")
 A3_NO_NEW_SUPPLY = "no new supply"           # the key's code where emissions + unlocks are a MEASURED 0 and burn > 0
 
 
@@ -11568,8 +11571,9 @@ def a3_key_legs(name: str) -> dict:
             "unlocks": ["unlock_release_tokens"] if config.has_unlock_leg(name) else []}
 
 
-def a3_key_note(p: dict) -> str:
-    """The comment opening A3's key cell (P4-Q5a): what this project's numerator and denominator are."""
+def a3_burned_note(p: dict) -> str:
+    """The comment opening the burned ÷ (emissions + unlocks) cell (P4-Q5a; the key until R20): its numerator and
+    denominator."""
     name = p["name"]
     if _retirement_zero(p):
         return ""
@@ -11586,14 +11590,14 @@ def a3_key_note(p: dict) -> str:
           "no unlock leg: no non-circulating wallet set is declared for this project (config.unlock_stock_metrics)")
     halt = config.buyback_halt_text(name)          # PR2.3: a halted programme's key is a measured 0, dated
     return (halt + "\n\n" if halt else "") + (
-            f"A3 KEY (P4-Q5a, Jake 2026-11-03): {burn} ÷ ({em}; {un}), each per covered day. A held buyback is not "
+            f"BURNED ÷ NEW SUPPLY (P4-Q5a, Jake 2026-11-03; A3's key until R20): {burn} ÷ ({em}; {un}), each per covered day. A held buyback is not "
             f"burned (P4-Q5b): it leaves the tradeable float while held instead. Emissions + unlocks a measured 0 with "
             f"a burn above 0 reads '{A3_NO_NEW_SUPPLY}' and ranks first."
             + (f" {option_c_text(name)}" if OPTION_C.get(name) else ""))
 
 
-def _a3_key_col(R: Refs, data_by_key: dict | None = None) -> tuple:
-    """A3'S RANK KEY (P4-Q5a, Jake 2026-11-03): BURNED buyback tokens per covered day ÷ (the tab's absorption emissions +
+def _a3_burned_col(R: Refs, data_by_key: dict | None = None) -> tuple:
+    """A3'S RANK KEY UNTIL ROUND 20, AN ORDINARY COLUMN SINCE (P4-Q5a, Jake 2026-11-03): BURNED buyback tokens per covered day ÷ (the tab's absorption emissions +
     unlock releases, each per covered day), for every A3 project — the emission rate IN FORCE in place of the series it
     replaces where one is declared (config.CURRENT_EMISSION_RATE: Sky). Only destination burn counts: a held buyback
     (Maple's SYRUP Strategic Fund, Sky's held share) or a distributed one is not in the numerator (P4-Q5b). It replaces
@@ -11622,16 +11626,128 @@ def _a3_key_col(R: Refs, data_by_key: dict | None = None) -> tuple:
         return _coverage_guard(R, r, legs, expr)
     # P2e-2: the key's own trajectory row (Q0 = this cell; Q-1..Q-4 the same builder shifted) — the reader's A3 tab
     # shows the key's last four quarters from it
+    return (A3_BURNED_HEAD, build, FMT_X, "calc", False,
+            {"metric": "buyback_burned_tokens", "trajectory_id": A3_BURNED_TRAJECTORY_ID,
+             "note_fn": lambda p: "\n\n".join(x for x in (a3_burned_note(p), lag_matched_note(p)) if x)})
+
+
+A3_BURNED_TRAJECTORY_ID = "a3_burned_vs_new_supply"
+
+# ---- R20: A3'S RANK KEY = revenue sent to holders ($) ÷ value of new supply ($), same window
+A3_KEY_HEAD = ("REVENUE TO HOLDERS ÷ NEW SUPPLY (x) = revenue sent to holders ($) ÷ value of new supply ($), same "
+               "window, per covered day — A3's rank key (R20)")
+A3_KEY_TRAJECTORY_ID = "a3_revenue_vs_new_supply"
+A3_KEY_METRIC = "revenue_to_holders_usd"
+
+
+def _revenue_to_holders_views(groups: dict) -> None:
+    """R20 (Jake 2026-11-24) — A3's numerator, $ per day: revenue_to_holders_usd = the CREDITED holder value
+    (holder_value_revenue_usd: each day's market buyback $ where its programme was revenue-funded that day, however
+    the tokens end up — burned, held or distributed — plus the declared payouts of revenue to stakers, in any token)
+    LESS the protocol-rule fee burn credited inside it (config.HOLDER_VALUE burn_credited: Near's gas burn, Ethereum's
+    base-fee burn). A burn built into the protocol is A4's, not a programme turning revenue into token demand. The fee
+    burn is taken out exactly as _holder_value_views put it in (the same tokens x the same day's price x the same
+    share, on the same days). Treasury- or emissions-funded buybacks were never credited (holder_value_other_usd).
+    A day holder value does not hold is not in the series: unknown is never 0."""
+    for p in scoped_projects():
+        name = p["name"]
+        g = groups.get((name, "holder_value_revenue_usd"))
+        bc = (config.HOLDER_VALUE.get(name) or {}).get("burn_credited") or {}
+        # only where a fee burn is credited inside holder value: everywhere else the key reads holder value itself
+        # (a3_key_numerator), so every declaration made on that series (monthly windows, declared zeros, cadence)
+        # holds for the key as it does for NET HOLDER YIELD
+        if g is None or g.empty or not bc:
+            continue
+        hv = _daily(g)
+        src = "derived:revenue_to_holders[= holder_value_revenue_usd]"
+        if bc:
+            tok, px = _daily(groups.get((name, bc["metric"]))), _daily(groups.get((name, "price_usd")))
+            burn = (tok * px.reindex(tok.index)).dropna() * float(bc.get("share_of_revenue", 1.0))
+            if bc.get("with_buyback"):
+                act = (pd.Series(dtype=float) if config.buyback_route(name)["route"] == "none" else _daily(groups.get(
+                    (name, "actual_buyback_usd_wallet" if (name, "actual_buyback_usd_wallet") in groups
+                     else "actual_buyback_usd"))))
+                if not act.empty:
+                    burn = burn[burn.index <= act.index.max()]
+            hv = (hv - burn.reindex(hv.index).fillna(0.0)).clip(lower=0.0)
+            src = f"derived:revenue_to_holders[holder_value_revenue_usd - fee burn ({bc['metric']} x price)]"
+        groups[(name, A3_KEY_METRIC)] = _as_stored(pd.DataFrame(
+            {"date": hv.index, "project": name, "metric": A3_KEY_METRIC, "value": hv.values, "tier": 2,
+             "source": src}), g.columns)
+
+
+def a3_key_numerator(name: str) -> str:
+    """The series A3's key reads as REVENUE SENT TO HOLDERS: the credited holder value (holder_value_revenue_usd —
+    revenue-funded market buybacks burned, held or distributed + revenue paid to stakers in any token), or, where a
+    protocol-rule fee burn is credited inside it (HOLDER_VALUE burn_credited: Near, Ethereum), that figure less the
+    burn (revenue_to_holders_usd, _revenue_to_holders_views)."""
+    return A3_KEY_METRIC if (config.HOLDER_VALUE.get(name) or {}).get("burn_credited") else "holder_value_revenue_usd"
+
+
+def a3_key_cats(p: dict) -> list:
+    """The new-supply categories A3's key divides by: the total-dilution outflows NET HOLDER YIELD subtracts
+    (_cp_cats: a..f, each in $ at each day's price)."""
+    return _cp_cats(p)
+
+
+def a3_key_note(p: dict) -> str:
+    """R20: the comment opening A3's key cell — its numerator and denominator (the burned column: a3_burned_note)."""
+    name = p["name"]
+    st = config.archetype_status(name, 3)
+    halt = config.buyback_halt_text(name)          # PR2.3: a halted programme's 0 is a measured 0, dated
+    if st:
+        return (halt + "\n\n" if halt else "") + (
+                f"A3 KEY (R20, Jake 2026-11-24): 0 — {st}: {config.ARCHETYPE_STATUS_WHY.get((name, 3), st)}. A "
+                f"programme labelled '{st}' reads 0 with the label (config.ARCHETYPE_STATUS).")
+    cats = a3_key_cats(p)
+    bc = (config.HOLDER_VALUE.get(name) or {}).get("burn_credited")
+    return ("A3 KEY (R20, Jake 2026-11-24): revenue sent to holders ($) ÷ value of new supply ($), the same window, "
+            f"each per covered day. Numerator {a3_key_numerator(name)} = revenue-funded market buybacks however the tokens "
+            "end up (burned, held or distributed) + revenue paid directly to stakers, in any token"
+            + (f", less the protocol-rule fee burn ({bc['metric']} x price — A4's)" if bc else "")
+            + "; a treasury- or emissions-funded buyback is recorded, not counted. Denominator = the total-dilution "
+            "outflows at each day's price: " + (" + ".join(f"({c}) outflow_{c}_usd" for c in cats) or "none declared")
+            + f" — the series NET HOLDER YIELD subtracts. New supply a measured 0 with revenue to holders above 0 reads "
+            f"'{A3_NO_NEW_SUPPLY}' and ranks first. Staking yield paid from emissions is in the denominator and not in "
+            f"the numerator (it nets out).")
+
+
+def _a3_key_col(R: Refs, data_by_key: dict | None = None) -> tuple:
+    """A3'S RANK KEY (R20, Jake 2026-11-24): revenue sent to holders ($) ÷ value of new supply ($), the same window
+    (Q0), each per covered day, for every A3 project. Numerator: a3_key_numerator — the credited holder value, less
+    the protocol-rule fee burn where one is credited inside it (revenue_to_holders_usd, _revenue_to_holders_views).
+    Denominator: the $ outflows (a..f) NET HOLDER YIELD subtracts (outflow_<c>_usd: tokens x that day's price;
+    _cp_cats — a declared publish lag matched, R5.3). A leg not measured over the window is unknown, never 0: the
+    coverage guard blocks it. New supply a MEASURED 0 with revenue to holders above 0 reads 'no new supply' (ranked
+    first); 0 ÷ 0 is n/a. A programme labelled paused / off (config.ARCHETYPE_STATUS) reads 0 with the label. The
+    trajectory row re-runs this builder k quarters back, so its latest quarter is the key."""
+    def build(r, p):
+        name = p["name"]
+        # the label is today's: the key reads 0 with it. An earlier quarter (the trajectory re-runs this builder k
+        # quarters back) keeps what was measured then — a programme paused in May still paid in March
+        if config.archetype_status(name, 3) and not _SHIFT["k"]:
+            return "=0"
+        nm = a3_key_numerator(name)
+        if nm not in config.metrics_for_project(p):
+            return "n/a — no revenue-to-holders series: no buyback programme and no declared payout to holders"
+        cats = a3_key_cats(p)
+        if not cats:
+            return "n/a — no new-supply series to divide by (no outflow category a..f is declared)"
+        om = lambda c: lag_matched(p, f"outflow_{c}_usd")  # noqa: E731
+        num = _flow_rate(R, r, nm)
+        den = "+".join(_flow_rate(R, r, om(c)) for c in cats)
+        expr = (f'IF(({den})=0,IF(({num})>0,"{A3_NO_NEW_SUPPLY}","n/a — 0 to holders over 0 new supply (0 ÷ 0)"),'
+                f"({num})/({den}))")
+        legs = [("revenue to holders", nm, "q0")] + [(f"outflow {c}", om(c), "q0") for c in cats]
+        return _coverage_guard(R, r, legs, expr,
+                               as_published=tuple(om(c) for c in as_published_cats(p) if c in cats))
     return (A3_KEY_HEAD, build, FMT_X, "calc", False,
-            {"metric": "buyback_burned_tokens", "trajectory_id": A3_KEY_TRAJECTORY_ID,
+            {"metric_fn": a3_key_numerator, "trajectory_id": A3_KEY_TRAJECTORY_ID,
              "note_fn": lambda p: "\n\n".join(x for x in (a3_key_note(p), lag_matched_note(p)) if x)})
 
 
-A3_KEY_TRAJECTORY_ID = "a3_burned_vs_new_supply"
-
-
 EXTRA_SNAPSHOT_HEADERS = (UNLOCK_HEAD, UNLOCK_PCT_HEAD, TOTAL_DILUTION_HEAD, NET_ABS_UNLOCK_HEAD, RETIRE_VS_DILUTION_HEAD,
-                          CURRENT_RATE_HEAD, RETIRE_VS_DILUTION_NOW_HEAD, A3_KEY_HEAD)
+                          CURRENT_RATE_HEAD, RETIRE_VS_DILUTION_NOW_HEAD, A3_BURNED_HEAD, A3_KEY_HEAD)
 
 
 def _published_unlock_column() -> tuple:
@@ -12812,11 +12928,34 @@ def _settlement_short_why(groups: dict, p: dict) -> str:
                 "settlement volume and overstate the ratio; re-export the full history")
     leg = groups.get((p["name"], rb["p2p_metric"]))
     first = pd.to_datetime(leg["date"]).min().date() if leg is not None and not leg.empty else None
-    return ("the settlement REBUILD (" + rb["dex_metric"] + " + " + rb["p2p_metric"]
+    # R20: the history marker FIRST — a cell's text is cut at 240 characters, and the marker must survive the cut
+    return (_settlement_history_marker(groups, p) + "the settlement REBUILD (" + rb["dex_metric"] + " + " + rb["p2p_metric"]
             + (f", P2P from {({'bigquery': 'BigQuery'}).get(rb.get('engine'), rb.get('engine') or 'its source')} from "
                f"{first}" if first else "")
             + ") holds {have} of the {n} days ending {last} — a 365-day sum needs every day; it forms once the P2P leg "
               "has a year behind it")
+
+
+def _settlement_history_marker(groups: dict, p: dict) -> str:
+    """R20 ("history filling", docs/r19_history_filling.md): the day the 365-day settlement sum first forms, as the
+    reader's history marker — the daily settlement series held without a hole from r0 forms its sum on r0 + 364. Said
+    only while the series is still read (reader._settlement_forms_on's own rule: its last day within
+    SETTLEMENT_LIVE_DAYS of the price series' last day); '' otherwise — a stopped series gets no date."""
+    import reader                                          # noqa: PLC0415
+    g = groups.get((p["name"], config.ARTEMIS_SETTLEMENT["metric"]))
+    px = _daily(groups.get((p["name"], "price_usd")))
+    if g is None or g.empty or px.empty:
+        return ""
+    days = _daily(g).index.sort_values()
+    if (px.index.max() - days[-1]).days > reader.SETTLEMENT_LIVE_DAYS:
+        return ""
+    r0 = days[-1]
+    for prev in reversed(days[:-1]):
+        if (r0 - prev).days != 1:
+            break
+        r0 = prev
+    forms = r0 + pd.Timedelta(days=364)
+    return reader.history_marker(365, days[-1], forms) + " "
 
 
 SETTLEMENT_VALIDATION: dict = {}    # project -> the last build's rebuild-vs-CSV validation (G7 item 8)
@@ -15295,7 +15434,7 @@ def _issuance_usd_col(R: Refs) -> tuple:
 
 def write_a4(ws, R: Refs, data_by_key: dict):
     projects = [p for p in scoped_projects() if 4 in p["archetypes"]]
-    _title(ws, "A4 — Permanent Burn", "Gross burn, gross issuance and ISSUANCE − BURN side by side (burn only where nothing is minted; the net supply change, the change in circulating supply, is on Master). Where the protocol publishes net mint itself "
+    _title(ws, "A4 — Permanent burn", "A4 (Jake 2026-11-24): any permanent destruction, built into the protocol or discretionary, scored on what is actually burned. Gross burn, gross issuance and ISSUANCE − BURN side by side (burn only where nothing is minted; the net supply change, the change in circulating supply, is on Master). Where the protocol publishes net mint itself "
                                        "that SELF-REPORTED figure is used and the derived one is shown beside it for comparison; a gap between them means one is wrong. "
                                        "Otherwise net = issuance − burn (positive = net inflation). "
                                        "Q0 = trailing comparison window; $ figures (burn, issuance, issuance − burn) at each day's price: each day's tokens × that day's price, the holder-value basis (PR1B.3); a day without a price is left out and named. Implied burn = the burn base (protocol revenue where declared, else fees) × documented share ÷ each day's price (suppressed when unconfirmed). "
@@ -15420,7 +15559,7 @@ def write_a4(ws, R: Refs, data_by_key: dict):
 
 def write_a3(ws, R: Refs, data_by_key: dict):
     projects = [p for p in scoped_projects() if 3 in p["archetypes"]]
-    _title(ws, "A3 — Revenue Buyback", "Pipeline: revenue (DefiLlama) × documented split (config) = implied buyback $ ÷ 90d AVERAGE price = implied tokens ÷ circulating supply, annualised = buyback as % of supply. "
+    _title(ws, "A3 — Revenue to holders", "A3 (Jake 2026-11-24): a documented programme turning protocol revenue into token demand — market buybacks however the tokens end up (burned, held or distributed), plus revenue paid directly to stakers, including in other tokens. Rank key: revenue sent to holders ($) ÷ value of new supply ($), same window. Pipeline: revenue (DefiLlama) × documented split (config) = implied buyback $ ÷ 90d AVERAGE price = implied tokens ÷ circulating supply, annualised = buyback as % of supply. "
                                         "Actual buyback shown alongside; the gap is itself a signal. Yield destination is tracked separately from burn and never netted against it. "
                                         "Grey = split unconfirmed (derived figure suppressed), OR split confirmed but its BASE unconfirmed (hover for which). Orange status = paused.")
     ann = ANN
@@ -15520,7 +15659,8 @@ def write_a3(ws, R: Refs, data_by_key: dict):
         *_unlock_cols(R, absorption=True),
         _retire_vs_dilution_col(R),
         *_current_rate_cols(R),
-        _a3_key_col(R, data_by_key),
+        _a3_burned_col(R, data_by_key),
+        _a3_key_col(R, data_by_key),     # R20: revenue to holders ÷ value of new supply — the rank key
         _buying_pressure_col(R),
         # ===== DOCUMENTED ALLOCATION LEGS, ONE ROW EACH, NEVER COLLAPSED. =====
         # Blank for every project that declares none, which is all of them but Sky. The legs
@@ -15659,7 +15799,7 @@ def write_a3(ws, R: Refs, data_by_key: dict):
 
 def write_a1(ws, R: Refs, data_by_key: dict, months: list[str]):
     projects = [p for p in scoped_projects() if 1 in p["archetypes"]]
-    _title(ws, "A1 — Infrastructure", "Demand: transactions, fees, fee per tx, active addresses (low weight), stablecoin supply, TVL (primary), RWA on chain (both sources, divergence shown). "
+    _title(ws, "A1 — Infrastructure", "A1 (Jake 2026-11-24): the token is the native asset of a chain (gas, security). Demand: transactions, fees, fee per tx, active addresses (low weight), stablecoin supply, TVL (primary), RWA on chain (both sources, divergence shown). "
                                        "Supply: gross issuance, staking rate, float, net issuance after burn where an A4 block applies. Key ratio: fees ÷ issuance ($, each day's issuance × that day's price — PR1B.3).")
     ann = ANN
     price = lambda r, w="q0": R.D(r, "price_usd", w)  # noqa: E731
@@ -15748,7 +15888,7 @@ def write_a1(ws, R: Refs, data_by_key: dict, months: list[str]):
 
 def write_a2(ws, R: Refs, data_by_key: dict, months: list[str]):
     projects = [p for p in scoped_projects() if 2 in p["archetypes"]]
-    _title(ws, "A2 — Coordination Mechanism", "Demand: physical/resource supply units, utilisation, end-user revenue ($). Supply: emissions to suppliers; split between supplier earnings from emissions vs actual customer payment. "
+    _title(ws, "A2 — Coordination", "A2 (Jake 2026-11-24): the token pays the suppliers of a real-world resource and customers pay for the service. Its key, customer revenue ÷ emissions, is NETWORK ECONOMICS, not holder value. Demand: physical/resource supply units, utilisation, end-user revenue ($). Supply: emissions to suppliers; split between supplier earnings from emissions vs actual customer payment. "
                                                "Key ratio: customer revenue per unit of emission, tracked over time; every emissions $ is each day's emissions × that day's price (PR1B.3). Most inputs come from Dune queries or manual overrides — see Data flags.")
     price = lambda r, w="q0": R.D(r, "price_usd", w)  # noqa: E731
     rev = lambda r, w="q0": R.D(r, "customer_revenue_usd", w)  # noqa: E731

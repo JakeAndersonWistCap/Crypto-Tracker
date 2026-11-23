@@ -70,7 +70,7 @@ CONVENTIONS = [
 ENTRIES = {
     # ------------------------------------------------------------------ Master
     "Archetypes (primary first)": dict(
-        what="The project's archetypes (1 infrastructure, 2 coordination, 3 revenue buyback, 4 permanent burn), "
+        what="The project's archetypes (1 infrastructure, 2 coordination, 3 revenue to holders, 4 permanent burn), "
              "primary first.", formula="config archetypes", window="—", unit="text"),
     "Held": dict(what="Archetypes the project also fits but which are NOT enabled for it (config archetypes_held).",
                  formula="config archetypes_held", window="—", unit="text"),
@@ -468,9 +468,26 @@ ENTRIES = {
                 "covered day)", window="Q0 / now", unit="x",
         inputs=["retired_buyback_tokens", "emissions_rate_current_annual_tokens", "unlock_release_tokens"],
         decided=[(J, "2026-10-12", "decision 2 on 6f8c86c")]),
+    "REVENUE TO HOLDERS ÷ NEW SUPPLY (x)": dict(
+        what="A3's rank key (R20): revenue sent to holders ($) against the $ value of new supply over the same "
+             "window; 1.0 is the crossover. Revenue-funded market buybacks however the tokens end up (burned, held or "
+             "distributed) plus revenue paid directly to stakers, in any token. A treasury- or emissions-funded "
+             "buyback and a protocol-rule fee burn (A4) are not in it.",
+        formula="holder_value_revenue_usd (the credited holder value; where a protocol-rule fee burn is credited "
+                "inside it — Near, Ethereum — revenue_to_holders_usd, the same less that burn) per covered day ÷ "
+                "(outflow_a_usd + … + outflow_f_usd, the categories the "
+                "project declares, each per covered day — tokens x that day's price, the series NET HOLDER YIELD "
+                "subtracts); new supply a measured 0 with revenue to holders above 0 reads 'no new supply' and ranks "
+                "first; 0 ÷ 0 is n/a; a programme labelled paused / off (config.ARCHETYPE_STATUS) reads 0 with the "
+                "label; BLOCKED where a side covers under a week or the sides' spans differ",
+        window="Q0", unit="x",
+        inputs=["holder_value_revenue_usd", "revenue_to_holders_usd", "outflow_a_usd", "outflow_b_usd", "outflow_c_usd", "outflow_d_usd",
+                "outflow_e_usd", "outflow_f_usd"],
+        decided=[(J, "2026-11-24", "Round 20, part 1: A3 Revenue to holders")]),
     "BURNED ÷ (EMISSIONS + UNLOCKS) (x)": dict(
-        what="A3's rank key: the BURNED buyback against new supply (emissions + unlocks), at the emission rate in "
-             "force; 1.0 is the crossover. A held or distributed buyback is not burned and is not counted.",
+        what="The BURNED buyback against new supply (emissions + unlocks), at the emission rate in "
+             "force; 1.0 is the crossover. A held or distributed buyback is not burned and is not counted. A3's rank "
+             "key until Round 20; an ordinary column since.",
         formula="buyback_burned_tokens per covered day ÷ (the tab's absorption emissions, with the declared rate in "
                 "force ÷ 365 in place of the leg it replaces — Sky; none where emissions are 0 by declaration — + "
                 "unlock_release_tokens where the project has a non-circulating wallet set, each per covered day); "

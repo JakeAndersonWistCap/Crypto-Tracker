@@ -3267,11 +3267,6 @@
    "CP | TRADEABLE FLOAT = circulating \u2212 staked/locked \u2212 protocol/treasury-held (tokens) \u2014 protocol/treasury-held is already out of circulating by the convention, so this is A2's free float": 22259833682.57
   },
   "Chainlink": {
-   "A1 | Gross issuance Q0 (tokens)": 0.0,
-   "A1 | NET ISSUANCE AFTER BURN Q0 (tokens) \u2014 issuance \u2212 every burn, on the basis A4 uses": 0.0,
-   "A1 | NET ISSUANCE AFTER BURN, annualised % of circulating (+ is net inflation; fee-market burns included)": 0.0,
-   "A1 | TOTAL YIELD \u2014 stakers = validator staking yield \u2212 net inflation \u2212 issuer releases (annual; rewards and foundation releases paid from issuer reserves count)": -0.05497477705226458,
-   "A1 | VALIDATOR STAKING YIELD (annual) \u2014 securing the chain, NOT a protocol revenue share": 0.04765737890131668,
    "A2 | CUSTOMER REVENUE PER TOKEN EMITTED ($/token) \u2014 key ratio": 30.84371647666539,
    "A2 | Customer revenue Q0 ($)": 15229630.05090114,
    "A2 | Customer revenue \u00f7 emissions value (x)": 2.822604670501565,
@@ -3366,13 +3361,6 @@
    "CP | TRADEABLE FLOAT = circulating \u2212 staked/locked \u2212 protocol/treasury-held (tokens) \u2014 protocol/treasury-held is already out of circulating by the convention, so this is A2's free float": 513407599.8067304
   },
   "Hyperliquid": {
-   "A4 | PERMANENT BURN YIELD = burn as % of supply (annualised, tokens)": 0.03199928463836751,
-   "A4 | BURN \u00f7 ISSUANCE (x) \u2014 crossover, on the basis to the left": 0.2970395919788353,
-   "A4 | ISSUANCE \u2212 BURN Q0 (tokens) \u2014 self-reported net mint where published, else issuance \u2212 burn, on the basis to the left (the cell says 'burn only' where nothing is minted)": -2444209.355202819,
-   "A4 | ISSUANCE \u2212 BURN, annualised % of circulating (signed; + is net inflation; the cell says 'burn only' where nothing is minted)": -0.03285880843451706,
-   "A4 | GROSS BURN Q0 (tokens)": 2380273.497402166,
-   "A4 | GROSS ISSUANCE Q0 (tokens)": 0.0,
-   "A4 | Pool release Q0 (tokens) \u2014 measured, premint distribution (where issuance is n/a)": 3837217.867433574,
    "A3 | CIRCULATING RETIREMENT RATE (tokens) = RETIRED buyback tokens (burned + held, annualised) \u00f7 circulating \u2014 primary": 0.03199928463836751,
    "A3 | FDV RETIREMENT RATE (tokens) = RETIRED buyback tokens (burned + held, annualised) \u00f7 FDV supply (the total supply FDV uses) \u2014 always read with the rate to its left": 0.01015558922095818,
    "A3 | BUYBACK AS % OF SUPPLY (annualised, implied)": 0.03242036487012703,
@@ -3406,11 +3394,6 @@
    "CP | TRADEABLE FLOAT = circulating \u2212 staked/locked \u2212 protocol/treasury-held (tokens) \u2014 protocol/treasury-held is already out of circulating by the convention, so this is A2's free float": 1099133150.5063858
   },
   "Morpho": {
-   "A2 | Customer revenue Q0 ($)": 55126707.58,
-   "A2 | Emissions to suppliers Q0 (tokens)": 28.0,
-   "A2 | FREE FLOAT = circulating \u2212 locked (tokens)": 547252376.9371623,
-   "A2 | FREE FLOAT \u00f7 ARR (x) = free float market cap \u00f7 ARR (the project's own where published, else customer revenue annualised) \u2014 headline": 5.779730477668299,
-   "A2 | SUPPLY TRAJECTORY = emissions (annualised) \u00f7 free float \u2014 annual dilution %": 2.667873291243179e-06,
    "CP | BUSINESS 1 \u2014 core usage (a stock: now; a flow: Q0 annualised over its covered days)": 5781889549.0,
    "CP | BUSINESS 2 \u2014 core usage (a stock: now; a flow: Q0 annualised over its covered days)": 6288795503.964233,
    "CP | BUSINESS 3 \u2014 core usage (a stock: now; a flow: Q0 annualised over its covered days)": 1.0,

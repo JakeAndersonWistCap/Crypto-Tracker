@@ -155,11 +155,11 @@ GLOBALS = {
     "default_change_threshold_pct": 50,   # period-on-period move that sends a value to the Review Queue
 }
 
-ARCHETYPE_NAMES = {
+ARCHETYPE_NAMES = {      # R20 (Jake 2026-11-24): the definitions are ARCHETYPE_DEFINITIONS, at the end of this file
     1: "Infrastructure",
-    2: "Coordination Mechanism",
-    3: "Revenue Buyback",
-    4: "Permanent Burn",
+    2: "Coordination",
+    3: "Revenue to holders",
+    4: "Permanent burn",
 }
 
 # =======================================================================================
@@ -21039,7 +21039,11 @@ def metrics_for_project(project: dict) -> list[str]:
     THE BAR IS "CANNOT EXIST", NOT "HAVE NOT SOURCED IT YET". A metric nobody has got round to is
     a gap and must stay one. This is only for a figure the protocol's design rules out.
     """
-    arch = set(project["archetypes"])
+    # R20 (Jake 2026-11-24): a RE-TAG MOVES NO SERIES. The tags say where a project is shown and ranked; which series
+    # are asked of it stays what it was (metric_archetypes = its tags before Round 20), so a re-tag never drops a
+    # measured series and never opens a gap for one nobody has wired. A new tab's own series are wired per project,
+    # as their own decision (extra_metrics, or a declared metric of the tab).
+    arch = set(project.get("metric_archetypes") or project["archetypes"])
     na = project.get("not_applicable") or {}
     chain = is_chain(project)
     out = []
@@ -48836,3 +48840,141 @@ FLOW_TOKEN_MEMO["Chainlink"] = (
      "Deposit Address') and on to 0x28C6c062… ('Binance: Hot Wallet'); labels are evidence, not proof "
      "(config.THEATRE_FLAG); in circulating before and after — an issuer-held -> float move, not in the expected "
      "closing; it stays inside unlocks (e)"),)
+
+
+# =====================================================================================================================
+# ROUND 20 — ARCHETYPES (Jake 2026-11-24). ARCH lane. Jake's definitions replace the old ones everywhere.
+# Classify each project by HOW VALUE REACHES THE TOKEN TODAY, from primary sources. Primary = the biggest route (the
+# first tag). A secondary tag needs a documented mechanism that is live, or paused with stated intent to restart. A
+# token can sit in several archetypes.
+# =====================================================================================================================
+ARCHETYPE_NAMES = {1: "Infrastructure", 2: "Coordination", 3: "Revenue to holders", 4: "Permanent burn"}
+ARCHETYPE_DEFINITIONS = {
+    1: {"name": "A1 Infrastructure",
+        "what": "the token is the native asset of a chain (gas, security)",
+        "key": "settlement per token, 1-year change",
+        "key_reads": "holder value"},
+    2: {"name": "A2 Coordination",
+        "what": "the token pays the suppliers of a real-world resource (hardware, compute, data, bandwidth) and "
+                "customers pay for the service",
+        "key": "customer revenue ÷ emissions",
+        "key_reads": "network economics, not holder value"},
+    3: {"name": "A3 Revenue to holders",
+        "what": "a documented programme turning protocol revenue into token demand — market buybacks however the "
+                "tokens end up (burned, held or distributed), plus revenue paid directly to stakers, including in "
+                "other tokens",
+        "key": "revenue sent to holders ($) ÷ value of new supply ($), same window",
+        "key_reads": "holder value"},
+    4: {"name": "A4 Permanent burn",
+        "what": "any permanent destruction, built into the protocol or discretionary, scored on what is actually "
+                "burned",
+        "key": "burn ÷ issuance",
+        "key_reads": "holder value"},
+}
+ARCHETYPE_RULES = (
+    "Classify each project by how value reaches the token today, from primary sources. Primary = the biggest route. A "
+    "secondary tag needs a documented mechanism that is live, or paused with stated intent to restart. A token can sit "
+    "in several archetypes.",
+    "Staking yield paid from emissions counts as value to stakers AND as emissions, so it nets out. It does not "
+    "qualify a project for A3 on its own.",
+    "The settled supply rule is unchanged: only burned tokens are retired from supply. That is a supply rule; it is "
+    "not A3's key.",
+)
+A2_KEY_LABEL = "network economics, not holder value"
+# the tags, primary first (Jake's list). A project not named here keeps its tags.
+ARCHETYPES_R20 = {
+    "Ethereum": [1, 4], "Near": [1, 3, 4], "Chainlink": [2, 3], "Aethir": [2, 4], "GEODNET": [2, 3, 4],
+    "Hyperliquid": [3, 1], "Sky": [3, 4], "Aerodrome": [3, 4], "Pendle": [3], "Maple": [3], "Fluid": [3],
+    "Ether.fi": [3], "Uniswap": [4, 3], "Morpho": [3],
+}
+ARCHETYPES_NO_CHANGE_R20 = {"Plume": "on hold, no change", "World Mobile": "parked"}
+# a tag Jake switched off (kept on record, not a tag): Chainlink's A1
+ARCHETYPE_OFF = {"Chainlink": {1: "off (Jake 2026-11-24: Chainlink A2, A3 — A1 off)"}}
+# THE TWO CONDITIONAL TAGS — OFF until the research gives clear primary-source evidence; the lead flips "on".
+CONDITIONAL_ARCHETYPES = {
+    "Aethir": {"tag": 3, "on": False,
+               "needs": "primary-source evidence that at least one ATH staking pool is paid from fees (customer "
+                        "revenue), not from emissions",
+               "why_off": "not established at the time of writing: staking yield paid from emissions does not "
+                          "qualify a project for A3 on its own"},
+    "Hyperliquid": {"tag": 4, "on": False,
+                    "needs": "primary-source evidence that the Assistance Fund's HYPE can never be moved (a burn in "
+                             "fact, not a held buyback)",
+                    "why_off": "not established at the time of writing: a held buyback is not a permanent burn"},
+}
+# A STATUS LABEL beside the key and the rank: the key reads 0 with the label.
+ARCHETYPE_STATUS = {"Fluid": {3: "paused"}, "Ether.fi": {3: "paused"}, "Morpho": {3: "off"}}
+ARCHETYPE_STATUS_WHY = {
+    ("Fluid", 3): "the buyback programme is paused (halted since 2026-05-11)",
+    ("Ether.fi", 3): "the revenue-funded buyback is paused",
+    ("Morpho", 3): "the fee switch is not on: no protocol revenue reaches holders",
+}
+ARCHETYPES_BEFORE_R20 = {p["name"]: list(p.get("archetypes") or []) for p in PROJECTS}
+
+
+def archetypes_r20(name: str, conditional: dict | None = None) -> list:
+    """The Round 20 tags of `name`, primary first: Jake's list (ARCHETYPES_R20; a project not on it keeps its tags),
+    plus its conditional tag where that switch is on (CONDITIONAL_ARCHETYPES; `conditional` = {project: bool}
+    overrides the switches, for the tests)."""
+    tags = list(ARCHETYPES_R20.get(name) or ARCHETYPES_BEFORE_R20.get(name) or [])
+    c = CONDITIONAL_ARCHETYPES.get(name)
+    on = (conditional or {}).get(name, c["on"]) if c else False
+    if c and on and c["tag"] not in tags:
+        tags.append(c["tag"])
+    return tags
+
+
+def archetype_status(name: str, arch: int) -> str:
+    """'paused' / 'off' where the project's programme under this archetype is so labelled (the key reads 0), else ''."""
+    return (ARCHETYPE_STATUS.get(name) or {}).get(int(arch or 0), "")
+
+
+def apply_archetypes_r20(conditional: dict | None = None) -> None:
+    """Write the Round 20 tags onto PROJECTS. A re-tag moves no series: metrics_for_project keeps reading the tags the
+    project held before (metric_archetypes) — nothing measured is dropped and no gap is opened for a series nobody has
+    wired; a new tab's own series are wired per project."""
+    for p in PROJECTS:
+        n = p["name"]
+        if n not in ARCHETYPES_R20:
+            continue
+        p["archetypes"] = archetypes_r20(n, conditional)
+        p["metric_archetypes"] = list(ARCHETYPES_BEFORE_R20.get(n) or [])
+
+
+apply_archetypes_r20()
+# A3'S NUMERATOR (R20; build_workbook.a3_key_numerator): revenue sent to holders, $ per day = the credited holder value (holder_value_revenue_usd: market
+# buybacks where revenue-funded, however the tokens end up, + revenue paid directly to stakers, in any token) LESS the
+# protocol-rule fee burn credited there (HOLDER_VALUE burn_credited: Near's gas burn, Ethereum's base-fee burn) — a
+# burn built into the protocol is A4, not a programme turning revenue into token demand.
+# Treasury- or emissions-funded buybacks stay out (holder_value_other_usd: recorded, not credited).
+METRICS["revenue_to_holders_usd"] = {
+    "label": "Revenue sent to holders ($ per day) — revenue-funded market buybacks (burned, held or distributed) + "
+             "revenue paid directly to stakers, in any token; A3's numerator (R20). Not in it: a protocol-rule fee "
+             "burn (A4) and treasury- or emissions-funded buybacks",
+    "kind": "flow", "unit": "usd", "archetypes": [1, 2, 3, 4], "tiers": [2], "sanity_min": 0, "sanity_max": 1e11,
+    # only where a fee burn is credited inside holder value; everywhere else A3's key reads holder_value_revenue_usd
+    "view_only": True, "only_projects": tuple(n for n, h in HOLDER_VALUE.items() if h.get("burn_credited"))}
+TRAJECTORY["rows"]["a3_revenue_vs_new_supply"] = ("Supply", 1)     # A3's rank key (R20) — the key's own trajectory row
+
+# "HISTORY FILLING" (R20; design docs/r19_history_filling.md, by reason): a cell that is empty ONLY because history
+# older than `min_window_days` is still filling, for a series still being read (its last day within `live_days` of the
+# as-of), reads "history filling - forms on <date>", grey, not counted, not blocking. A shorter window, a stopped
+# series or an undated reason keeps its behaviour.
+HISTORY_FILLING = {"code": "history filling", "min_window_days": 365, "live_days": 7}
+
+# THE INTERIM A1 COLUMN (R20; docs/r19_bigquery_plan.md D1 (c)): settlement per circulating token over the last
+# `days` against the `days` before, as a % change — labelled, never ranked, shown only while the 1-year key cannot
+# form and only when both halves hold every day.
+A1_INTERIM_KEY = {"projects": ("Near", "Ethereum"), "days": 182,
+                  "label": "interim — 6 months on 6 months, not the 1-year rule; not ranked"}
+
+# R20, the A4 tag's own wiring — AERODROME (A3, A4): what is actually burned is the Foundation's BURNED BUYBACK
+# (buyback_burned_tokens, from 2026-10-22; R13.6 burn_mechanism protocol_level_destruction). The A4 tab scores that
+# series. AERO has no other burn of the supply: A1 / Master's burn reads (a1_burn_metric) stay as they were, so
+# nothing else subtracts the burn (the token-flow statement's "− burned" is RULE_IN flow_burn, unchanged).
+# OPEN (for the Aerodrome decisions): A4's BURN ÷ ISSUANCE divides the burned buyback by gross_issuance_tokens as
+# stored (0.0061x on Jake's 2026-11-20 export, beside burned ÷ (emissions + unlocks) 0.0056x); whether Aerodrome's A4
+# issuance should instead be the Minter legs the A3 tab reads (gross_issuance_accrued_tokens + emissions_tokens) is
+# not decided here (config.A4_RELEASE_ISSUANCE is the place). A secondary tag: no rank depends on it.
+PROJECT_BY_NAME["Aerodrome"]["a4_burn_metric"] = "buyback_burned_tokens"
+PROJECT_BY_NAME["Aerodrome"]["a1_burn_metric"] = "gross_burn_tokens"

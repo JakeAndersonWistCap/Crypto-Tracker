@@ -20,6 +20,11 @@ A CLEAR-BY DATE is a date found in the reason text that is on or after the as-of
 month written out ("about January 2027", "by Jan 2027" — read as that month's last day; the build writes ISO dates,
 "about 2027-01-01"). A reason whose dates are all before the as-of day (a hole, a "held from") has NO clear-by date.
 
+R20 — "history filling": a cell whose text reads "history filling - forms on <date>" (the reader writes it where the
+reason carries a history marker: a window of 12 months or more, a series read within 7 days of the as-of, a forming day
+not passed) is listed apart, grey, NOT counted and NOT blocking; a label whose reason no longer qualifies is a blocker.
+A key cell reading "interim 6m on 6m: ..." is a labelled, unranked figure (Near, Ethereum) — not judged as a key.
+
 Anything else is a BLOCKER:
     rule-3      a rule-3 suspect (rule3.suspects, both workbooks: a code whose reason says a mechanism is absent),
                 even when its code is 'by design'; one blocker per reason, the other cells with it listed under it
@@ -71,6 +76,13 @@ ORDER = {c: i for i, c in enumerate(("BROKEN", "STALE", "unranked", "MISSING", "
 
 NEVER_NOT_VERIFIED = ("BROKEN", "STALE", "error", "blank")   # R17: what "not verified" can never cover
 NOT_VERIFIED_SEEN: dict = {}                                 # project -> the cells listed apart on the last check
+# R20 ("history filling", docs/r19_history_filling.md): a cell empty ONLY because history of 12 months or more is still
+# filling, for a series still being read, reads "history filling - forms on <date>" — grey, listed apart, NOT counted
+# and NOT blocking. Judged from the reason's own marker (reader.history_marker / reader.history_filling: window >= 12
+# months, the series' last day within 7 days of the as-of, the forming day not passed); anything else keeps its class.
+HISTORY_FILLING_SEEN: dict = {}                              # project -> ["tab: header — forms on <date>"]
+HISTORY_FILLING_PREFIX = "history filling"
+INTERIM_PREFIX = "interim 6m on 6m"                          # R20: the labelled, unranked 6-on-6 figure in a key cell
 
 # ============================================================================================ dates
 _ISO = re.compile(r"\b(\d{4})-(\d{2})-(\d{2})\b")
@@ -236,6 +248,18 @@ def judge_cell(project, tab, header, cell, value, asof, awb, is_rank=False, key_
     if not isinstance(value, str) or value.strip().upper() in _ERRORS or value.startswith("#ERROR"):    # an Excel error (xlcalc.XLError) or bool
         return out + [Blocker(tab, header, "error", f"evaluates to {value!r}", "error")]
     code = value.strip().lower()
+    if code.startswith(HISTORY_FILLING_PREFIX):
+        # R20: the label is honoured only while its own reason still qualifies on THIS as-of day (the guards)
+        d = reader.history_filling(comment, asof)
+        if d is not None:
+            HISTORY_FILLING_SEEN.setdefault(project, []).append(f"{tab}: {short(header, HEAD_SHORT)} — forms on {d}")
+            return out
+        return out + [Blocker(tab, header, "history filling",
+                              "reads 'history filling' but its reason no longer qualifies (window under 12 months, "
+                              "the series not read within 7 days of the as-of, or the forming day passed) — "
+                              + short(comment), "history")]
+    if code.startswith(INTERIM_PREFIX):
+        return out                                                        # a labelled interim figure: never ranked
     if code not in reader.CODES:
         return out                                                        # a descriptor (token, archetype, status)
     reason = comment + (f"\n\n{key_reason}" if is_rank and key_reason else "")
@@ -370,7 +394,11 @@ def judge_audit(book: Book, project: str, cov: list, heads: dict) -> list:
         elif st == "MISSING" and (tab, project, col) in heads:
             acc = _allowed(project, f"{tab[:2]} | {col}: {why}", book.asof)
             ok, cls, _v = classify("n/a", why, book.asof, accepted=acc is not None)
-            if not (ok and cls in ("history", "accepted")):
+            hf = reader.history_filling(why, book.asof)                 # R20: only old history is missing
+            if hf is not None:
+                HISTORY_FILLING_SEEN.setdefault(project, []).append(
+                    f"audit {tab}: {short(col, HEAD_SHORT)} — forms on {hf}")
+            elif not (ok and cls in ("history", "accepted")):
                 out.append(Blocker(f"audit {tab}", col, "MISSING", f"headline MISSING — {short(why)}", "MISSING"))
     for (tab, p, head), coord in heads.items():
         if p != project:
@@ -437,6 +465,7 @@ def check(rwb, awb, asof: date) -> list:
         names += [n for n in fc._project_rows(rwb[reader.COMPARISON]) if n not in names]
     parked = set(fc.parked_projects(names, asof))
     hits = rule3.suspects(rwb, awb)
+    HISTORY_FILLING_SEEN.clear()
     cov, heads = coverage_rows(awb), headline_cells(awb)
     results = []
     for n in names:
@@ -506,7 +535,12 @@ def main(argv=None) -> int:
                 print(f"    [{b.cls}] {b.line()}")
             for b in NOT_VERIFIED_SEEN.get(name, ()):
                 print(f"    [not verified - shown grey, not counted] {b.line()}")
+            for line in HISTORY_FILLING_SEEN.get(name, ()):
+                print(f"    [history filling - shown grey, not counted] {line}")
     print(f"DONE CHECK: {counts['READY']} READY, {counts['NOT READY']} NOT READY, {counts['PARKED']} PARKED")
+    n_hf = sum(len(v) for v in HISTORY_FILLING_SEEN.values())
+    if n_hf:
+        print(f"HISTORY FILLING: {n_hf} cell(s) shown grey, not counted — --verbose lists them")
     n_nv = sum(len(v) for v in NOT_VERIFIED_SEEN.values())
     if n_nv:
         print(f"NOT VERIFIED (config.NOT_VERIFIED): {n_nv} cell(s) shown grey, not counted — --verbose lists them")

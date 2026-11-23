@@ -194,7 +194,7 @@ def test_p3_2c_uniswap_a4_key_is_burn_over_releases_into_circulating(built):
 
 # ============================================================================================== P3-2d
 def test_p3_2d_chainlink_primary_a2_ranked_there_secondary_on_a1_and_a3(built):
-    assert config.PROJECT_BY_NAME["Chainlink"]["archetypes"] == [2, 1, 3]
+    assert config.PROJECT_BY_NAME["Chainlink"]["archetypes"] == [2, 3]      # R20 (Jake 2026-11-24): A1 off; was [2, 1, 3]
     r, XR = built["reader"], built["XR"]
     s = r["Summary"]
     prim = {}
@@ -209,7 +209,7 @@ def test_p3_2d_chainlink_primary_a2_ranked_there_secondary_on_a1_and_a3(built):
     a2rank = XR.value(a2.title, a2rows["Chainlink"], _reader_col(a2, lambda h: h.startswith("Rank in")))
     assert isinstance(srank, float) and srank == a2rank
     # ranked on A2's key: its key cell is the A2 key and its rank follows it among A2's primaries
-    kc = _reader_col(a2, lambda h: h == "Customer revenue ÷ emissions (x)")
+    kc = _reader_col(a2, lambda h: h == reader.ARCHETYPE_KEYS[2][0])
     rc = _reader_col(a2, lambda h: h.startswith("Rank in"))
     ranked = sorted(((XR.value(a2.title, rr, rc), XR.value(a2.title, rr, kc), n) for n, rr in a2rows.items()
                      if isinstance(XR.value(a2.title, rr, rc), float)))

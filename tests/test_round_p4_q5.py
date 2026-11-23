@@ -68,7 +68,7 @@ def evaluate(formula: str, vals: dict, R: FakeRefs):
 
 def key_value(name: str, vals: dict):
     R = FakeRefs(vals)
-    f = bw._a3_key_col(R, {})[1](5, P[name])
+    f = bw._a3_burned_col(R, {})[1](5, P[name])
     return evaluate(f, vals, R), f
 
 
@@ -87,25 +87,25 @@ def test_key_is_burned_over_emissions_plus_unlocks_for_every_a3_project(monkeypa
     for p in config.PROJECTS:
         if 3 not in p["archetypes"] or bw._retirement_zero(p):
             continue
-        f = bw._a3_key_col(bw.Refs(100, 10, ["2026-09"]), {})[1](5, p)
+        f = bw._a3_burned_col(bw.Refs(100, 10, ["2026-09"]), {})[1](5, p)
         assert '|buyback_burned_tokens"' in f and "|retired_buyback_tokens" not in f, p["name"]
         # R9.3: an unlock leg forms from the vesting stocks or as a DECLARED zero (Aerodrome: no schedule in its docs)
         assert ('|unlock_release_tokens"' in f) == config.has_unlock_leg(p["name"]), p["name"]
-    hl = bw._a3_key_col(bw.Refs(100, 10, ["2026-09"]), {})[1](5, P["Hyperliquid"])
+    hl = bw._a3_burned_col(bw.Refs(100, 10, ["2026-09"]), {})[1](5, P["Hyperliquid"])
     assert '|emissions_tokens"' in hl and '|unlock_release_tokens"' in hl
-    sky = bw._a3_key_col(bw.Refs(100, 10, ["2026-09"]), {})[1](5, P["Sky"])
+    sky = bw._a3_burned_col(bw.Refs(100, 10, ["2026-09"]), {})[1](5, P["Sky"])
     assert '|emissions_rate_current_annual_tokens"' in sky and '|emissions_tokens"' not in sky
-    efi = bw._a3_key_col(bw.Refs(100, 10, ["2026-09"]), {})[1](5, P["Ether.fi"])
+    efi = bw._a3_burned_col(bw.Refs(100, 10, ["2026-09"]), {})[1](5, P["Ether.fi"])
     assert '|emissions_tokens"' not in efi and '|unlock_release_tokens"' in efi
     # R5.3: where the build matched Pendle's window, the key reads the lag-matched unlock release
     monkeypatch.setitem(bw.LAG_MATCH, "Pendle", {"ok": True, "cut": {"unlock_release_tokens", "emissions_tokens"}})
-    pen = bw._a3_key_col(bw.Refs(100, 10, ["2026-09"]), {})[1](5, P["Pendle"])
+    pen = bw._a3_burned_col(bw.Refs(100, 10, ["2026-09"]), {})[1](5, P["Pendle"])
     assert '|unlock_release_tokens_lagm"' in pen and '|unlock_release_tokens"' not in pen
     for gone in ("RETIRE_VS_EMISSIONS_HEAD", "_retire_vs_emissions_col", "A3_KEY_FALLBACK_TEXT", "a3_key_fallback",
                  "_a3_fallback_applies", "_a3_emissions_zero_in"):
         assert not hasattr(bw, gone), gone
-    assert bw.A3_KEY_TRAJECTORY_ID == reader.A3_TRAJECTORY_ID == "a3_burned_vs_new_supply"
-    assert "a3_retire_vs_emissions" not in config.TRAJECTORY["rows"] and bw.A3_KEY_TRAJECTORY_ID in config.TRAJECTORY["rows"]
+    assert bw.A3_BURNED_TRAJECTORY_ID == "a3_burned_vs_new_supply"   # R20: the reader's key row is the new key's
+    assert "a3_retire_vs_emissions" not in config.TRAJECTORY["rows"] and bw.A3_BURNED_TRAJECTORY_ID in config.TRAJECTORY["rows"]
 
 
 def test_key_value_jakes_hyperliquid_numbers_and_no_new_supply():
@@ -309,7 +309,7 @@ def test_fixture_keys_and_ranks(built):
     unknown, never 0. Summary and the A3 tab rank Sky first, then the zeros by net holder yield, Hyperliquid unranked."""
     a, XA = built["audit"], built["XA"]
     ws = a[A3]
-    kc, rows = _col(ws, lambda h: h == bw.A3_KEY_HEAD), _rows(ws)
+    kc, rows = _col(ws, lambda h: h == bw.A3_BURNED_HEAD), _rows(ws)
     val = {n: XA.value(A3, rows[n], kc) for n in rows if n in P}
     q0 = "Q0 ("
     burned = _data(built, "Sky|buyback_burned_tokens", q0)
@@ -374,10 +374,10 @@ def test_fixture_key_equals_its_trajectory_latest_quarter(built):
     audit file and on the reader's A3 tab (its 'latest' column)."""
     a, XA = built["audit"], built["XA"]
     ws, tj = a[A3], a["Trajectory"]
-    kc, rows, q0 = _col(ws, lambda h: h == bw.A3_KEY_HEAD), _rows(ws), trajectory.COL["Q0"]
+    kc, rows, q0 = _col(ws, lambda h: h == bw.A3_BURNED_HEAD), _rows(ws), trajectory.COL["Q0"]
     seen = 0
     for name in ("Sky", "Maple", "Pendle", "Fluid", "Ether.fi", "Hyperliquid", "GEODNET"):
-        row = next(r for r in range(5, tj.max_row + 1) if tj.cell(r, 2).value == f"A3|{name}|{bw.A3_KEY_TRAJECTORY_ID}")
+        row = next(r for r in range(5, tj.max_row + 1) if tj.cell(r, 2).value == f"A3|{name}|{bw.A3_BURNED_TRAJECTORY_ID}")
         k = XA.value(A3, rows[name], kc)
         tv = XA.value("Trajectory", row, q0)
         if isinstance(k, float):
@@ -444,7 +444,7 @@ def test_fixture_reader_columns_definitions_and_map(built):
     assert (reader.A3_TAB, reader.BUYING_PRESSURE_SHORT) in defs and (reader.COMPARISON, reader.BUYING_PRESSURE_SHORT) in defs
     assert (reader.A3_TAB, reader.ARCHETYPE_KEYS[3][0]) in defs
     rows = list(csv.DictReader(open(built["dir"] / "reader_column_map.csv", encoding="utf-8")))
-    key = [x for x in rows if x["audit_header"] == bw.A3_KEY_HEAD]
+    key = [x for x in rows if x["audit_header"] == bw.A3_BURNED_HEAD]
     assert key and key[0]["reader_header"] == reader.ARCHETYPE_KEYS[3][0]
     bp = {(x["reader_tab"], x["audit_tab"]) for x in rows if x["reader_header"] == reader.BUYING_PRESSURE_SHORT}
     assert {(reader.A3_TAB, A3), (reader.COMPARISON, CP)} <= bp
@@ -459,9 +459,9 @@ def test_the_a3_key_column_maps_to_its_own_concept_with_every_input_it_reads():
     import coverage_audit as ca
     import spec
     cs = spec.concepts()
-    assert spec.concept_for("A3 Revenue Buyback", bw.A3_KEY_HEAD) == "a3_key"
-    assert spec.concept_for("A3", bw.A3_KEY_HEAD) == "a3_key"
-    key = cs["a3_key"]
+    assert spec.concept_for("A3 Revenue Buyback", bw.A3_BURNED_HEAD) == "a3_burned"
+    assert spec.concept_for("A3", bw.A3_BURNED_HEAD) == "a3_burned"
+    key = cs["a3_burned"]   # R20: the burned figure is an ordinary column with its own concept
     assert key["axis"] == "CAPTURE" and key["dir"] == 1 and key["unit"] == "x" and key["tabs"] == ("A3",)
     ins = set(key["inputs"])
     a3 = [p for p in config.PROJECTS if 3 in (p.get("archetypes") or [])]
