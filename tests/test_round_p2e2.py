@@ -28,10 +28,10 @@ from shared_build import plain_build  # noqa: E402
 
 TABS = ("A1 Infrastructure", "A2 Coordination", "A3 Revenue Buyback", "A4 Permanent Burn")
 KEY_STEM = {"A1 Infrastructure": "Settlement/token 1-yr chg", "A2 Coordination": "Revenue ÷ emissions (x)",
-            "A3 Revenue Buyback": "Burned ÷ (emis + unlocks)", "A4 Permanent Burn": "Burn ÷ issuance (x)"}
+            "A3 Revenue Buyback": "To holders ÷ new supply", "A4 Permanent Burn": "Burn ÷ issuance (x)"}   # R20
 OTHER_STEM = {"A1 Infrastructure": "Fees ÷ issuance", "A2 Coordination": "$ per token emitted",
               "A3 Revenue Buyback": "Retired ÷ (emis + unlocks)", "A4 Permanent Burn": "Issuance − burn (tokens)"}   # PR1.S8: A4's figure is mint − burn
-KEY_ID = {"A2 Coordination": "a2_rev_vs_emissions_value", "A3 Revenue Buyback": "a3_burned_vs_new_supply",
+KEY_ID = {"A2 Coordination": "a2_rev_vs_emissions_value", "A3 Revenue Buyback": "a3_revenue_vs_new_supply",
           "A4 Permanent Burn": "a4_crossover"}
 
 

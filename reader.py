@@ -57,7 +57,8 @@ CODES = {"n/a": "808080", "blocked": "C00000", "not wired": "C65911", "by design
          "unranked": "595959", "secondary": "2F5597", "no new supply": "375623",
          "not yet split": "806000",                 # PR1.S13: a project's three revenue lines before its own round
          "lumpy": "7030A0",                         # PR1B.10a: a change whose window is carried by a few days
-         "not verified": "7F7F7F"}                  # R17: no source can evidence the cell (config.NOT_VERIFIED) — grey
+         "not verified": "7F7F7F",                  # R17: no source can evidence the cell (config.NOT_VERIFIED) — grey
+         "history filling": "7F7F7F"}               # R20: only old history is missing, the series is read — grey
 FILL_NOT_VERIFIED = PatternFill("solid", fgColor="D9D9D9")
 NO_NEW_SUPPLY = "no new supply"            # P4-Q5a: A3's key where emissions + unlocks are a measured 0, burn above 0
 NO_NEW_SUPPLY_KEY = float("inf")           # ... which ranks it first (_rank_rows sorts the key high to low)
@@ -68,25 +69,37 @@ SERIES_YEARS_BACK = 2200                   # days of daily rows on _series: both
 SELECT_CELL, CUSTOM_CELL = f"{SUMMARY}!$B$2", f"{SUMMARY}!$D$2"
 DAYS_REF = f"{SERIES_SHEET}!$B$1"          # the selected period in days — every period formula reads this one cell
 MOVE_THRESHOLD = 0.10                      # "what changed" lists moves above 10% over the selected period
-ARCHETYPE_NAMES = {1: "A1 Infrastructure", 2: "A2 Coordination", 3: "A3 Revenue Buyback", 4: "A4 Permanent Burn"}
+# R20 (Jake 2026-11-24): the archetype DISPLAY names. The sheet titles (A1_TAB .. A4_TAB) are unchanged — the frozen
+# baselines, project_freeze, highlights, the leaderboard and done_check find the tabs by title.
+ARCHETYPE_NAMES = {1: "A1 Infrastructure", 2: "A2 Coordination", 3: "A3 Revenue to holders", 4: "A4 Permanent burn"}
 ARCHETYPE_KEYS = {
     1: ("Settlement per token, 1-year change",
-        "SETTLEMENT VOLUME PER CIRCULATING TOKEN, 1-YEAR CHANGE = (trailing-365-day settlement volume ÷ circulating "
+        "A1 INFRASTRUCTURE — the token is the native asset of a chain (gas, security). KEY: SETTLEMENT VOLUME PER "
+        "CIRCULATING TOKEN, 1-YEAR CHANGE = (trailing-365-day settlement volume ÷ circulating "
         "supply, now) ÷ (the same a year earlier) − 1. Settlement volume is Artemis's DEX + NFT + P2P transfers, the "
         "series A1's NRR reads; it needs two years of history. Higher is better."),
-    2: ("Customer revenue ÷ emissions (x)",
-        "CUSTOMER REVENUE ÷ EMISSIONS $ (x) — customer revenue over the last 90 days ÷ the tokens emitted to suppliers "
+    2: ("Network economics: rev ÷ emissions",
+        "A2 COORDINATION — the token pays the suppliers of a real-world resource (hardware, compute, data, bandwidth) "
+        "and customers pay for the service. KEY: CUSTOMER REVENUE ÷ EMISSIONS $ (x) — NETWORK ECONOMICS, NOT HOLDER "
+        "VALUE: customer revenue over the last 90 days ÷ the tokens emitted to suppliers "
         "over the same days, each day's tokens at that day's price (A2's column). Higher is better; 1.0x is the "
         "crossover."),
-    3: ("Burned ÷ (emissions + unlocks) (x)",
-        "BURNED BUYBACK ÷ (EMISSIONS + UNLOCKS) (x) — tokens bought back and BURNED, per covered day, ÷ (tokens emitted "
-        "+ tokens unlocked from the non-circulating wallets) per covered day, at the emission rate in force (Sky's "
-        "scheduled rate where declared, else the last 90 days' measured rate). A buyback held in a treasury or paid "
-        "out to stakers is not burned and is not counted (a held buyback leaves the tradeable float while held "
-        "instead). Where emissions + unlocks are a measured 0 and the burn is above 0 the key reads 'no new supply' "
-        "and ranks first. Ties are broken by net holder yield. Higher is better; 1.0x is the crossover."),
+    3: ("Revenue to holders ÷ new supply (x)",
+        "A3 REVENUE TO HOLDERS — a documented programme turning protocol revenue into token demand: market buybacks "
+        "however the tokens end up (burned, held or distributed), plus revenue paid directly to stakers, including in "
+        "other tokens. KEY: REVENUE SENT TO HOLDERS ($) ÷ VALUE OF NEW SUPPLY ($), the same window (x) — over the last "
+        "90 days, each per covered day: revenue-funded buybacks + revenue paid to stakers ÷ the $ value of every new "
+        "token reaching the market (the total-dilution outflows a–f, each day's tokens at that day's price — the "
+        "series net holder yield subtracts). A treasury- or emissions-funded buyback is not revenue and is not "
+        "counted. Staking yield paid from emissions counts as value to stakers AND as emissions, so it nets out; it "
+        "does not qualify a project for A3 on its own. A programme labelled 'paused' or 'off' reads 0 with the label. "
+        "New supply a measured 0 with revenue to holders above 0 reads 'no new supply' and ranks first. Ties are "
+        "broken by net holder yield. Higher is better; 1.0x is the crossover. (The supply rule is separate and "
+        "unchanged: only burned tokens are retired from supply.)"),
     4: ("Burn ÷ issuance (x)",
-        "BURN ÷ ISSUANCE (x) — tokens burned ÷ tokens issued over the last 90 days, each per covered day; for a "
+        "A4 PERMANENT BURN — any permanent destruction, built into the protocol or discretionary, scored on what is "
+        "actually burned. KEY: BURN ÷ ISSUANCE (x) — tokens burned ÷ tokens issued over the last 90 days, each per "
+        "covered day; for a "
         "pre-minted supply, burn ÷ pool release (Uniswap, which mints nothing: burn ÷ its releases into circulating, "
         "P3-2c), so the direction matches — the RECIPROCAL of the audit file's "
         "'Release ÷ burn (x)'. The last 90 days' measured issuance is the rate in force (no A4 project declares a "
@@ -286,7 +299,10 @@ def reader_format(audit_fmt: str | None) -> str:
 def _zero_format(fmt: str, label: str) -> str:
     """A number format whose ZERO section shows the status beside the 0 (P2a A4: the 0 stays a 0, rule 3)."""
     lab = label.replace('"', "'")
-    zero = {FMT_PCT: f'"0.0% — {lab}"', FMT_X: f'"0.0x — {lab}"', FMT_USD: f'"$0 — {lab}"'}.get(fmt, f'"0 — {lab}"')
+    # R20 (Jake's item 7, Fluid's A3 row): the zero section was TEXT ONLY ('"0.0x — halted since 2026-05-11"'), which
+    # a spreadsheet draws as #### in a narrow column or not at all — the key column then read empty and the row read
+    # shifted (the rank, 4, the first figure seen). The zero keeps its digit placeholder; the status is a suffix.
+    zero = {FMT_PCT: f'0.0%" — {lab}"', FMT_X: f'0.0"x — {lab}"', FMT_USD: f'$0" — {lab}"'}.get(fmt, f'0" — {lab}"')
     pos_neg = {FMT_PCT: "0.0%;-0.0%", FMT_X: '0.0"x";-0.0"x"', FMT_USD: "$#,##0;-$#,##0"}.get(fmt, "#,##0;-#,##0")
     return f"{pos_neg};{zero}"
 
@@ -519,6 +535,112 @@ def price_change(s: pd.Series, days: int, asof: pd.Timestamp, excluded=()) -> tu
     return float(s.loc[end]) / p0 - 1, f"{then.date()} to {end.date()}"
 
 
+# ============================================================================================ R20: history filling
+_HF_MARK = re.compile(r"\[history filling: window (\d+)d, series read to (\d{4}-\d{2}-\d{2}), forms on "
+                      r"(\d{4}-\d{2}-\d{2})\]")
+_BUILD_ASOF: dict = {}                      # this build's as-of day (build_reader sets it; put_code reads it)
+
+
+def history_marker(window_days: int, read_to, forms_on) -> str:
+    """The marker a reason carries when its cell is empty ONLY because old history is still filling: the window the
+    figure needs, the last day its series holds, the day it first forms. Written by whoever knows the three; judged by
+    history_filling (the reader's cell, done_check) — never guessed from prose."""
+    return (f"[history filling: window {int(window_days)}d, series read to {pd.Timestamp(read_to).date()}, forms on "
+            f"{pd.Timestamp(forms_on).date()}]")
+
+
+def history_filling(reason, asof):
+    """The day a 'history filling' cell forms, or None. R20 (design docs/r19_history_filling.md, by reason) — ALL of:
+    the reason carries a history marker; its window is 12 months or more (config.HISTORY_FILLING min_window_days — a
+    shorter window keeps today's behaviour); its series is still being read (its last day within live_days of the
+    as-of — a stopped series never hides behind the label); the day it forms is on or after the as-of."""
+    import config                                          # noqa: PLC0415
+    spec = config.HISTORY_FILLING
+    if asof is None:
+        return None
+    day = pd.Timestamp(asof).normalize()
+    best = None
+    for w, read_to, forms in _HF_MARK.findall(str(reason or "")):
+        if int(w) < int(spec["min_window_days"]):
+            continue
+        if (day - pd.Timestamp(read_to)).days > int(spec["live_days"]):
+            continue
+        f_on = pd.Timestamp(forms)
+        if f_on < day:
+            continue
+        best = f_on if best is None or f_on > best else best
+    return best.date() if best is not None else None
+
+
+def history_filling_text(reason, asof) -> str:
+    d = history_filling(reason, asof)
+    return f"history filling - forms on {d}" if d else ""
+
+
+FILL_HISTORY = PatternFill("solid", fgColor="EDEDED")
+
+
+def settlement_six_on_six(groups: dict, project: str, days: int | None = None) -> tuple[float | None, str]:
+    """R20 — THE INTERIM A1 FIGURE (docs/r19_bigquery_plan.md D1 (c)): settlement volume per circulating token over the
+    last `days` days (config.A1_INTERIM_KEY, 182) against the `days` before, as a change: (Σ later ÷ circulating at its
+    end) ÷ (Σ earlier ÷ circulating at its end) − 1 — the ratio of the two annualised levels (× 365 ÷ days cancels);
+    the change itself is NOT compounded to a year. Formed only when BOTH halves hold every day (2 × days rows without
+    a hole, ending on the series' last day); else (None, why). Never ranked."""
+    import config                                          # noqa: PLC0415
+    n = int(days or config.A1_INTERIM_KEY["days"])
+    d = _series(groups, project, (getattr(config, "ARTEMIS_SETTLEMENT", {}) or {}).get("metric",
+                                                                                       "settlement_volume_usd"))
+    c = _series(groups, project, "circulating_supply_used")
+    if d.empty:
+        return None, "no daily settlement volume series"
+    if c.empty:
+        return None, "no circulating supply series"
+    end = d.index.max()
+    mid, start = end - pd.Timedelta(days=n), end - pd.Timedelta(days=2 * n)
+    later, earlier = d[(d.index > mid) & (d.index <= end)], d[(d.index > start) & (d.index <= mid)]
+    if len(later) < n or len(earlier) < n:
+        return None, (f"both halves must hold every day: the later {n} days ({(mid + pd.Timedelta(days=1)).date()}.."
+                      f"{end.date()}) hold {len(later)}, the earlier {n} ({(start + pd.Timedelta(days=1)).date()}.."
+                      f"{mid.date()}) hold {len(earlier)}; the series is held from {d.index.min().date()}")
+    cn, ct = c.asof(end), c.asof(mid)
+    if pd.isna(cn) or pd.isna(ct) or cn <= 0 or ct <= 0:
+        return None, f"no circulating supply on {mid.date()} or {end.date()}"
+    a, b = float(later.sum()) / float(cn), float(earlier.sum()) / float(ct)
+    if b == 0:
+        return None, f"settlement volume 0 over {(start + pd.Timedelta(days=1)).date()}..{mid.date()}"
+    return a / b - 1, (f"{(mid + pd.Timedelta(days=1)).date()}..{end.date()} against "
+                       f"{(start + pd.Timedelta(days=1)).date()}..{mid.date()}: ${a * 365 / n:,.2f} against "
+                       f"${b * 365 / n:,.2f} per token, annualised (levels × 365 ÷ {n})")
+
+
+def interim_key(groups: dict, project: str) -> tuple[float | None, str]:
+    """(the 6-on-6 figure, how) for a chain in config.A1_INTERIM_KEY WHILE its 1-year key cannot form; (None, why)
+    otherwise — dropped per chain on the day the 1-year rule forms."""
+    import config                                          # noqa: PLC0415
+    if project not in config.A1_INTERIM_KEY["projects"]:
+        return None, "not shown for this chain (the interim column is for " + ", ".join(
+            config.A1_INTERIM_KEY["projects"]) + ")"
+    if settlement_key(groups, project)[0] is not None:
+        return None, "dropped: the 1-year rule has formed for this chain"
+    return settlement_six_on_six(groups, project)
+
+
+def status_label_cells(sh, row: int, key_col, rank_col, name: str, arch: int) -> str:
+    """R20 (config.ARCHETYPE_STATUS): a programme labelled 'paused' / 'off' shows the label beside the key and the
+    rank — '0.0x — paused', '4 — paused'. The cells stay NUMBERS (the label is a number-format suffix after the
+    digits). Returns the label ('' when none)."""
+    import config                                          # noqa: PLC0415
+    lab = config.archetype_status(name, arch)
+    if not lab:
+        return ""
+    for col, fmt in ((key_col, key_format(arch)), (rank_col, FMT_RANK)):
+        c = sh.ws.cell(row, _idx(sh, col))
+        if isinstance(c.value, str) and c.value.startswith("="):
+            # one literal after the digits (never two quoted literals side by side)
+            c.number_format = {FMT_X: f'0.0"x — {lab}"', FMT_PCT: f'0.0%" — {lab}"'}.get(fmt, f'0" — {lab}"')
+    return lab
+
+
 SETTLEMENT_LIVE_DAYS = 7     # R17: a settlement series whose last day is within this of circulating's is still read
 
 
@@ -541,7 +663,8 @@ def _settlement_forms_on(groups: dict, project: str, circ: pd.Series) -> str:
         r0 = prev
     return (f": the daily settlement series is held without a hole from {r0.date()}, so the 365-day sum first forms "
             f"on {(r0 + pd.Timedelta(days=364)).date()} and its 1-year change (two years of history) on "
-            f"{(r0 + pd.Timedelta(days=729)).date()} — earlier only if the days before {r0.date()} are backfilled")
+            f"{(r0 + pd.Timedelta(days=729)).date()} — earlier only if the days before {r0.date()} are backfilled "
+            + history_marker(730, d.index.max(), r0 + pd.Timedelta(days=729)))
 
 
 def settlement_key(groups: dict, project: str, back_days: int = 0) -> tuple[float | None, str]:
@@ -567,7 +690,8 @@ def settlement_key(groups: dict, project: str, back_days: int = 0) -> tuple[floa
         forms = ""
         if back_days == 0 and (c.index.max() - s.index.max()).days <= SETTLEMENT_LIVE_DAYS:
             forms = (f" — its 1-year change first forms on {(s.index.min() + pd.Timedelta(days=365)).date()} as the "
-                     f"daily series runs on (earlier only if the days before are backfilled)")
+                     f"daily series runs on (earlier only if the days before are backfilled) "
+                     + history_marker(730, s.index.max(), s.index.min() + pd.Timedelta(days=365)))
         return None, (f"needs the trailing-365-day settlement volume on {then.date()} (two years of history); held "
                       f"from {s.index.min().date()}{forms}")
     cn, ct = c.asof(end), c.asof(then)
@@ -758,9 +882,12 @@ def put_code(sh: Sheet, row: int, col: Col, code: str, reason: str, fill: Patter
         code, fill = config.NOT_VERIFIED_CODE, FILL_NOT_VERIFIED
         reason = (f"NOT VERIFIED — no source can evidence this cell. Searched ({nv['read_on']}): {nv['searched']}. "
                   f"The build's own reason: {reason}")
-    c = sh.ws.cell(row, _idx(sh, col), code)
-    c.font = Font(name=FONT, size=9, italic=True, color=CODES[code])
+    hf = history_filling_text(reason, _BUILD_ASOF.get("day")) if code in ("n/a", "blocked") else ""
+    c = sh.ws.cell(row, _idx(sh, col), hf or code)
+    c.font = Font(name=FONT, size=9, italic=True, color=CODES["history filling" if hf else code])
     c.alignment = Alignment(horizontal="right")
+    if hf:
+        fill = FILL_HISTORY
     if fill is not None:
         c.fill = PatternFill("solid", fgColor=fill.fgColor.rgb)
     c.comment = _comment(reason or code)
@@ -1044,6 +1171,7 @@ def build_reader(wb, path, *, asof, groups: dict, headline_cells: list, projects
     asof = pd.Timestamp(asof).normalize()
     _AERO_PARK.clear()
     _AERO_PARK["day"] = asof
+    _BUILD_ASOF["day"] = asof                # R20: put_code judges "history filling" against the build's as-of
     _LEAD["asof"] = asof
     A = Audit(wb)
     _AUDIT_WB["wb"] = wb
@@ -1365,8 +1493,9 @@ def _write_summary(sh: Sheet, ctx: Ctx, keys: dict) -> None:
     C = {k: Col(*v) for k, v in {
         "project": ("Project", "The project.", FMT_TOK, "", "", 0, 16),
         "token": ("Token", "The token's symbol.", FMT_TOK, "", "", 0, 8),
-        "arch": ("Archetypes", "The archetypes the project is assessed under, primary first: A1 infrastructure, A2 "
-                 "coordination, A3 revenue buyback, A4 permanent burn.", FMT_TOK, "", "", 0, 11),
+        "arch": ("Archetypes", "The archetypes the project is assessed under — how value reaches the token today — "
+                 "primary (the biggest route) first: A1 infrastructure, A2 coordination, A3 revenue to holders, A4 "
+                 "permanent burn. A status beside a tag (A3 paused, A3 off) is the programme's.", FMT_TOK, "", "", 0, 11),
         "mcap": ("Market cap", "Price × the circulating supply the token ratios use.", FMT_USD, "Size",
                  "Master, Market cap ($)", 0, 12),
         "fdv": ("FDV", "Fully diluted value: price × the total supply FDV uses.", FMT_USD, "Size", "Master, FDV ($)",
@@ -1385,10 +1514,10 @@ def _write_summary(sh: Sheet, ctx: Ctx, keys: dict) -> None:
         "key": ("Archetype key", "The primary archetype's ranking key, higher is better, each in its own unit (A1's "
                 "is a 1-year change, in %; A2–A4's are ratios, in x) — see Definitions: "
                 + " · ".join(f"A{a}: {k[0]}" for a, k in ARCHETYPE_KEYS.items()), FMT_X, "Rank", "A-tab key columns",
-                0, 12),
+                0, 17),
         "rank": ("Rank in archetype", "Position within the primary archetype by its key. A project with no measured "
                  "key reads 'unranked' and sorts last; a parked project reads 'parked' and is outside the ranks.",
-                 FMT_RANK, "Rank", "computed", 0, 9),
+                 FMT_RANK, "Rank", "computed", 0, 12),
         "hvy": ("Holder value yield", "Revenue-funded value to holders a year (retired + distributed + liquid voter "
                 "bribes) ÷ the average market cap over the same days.", FMT_PCT, "Holders", "CP Comparability, HOLDER VALUE YIELD", 0, 11),
         "dil": ("Total dilution, % of float", "Every outflow a year (security emissions, supply- and demand-side "
@@ -1484,7 +1613,9 @@ def _summary_row(sh, ctx: Ctx, C, row, p, rank, key, parked: bool = False) -> No
     sh.value_rows.append(row)
     put_text(sh, row, C["project"], name, parked_reason(name) if parked else "", bold=True)
     put_text(sh, row, C["token"], p.get("symbol") or "—")
-    put_text(sh, row, C["arch"], ", ".join(f"A{a}" for a in (p.get("archetypes") or [])) or "—")
+    put_text(sh, row, C["arch"], ", ".join(
+        f"A{a}" + (f" {ctx.config.archetype_status(name, a)}" if ctx.config.archetype_status(name, a) else "")
+        for a in (p.get("archetypes") or [])) or "—")
     greens, nums = 0, 0
     srcs = {k: A.cell(sheet, head, name) for k, (sheet, head) in SUMMARY_SOURCES.items()}
 
@@ -1546,8 +1677,19 @@ def _summary_row(sh, ctx: Ctx, C, row, p, rank, key, parked: bool = False) -> No
         put_src(sh, data, row, C["key"], p, ksrc, f"No measured key: {kwhy}" if kwhy else "No measured key.",
                 extra=kwhy if kwhy.startswith(FLOWS_BLOCK) else "")
     else:
-        put_code(sh, row, C["key"], "n/a", f"No measured {ARCHETYPE_KEYS.get(arch, ('key',))[0].lower()}"
-                 + (f": {kwhy}" if kwhy else "") + ".")
+        iv, ihow = interim_key(ctx.groups, name) if arch == 1 else (None, "")
+        if iv is not None:
+            # R20: the 1-year key cannot form — the labelled 6-on-6 figure is the cell's TEXT (not a number: it is
+            # never ranked and never read as the key)
+            put_text(sh, row, C["key"], f"interim 6m on 6m: {iv:+.1%}",
+                     f"INTERIM — {ctx.config.A1_INTERIM_KEY['label']}. Settlement volume per circulating token, "
+                     f"{ihow}. Shown only while the 1-year key cannot form; dropped for this chain on the day it "
+                     f"does.\n\nThe 1-year key: n/a — {kwhy}.\n\nWorking: computed here from the stored daily "
+                     f"settlement series and {name}|circulating_supply_used.")
+            sh.ws.cell(row, _idx(sh, C["key"])).alignment = Alignment(horizontal="right")
+        else:
+            put_code(sh, row, C["key"], "n/a", f"No measured {ARCHETYPE_KEYS.get(arch, ('key',))[0].lower()}"
+                     + (f": {kwhy}" if kwhy else "") + ".")
     # PR1.S11 (Jake 2026-11-05: Ethereum's A1 key −0.135 read "-0.1x"): each key in its own unit — A1's is a 1-year
     # change (%), A2-A4's a ratio (x)
     kc = sh.ws.cell(row, _idx(sh, C["key"]))
@@ -1567,6 +1709,7 @@ def _summary_row(sh, ctx: Ctx, C, row, p, rank, key, parked: bool = False) -> No
                   f"Unranked, sorted last in its group: no measured {ARCHETYPE_KEYS.get(arch, ('key',))[0].lower()}"
                   + (f" — {kwhy}" if kwhy else "") + (f" — {plain(ksrc.text)}" if ksrc is not None and ksrc.text
                                                       else "") + "."))
+    status_label_cells(sh, row, C["key"], C["rank"], name, arch)        # R20: "0.0x — paused", "4 — paused"
     number("hvy", srcs["hvy"])
     number("dil", srcs["dil"])
     d, f = srcs["dil"], srcs["float"]
@@ -1750,7 +1893,7 @@ def tab_specs(bw) -> list:
     return [
         TabSpec(A1_TAB, 1, "A1 Infrastructure — ranked by settlement volume per token, 1-year change", ("a1",),
                 "Settlement per token, 1-yr change", "Rank in A1",
-                a_extra=(("interim", "FEES ÷ ISSUANCE (x)"),),
+                a_extra=(("six",), ("interim", "FEES ÷ ISSUANCE (x)")),
                 valuation=((None, "Price — spot ($)", "Price", ""), (None, "Market cap ($)", "Market cap", ""),
                            (M, "FDV ($)", "FDV", ""),
                            (None, "NRR ON SETTLEMENT VOLUME — market cap", "NRR on settlement", ""),
@@ -1779,8 +1922,8 @@ def tab_specs(bw) -> list:
                          (None, "VALIDATOR STAKING YIELD (annual)", "Validator yield", "staking"),
                          (None, "Spread over the 3-month T-bill: Total yield — stakers", "Stakers' yield minus T-bill",
                           ""))),
-        TabSpec(A2_TAB, 2, "A2 Coordination — ranked by customer revenue ÷ emissions", ("audit",
-                "Customer revenue ÷ emissions value (x)"), "Customer revenue ÷ emissions (x)", "Rank in A2",
+        TabSpec(A2_TAB, 2, "A2 Coordination — ranked by customer revenue ÷ emissions (network economics, not holder "
+                "value)", ("audit", "Customer revenue ÷ emissions value (x)"), ARCHETYPE_KEYS[2][0], "Rank in A2",
                 valuation=((None, "Market cap ($)", "Market cap", ""), (M, "FDV ($)", "FDV", ""),
                            (None, "Free float market cap ($, spot)", "Free float market cap", ""),
                            (None, "FREE FLOAT ÷ ARR (x)", "Free float ÷ ARR (x)", "")),
@@ -1803,23 +1946,23 @@ def tab_specs(bw) -> list:
                          (None, "Unlock dilution, annualised % of free float", "Unlocks, % of free float a year", ""),
                          (None, "TOTAL DILUTION = emissions + unlocks", "Total dilution, % of float a year", ""),
                          (None, "PUBLISHED UNLOCK SCHEDULE", "Published unlocks, next 12 months", ""))),
-        TabSpec(A3_TAB, 3, "A3 Revenue Buyback — ranked by burned buyback ÷ (emissions + unlocks)", ("audit",
+        TabSpec(A3_TAB, 3, "A3 Revenue to holders — ranked by revenue sent to holders ÷ value of new supply", ("audit",
                 bw.A3_KEY_HEAD), ARCHETYPE_KEYS[3][0], "Rank in A3",
                 a_extra=(("dilution", bw.RETIRE_VS_DILUTION_HEAD, bw.RETIRE_VS_DILUTION_NOW_HEAD),),
                 valuation=((None, "Price — spot ($)", "Price", ""), (None, "Market cap ($)", "Market cap", ""),
                            (None, "FDV ($)", "FDV", ""), (None, "Circulating supply", "Circulating supply", ""),
                            (CP_TAB, "HOLDER VALUE YIELD", "Holder value yield", "buyback"),
                            (None, "BUYING PRESSURE ON FLOAT", BUYING_PRESSURE_SHORT, "buyback")),
-                key_traj=(bw.A3_KEY_TRAJECTORY_ID, "Burned ÷ (emis + unlocks)", FMT_X,
-                          "BURNED ÷ (EMISSIONS + UNLOCKS) (x) — the rank key: burned buyback ÷ (emissions + unlocks), "
-                          "each per covered day (a held or distributed buyback is not burned); where an emission rate "
-                          "in force is declared (Sky), that rate: its latest value in the latest quarter, its mean over "
-                          "an earlier quarter (the Trajectory tab's rule for a stock); a quarter whose emissions + "
-                          "unlocks are a measured 0 with a burn reads 'no new supply' (P4-Q5a)"),
+                key_traj=(bw.A3_KEY_TRAJECTORY_ID, "To holders ÷ new supply", FMT_X,
+                          "REVENUE TO HOLDERS ÷ NEW SUPPLY (x) — the rank key (R20): revenue sent to holders ($) ÷ the "
+                          "$ value of new supply (outflows a–f at each day's price), each per covered day, over the "
+                          "quarter; a quarter whose new supply is a measured 0 with revenue to holders above 0 reads "
+                          "'no new supply'"),
                 traj=("a3_retire_vs_dilution", "Retired ÷ (emis + unlocks)", FMT_X,
                       "RETIREMENT ÷ DILUTION (x) — retired buyback ÷ (emissions + unlocks), each per covered day, not "
                       "the rank key"),
-                drivers=((None, "Base for the implied buyback ($)", "Revenue base, last 90 days", ""),
+                drivers=((None, "BURNED ÷ (EMISSIONS + UNLOCKS)", "Burned ÷ (emissions + unlocks)", "buyback"),
+                         (None, "Base for the implied buyback ($)", "Revenue base, last 90 days", ""),
                          ("@growth", "@revenue", "Revenue growth, selected period", "flow"),
                          (None, "Actual buyback Q0 ($)", "Actual buyback, last 90 days", "buyback"),
                          (None, "Actual buyback Q0 RETIRED (tokens)", "Retired: burned + held (tokens)", "buyback"),
@@ -1829,7 +1972,7 @@ def tab_specs(bw) -> list:
                          (None, "CIRCULATING RETIREMENT RATE (tokens)", "Retirement rate, % of circulating",
                           "buyback"),
                          (None, "PROTOCOL STAKING YIELD (tokens)", "Staking yield (tokens)", "staking"))),
-        TabSpec(A4_TAB, 4, "A4 Permanent Burn — ranked by burn ÷ issuance (burn ÷ release where pre-minted)",
+        TabSpec(A4_TAB, 4, "A4 Permanent burn — ranked by burn ÷ issuance (burn ÷ release where pre-minted)",
                 ("audit", "BURN ÷ ISSUANCE (x)"), "Burn ÷ issuance (x)", "Rank in A4",
                 valuation=((None, "Market cap ($)", "Market cap", ""), (M, "FDV ($)", "FDV", ""),
                            (None, "PERMANENT BURN YIELD", "Permanent burn yield", ""),
@@ -1915,7 +2058,7 @@ def _note_cols(tab: str, cols: list, how: list) -> list:
     return out
 
 
-A3_TRAJECTORY_ID = "a3_burned_vs_new_supply"          # the A3 key's own trajectory row (P2e-2, P4-Q5a)
+A3_TRAJECTORY_ID = "a3_revenue_vs_new_supply"          # the A3 key's own trajectory row (P2e-2, P4-Q5a)
 # block (c)'s quarter labels (P2e-2: short, so a series' exact name fits a 35-character header beside them)
 TRAJ_LABELS = ("latest", "−1 qtr", "−2 qtrs", "−3 qtrs")
 KEY_CHANGE_HEADER = "Key: change vs previous quarter"
@@ -2349,21 +2492,28 @@ def _write_arch_tab(sh: Sheet, ctx: Ctx, spec: TabSpec) -> None:
     else:
         kc = audit_col(spec.key[1])
         kh = A.header(tab, kc) if kc else spec.key[1]
-        add(Col(spec.key_header, ARCHETYPE_KEYS[spec.arch][1], FMT_X, "(a) Rank key", f"{tab}, {kh}", 0, 12,
+        add(Col(spec.key_header, ARCHETYPE_KEYS[spec.arch][1], FMT_X, "(a) Rank key", f"{tab}, {kh}", 0, 17,
                 audit=(tab, kh), family="buyback" if spec.arch == 3 else ""), ("audit", kc))
     add(Col(spec.rank_header, "Position by the rank key, higher first, among the projects whose PRIMARY archetype this "
             "is — the same rank as Summary. No measured key reads 'unranked' and sorts last; a project whose primary "
             "archetype is another reads 'secondary' (its key shown for comparison, ranked under its primary) and sorts "
             "below; a parked project reads 'parked' and is outside the ranks.", FMT_RANK, "(a) Rank key",
-            "computed (the ranking Summary shows)", 0, 9), ("rank",))
+            "computed (the ranking Summary shows)", 0, 12), ("rank",))
     for extra in spec.a_extra:
         if extra[0] == "dilution":
             dc, dn = audit_col(extra[1]), audit_col(extra[2])
             add(Col("Retired ÷ (emissions + unlocks)", "Retired buyback (burned + HELD) against emissions AND unlocks "
-                    "(at the rate in force where one is declared) — beside the key, which counts the burned buyback "
-                    "only (P4-Q5a).", FMT_X,
+                    "(at the rate in force where one is declared) — a supply figure beside the key; burned buyback "
+                    "only (P4-Q5a). Not the rank key (R20: revenue sent to holders ÷ value of new supply).", FMT_X,
                     "(a) Rank key", f"{tab}, RETIREMENT ÷ DILUTION (at the rate in force where declared)", 0, 13,
                     audit=(tab, extra[1]), family="buyback"), ("dilution", dc, dn))
+        elif extra[0] == "six":
+            add(Col("6 months on 6 (interim)", "INTERIM — 6 months on 6 months, not the 1-year rule, NOT RANKED: "
+                    "settlement volume per circulating token over the last 182 days against the 182 days before, as a "
+                    "change (the ratio of the two annualised levels; not compounded to a year). Near and Ethereum "
+                    "only, only while the chain's 1-year key cannot form and only when both halves hold every day; "
+                    "dropped per chain on the day its 1-year rule forms.", FMT_PCT, "(a) Rank key",
+                    "computed from the stored daily settlement volume and circulating supply", 0, 13), ("six",))
         elif extra[0] == "interim":
             ic = audit_col(extra[1])
             ih = A.header(tab, ic) if ic else extra[1]
@@ -2519,6 +2669,7 @@ def _write_arch_tab(sh: Sheet, ctx: Ctx, spec: TabSpec) -> None:
     order = primary + secondary + [(n, None, None) for n in sorted(n for n in names if parked_reason(n))]
     is_secondary = {n for n, _rk, _v in secondary}
     trend_cols, period_cols = [], []
+    status_rows: list = []                                              # R20: (row, project) — the status labels
     held = sum(1 for v in keyvals.values() if v is not None)            # projects on this tab holding the rank key
     ranked = sum(1 for _n, rk, _v in primary if rk is not None)
     for i, (name, rank, kv) in enumerate(order):
@@ -2532,6 +2683,7 @@ def _write_arch_tab(sh: Sheet, ctx: Ctx, spec: TabSpec) -> None:
             notes.insert(0, parked_reason(name))
         put_text(sh, row, cols[0], name, "\n\n".join(n for n in notes if n), bold=True)
         put_text(sh, row, cols[1], p.get("symbol") or "—")
+        status_rows.append((row, name))
         for j, (col, h) in enumerate(zip(cols, how)):
             if h is None:
                 continue
@@ -2541,6 +2693,18 @@ def _write_arch_tab(sh: Sheet, ctx: Ctx, spec: TabSpec) -> None:
                 extra = _premint_note(p, src) if src is not None and "ISSUANCE − BURN" in src.header.upper() else ""
                 cell = put_src(sh, data, row, col, p, src, extra=extra)
                 ctx.record(src, tab, cell, name)
+            elif kind == "six":
+                iv, ihow = interim_key(ctx.groups, name)
+                if iv is not None:
+                    put_number(sh, data, row, col, name, "a1six", iv, None,
+                               f"INTERIM — {config.A1_INTERIM_KEY['label']}. Settlement volume per circulating "
+                               f"token, {ihow}. Shown only while the 1-year key cannot form.\n\nWorking: computed "
+                               f"here from the stored daily settlement series and {name}|circulating_supply_used.")
+                elif name in config.A1_INTERIM_KEY["projects"] and not ihow.startswith("dropped"):
+                    put_code(sh, row, col, "n/a", f"The interim 6-on-6 figure is not formed: {ihow}. It is never "
+                                                  "filled or estimated.")
+                else:
+                    put_code(sh, row, col, "by design", f"Interim column — {ihow}.")
             elif kind == "interim":
                 src = A.at(tab, r_a, h[1]) if h[1] else None
                 cell = put_src(sh, data, row, col, p, src, extra=(
@@ -2667,6 +2831,9 @@ def _write_arch_tab(sh: Sheet, ctx: Ctx, spec: TabSpec) -> None:
                 if col.block == "(a) Rank key" or (h or ("",))[0] == "keytraj" or col.header == KEY_CHANGE_HEADER:
                     park_cell(sh, f"{col.letter}{row}", name)
             grey_row(sh, row)
+    for srow, sname in status_rows:          # R20 (config.ARCHETYPE_STATUS): "0.0x — paused" beside the key and rank
+        if not parked_reason(sname):
+            status_label_cells(sh, srow, cols[2], cols[3], sname, spec.arch)
     kept = len(sh.cols) - len(moved)
     if moved:
         _lift_notes(sh, ctx, tab, moved, kept, set(trend_cols), set(period_cols))
@@ -3486,8 +3653,12 @@ def _write_definitions(ws, sheets: dict) -> None:
                       ("secondary", "in a rank column of an archetype tab: the archetype is not the project's primary "
                        "one — its key is shown for comparison, its rank is under its primary archetype (on Summary "
                        "and that tab)"),
-                      (NO_NEW_SUPPLY, "in A3's key column: emissions + unlocks are a measured 0 and tokens were "
-                       "burned, so the ratio has no denominator — it ranks first (ties by net holder yield)"),
+                      (NO_NEW_SUPPLY, "in A3's key column: the value of new supply is a measured 0 and revenue was "
+                       "sent to holders, so the ratio has no denominator — it ranks first (ties by net holder yield)"),
+                      ("history filling", "'history filling - forms on <date>': the cell is empty only because "
+                       "history older than 12 months is still filling, for a series that is still being read (its "
+                       "last day within 7 days of the as-of) — grey, not counted as a gap; the date is the day the "
+                       "figure first forms"),
                       ("not yet split", "in a revenue-line column (fees, revenue, holder revenue, holder share): the "
                        "project's three lines are populated in its own round; until then the comment says which of "
                        "the three its existing revenue cell is")):
@@ -3530,14 +3701,16 @@ def _write_revenue_line_defs(ws, r: int) -> int:
 
 
 def _write_about(ws, asof, sheets: dict, projects: list) -> None:
+    import config                                          # noqa: PLC0415
     parked = [f"{p['name']} — {parked_reason(p['name'])}" for p in projects if parked_reason(p["name"])]
     tab_lines = {
         SUMMARY: "every project on one row, grouped by its primary archetype and ranked by that archetype's key; the "
                  "period selector is in B2.",
         A1_TAB: "the infrastructure chains: settlement and fees against issuance, NRR, yields.",
-        A2_TAB: "the coordination networks: customer revenue against the emissions that pay suppliers, supply units, "
-                "dilution.",
-        A3_TAB: "the revenue-buyback tokens: what is retired against what is emitted, valuation, payout.",
+        A2_TAB: "the coordination networks: customer revenue against the emissions that pay suppliers (network "
+                "economics, not holder value), supply units, dilution.",
+        A3_TAB: "A3 Revenue to holders: revenue sent to holders against the value of new supply, valuation, payout "
+                "(the sheet keeps its title).",
         A4_TAB: "the permanent-burn tokens: burn against issuance (or against release for a pre-minted supply).",
         COMPARISON: "every project on the figures that mean the same for each, sorted by net holder yield.",
         BUSINESS: "fees, revenue, TVL and each project's own unit of demand, with growth over the selected period.",
@@ -3560,14 +3733,17 @@ def _write_about(ws, asof, sheets: dict, projects: list) -> None:
          "is spending them.", F_BODY),
         ("", F_BODY),
         ("The four archetypes, and the key each is ranked by (higher is better)", F_BOLD),
-        ("A1 Infrastructure — a chain whose token secures it: ranked by settlement volume per circulating token, "
-         "1-year change.", F_BODY),
-        ("A2 Coordination — a network paying suppliers in tokens: ranked by customer revenue ÷ emissions (1.0x is the "
-         "crossover).", F_BODY),
-        ("A3 Revenue buyback — revenue buys tokens back: ranked by tokens retired ÷ tokens emitted (1.0x is the "
-         "crossover).", F_BODY),
-        ("A4 Permanent burn — usage burns tokens: ranked by burn ÷ issuance, or burn ÷ release for a pre-minted supply "
-         "(1.0x is the crossover).", F_BODY),
+        (config.ARCHETYPE_RULES[0], F_BODY),
+        *[(f"{d['name']} — {d['what']}. Key: {d['key']}"
+           + (f" — {d['key_reads']}" if d["key_reads"] != "holder value" else "") + ".", F_BODY)
+          for _a, d in sorted(config.ARCHETYPE_DEFINITIONS.items())],
+        ("A3 status labels: 'paused' (the programme is paused with stated intent to restart) and 'off' (the "
+         "mechanism is not switched on); the key reads 0 with the label beside it and beside the rank.", F_BODY),
+        (config.ARCHETYPE_RULES[1], F_BODY),
+        (config.ARCHETYPE_RULES[2], F_BODY),
+        ("On A1, '6 months on 6 (interim)' is a labelled, unranked figure for Near and Ethereum, shown only while "
+         "the chain's 1-year key cannot form. 'history filling - forms on <date>' (grey) marks a cell that is empty "
+         "only because history older than 12 months is still filling for a series that is still being read.", F_BODY),
         ("", F_BODY),
         ("How to read a cell", F_BOLD),
         ("Fill is confidence: GREEN verified and usable · AMBER a real number with a caveat (hover it) · RED not usable "
@@ -3613,7 +3789,12 @@ COVERAGE_CODES = (("blocked", "a rule refused the key: unequal coverage of its t
                   ("n/a", "the key has no value: a leg has no reading, the history is too short, or a ratio over 0"),
                   ("not wired", "no route to one of the key's inputs yet"),
                   ("by design", "the key does not apply to the project (for example a fixed supply that emits "
-                                "nothing)"))
+                                "nothing)"),
+                  # R20: the two key-cell texts that are not codes — counted by their opening words (a COUNTIFS wildcard)
+                  ("history filling*", "only history older than 12 months is missing, for a series still being read; "
+                                       "the key cell says the day it forms"),
+                  ("interim*", "the 1-year key cannot form yet; the key cell shows the labelled 6-months-on-6 figure "
+                               "(Near, Ethereum), which is never ranked"))
 
 
 def _summary_sections(ws) -> list:
@@ -3636,7 +3817,7 @@ def _write_coverage(ws, top: int, sws) -> None:
     hdr = {sws.cell(4, c).value: c for c in range(1, sws.max_column + 1)}
     kL, rL = get_column_letter(hdr["Archetype key"]), get_column_letter(hdr["Rank in archetype"])
     ws.cell(top, 1, "Honest coverage — counted from the Summary tab (the figures follow the data)").font = F_BOLD
-    heads = ("Archetype", "Projects", "Ranked", "Unranked", "Parked") + tuple(f"Unranked: {c}" for c, _ in
+    heads = ("Archetype", "Projects", "Ranked", "Unranked", "Parked") + tuple(f"Unranked: {c.rstrip('*')}" for c, _ in
                                                                            COVERAGE_CODES)
     for j, h in enumerate(heads, start=1):
         c = ws.cell(top + 1, j, h)
@@ -3662,7 +3843,7 @@ def _write_coverage(ws, top: int, sws) -> None:
     ws.cell(r, 1, "Why a project is unranked, by the code in its key cell").font = F_BOLD
     for code, why in COVERAGE_CODES:
         r += 1
-        ws.cell(r, 1, f"{code} — {why}.").font = F_BODY
+        ws.cell(r, 1, f"{code.rstrip('*')} — {why}.").font = F_BODY
     r += 1
     ws.cell(r, 1, "parked — the project is parked: its row is greyed, its numbers shown, outside the ranks; the reason "
                   "is listed under Parked projects above.").font = F_BODY

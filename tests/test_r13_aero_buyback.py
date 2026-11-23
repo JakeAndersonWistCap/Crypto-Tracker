@@ -557,7 +557,8 @@ def test_the_burn_mechanism_and_the_two_burns_are_recorded_with_their_transactio
     assert mech["model"] == "protocol_level_destruction" and mech["status"] == "confirmed" and mech["from"] == "2026-10-22"
     assert P["burn_mechanism_was"]["model"] == "no_burn" and P["burn_mechanism_was"]["until"] == "2026-10-22"
     assert config.burn_mechanism(P)["model"] in config.BURN_MECHANISM_MODELS
-    assert P["archetypes"] == [3], "the burn is a destination of the buyback, not a fee burn: archetype 4 is not added"
+    # R20 (Jake 2026-11-24): Aerodrome A3, A4 — any permanent destruction, scored on what is actually burned. Was [3]
+    assert P["archetypes"] == [3, 4] and config.a4_burn_metric("Aerodrome") == "buyback_burned_tokens"
     # nothing derives a figure from the mechanism for Aerodrome: its issuance is read, not derived from the supply
     assert "gross_issuance_tokens" not in config.metrics_for_project(P) and P.get("burn_read_method") is None
     last = config.buyback_destination_shares("Aerodrome", "2026-11-01")

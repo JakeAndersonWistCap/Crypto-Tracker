@@ -295,7 +295,7 @@ def test_p1_9_the_column_map_names_every_master_and_a3_column(built):
         assert set(heads) <= mapped, set(heads) - mapped
     key = [x for x in rows if x["audit_header"] == bw.A3_KEY_HEAD]
     assert key and key[0]["reader_tab"] == "A3 Revenue Buyback" and \
-        key[0]["reader_header"] == "Burned ÷ (emissions + unlocks) (x)"
+        key[0]["reader_header"] == reader.ARCHETYPE_KEYS[3][0]            # R20: revenue to holders ÷ new supply
     others = {x["audit_tab"] for x in rows if x["audit_column"] == "(all)"}
     assert {"Data", "Run Log", "Coverage", "Credibility"} <= others
 
@@ -416,7 +416,9 @@ def test_p2a_a4_a_status_driven_zero_keeps_its_zero_and_shows_the_status(built):
     for head in ("Holder value yield", "Archetype key"):
         c = ws.cell(rr, _col_of(ws, head))
         assert X.value("Summary", rr, c.column) == 0.0, head
-        assert "halted since 2026-05-11" in c.number_format and "halted since 2026-05-11" in c.comment.text, head
+        # R20: the key's label is the programme's status ("paused"); the halt's date stays in the comment
+        assert ("halted since 2026-05-11" in c.number_format or "paused" in c.number_format) and \
+            "2026-05-11" in c.comment.text, head
     assert reader.status_note(config.PROJECT_BY_NAME["Maple"], "staking").startswith("ended since 2025-11")
 
 
@@ -468,8 +470,8 @@ def test_p2a_a7_what_changed_follows_the_selector(built):
 def test_p2a_b_archetype_tabs_are_built_like_a3_with_their_keys(built):
     r = openpyxl.load_workbook(built["reader"])
     defs = {(row[0].value, row[2].value) for row in r["Definitions"].iter_rows(min_row=4) if row[0].value}
-    keys = {"A1 Infrastructure": "Settlement per token, 1-yr change", "A2 Coordination": "Customer revenue ÷ emissions (x)",
-            "A3 Revenue Buyback": "Burned ÷ (emissions + unlocks) (x)", "A4 Permanent Burn": "Burn ÷ issuance (x)"}
+    keys = {"A1 Infrastructure": "Settlement per token, 1-yr change", "A2 Coordination": reader.ARCHETYPE_KEYS[2][0],
+            "A3 Revenue Buyback": reader.ARCHETYPE_KEYS[3][0], "A4 Permanent Burn": "Burn ÷ issuance (x)"}   # R20
     for tab, key in keys.items():
         ws = r[tab]
         labels = [ws.cell(3, c).value for c in range(1, ws.max_column + 1) if ws.cell(3, c).value]
@@ -655,8 +657,9 @@ def test_p2c_8_about_coverage_counts_equal_the_summary(built):
         assert a.cell(top + 2 + i, 1).value == label and got == [float(x) for x in want], (label, got, want)
         assert want[0] == want[1] + want[2] + want[3], label
         by_code = [X.value("About", top + 2 + i, j) for j in range(6, 6 + len(reader.COVERAGE_CODES))]
-        assert by_code == [float(sum(1 for k, rv in zip(keys, ranks) if rv == "unranked" and k == code))
-                           for code, _w in reader.COVERAGE_CODES]
+        assert by_code == [float(sum(1 for k, rv in zip(keys, ranks) if rv == "unranked" and (
+            k == code or (code.endswith("*") and isinstance(k, str) and k.startswith(code[:-1])))))
+                           for code, _w in reader.COVERAGE_CODES]             # R20: history filling* / interim*
         totals = [t + w for t, w in zip(totals, want)]
     assert [X.value("About", top + 2 + len(sections), j) for j in range(2, 6)] == [float(t) for t in totals]
     # the text is fixed: a formula in every figure cell, never a typed number

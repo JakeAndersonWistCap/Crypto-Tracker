@@ -188,7 +188,9 @@ def check_about_counts(wb, X=None) -> list:
         keys = [X.value(reader.SUMMARY, r, kk) for r in range(lo, hi + 1)]
         want = [hi - lo + 1, sum(_is_number(v) and v > 0 for v in ranks), ranks.count("unranked"),
                 ranks.count("parked")]
-        want += [sum(1 for k, rv in zip(keys, ranks) if rv == "unranked" and k == code)
+        # R20: a code ending in * is counted by its opening words (history filling - forms on <date>; interim …)
+        want += [sum(1 for k, rv in zip(keys, ranks) if rv == "unranked" and (
+            k == code or (code.endswith("*") and isinstance(k, str) and k.startswith(code[:-1]))))
                  for code, _w in reader.COVERAGE_CODES]
         compare(row, label, want)
         totals = [t + w for t, w in zip(totals, want)]

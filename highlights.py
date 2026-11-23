@@ -259,7 +259,7 @@ def c5_caveat_formula(caveat: str, r30, b30) -> str | None:
 def c6_reading(growth, cover, second_best: bool) -> str:
     """C6's reading: 'revenue grew' only when Summary revenue growth is above 0, 'subsidy cover is high' only when
     Subsidy cover (x) is at least HIGH_COVER, 'net holder yield is second best' only when it is."""
-    s = "Burned ÷ (emissions + unlocks) fell to zero over four quarters"
+    s = "Revenue to holders ÷ new supply fell to zero over four quarters"     # R20: A3's key
     g, c = num(growth), num(cover)
     cl = (["revenue grew"] if g is not None and g > 0 else []) + \
          (["subsidy cover is high"] if c is not None and c >= HIGH_COVER else [])

@@ -315,7 +315,7 @@ def test_synthetic_the_printed_card_shows_label_and_the_value_as_displayed():
     i = next(k for k, ln in enumerate(lines) if "[C1]" in ln)
     block = lines[i:i + 8]
     assert "GEODNET" in block[0]
-    assert any(ln.strip() == "Customer revenue ÷ emissions (x): 1.1x" for ln in block), block
+    assert any(ln.strip().endswith(": 1.1x") for ln in block), block       # R20: the A2 key's header is relabelled
     assert any(ln.strip() == "Holder value yield: 6.8%" for ln in block)
     j = next(k for k, ln in enumerate(lines) if "[C4]" in ln)
     assert any("Protocol revenue, annualised: $849.0m" in ln for ln in lines[j:j + 9])
@@ -425,7 +425,7 @@ def test_p3_8_narrowed_over_three_quarters_only_when_strictly_falling_over_the_f
 
 def test_p3_8_c6_revenue_grew_and_subsidy_cover_high_are_two_clauses_each_only_when_true():
     assert H.HIGH_COVER == 2.0
-    base = "Burned ÷ (emissions + unlocks) fell to zero over four quarters"
+    base = "Revenue to holders ÷ new supply fell to zero over four quarters"   # R20: A3's key (was burned ÷ …)
     assert H.c6_reading(0.3, 56.4, False) == base + " while revenue grew and subsidy cover is high."
     assert H.c6_reading(-0.048, 56.4, False) == base + " while subsidy cover is high."
     assert H.c6_reading(0.0, 2.0, False) == base + " while subsidy cover is high."          # 0 is not growth; 2.0x is high

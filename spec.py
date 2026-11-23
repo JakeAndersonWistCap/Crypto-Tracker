@@ -100,7 +100,8 @@ COLUMN_MAP: tuple[tuple[str, str, str], ...] = (
     ("*", "PENDLE still in the OLD", "stake_inside"), ("*", "sPENDLE + old vePENDLE", "cross_check"),
     ("*", "Umbrella staked", "notes"), ("*", "CIRCULATING RETIREMENT RATE", "retirement"),
     ("*", "Circulating retirement rate", "retirement"), ("*", "Retirement rate", "retirement"),
-    ("*", "RETIREMENT ÷ DILUTION", "retirement"), ("*", "BURNED ÷ (EMISSIONS + UNLOCKS)", "a3_key"),  # P4-Q5 fix: the key's own concept
+    ("*", "RETIREMENT ÷ DILUTION", "retirement"), ("*", "BURNED ÷ (EMISSIONS + UNLOCKS)", "a3_burned"),   # R20: an ordinary column, its own concept
+    ("*", "REVENUE TO HOLDERS ÷ NEW SUPPLY", "a3_key"),   # R20: the key (revenue to holders ÷ value of new supply)  # P4-Q5 fix: the key's own concept
     ("*", "BUYING PRESSURE ON FLOAT", "actual_buyback"),
     ("*", "Buyback status", "capture_status"),
     ("*", "Burn status", "capture_status"), ("*", "Programmed?", "capture_status"), ("*", "Buyback destination", "capture_status"),

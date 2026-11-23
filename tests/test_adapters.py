@@ -14806,7 +14806,7 @@ def test_hyperliquid_future_emissions_is_its_own_series_never_pool_release():
 def test_valuation_config_chainlink_manual_routes_and_the_two_yields_stay_apart():
     c = config.PROJECT_BY_NAME["Chainlink"]
     # P3-2d (DEFINITION R4, Jake 2026-11-02): A2 is PRIMARY (was [1, 2, 3]); A1 and A3 stay as secondary
-    assert c["archetypes"] == [2, 1, 3], "the note's archetype-2 list names Chainlink"
+    assert c["archetypes"] == [2, 3], "the note's archetype-2 list names Chainlink"   # R20: A1 off (was [2, 1, 3])
     # customer_revenue_usd RESOLVED 2026-09-28: DefiLlama's adapter books the fee aggregator's
     # receipts (consumer spend) as fees, so it is restated as a labelled FLOOR
     assert "supply_units" in c["manual_quarterly"] and "customer_revenue_usd_blocked" not in c

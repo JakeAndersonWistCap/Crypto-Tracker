@@ -24,7 +24,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent
 OUT = ROOT / "METRICS.md"
 TABS = (("Master", "Master"), ("A1", "A1 — Infrastructure"), ("A2", "A2 — Coordination"),
-        ("A3", "A3 — Revenue buyback"), ("A4", "A4 — Permanent burn"), ("CP", "CP — Comparability (Phase 2)"))
+        ("A3", "A3 — Revenue to holders"), ("A4", "A4 — Permanent burn"), ("CP", "CP — Comparability (Phase 2)"))
 SKIP = {"Project", "Symbol"}
 TIER_NAMES = {1: "free API", 2: "contract / chain read", 3: "rendered page / manual"}
 
