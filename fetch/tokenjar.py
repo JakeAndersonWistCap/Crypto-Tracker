@@ -71,7 +71,7 @@ MULTICALL_CHUNK = 300
 SEL = {"factory": "c45a0155", "token0": "0dfe1681", "token1": "d21220a7", "getReserves": "0902f1ac",
        "totalSupply": "18160ddd", "symbol": "95d89b41", "balanceOf": "70a08231", "aggregate3": "82ad56cb"}
 DEFAULTS = {"state_path": ".cache/tokenjar/state.json", "prices_path": ".cache/tokenjar/prices.json",
-            "budget_s": 240, "min_confidence": 0.9, "price_hour_utc": 12, "search_width": "12h",
+            "budget_s": 240, "balance_budget_s": 60, "min_confidence": 0.9, "price_hour_utc": 12, "search_width": "12h",
             "price_api": "https://coins.llama.fi", "balance_window_days": 90}
 
 
@@ -246,13 +246,31 @@ class TokenJarInflows:
     def _left(self) -> float:
         return self._deadline - self.clock()
 
+    def _hard_left(self) -> float:
+        """Seconds to the HARD STOP (R20): the soft budget plus the balance reads' slice. Past it no call starts."""
+        return getattr(self, "_hard", float("inf")) - self.clock()
+
+    def _guard(self, h: Http | None = None) -> None:
+        """R20 (Jake 2026-11-24: the tier ran past 300 s and stored nothing): NO NETWORK CALL STARTS AFTER THE HARD
+        STOP — block bisection, multicalls, prices and the native leg had no limit of their own — and a call made close
+        to it may not wait (read timeout, 429 back-off) longer than what is left. RouteFailed: the chain-day stays
+        unread and the next run reads it; what is already read is emitted."""
+        left = self._hard_left()
+        if left <= 0:
+            raise RouteFailed("time budget reached (hard stop) — nothing more is asked this run; resumes next run")
+        if h is not None and left != float("inf") and hasattr(h, "timeout") and hasattr(h, "max_retry_wait"):
+            base = self.__dict__.setdefault("_http_limits", {}).setdefault(id(h), (h.timeout, h.max_retry_wait))
+            h.timeout, h.max_retry_wait = min(base[0], max(2.0, left)), min(base[1], max(0.0, left))
+
     def _post(self, url: str, payload):
+        self._guard(None if self._rpc_post is not None else self.http)
         if self._rpc_post is not None:
             return self._rpc_post(url, payload)
         return self.http.post(url, json_body=payload)
 
     def _get(self, url: str, params: dict):
         h = self.bs_http if "/api" in url and "module" in params else self.http
+        self._guard(h)
         return h.get(url, params=params)
 
     def rpc(self, url: str, method: str, params: list):
@@ -708,6 +726,8 @@ class TokenJarInflows:
         if unbounded and self.bs_http is not self.http:
             self.bs_http.max_retry_wait = 600.0       # a seed waits out a keyless Blockscout window (x-ratelimit-reset)
         self._deadline = self.clock() + (float("inf") if unbounded else float(spec["budget_s"]))
+        # R20: the HARD STOP — the soft budget (new chain-days start until it) plus the balance reads' own slice
+        self._hard = self._deadline + float(spec.get("balance_budget_s") or 0.0)
         st = self._load(spec["state_path"])
         self.st = st if st.get("version") == 1 else {"version": 1, "chains": {}, "balances": {}}
         self.prices = self._load(spec["prices_path"])
@@ -757,10 +777,20 @@ class TokenJarInflows:
             rec = self.st.setdefault("balances", {}).get(day)
             if rec and rec.get("complete"):
                 continue
-            per, why = {}, {}
+            # R20: A HELD CHAIN IS NOT READ AGAIN. A balance at a day's closing block changes only with the list of
+            # tokens asked (the tokens seen arriving, which grows as older days are read): a chain's read of this day
+            # is kept while that list is unchanged. Was: every chain of both balance days was read again on every run
+            # until the whole history was read — after the budget, with no limit of its own.
+            per, why = dict((rec or {}).get("per") or {}), {}
             for chain in self.live_chains(day):
                 cs = spec["chains"][chain]
                 if cs.get("not_read"):
+                    continue
+                held = per.get(chain)
+                if held and int(held.get("seen_kinds", -1)) == len(self.cst(chain).get("seen") or []):
+                    continue
+                if self._hard_left() <= 0:
+                    why[chain] = "time budget reached before its balance read — read next run"
                     continue
                 try:
                     per[chain] = self.read_balance(chain, cs, day)

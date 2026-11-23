@@ -279,12 +279,13 @@ def test_5_leakage_i_is_zero_when_all_the_credited_value_was_retired():
 
 # ===================================================================== decision 6: node-operator payments are (b)
 def test_6_node_operator_payments_are_outflow_b_and_the_recipients_are_inferred():
-    assert config.outflow_metrics(CL, "b") == ("node_operator_payments_tokens",)
-    assert config.outflow_metrics(CL, "e") == ("unlock_release_tokens",)     # the exchange leg stays in (e)
+    # R20 (Jake 2026-11-24): (b) also holds the Safe 0x77dd1a9b's direct payments to the same recipients (was the
+    # contract's alone); the exchange leg is category (f), netted out of (e) (was: it stays in (e)); the label reads
+    # "path PUBLISHED ..., addresses not named" (was "node operators, INFERRED") - tests/test_r20_decisions.py
+    assert config.outflow_metrics(CL, "b") == ("node_operator_payments_tokens", "node_operator_payments_safe_tokens")
+    assert config.outflow_metrics(CL, "e") == ("unlock_release_tokens",)
     np_ = config.CHAINLINK_NODE_PAYMENTS
-    assert np_["recipients"] == 63 and np_["recipients_label"] == "node operators, INFERRED"
-    assert "INFERRED" in config.METRICS["node_operator_payments_tokens"]["label"]
-    assert "INFERRED" in config.OUTFLOW_CATEGORIES[CL]["basis"]
+    assert np_["recipients"] == 63
     rd = np_["read"]
     assert sum(rd["by_quarter"].values()) == pytest.approx(rd["paid_all_time"], abs=3)      # 5,132,390.40 (rounded rows)
     assert sum(rd["funded_by"].values()) == pytest.approx(rd["paid_all_time"], abs=3)       # every LINK's payer named
@@ -376,7 +377,9 @@ def test_6_each_payment_leaves_the_release_on_its_lumps_day_fifo():
     """(e) loses exactly what (b) counts: payments draw FIFO on the lumps from 2025-03-14, each lump first less its
     staking part; taken out on the lump's day; a payment no lump covers is not attributed."""
     pl = config.RELEASE_PAID_LATER[CL]
-    assert pl["paid"] == "node_operator_payments_tokens" and pl["from"] == "2025-03-14"
+    # R20: two payment paths (was "node_operator_payments_tokens" alone)
+    assert pl["paid"] == ("node_operator_payments_tokens", "node_operator_payments_safe_tokens")
+    assert pl["from"] == "2025-03-14"
     days = pd.date_range("2025-01-01", "2025-12-31")
     release = pd.Series(0.0, index=days)
     lumps = {"2025-01-10": 1_000_000.0, "2025-03-14": 4_125_000.0, "2025-06-20": 3_125_000.0}   # to 0xD50f074E…
@@ -384,7 +387,7 @@ def test_6_each_payment_leaves_the_release_on_its_lumps_day_fifo():
         release.loc[pd.Timestamp(d)] = v + 14_875_000.0                       # + the exchange leg that day
     g = {(CL, pl["lumps"]): _frame(pl["lumps"], list(lumps.items()), "explorer:staking_path_in"),
          (CL, pl["after"]): _frame(pl["after"], [("2025-03-14", 607_500.0)], "derived:fifo"),
-         (CL, pl["paid"]): _frame(pl["paid"], [("2025-04-03", 3_000_000.0), ("2025-07-03", 1_000_000.0),
+         (CL, pl["paid"][0]): _frame(pl["paid"][0], [("2025-04-03", 3_000_000.0), ("2025-07-03", 1_000_000.0),
                                                ("2025-12-18", 5_000_000.0)], "explorer:node_payments_out")}
     total, src = bw._paid_later_split(g, CL, pl, release, g[(CL, pl["lumps"])].columns)
     out = g[(CL, pl["out"])].set_index("date")["value"]
@@ -423,7 +426,13 @@ def test_6_total_dilution_is_not_blocked_while_the_payments_scan_has_no_row(scop
                                                       "explorer:node_payments_out")
     bw._VIEW_BLOCKS.clear()
     bw._outflow_views(g)
-    assert not bw.PAID_LATER_NOT_READ and bw._cp_cats(P) == ["a", "b", "e"]
+    # R20: the second payment path's scan stores its own series ((b) is formed only with both) and the exchange leg is
+    # category (f), not read here - still wholly inside (e), so it blocks nothing (was: no entry, cats a, b, e)
+    g[(CL, "node_operator_payments_safe_tokens")] = _frame("node_operator_payments_safe_tokens",
+                                                           [(d, 0.0) for d in days], "explorer:node_payments_safe_out")
+    bw._VIEW_BLOCKS.clear()
+    bw._outflow_views(g)
+    assert set(bw.PAID_LATER_NOT_READ) == {(CL, "f")} and bw._cp_cats(P) == ["a", "b", "e"]
     assert g[(CL, "outflow_b_usd")]["value"].sum() == pytest.approx(13 * 100_000.0 * 12.0)
     bw.PAID_LATER_NOT_READ.clear()
     bw._VIEW_BLOCKS.clear()
@@ -504,7 +513,9 @@ def test_8_the_flag_reads_raised_at_the_live_figures(scoped):
     assert r["as_written"]["size"] == pytest.approx(11.4038, abs=1e-4)      # 1,140% of the retired tokens
     assert bw.theatre_flag_size(CL) == f"={r['as_written']['size']!r}"
     txt = bw.theatre_flag_text(CL)
-    assert txt.startswith("SCORED — AS WRITTEN (tokens RETIRED by buyback): RAISED")
+    # R20: the cell opens with the long wording (W1), its figures from these series; the scored line follows
+    assert txt.startswith("RAISED — 11.4x. Since the Reserve began (2025-08-07)") and "77.6M LINK" in txt
+    assert "SCORED — AS WRITTEN (tokens RETIRED by buyback): RAISED" in txt
     for must in ("Binance", "Blockscout", "evidence, not proof", "2025-08-07", "NAMED FLOAT OUTFLOW"):
         assert must in txt, must
     assert spec["window"]["from"] == str(r["window"][0])

@@ -908,10 +908,51 @@ def _emissions_accrual_views(groups: dict) -> None:
             continue
         cols = next(g.columns for m in (spec["before"], spec["rate_metric"]) if (g := groups.get((name, m))) is not None)
         start = pd.Timestamp(spec["from"])
+        # R20 (Jake 2026-11-24): the Gauge Caps' UNMINTED SURPLUS is netted out, so dilution counts only what mints
+        sm = spec.get("surplus_metric")
+        surplus = _daily(groups.get((name, sm))) if sm else pd.Series(dtype=float)
+        netted_from = None
+        if not surplus.empty:
+            acc, netted_from = accrual_less_surplus(acc, surplus, start)
+        ACCRUAL_SURPLUS[name] = {"netted_from": netted_from, "surplus_days": int(len(surplus)),
+                                 "surplus_last": float(surplus.iloc[-1]) if len(surplus) else None}
+        net_src = f"derived:accrual[{spec['rate_metric']}/{spec['days_per_rate']:g} - d({sm})]"
         groups[(name, spec["metric"])] = _as_stored(pd.DataFrame(
             {"date": acc.index, "project": name, "metric": spec["metric"], "value": acc.values, "tier": 2,
              "source": [f"derived:accrual[{spec['before']}]" if d < start else
+                        net_src if netted_from is not None and d >= netted_from else
                         f"derived:accrual[{spec['rate_metric']}/{spec['days_per_rate']:g}]" for d in acc.index]}), cols)
+
+
+ACCRUAL_SURPLUS: dict = {}   # project -> what the last build netted (R20)
+
+
+def accrual_less_surplus(acc: pd.Series, surplus: pd.Series, start) -> tuple:
+    """R20 (pure): (the accrual with the unminted surplus netted out, the first netted day). `surplus` is a STOCK (0 at
+    `start`, the activation). On each day it is read, the accrual of that day loses the surplus's RISE since the
+    previous reading (the first reading: since 0) — a FALL (a surplus spent: a mint) adds. A day is never below 0: a
+    rise larger than the day's accrual is carried to the following days, so the sum over the span is exactly
+    Σ accrual − (the last surplus read − 0). Days from `start` after the LAST surplus reading hold no value (their
+    surplus change is not known: unknown, never the cap); days before `start` and days before the first reading are
+    untouched; a day inside the span with no reading keeps its accrual (the change lands on the next reading)."""
+    start = pd.Timestamp(start)
+    if surplus is None or surplus.empty:
+        return acc, None
+    s = surplus[surplus.index >= start].sort_index().astype(float)
+    if s.empty:
+        return acc, None
+    delta = s.diff()
+    delta.iloc[0] = float(s.iloc[0])
+    out = acc[acc.index <= s.index.max()].astype(float).copy()
+    owed = 0.0
+    for d in out.index[out.index >= s.index.min()]:
+        need = owed + float(delta.get(d, 0.0))
+        v = float(out.loc[d]) - need
+        if v >= 0:
+            out.loc[d], owed = v, 0.0
+        else:
+            out.loc[d], owed = 0.0, -v
+    return out, s.index.min()
 
 
 def _velo_merged_views(groups: dict) -> None:
@@ -5212,6 +5253,20 @@ def _ending_schedule_views(groups: dict) -> None:
         ENDING_SCHEDULE_ROWS[name] = True
 
 
+def theatre_flag_headline(spec: dict, r: dict, scored: dict) -> str:
+    """R20 (Jake 2026-11-24, Chainlink: "RAISED at 11.4x with the long wording"): a project's declared cell wording
+    (config THEATRE_FLAG cell_wording), EVERY FIGURE FILLED FROM THE BUILD'S OWN WINDOW SUMS — the tokens sent, the
+    tokens bought (the scored base), their ratio and the base as a share of the sends. Formed only where the scored
+    reading is RAISED with a size; otherwise '' and the cell reads as before (NOT TESTABLE stays NOT TESTABLE)."""
+    w = spec.get("cell_wording")
+    sent, base = r.get("sent"), r.get("retired" if (spec.get("scored") or "as_written") == "as_written" else "bought")
+    if not w or scored.get("state") != "RAISED" or scored.get("size") is None or not sent or not base:
+        return ""
+    head = w.format(state=scored["state"], size=float(scored["size"]), since=spec["window"]["from"],
+                    sent_m=float(sent) / 1e6, bought_m=float(base) / 1e6, share=float(base) / float(sent))
+    return head + (" " + spec["cell_comment"] + " " if spec.get("cell_comment") else " ")
+
+
 def theatre_flag_text(name: str) -> str:
     """The CP cell: the flag's state under the standard's wording, the wider reading beside it, and the evidence."""
     spec = (getattr(config, "THEATRE_FLAG", {}) or {}).get(name)
@@ -5235,7 +5290,8 @@ def theatre_flag_text(name: str) -> str:
     named = (f"NAMED FLOAT OUTFLOW {nw[0]}..{nw[1]}: "
              + (f"{ns:,.0f} sent to the tagged destinations" if ns is not None else "not stored over the window")
              + ", purpose not established. ")
-    return (f"SCORED — {first[0]}: {first[1]['state']} — {first[1]['why']}{size(first[1])}. "
+    return (theatre_flag_headline(spec, r, first[1])
+            + f"SCORED — {first[0]}: {first[1]['state']} — {first[1]['why']}{size(first[1])}. "
             f"Beside it — {second[0]}: {second[1]['state']} — {second[1]['why']}{size(second[1])}. "
             f"Flag window {r['window'][0]}..{r['window'][1]}"
             + (f" ({'; '.join(r['late'])})" if r.get("late") else "") + ". " + named
@@ -6983,10 +7039,17 @@ def _outflow_views(groups: dict) -> None:
                 continue
             legs = [_daily(groups.get((name, m))) for m in ms]
             pl = (getattr(config, "RELEASE_PAID_LATER", {}) or {}).get(name) or {}
-            if tuple(ms) == (pl.get("paid"),) and legs[0].empty and (name, ms[0]) not in _VIEW_BLOCKS:
+            # R20: `paid` may be several series (Chainlink's two payment paths), and a category netted out of the
+            # release by RELEASE_LESS may be declared the same way (config.NETTED_NOT_READ_OK: Chainlink's (f))
+            paid = pl.get("paid")
+            netted = set((paid,) if isinstance(paid, str) else (paid or ())) | set(
+                ((getattr(config, "NETTED_NOT_READ_OK", {}) or {}).get(name) or {}).get(cat) or ())
+            if ms and set(ms) <= netted and all(leg.empty for leg in legs) and not any(
+                    (name, m) in _VIEW_BLOCKS for m in ms):
                 PAID_LATER_NOT_READ[(name, cat)] = (
-                    f"{ms[0]} holds no row yet (its log scan stores it on the next run): the tokens are still inside "
-                    f"unlocks (e) — nothing is netted out — so total dilution is complete without category ({cat})")
+                    f"{' / '.join(ms)} holds no row yet (its log scan stores it on the next run): the tokens are still "
+                    f"inside unlocks (e) — nothing is netted out — so total dilution is complete without category "
+                    f"({cat})")
             # A LEG THAT IS BLOCKED OR EMPTY BLOCKS THE CATEGORY, WITH ITS REASON (Jake's run on 3500042, item 24: CP
             # NET HOLDER YIELD read a bare n/a for Hyperliquid and NEAR while holder value was ok — a missing outflow
             # leg left no outflow row, so the formula errored silently). The outflow rows now say which leg and why.
@@ -7036,6 +7099,8 @@ def _holder_value_views(groups: dict) -> None:
                else _daily(groups.get((name, "actual_buyback_usd_wallet" if (name, "actual_buyback_usd_wallet") in groups
                                       else "actual_buyback_usd"))))
         extra = [_daily(groups.get((name, m))) for m in spec.get("distributed_extra", ())]
+        # R20 (config HOLDER_VALUE extra_switch — Aerodrome from the merger): one all-chain staker-revenue series
+        hv_sw = _hv_extra_switch(groups, name, spec, extra) if spec.get("extra_switch") else None
         # P3-1c (R2): a protocol whose revenue IS its fee burn credits the burn a day x that day's price (Ethereum)
         bc = spec.get("burn_credited") or {}
         burn_usd = pd.Series(dtype=float)
@@ -7100,8 +7165,11 @@ def _holder_value_views(groups: dict) -> None:
         if br:
             bribe_from = pd.Timestamp(br["from"])
             gross, ill = _daily(groups.get((name, br["gross"]))), _daily(groups.get((name, br["illiquid"])))
+            # R20: the add-on ENDS where the base series already holds the incentives (config bribes.until: Aerodrome
+            # from the merger — DefiLlama's holders revenue and the all-chain on-chain read both carry them)
+            bribe_until = pd.Timestamp(br["until"]) if br.get("until") else None
             for d, v in gross.items():
-                if d >= bribe_from:
+                if d >= bribe_from and (bribe_until is None or d < bribe_until):
                     credit[d] = credit.get(d, 0.0) + max(0.0, float(v) - float(ill.get(d, 0.0)))
         cols = next(g for g in (groups.get((name, m)) for m in ("actual_buyback_usd", "fees_usd", "price_usd"))
                     if g is not None and not g.empty).columns
@@ -7114,6 +7182,8 @@ def _holder_value_views(groups: dict) -> None:
                 burn_src = dict(zip(gb["date"], gb["source"].astype(str)))
 
         def src_for(d, base):
+            if hv_sw and d >= hv_sw["from"] and base == "derived:holder_value[revenue-funded]":
+                return hv_sw["source"]                    # R20: the declared handover at the merger
             if bribe_from is not None and d >= bribe_from and base == "derived:holder_value[revenue-funded]":
                 return "derived:holder_value_with_liquid_bribes[revenue-funded + liquid bribes]"
             if bc and base == "derived:holder_value[revenue-funded]" and d in burn_usd.index:
@@ -7131,6 +7201,80 @@ def _holder_value_views(groups: dict) -> None:
                 groups[(name, metric)] = _as_stored(pd.DataFrame(
                     {"date": s_.index, "project": name, "metric": metric, "value": s_.values, "tier": 2,
                      "source": [src_for(d, src) for d in s_.index]}), cols)
+
+
+HV_SWITCH_STATE: dict = {}   # project -> {"ready", "why", "epochs", "source"} of the last build (R20)
+
+
+def allchain_epochs(base: pd.Series, leaf: dict, frm, leaf_from: dict | None = None) -> tuple:
+    """R20 (pure): ({epoch start: $ over ALL chains}, ready, why). `base` = the root chain's per-epoch staker revenue
+    (dated the epoch's start), `leaf` = {chain: (fees series, incentives series)} per epoch. An epoch's all-chain figure
+    is formed only where EVERY chain holds it (a chain is owed from its own first epoch, `leaf_from`). READY — the
+    switch — only when the epochs from `frm` to the root chain's newest stored epoch are held by every chain with no
+    hole: one chain short on one epoch and the series is not used (unknown, never a smaller figure)."""
+    frm = pd.Timestamp(frm)
+    b = base[base.index >= frm].sort_index()
+    if b.empty:
+        return {}, False, "no epoch of the root chain is stored from the merger"
+    want = pd.date_range(b.index.min(), b.index.max(), freq="7D")
+    out, missing = {}, []
+    for e in want:
+        if e not in b.index:
+            missing.append(f"base {e.date()}")
+            continue
+        tot, ok = float(b.loc[e]), True
+        for chain, (fees, inc) in sorted(leaf.items()):
+            if e < pd.Timestamp((leaf_from or {}).get(chain) or frm):
+                continue                                   # the chain did not exist yet: nothing owed
+            if fees is None or inc is None or e not in fees.index or e not in inc.index:
+                missing.append(f"{chain} {e.date()}")
+                ok = False
+                continue
+            tot += float(fees.loc[e]) + float(inc.loc[e])
+        if ok:
+            out[e] = tot
+    if missing:
+        return out, False, (f"{len(missing)} chain-epoch(s) not stored: " + ", ".join(missing[:6])
+                            + (" …" if len(missing) > 6 else ""))
+    return out, True, f"{len(out)} epoch(s) from {want[0].date()} held by every chain"
+
+
+def _hv_extra_switch(groups: dict, name: str, spec: dict, extra: list) -> dict | None:
+    """R20 (Jake 2026-11-24; config HOLDER_VALUE[...]["extra_switch"]): from the declared date the credited payout to
+    holders is ONE all-chain staker-revenue series in place of `replaces` — the on-chain read of every chain once it is
+    stored hole-free (allchain_epochs; each epoch spread evenly over its seven days), the declared stand-in until then.
+    `extra` is changed in place. The all-chain epochs that could be formed are written as a view either way."""
+    sw = spec["extra_switch"]
+    try:
+        i = list(spec.get("distributed_extra", ())).index(sw["replaces"])
+    except ValueError:
+        return None
+    frm = pd.Timestamp(sw["from"])
+    lc = (getattr(config, "AERO_LEAF_CHAINS", {}) or {}).get("chains") or {}
+    leaf = {}
+    for c in sw.get("leaf", ()):
+        f_, i_ = (groups.get((name, f"aero_leaf_{k}_usd_{c}")) for k in ("fees", "incentives"))
+        leaf[c] = (None if f_ is None or f_.empty else _daily(f_), None if i_ is None or i_.empty else _daily(i_))
+    epochs, ready, why = allchain_epochs(_daily(groups.get((name, sw["base"]))), leaf, frm,
+                                         {c: v.get("from_epoch") for c, v in lc.items()})
+    cols = next((g.columns for g in (groups.get((name, m)) for m in (sw["base"], sw["stand_in"], sw["replaces"]))
+                 if g is not None and not g.empty), None)
+    daily = pd.Series({e + pd.Timedelta(days=k): v / 7.0 for e, v in epochs.items() for k in range(7)},
+                      dtype=float).sort_index()
+    if len(daily) and cols is not None:
+        groups[(name, sw["onchain"])] = _as_stored(pd.DataFrame(
+            {"date": daily.index, "project": name, "metric": sw["onchain"], "value": daily.values, "tier": 2,
+             "source": f"derived:allchain[{sw['base']} + aero_leaf_* of {len(leaf)} chain(s), each epoch / 7]"}), cols)
+    if ready:
+        new, point, what = daily, sw["points"][1], "on-chain staker revenue, all chains (fees + incentives per epoch / 7)"
+    else:
+        new, point = _daily(groups.get((name, sw["stand_in"]))), sw["points"][0]
+        what = f"{sw['stand_in']}: all chains, incentives inside — until every chain is stored on chain"
+    old = extra[i]
+    extra[i] = pd.concat([old[old.index < frm], new[new.index >= frm]]).sort_index()
+    HV_SWITCH_STATE[name] = {"ready": ready, "why": why, "epochs": len(epochs), "source": f"{point}[{what}]",
+                             "from": frm}
+    return HV_SWITCH_STATE[name]
 
 
 # PR1B.3: the token series valued at each day's own price, by name (config.METRICS declares each)
@@ -7527,6 +7671,23 @@ def foundation_burn_split(bought: pd.Series, burned: pd.Series) -> tuple:
     return pd.Series(ok, dtype=float), pd.Series(extra, dtype=float)
 
 
+def foundation_minted_burns(burned: pd.Series, mint_funded: dict) -> tuple:
+    """(the wallets' own-stake burns WITHOUT the mint-funded part, the mint-funded part per day) — pure (R20). A stake
+    funded by a mint to the wallet (config.mint_funded_burns: {'YYYY-MM-DD': tokens}, each an evidenced record) is not
+    a buyback however much the wallet bought before: it leaves the burn BEFORE foundation_burn_split, never more than
+    the day's measured burn (a record the chain does not show takes nothing), and is returned apart for the
+    "destroyed, not a burned buyback" line. Every day of `burned` keeps a row (a 0 where the whole burn was minted)."""
+    left = burned.sort_index().astype(float).copy()
+    out = pd.Series(0.0, index=left.index)
+    for day, tokens in (mint_funded or {}).items():
+        d = pd.Timestamp(day)
+        if d in left.index:
+            take = min(float(tokens), float(left.loc[d]))
+            left.loc[d] -= take
+            out.loc[d] += take
+    return left, out
+
+
 def foundation_not_held(fb: dict, parts: dict, liquid: pd.Series) -> pd.Series:
     """PURCHASES COUNTED ON THEIR PURCHASE DAY THAT THE WALLETS NO LONGER HOLD (pure; R13 B1 "while held"). From the
     declared date a running stock of AERO bought and NOT locked in that transaction, less what later locks and stakes
@@ -7612,7 +7773,13 @@ def _foundation_burn_views(groups: dict) -> None:
             since = (fb.get("purchase_day_basis") or {}).get("from")
             if since:
                 bought = bought[bought.index >= pd.Timestamp(since)]
+            # R20 (Jake 2026-11-24): a burn of a stake that a MINT to the same wallet funded is no buyback at all — the
+            # declared, evidenced records (config.mint_funded_burns) leave the burn before the split, and join the
+            # "destroyed, not a burned buyback" line whole. Was: the 10M of 11-20 counted up to the purchases held
+            raw, minted = foundation_minted_burns(raw, config.mint_funded_burns(name) if bl.get("mint_funded") else {})
             ok, extra = foundation_burn_split(bought, raw)
+            extra = extra.add(minted, fill_value=0.0)
+            info["mint_funded"] = float(minted.sum())
             other = _ser_of(groups, name, bl.get("other_metric") or "")
             if bl.get("other_metric"):
                 # R17: EVERY AERO a Foundation wallet destroyed that is not a burned buyback, as one series — not its
@@ -7992,7 +8159,12 @@ def _paid_later_split(groups: dict, name: str, pl: dict, total: pd.Series, cols)
             return None
         return (g.assign(date=pd.to_datetime(g["date"]).dt.normalize()).groupby("date")["value"].sum().astype(float)
                 .sort_index())
-    lumps, paid = daily(pl["lumps"]), daily(pl["paid"])
+    # R20: `paid` may name several series (Chainlink: the Reserves contract's payments and the Safe 0x77dd1a9b…'s direct
+    # ones to the same recipients) — summed per day; a series with no row yet takes nothing out (it is still in (e))
+    paid_ms = (pl["paid"],) if isinstance(pl["paid"], str) else tuple(pl["paid"])
+    parts = [s for s in (daily(m) for m in paid_ms) if s is not None]
+    lumps = daily(pl["lumps"])
+    paid = None if not parts else pd.concat(parts, axis=1).fillna(0.0).sum(axis=1).sort_index()
     if lumps is None or paid is None:
         return total, ""
     before = daily(pl["after"]) if pl.get("after") else None
@@ -8034,7 +8206,7 @@ def _paid_later_split(groups: dict, name: str, pl: dict, total: pd.Series, cols)
     ser = pd.Series({d: float(taken.get(d, 0.0)) for d in total.index if d >= first}, dtype=float).sort_index()
     groups[(name, pl["out"])] = _as_stored(pd.DataFrame(
         {"date": ser.index, "project": name, "metric": pl["out"], "value": ser.values, "tier": 2,
-         "source": f"derived:fifo[{pl['lumps']}|{pl['paid']}] — {FIFO_CONVENTION}"}), cols)
+         "source": f"derived:fifo[{pl['lumps']}|{'+'.join(paid_ms)}] — {FIFO_CONVENTION}"}), cols)
     return total, f"-{pl['out']} ({FIFO_CONVENTION})"
 
 
