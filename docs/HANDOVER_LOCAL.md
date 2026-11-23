@@ -141,3 +141,105 @@ Freeze order once a project reads READY on the store and the gate is green: one 
 - Check lines: see the agent's block "11fg-ethereum-near" in SPEC "Round 17 — Ethereum and Near" and run:
   `python token_metrics.py --project Ethereum --project Near`, then
   `python done_check.py --verbose | Select-String "^(Ethereum|Near)" -Context 0,16`.
+
+## 8. Round 18 (2026-11-24) — research and piping; THE NEXT RUN ON THE STORE, IN ORDER
+
+Round 18 ran nothing on the store and froze nothing. Every route below is wired so one pass fills it. This section
+supersedes the "Next step" column of section 5 where they differ. Decisions still open are in section 9.
+
+```
+cd C:\Users\jake\Crypto-Tracker
+.venv\Scripts\Activate.ps1
+git switch claude/crypto-metrics-supply-demand-ovkg8g
+git pull
+git log --oneline -1
+gcloud auth application-default login                                   # Jake, once per login
+gcloud auth application-default set-quota-project near-data-510309
+
+# 1. read-only, before anything is written
+python project_freeze.py --compare all
+#    expect: nine lines, each "0 undeclared move(s)"
+python check_offline_items.py plume_rwa_issuers
+#    expect: seven issuers, a list sum near 62.8M, category about 986,609 over 4, no "NOT DECLARED either way" line
+python check_offline_items.py plume_rwa_archive
+#    prints DefiLlama's RWA-category protocols on Plume as of 2026-10-11 (Wayback). PASTE IT BACK: it names the
+#    $11-42M of the old series nobody could attribute
+python near_p2p_history.py plan
+#    no network; prints the monthly schedule and "NEXT: NOT APPROVED - the chunk ..."
+
+# 2. the daily run (takes the run lock itself). It fills, with no extra command:
+#    Aerodrome  velo_fees_usd / velo_revenue_usd / velo_holders_revenue_usd (Velodrome's revenue, taken off before 10-22)
+#    Chainlink  issuer_exchange_outflow_tokens, node_operator_payments_tokens, insider_stake_principal_tokens,
+#               reward_vault_balance_tokens, issuer_path_holding_tokens, circulating_supply_chainlink_api
+#    Ethereum   ef_held_tokens, ef_inferred_held_tokens, ef_staked_tokens (Ethereum Foundation wallets)
+#    Plume      rwa_defillama_usd rebuilt once from 2026-05-21 on the issuer list (Run Log: "CLEAN-UP R18-plume-rwa",
+#               "the ONE rebuild"), plus rwa_defillama_category_usd
+#    GEODNET    nothing new is fetched: revenue = burn / 0.8, fees = burn / 0.4 are built from the stored burn
+#    Near       NearBlocks reads billed as NearBlocks bills (no "TIER TIMED OUT" for nearblocks)
+python token_metrics.py
+
+# 3. Aerodrome's two catch-ups (Round 17), then Chainlink's
+python token_metrics.py --seed aero_buyback
+python archive_backfill.py --project Aerodrome --run
+#    expect: "Velodrome VELO history Aerodrome: not read - before the merger the series are Aerodrome's alone" and
+#    "Aerodrome issuance before the first v3 read ..." (rows 10-23..10-27)
+python archive_backfill.py --run --project Chainlink
+python token_metrics.py --project Chainlink
+#    repeat this line if the Run Log says a scan stopped at its budget (the first run seeds 4,231 transfers)
+
+# 4. Ethereum
+python -m fetch.ef_wallets --backfill
+#    optional, 15-20 min, resumable; repeat until "nothing owed". Without it the float trend reads part-held for a quarter
+python staked_eth_rebuild.py --apply
+#    exit 0: OVERLAP TEST PASSED, rebuilt days stored
+#    exit 3: NOT PASSED -> DECLARED CHANGE OF QUANTITY, one row beacon_chain_eth_seam_step_pct stored (Jake's R18 ruling:
+#            the series switches to actual balances at the seam, labelled; no question asked)
+#    exit 1: BigQuery unavailable, nothing stored: log in and run again
+python settlement_extend.py validate
+#    read-only: the settlement rebuild's legs and missing days beside the Artemis CSV
+
+# 5. Near's history backfill - ONLY on or after 2026-12-01, and never without Jake's dated approval
+python token_metrics.py --project Near
+python near_p2p_history.py dry-run                  # free: the next chunk's exact GB
+#    Jake edits config.NEAR_P2P_HISTORY_APPROVAL (approved True, approved_by, approved_on in THIS month, max_gb, chunks)
+python near_p2p_history.py run
+#    without approval it prints "NEAR P2P HISTORY NOT RUN ... Nothing billed; no BigQuery call was made."
+
+# 6. build, check, export
+python token_metrics.py
+python done_check.py --verbose > logs\done.txt
+python headline_check.py --audit token_metrics_audit.xlsx --reader token_metrics.xlsx --db metrics.db --out ..\tm-exports\headline_check.md
+python project_freeze.py --compare all
+foreach ($p in 'Aerodrome','Chainlink','Ethereum','GEODNET','Aethir','Plume','Near') { python store_export.py --project $p --out-dir ..\tm-exports }
+```
+
+What to expect in `logs\done.txt` after that pass (each is a prediction from the fixture or an export, not seen on the store):
+
+| Project | Expected | If not |
+|---|---|---|
+| Aerodrome | READY; Flows Q0 shows "+ merger issuance" 116,999,999 and a residual within 0.5% | If the fees tier was skipped that day the three velo_* series land on the next daily run |
+| Chainlink | READY if the store holds `ccip_token_value_usd`; theatre flag RAISED near 11.4x | Flag NOT TESTABLE means `actual_buyback_tokens` starts after 2025-08-10 on the store |
+| Ethereum | The four "not yet split" lines, insider share of stake and staked-ETH staleness gone; settlement (key, rank, NRR) and four rule-3 lines remain | Settlement needs the BigQuery P2P rebuild: Artemis itself stopped publishing on 2026-08-25 |
+| GEODNET | One or two lines: UNIFORMITY (a decision), insider share of stake (should clear) | — |
+| Plume | Business slot 1 near $62.8M with a declared series break at 2026-05-21 | The done_check lines were never reproduced off the store: paste them |
+| Aethir | Unchanged: allowance and three MATURING rows now run to 2026-12-31 | Run `python check_offline_items.py aethir_distributor_match`; with 10 daily runs stored, re-judge the rows instead |
+| Near | Key and rank dated, not blocking; NRR blocks until the December P2P days are stored | — |
+
+Frozen moves this round: `docs/moves_r18.md` (and `tests/fixtures/frozen_moves_r18.json` when any cell moved).
+
+## 9. Decisions open after Round 18 (Jake's)
+
+- Aerodrome: the 10M is explained (governance `Voter.spendSurplus`: the Gauge Caps' unminted surplus, minted to the
+  Foundation Safe and burned whole; not merger-related, not a buyback). The 8.18M cap was kept as instructed; taking
+  the whole 10M off the buyback line gives burned Q0 407,816 and key 0.0056 (now 2,226,496 and 0.0304).
+- Aerodrome: dilution counts the cap rate; about a third of it accrued as surplus that mints only if governance
+  spends it. Netting it needs a new stored series.
+- Chainlink: Safe 0x77dd1a9b… paid 2,082,892 LINK straight to the same recipients (not in outflow b); whether the
+  exchange leg moves to category (f) as Ether.fi's did; whether A1's "float after staking" takes the issuer stock out.
+- GEODNET: fees = burn / 0.4 is twice GEODNET's only first-party figure ($4M ARR, May 2025 = burn / 0.8 within 0.5%).
+  UNIFORMITY: declare the n/a, or wire the +20% staker bonus (at most 328,400 GEOD a year, 0.035% of circulating).
+- Ethereum: keep the two INFERRED Foundation wallets (2,474 ETH) off the float or not; Master fees on DefiLlama
+  ($37.19M) beside S13 fees on Blockscout ($37.97M).
+- Near: 1 chunk a month (key forms 2027-05-31, 1,380 GB) or 2 (2027-03-31, 1,840 GB).
+- Plume: the issuer list as wired (62.8M today) or one of the other bases; Plume's weekly RWA market share still
+  reads the gutted category and should be treated as missing.
