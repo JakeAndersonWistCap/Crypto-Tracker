@@ -1384,24 +1384,68 @@ def _handover_continuation_views(groups: dict) -> None:
             continue
         # P3-A3: A HANDOVER MADE ONLY AFTER ITS OVERLAP CHECK (Ethereum's staked ETH, validatorqueue -> the beacon chain):
         # until the declared overlap passes, the series keeps its earlier leg and the cell says why (never switched blind)
+        declared_change = None
         if spec.get("requires_overlap"):
-            ov = ((config.PROJECT_BY_NAME.get(name) or {}).get("series_handover") or {}).get(metric, {}).get("overlap")
+            decl = ((config.PROJECT_BY_NAME.get(name) or {}).get("series_handover") or {}).get(metric, {})
+            ov = decl.get("overlap")
             chk = handover_overlap(groups, name, ov) if ov else {"passed": False, "text": "no overlap spec declared"}
+            fb = spec.get("fallback")
+            if fb and decl:
+                # the handover's own composition text, restored on every build (the fallback below replaces it only
+                # while it is in force)
+                decl.setdefault("composition_change_declared", decl.get("composition_change"))
+                decl["composition_change"] = decl["composition_change_declared"]
             if not chk["passed"]:
-                HANDOVER_HELD[(name, metric)] = (
-                    f"NOT HANDED OVER to {spec['from_metric']} ({len(add)} row(s) from {pd.to_datetime(add['date']).min().date()} "
-                    f"held back): {chk['text']}")
-                continue
+                # R18 (Jake 2026-11-24): THE DECLARED CHANGE OF QUANTITY. staked_eth_rebuild.py --apply stores one
+                # marker row when its overlap test did not pass; while that row is in the store the series reads the
+                # later leg's rows ON THE DECLARED POINT ONLY (the node's actual balances — never a rebuilt day) from
+                # the day after the earlier leg's last row. The overlap's tolerance is untouched: the check still says
+                # NOT PASSED on the cell, and the seam is a series break (the handover's composition_change).
+                seam = seam_fallback(groups, name, fb, add) if fb else None
+                if seam is None:
+                    HANDOVER_HELD[(name, metric)] = (
+                        f"NOT HANDED OVER to {spec['from_metric']} ({len(add)} row(s) from "
+                        f"{pd.to_datetime(add['date']).min().date()} held back): {chk['text']}")
+                    continue
+                add, declared_change = seam["rows"], seam
+                decl["composition_change"] = f"{fb['composition_change']}. MEASURED STEP: {seam['text']}"
         markers = [m for m in config.SOURCE_MARKERS if m != "archive"]
         add["source"] = [next((config.mark_source(spec["source"], m) for m in markers
                                if f":{m}" in str(s)), spec["source"]) for s in add["source"].astype(str)]
         add["metric"] = metric
         first = pd.to_datetime(add["date"]).min()
         groups[(name, metric)] = pd.concat([g, _as_stored(add, g.columns)], ignore_index=True)
+        if declared_change:
+            HANDOVER_CONTINUED[(name, metric)] = (
+                f"DECLARED CHANGE OF QUANTITY from {first.date()} ({spec['fallback']['decided']}): "
+                f"{spec['after_point']}'s last stored row is {last.date()}; from {first.date()} the series reads "
+                f"{spec['from_metric']} on {spec['fallback']['only_point']} ({len(add)} row(s) to "
+                f"{pd.to_datetime(add['date']).max().date()}). MEASURED STEP: {declared_change['text']}. No trend reads "
+                f"across the seam; the days between the two legs are holes")
+            continue
         HANDOVER_CONTINUED[(name, metric)] = (
             f"HANDED OVER from {(first.date())}: {spec['after_point']}'s last stored row is {last.date()}; from the next "
             f"day the series reads {spec['from_metric']} ({len(add)} row(s) to {pd.to_datetime(add['date']).max().date()})"
             f" — {spec.get('decided', 'declared in config.HANDOVER_CONTINUATION')}")
+
+
+def seam_fallback(groups: dict, name: str, fb: dict, add: pd.DataFrame) -> dict | None:
+    """R18: the declared change of quantity of a handover whose overlap did not pass — {"rows": the later leg's rows on
+    fb["only_point"], "step_pct", "text"} when the marker series (fb["marker_metric"], stored by the script that ran
+    the test) holds a row and the later leg holds a row on that point; None otherwise (the handover stays held)."""
+    from fetch.base import _measuring_point                        # noqa: PLC0415
+    mk = groups.get((name, fb["marker_metric"]))
+    if mk is None or mk.empty:
+        return None
+    want = _measuring_point(fb["only_point"])
+    rows = add[add["source"].astype(str).map(_measuring_point) == want].copy()
+    if rows.empty:
+        return None
+    m = mk.assign(d=pd.to_datetime(mk["date"])).sort_values("d").iloc[-1]
+    src = str(m["source"])
+    detail = src[src.find("[") + 1:src.rfind("]")] if "[" in src and src.endswith("]") else src
+    return {"rows": rows, "step_pct": float(m["value"]),
+            "text": f"{float(m['value']):+.2f}% (recorded {pd.Timestamp(m['d']).date()}: {detail})"}
 
 
 MONTHLY_FLOW_FORMED: dict = {}   # (project, metric) -> months formed / holes, last build (P2a D5b)
@@ -14110,6 +14154,7 @@ def _rule_in_views(groups: dict) -> None:
     """R9.2 (config.RULE_IN): the issuer-side stock THE RULE counts in circulating — off the free float. One series
     per project, rule_in_off_float_tokens = the sum of its declared legs on the days every leg is held (a day missing a
     leg is no value: the float is then n/a, never the float without it)."""
+    config.RULE_IN_PENDING.clear()
     for name, spec in config.RULE_IN.items():
         names = list(spec.get("off_float", spec["legs"]))
         swc = config.circulating_swc(name)
@@ -14129,6 +14174,26 @@ def _rule_in_views(groups: dict) -> None:
             if m in frm:
                 held = s.index[s.index >= frm[m]]
                 frm[m] = held.min() if len(held) else pd.Timestamp.max
+        if len(frm) == len(names):
+            # R18 (Ethereum: the Foundation's wallets): EVERY leg joins from a declared date, so there is no earlier
+            # series to keep. Until every leg holds a row on or after its date the project's float is what it was
+            # (config.RULE_IN_PENDING: no term — never a float without a figure, never a 0); from then the sum is
+            # formed on the days all of them hold.
+            unread = [m for m, d in frm.items() if d == pd.Timestamp.max]
+            idx = None
+            for m, s in zip(names, legs):
+                keep = s.index[s.index >= frm[m]]
+                idx = keep if idx is None else idx.intersection(keep)
+            if unread or idx is None or idx.empty:
+                config.RULE_IN_PENDING[name] = (
+                    ("not read yet: " + ", ".join(unread)) if unread else "no day on which every declared leg is held")
+                continue
+            cols = next(g.columns for (n_, _m), g in groups.items() if n_ == name and g is not None and not g.empty)
+            tot = sum(s.reindex(idx) for s in legs)
+            groups[(name, "rule_in_off_float_tokens")] = _as_stored(pd.DataFrame(
+                {"date": idx, "project": name, "metric": "rule_in_off_float_tokens", "value": tot.values, "tier": 2,
+                 "source": "derived:rule_in[" + "+".join(f"{m} from {frm[m].date()}" for m in names) + "]"}), cols)
+            continue
         idx = next(s.index for m, s in zip(names, legs) if m not in frm)
         for m, s in zip(names, legs):
             idx = idx.intersection(s.index) if m not in frm else idx[(idx < frm[m]) | idx.isin(s.index)]
@@ -14152,8 +14217,11 @@ def _rule_in_views(groups: dict) -> None:
 
 
 def _rule_in_term(R: Refs, r, p: dict) -> str | None:
-    """R9.2: the rule's issuer-held stock inside circulating, now — out of every float (None where none is declared)."""
-    return R.D(r, "rule_in_off_float_tokens", "now") if p["name"] in config.RULE_IN else None
+    """R9.2: the rule's issuer-held stock inside circulating, now — out of every float (None where none is declared, and
+    where every leg joins from a declared date and is not read yet: R18, config.RULE_IN_PENDING)."""
+    if p["name"] not in config.RULE_IN or p["name"] in config.RULE_IN_PENDING:
+        return None
+    return R.D(r, "rule_in_off_float_tokens", "now")
 
 
 def _rule_addback_term(R: Refs, r, p: dict) -> str:
@@ -14850,7 +14918,8 @@ def _cp_cols(R: Refs, data_by_key: dict) -> list[tuple]:
                        # R9.2: the issuer-side stock the rule counts in circulating (+ the released issuer-held supply
                        # already inside it) ÷ circulating — never "0 by construction" once the rule moved wallets in
                        else calc(f"({_released_held(R, r, p)}{_rule_addback_term(R, r, p)})/({circ(r, p)})")
-                       if (p["name"] in config.RULE_IN and p["name"] not in config.CIRC_RELEASED_STAKED) else "=0" if (config.CIRCULATING_ONCHAIN.get(p["name"]) or {}).get("status") == "established"
+                       if (p["name"] in config.RULE_IN and p["name"] not in config.CIRC_RELEASED_STAKED
+                           and p["name"] not in config.RULE_IN_PENDING) else "=0" if (config.CIRCULATING_ONCHAIN.get(p["name"]) or {}).get("status") == "established"
                        and config.circulating_primary_metric(p["name"]) in ("circulating_supply_onchain",)
                        # R7.C1: the Foundation + Grants STAKE is insider-held and inside circulating (released)
                        # R9.2: under the rule the team wallet and the two wallets' spot are inside circulating too

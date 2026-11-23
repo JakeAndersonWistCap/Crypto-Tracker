@@ -48004,8 +48004,7 @@ METRICS["rwa_defillama_category_usd"] = {
              "rwa_defillama_usd, which follows the declared issuer list (R18)",
     "kind": "stock", "unit": "usd", "archetypes": [1], "tiers": [1], "sanity_min": 0, "sanity_max": 1e12,
     "only_projects": ("Plume",), "view_only": True}
-# =====================================================================================================================
-# ===== R18 — AERODROME ACROSS THE MERGER (Jake 2026-11-24) =====
+# ==============================================================================================================# ===== R18 — AERODROME ACROSS THE MERGER (Jake 2026-11-24) =====
 # Jake: "before 2026-10-22, Aerodrome only; no Velodrome history in any figure. The AERO minted for VELO conversions is
 # a one-off merger issuance, on its own named line, kept out of yearly dilution and net holder yield. From 2026-10-22
 # the combined revenue counts." This REVERSES R11.2c / R12 / R13 (Velodrome's supply, locks and emissions x 0.044 inside
@@ -48171,3 +48170,274 @@ AERO_GAUGE_CAPS = {
                                                             "(pulled 2026-11-23T07:14Z)"},
     "read_on": "2026-11-23", "source": "Minter 0x59268A34… emissionRate / emissionsCap / emissionsMinted, Voter "
                                        "spendableSurplus(8453), spendableSurplus(0) at each day's first block"}
+# =====================================================================================================================
+# ===== R18 — ETHEREUM (Jake 2026-11-24; SPEC "Round 18 — Ethereum"). Research and piping: one run on the store fills it.
+# =====================================================================================================================
+# ----- 1. THE THREE REVENUE LINES (Jake: "FEES = all gas (base + priority), REVENUE = base fee burned, HOLDER REVENUE =
+# the same burn"). Nothing new is read: the series are on file.
+#   FEES            fees_usd_blockscout = Blockscout's txnsFee (its chart's own words: "Sum of ETH spent on gas fees",
+#                   per UTC day — base + priority; NOT VERIFIED from its source whether the blob fee is inside or
+#                   outside it) x that day's price. DefiLlama's fees_usd (base + priority + BLOB fees, its adapter
+#                   fees/ethereum/index.ts read 2026-11-23) is the cross-check: on the 368 days both hold on the dumps
+#                   (2025-10-07..2026-10-12) Blockscout reads $207.30M against DefiLlama's $202.00M (+2.6%; the daily
+#                   gap's median is +0.6%).
+#   REVENUE         the base fee burned x that day's price = holder_value_revenue_usd (HOLDER_VALUE burn_credited:
+#                   gross_burn_tokens — Etherscan's BurntFees counter, day on day, from 2026-09-30; before it DefiLlama's
+#                   burned-fee revenue ÷ price, the declared handover of gross_burn_tokens).
+#   HOLDER REVENUE  the same series: every wei of it is destroyed, so it reaches every holder.
+#   HOLDER SHARE    1 by definition (one series over itself) — it restates EIP-1559, it measures nothing.
+# Priority fees (to validators) = FEES − REVENUE; they are not a line. NOT VERIFIED: whether Etherscan's BurntFees
+# counts the blob base fee (EIP-4844) beside the EIP-1559 base fee — its docs say "burnt fees" only. DefiLlama's
+# revenue_usd (base, by its own approximation "minimum effective gas price of the block", + blob fees) stays Master's
+# revenue cell and is the cross-check.
+REVENUE_SPLIT["Ethereum"] = {
+    "round": "R18 (Jake 2026-11-24)",
+    "fees": {"metric": "fees_usd_blockscout", "primary": False,
+             "route": "ALL GAS, base + priority: Blockscout's txnsFee for Ethereum mainnet ('Sum of ETH spent on gas "
+                      "fees', eth.blockscout.com stats-service, per UTC day) x that day's ETH price. An explorer's "
+                      "index of the chain's own receipts — SECONDARY (no node of ours sums 7,200 blocks of receipts a "
+                      "day). DefiLlama's 'ethereum' dailyFees (base + priority + blob fees) is the cross-check "
+                      "(fees_usd)"},
+    "revenue": {"metric": "holder_value_revenue_usd", "primary": True,
+                "route": "THE BASE FEE BURNED x that day's price: gross_burn_tokens = the day-on-day change of "
+                         "Etherscan's cumulative BurntFees (ethsupply2) from 2026-09-30, DefiLlama's burned-fee "
+                         "revenue ÷ price before it (a declared handover). EIP-1559 destroys the base fee: what users "
+                         "pay less what validators keep (the priority fee) is the protocol's revenue"},
+    "holder_revenue": {"metric": "holder_value_revenue_usd", "primary": True,
+                       "route": "THE SAME BURN (Jake 2026-11-24): the base fee is destroyed by protocol rule, so all of "
+                                "the revenue reaches every holder as a smaller supply; nothing is distributed and "
+                                "nothing is bought"},
+    "holder_share": {"route": "holder revenue ÷ revenue = the burn over itself: 1 BY DEFINITION. It restates EIP-1559 "
+                              "(all of the base fee is burned) and measures nothing about a split"},
+    "other_recipients": "validators / block builders: the priority fee (FEES − REVENUE) and MEV; they are also paid by "
+                        "issuance (security emissions, outflow (a))",
+    "crosscheck": "DefiLlama's 'ethereum' dailyRevenue = dailyHoldersRevenue (revenue_usd, holders_revenue_usd): base "
+                  "fees + blob fees burned, valued by DefiLlama — Master's revenue cell"}
+
+# ----- 2. THE ETHEREUM FOUNDATION'S WALLETS — IN circulating (they can be moved), OFF the free float (Jake 2026-11-24;
+# the rule of 2026-11-17: off the float if held by an issuer / foundation / treasury). Each address with where it was
+# PUBLISHED; a wallet tied to the Foundation only by what the chain shows is tagged INFERRED and kept in its own series.
+# READ LIVE 2026-11-23 11:53:59 UTC, finalized block 26,477,664 (ethereum-rpc.publicnode.com), ETH + WETH:
+#   PUBLISHED  treasury Safe      0xc06145782F31030dB1C40B203bE6B0fD53410B6d  68,353.2986 ETH            Safe 4-of-7
+#   PUBLISHED  DeFi Safe          0x9fC3dc011b461664c835F2527fffb1169b3C213e  20,176.0532 + 1,600.0000   Safe 3-of-5
+#   PUBLISHED  the 2015 wallet    0xde0B295669a9FD93d5F28D9Ec85E40f4cb697BAe   4,774.5518 +   214.1410   wallet contract
+#   INFERRED   Safe 2-of-4        0xbC9a9Ac7Dc36b1706732374bF632eF39FB6EfbC3   2,222.2069                 Safe 2-of-4
+#   INFERRED   paying wallet      0x9eE457023bB3De16D51A003a247BaEaD7fce313D     251.6789                 one key
+#   PUBLISHED 95,118.0446 ETH; INFERRED 2,473.8858 ETH; together 97,591.9304 ETH.
+# STAKED (inside beacon-chain ETH, so it leaves the float with the stake and is NOT in the held series): 34 validators
+# whose withdrawal credentials are the treasury Safe, Σ 69,633.2443 ETH at finalized slot 15,717,600 (2026-11-23 12:00
+# UTC) — the WHOLE registry (2,413,150 validators) was scanned for the five addresses: 34 for the treasury Safe, none
+# for the other four. The first is the validator the Foundation's post names; the other 33 were deposited by the Safe
+# (3 transactions of 11 x 2,047 ETH: 2026-03-30 0x4022d763…, 2026-04-03 0x7a091e13… and 0x3811fd04…).
+# NOT COUNTED: ETH lent out — the DeFi Safe holds Morpho vault shares (STEAKETH 2,600.72 + 994.25 shares), 8.05 aWETH,
+# and stablecoins (USDC 22.93M, DAI 5.11M, vault shares) — a claim on ETH that is with a borrower is not ETH the
+# Foundation holds; a decision for Jake.
+_EF_BLOG = ("blog.ethereum.org/2026/02/24/staking (read 2026-11-23): 'Approximately 70,000 ETH is being staked with "
+            "rewards directed back to the EF treasury. … The first of these validators can be found here' -> "
+            "beaconcha.in/validator/aa4572c7…41467e")
+_EF_POST = ("Hsiao-Wei Wang (EF co-executive director), x.com/hwwonx/status/1881413731780821405, 2025-01-20 (read "
+            "2026-11-23): 'The Ethereum Foundation (@ethereumfndn) has set up a new @safe 3-of-5 multisig wallet. The "
+            "wallet address is 0x9fC3dc011b461664c835F2527fffb1169b3C213e. An op has been initiated to send 50,000 ETH "
+            "there … (etherscan.io/tx/0x6872c97c…f4d7)'")
+METRICS["ef_held_tokens"] = {
+    "label": "ETH held by the Ethereum Foundation's PUBLISHED wallets (ETH + WETH; the treasury Safe, the DeFi Safe, "
+             "the 2015 wallet) — in circulating, OFF the free float (R18); staked ETH is not in it",
+    "kind": "stock", "unit": "tokens", "archetypes": [1], "tiers": [1], "sanity_min": 0, "sanity_max": 1e6,
+    "only_projects": ("Ethereum",)}
+METRICS["ef_inferred_held_tokens"] = {
+    "label": "ETH held by wallets INFERRED to be the Ethereum Foundation's (ETH + WETH; tied to it by the chain only: a "
+             "shared Safe owner, its funding) — in circulating, OFF the free float, kept apart from the published set "
+             "(R18)",
+    "kind": "stock", "unit": "tokens", "archetypes": [1], "tiers": [1], "sanity_min": 0, "sanity_max": 1e6,
+    "only_projects": ("Ethereum",)}
+METRICS["ef_staked_tokens"] = {
+    "label": "ETH staked by the Ethereum Foundation — Σ balance of the validators whose withdrawal address is its "
+             "treasury Safe (R18); inside beacon-chain ETH",
+    "kind": "stock", "unit": "tokens", "archetypes": [1], "tiers": [1], "sanity_min": 0, "sanity_max": 1e6,
+    "only_projects": ("Ethereum",)}
+PROJECT_BY_NAME["Ethereum"]["ef_wallets"] = {
+    "decided": "Jake 2026-11-24 (R18): Ethereum Foundation wallets off the float, from published addresses; inferred "
+               "ones tagged INFERRED",
+    "read_on": "2026-11-23", "block": 26_477_664,
+    "rpc": tuple(DEFAULT_RPC["ethereum"]), "rpc_env": "ETHEREUM_RPC_URL",
+    # the history read (--backfill): public endpoints that served eth_getBalance at a block a year back, keyless, on
+    # 2026-11-23 (ethereum-rpc.publicnode.com answers "Archive requests require a personal token")
+    "archive_rpc": ("https://eth.drpc.org", "https://eth-mainnet.public.blastapi.io", "https://rpc.mevblocker.io"),
+    "weth": "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2",
+    "held_metric": "ef_held_tokens", "inferred_metric": "ef_inferred_held_tokens",
+    # "read" = (ETH, WETH) of the read above — the table of the report; the daily read replaces nothing here
+    "wallets": (
+        {"key": "treasury_safe", "address": "0xc06145782F31030dB1C40B203bE6B0fD53410B6d", "tag": "PUBLISHED",
+         "who": "Safe 4-of-7", "weth": True, "read": (68_353.2986, 0.0),
+         "source": _EF_BLOG + " — that validator's withdrawal credentials on chain are 0x02…c06145782f31030db1c40b203b"
+                              "e6b0fd53410b6d (publicnode beacon API, finalized state, 2026-11-23): the address the "
+                              "rewards return to"},
+        {"key": "defi_safe", "address": "0x9fC3dc011b461664c835F2527fffb1169b3C213e", "tag": "PUBLISHED",
+         "who": "Safe 3-of-5", "weth": True, "read": (20_176.0532, 1_600.0), "source": _EF_POST},
+        {"key": "wallet_2015", "address": "0xde0B295669a9FD93d5F28D9Ec85E40f4cb697BAe", "tag": "PUBLISHED",
+         "who": "the 2015 multi-signature wallet contract", "weth": True, "read": (4_774.5518, 214.1410),
+         "source": _EF_POST + " — the linked transaction 0x6872c97c… (block 21,667,178) is execute(0x9fC3dc01…, "
+                              "50,000 ETH) called ON 0xde0B2956…: the wallet the Foundation says it sent from"},
+        {"key": "inferred_safe_2of4", "address": "0xbC9a9Ac7Dc36b1706732374bF632eF39FB6EfbC3", "tag": "INFERRED",
+         "who": "Safe 2-of-4", "weth": False, "read": (2_222.2069, 0.0),
+         "source": "INFERRED, on chain only (read 2026-11-23): its owner 0xd779332c…c1f4 is also an owner of the "
+                   "published DeFi Safe 0x9fC3dc01… and executes transactions on both; no Foundation publication "
+                   "names it"},
+        {"key": "inferred_paying_wallet", "address": "0x9eE457023bB3De16D51A003a247BaEaD7fce313D", "tag": "INFERRED",
+         "who": "an externally owned account, one key", "weth": False, "read": (251.6789, 0.0),
+         "source": "INFERRED, on chain only (read 2026-11-23): funded by the Safe 0xbC9a9Ac7… in tranches of 100-600 "
+                   "ETH (ten between 2026-04-20 and 2026-10-30), pays out small amounts; no Foundation publication "
+                   "names it"},
+    ),
+    "stake": {
+        "metric": "ef_staked_tokens", "treasury": "0xc06145782F31030dB1C40B203bE6B0fD53410B6d",
+        "beacon": PROJECT_BY_NAME["Ethereum"]["staked_eth_node"]["endpoints"],
+        "read_on": "2026-11-23", "slot": 15_717_600, "safe_nonce": 18, "read": 69_633.2443,
+        "source": _EF_BLOG + "; the other 33 share its withdrawal credentials (the whole registry scanned 2026-11-23, "
+                             "2,413,150 validators, finalized slot 15,717,600)",
+        "validators": (
+            "0xaa4572c7ecd69ec96327ee846f89c40ecaab7b1c2a82c85dbf594ed9afa245ddb361901fe0871a77484afd384541467e",
+            "0x96ade8aea37206cabd974cd76dd359d76e380e17f730c49966610d7a219f8c15c010a2315569aebe4ea102a94c7c70b0",
+            "0xaecb15c8ecabeedde7c7763c38e565a26669688e03a519196cb1d5fa29494eac7e101253fbeadc220f9d0b59f10f8994",
+            "0xa36948c78ba766b23dfa538357605df3c0df8161913f32b6c6fccf9a19ef0ff4d0f9e75f07fac4f29c965a1493557a55",
+            "0x8a70fefbef8c73173ab2139ef2c37e6e94be188f89fef76dc15b6412d4ba95be7434c82ccfd1cff6c241104cab84f82a",
+            "0xb45025603d0fe98d45819ad56f120a19f93858f3696daa63ca508f54cc41785e4ebe912d5bf2d0db3a7cc8065cf37f1a",
+            "0x977f780d12567b3f42aefb259331505ec8dfde6de2429ae8ff1d38e284a74132af7a16cce6cd5bdbfecaa0a997cb66ad",
+            "0x8b087a54d092f840790c68c225f88e064fc8232b817c66ed0869536e3672c00c763fb86bacecfe1150a4b210f3500b67",
+            "0x92d6071b39da71c48ef4be999ad801bd9ebb04b76927c1b4fb1a79ad96d1389abff85f7693002cd51a036c7c21199442",
+            "0x8bca197bf9312037e25aaef7dbc975997ff27b8e73a4122cdfd774de795f0d1afe8ab469401d9337adf75b151943fddd",
+            "0xb00e3774cfdfc89325f92134180f6e371d2635a871b817508d20f5d95174a213bf5e63572403b76d4b9fbee64a1ee367",
+            "0xb3c54a43a6d3dc17646e8fd6391323bdfeec7e6c4a67d4e116c95fad79162856bc622e74518f52ad8ad5e191b2019dda",
+            "0xb16d0361901f1c127113f69d8a950f274c88890490f6336f3ce12e388390ae8c2e2b2939b6afb4067a0ec7d601faff84",
+            "0xb839f0313b7e9d93d8a53d100c22fa10665590f7753416d3a1487928da8fc6529e68a9fc8c2784faf82b0d66b7db4f69",
+            "0xab3b97a3f3533e06bae0401e5c4b82b7fcb06a6ba5776292dc2164611d15a92e05c9ca45b62bc56216a34c6350967b77",
+            "0xb4cf34022cba07f097e74b8a0a203ce2b13024c05f072ca9e0420f6b28b33a1a3ec72b91d143e2ed153d582bed17f658",
+            "0x8de4a9b978e060f2e155d070e277f53da9cd7d3752458bf69bf8a9d8411a7f17d0f8c6edde16d451a4bf9b1986f7cf95",
+            "0x850c99b9fa889962b2d0d1cbb39c9f890be969867a33ac3f16c5676ec4da285fe91632c6e49dbb238d82cda21136b480",
+            "0x8cea014cbb2c8889d42ce2f65315948d7ed7db925bfe9450dcbb31e9839fc18f57c57efd4b68e8dd157652a615c8dbde",
+            "0xa35c5628a9b66e6a1a87a96b9c2eb753a3747ee52157b760e4763efeca3e633bf97689383e5196a79f98ec6ddc238c88",
+            "0xa81275a236b4f7dc8349213572b62536066d32db8deb957d285546c20f4b05b279d675556f64eecc9379915ef0e42b65",
+            "0xa1b4376a7b684cd1c612aeddd2231b0bbadac652bc074082b2c3be17cbda1a2ad504a48094d2b712510478560985f61f",
+            "0xaf3771f01ebf1105f7078d9e98f85e99dc2d64977318b0df06304a7222a7cba09990449d152495c4c2fb3eb88bba3324",
+            "0x81dce376577e6281bd567541031bc3a1ba6dc869835ea3c46b2d5427298fe76bd63c2d8fa2bc6f645dfebd2ff988ddba",
+            "0x8b70e62d88b4414065b73d8f44193aef0d2d44a958d506705584bc4f714e78a9fdebbc546c75ea531767618089a61273",
+            "0xb780386cbfbfd1da9a9c2e28a06b9f7f2970ca484971a1c3b270e062c314e00cb1ede1d3d9c36c052f02f911c525830c",
+            "0xaec50ca09da41575a187ac98098fc308e1821fdf87ffed44844e555e9c6b0de74497c3775eb9747e08542e92b805bc3f",
+            "0xa8e0a8ee8591130651e0ca4c09613f1278042290b9a0710a1214391b3dc23c4406e8c1c2b7a55c757fa1818985800032",
+            "0xa2b213e23c2e7edd7fd95c9335683749220a8e83d93293a15c534567e19f995736ec2e0ac31e74736380115764e9d8dd",
+            "0x857b63bf10111cb687878dc164acb12776b94dd34d68052c13f7b9c8b913d0c9b8b682a98985286ef1205b9cfc13fa9b",
+            "0x960139e5d7cfbe35e7a785d331da80d3c9b0443f6427e5a793d535735baa5853ab196bdb5ba41c347600b284d312984b",
+            "0xaf1b8a31ffe9beff91635d9dbf9016649025e8cb18691f52e9d0bbdc208115684cc31e8b72340c0f85bba182eb061aa1",
+            "0x924d87d2b613f811e52fb807513512544694694def1fc24baff9d02e64a538c44eff4313b116339ab79b32556ba7b381",
+            "0x958d1b2e82f60dca24da19ccd2ffaf3db7a4ef601140b27b437be181d150107e4498f359dc9c127fa671436c04f9ad12"),
+    },
+    "not_counted": "ETH lent out (Morpho vault shares STEAKETH 2,600.72 + 994.25, 8.05 aWETH in the DeFi Safe, read "
+                   "2026-11-23): a claim, the ETH is with a borrower — a decision for Jake",
+}
+# OFF THE FLOAT: nothing is taken out of circulating (Ethereum's circulating is the protocol's total supply with an
+# empty non-circulating set — Jake 2026-10-06; the rule counts these wallets in it too), so there are no `legs`; the
+# two held series leave every float FROM THEIR FIRST STORED ROW (off_float_from: a build whose store holds no row yet
+# keeps its float as it was — never a float without a figure, never a 0; config.RULE_IN_PENDING). The first LIVE read
+# is 2026-11-23; `python -m fetch.ef_wallets --backfill` stores the past days from an archive endpoint (each day's
+# last block), so the declared date is the day the Foundation announced its DeFi Safe (2025-01-20) — no row before it
+# is read. The staked ETH is inside beacon_chain_eth, which the float already nets out.
+declare_rule_in(
+    "Ethereum", (),
+    "config.PROJECT_BY_NAME['Ethereum']['ef_wallets'] (read 2026-11-23, block 26,477,664): the Ethereum Foundation's "
+    "treasury Safe (4-of-7), DeFi Safe (3-of-5) and 2015 wallet — each PUBLISHED by the Foundation and movable by its "
+    "signers: in circulating, off the float; two wallets INFERRED from the chain (a shared Safe owner, its funding), "
+    "kept in their own series",
+    off_float=("ef_held_tokens", "ef_inferred_held_tokens"),
+    float_answer="circulating does not move (the wallets were always counted in it); the free float falls by "
+                 "97,591.93 ETH on 2026-11-23 (95,118.04 published + 2,473.89 inferred)")
+RULE_IN["Ethereum"].update({
+    "read_on": "2026-11-23", "decided": "Jake 2026-11-24 (R18), the rule of 2026-11-17",
+    "off_float_from": {"ef_held_tokens": "2025-01-20", "ef_inferred_held_tokens": "2025-01-20"},
+    "flow_rule": False,                 # no wallet moves in or out of circulating: the flow statement is unchanged
+    "reference_leaves_out": False})     # the reference's circulating counts these wallets, as ours does
+# INSIDER SHARE OF STAKE: the Foundation's validators over all staked ETH
+INSIDER_LOCK["Ethereum"] = (
+    "ef_staked_tokens", "beacon_chain_eth",
+    "ETH staked by the Ethereum Foundation (the 34 validators whose withdrawal address is its treasury Safe "
+    "0xc0614578…, Σ balance) ÷ beacon-chain ETH. 69,633.24 ETH on 2026-11-23 (slot 15,717,600) — about 0.16% of the "
+    "stake")
+# the wallet list is on file now: the "needs issuer wallet list" route text no longer applies (INSIDER_LOCK reads the
+# measured series; a store the read has not reached shows the series' own n/a)
+INSIDER_SHARE_ROUTE_CLOSED = {"Ethereum": dict(
+    INSIDER_SHARE_ROUTES.pop("Ethereum"),
+    closed="R18 (2026-11-23): the whole validator registry at finalized slot 15,717,600 (2,413,150 validators) was "
+           "scanned for the five Foundation wallets — 34 validators carry the treasury Safe as withdrawal address, "
+           "none the others; read daily since (fetch/ef_wallets.py, ef_staked_tokens)")}
+SOURCE_REGISTER["ethereum-rpc.publicnode.com"] = {
+    "used_for": "R18: eth_getBalance / WETH balanceOf of the Ethereum Foundation's wallets at one finalized block, "
+                "once a day (fetch/ef_wallets.py); a keyed ETHEREUM_RPC_URL is asked first when set",
+    "paths": ["/ (JSON-RPC: eth_getBlockByNumber, eth_getBalance, eth_call)"],
+    "robots": "a JSON-RPC endpoint, about ten small calls a day",
+    "terms": {"url": "https://www.publicnode.com/terms", "status": "as ethereum-beacon-api.publicnode.com"}}
+
+# ----- 3. SETTLEMENT VOLUME: ARTEMIS'S OWN SERIES ENDS 2026-08-25. Read 2026-11-23: Artemis's data service
+# (data-svc.artemisxyz.com/data/api/SETTLEMENT_VOLUME?symbols=eth — what its web app and Sheets add-in read; it
+# answered WITHOUT a key; it is not a documented public API and its terms are not read, so it is NOT wired) returns
+# the series of Jake's CSV to the cent on all 352 days the dumps hold (2025-09-08..2026-08-25: Σ $6,640.68bn both, the
+# worst day's gap 4e-14 %) and NULL on every day from 2026-08-26 to 2026-11-23 (90 days). Its P2P legs
+# (P2P_TRANSFER_VOLUME, P2P_NATIVE_…, P2P_TOKEN_…) stop on the same day; its other Ethereum series (FEES, DAU,
+# STABLECOIN_TRANSFER_VOLUME, PRICE) run to 2026-11-22. So a monthly export would end on 2026-08-25 too: the series
+# stopped at the source. The automated route on the same definition is the one already declared — the rebuild
+# (DefiLlama DEX + DefiLlama NFT + BigQuery P2P; handover from 2026-08-26, measured +6.8% on Jake's run over
+# 2026-05-28..08-25). Artemis's own legs on those 90 days: settlement $1,439.21bn = P2P $1,339.37bn (93.1%) + DEX and
+# NFT $99.84bn; DefiLlama's DEX + NFT on the same days $100.29bn (+0.46% on the leg, +0.03% of settlement) — so the
+# rebuild's gap is in the P2P leg (BigQuery's definition against Artemis's).
+ARTEMIS_SETTLEMENT["series_status"] = {
+    "last_day": "2026-08-25", "status": "ENDED AT THE SOURCE — Artemis publishes no value after 2026-08-25",
+    "checked_on": "2026-11-23",
+    "evidence": "data-svc.artemisxyz.com/data/api/SETTLEMENT_VOLUME?symbols=eth (keyless, read 2026-11-23): identical "
+                "to the CSV on 352 of 352 days 2025-09-08..2026-08-25 (Σ $6,640.68bn), null on all 90 days "
+                "2026-08-26..2026-11-23; P2P_TRANSFER_VOLUME ends the same day; FEES / DAU run to 2026-11-22",
+    "overlap_legs_2026_05_28_to_08_25": {"artemis_settlement_usd": 1_439_208_003_068.0,
+                                         "artemis_p2p_usd": 1_339_372_024_510.0,
+                                         "artemis_dex_nft_usd": 99_835_978_558.0,
+                                         "defillama_dex_usd": 100_247_812_153.0, "defillama_nft_usd": 46_036_569.0},
+    "not_wired": "the data service is not a documented public API and Artemis's terms are not read; it holds nothing "
+                 "the CSV does not",
+    "next": "none from Artemis: a monthly export would end 2026-08-25 as well. The live series is the declared "
+            "rebuild (SETTLEMENT_REBUILD['ethereum_rebuild']['handover'])"}
+
+# ----- 4. STAKED ETH: THE FALLBACK WHEN THE REBUILD'S OVERLAP TEST DOES NOT PASS (Jake 2026-11-24: "if
+# staked_eth_rebuild.py's overlap test fails on the store, it switches to actual balances at the seam as a declared
+# change of quantity (0.80% today), labelled. Wire that so the run does it without asking").
+# The ±1% test on 455 days is unchanged. What changes is what a NOT PASSED does under --apply: staked_eth_rebuild.py
+# stores ONE row, beacon_chain_eth_seam_step_pct, dated the first day on actual balances — its value the MEASURED STEP
+# (the first beacon-node row ÷ validatorqueue's last row − 1, in %), its source the test's result and both figures.
+# While that row is in the store and the overlap check has not passed, the build hands beacon_chain_eth over to
+# beacon_chain_eth_primary's NODE rows (never a rebuilt row: the rebuild was not adopted) from the day after
+# validatorqueue's last row, as a DECLARED CHANGE OF QUANTITY: no trend, growth or difference reads across the seam
+# (the handover's composition_change — a series break), and the days between validatorqueue's last row and the first
+# node row stay holes. A later run whose test passes stores the rebuilt days and the ordinary handover takes over.
+METRICS["beacon_chain_eth_seam_step_pct"] = {
+    "label": "Staked ETH — the step at the declared change of quantity (R18): the first beacon-node row (Σ actual "
+             "balances of all validators) over validatorqueue's last row (effective balance that attested) − 1, in % — "
+             "stored by staked_eth_rebuild.py --apply only when its ±1% overlap test did not pass",
+    "kind": "stock", "unit": "pct", "archetypes": [1], "tiers": [1], "sanity_min": -5.0, "sanity_max": 5.0,
+    "only_projects": ("Ethereum",)}
+STAKED_SEAM_POINT = "staked_eth_rebuild:seam_step"
+PROJECT_BY_NAME["Ethereum"]["staked_eth_rebuild"]["fallback"] = {
+    "decided": "Jake 2026-11-24 (R18)", "marker_metric": "beacon_chain_eth_seam_step_pct",
+    "point": STAKED_SEAM_POINT, "to_point": BEACON_NODE_POINT,
+    "reference": "read 2026-11-23 at one finalized state (slot 15,716,896): Σ actual balances 44,714,369 ETH against "
+                 "44,357,984 ETH of effective balance that attested (validatorqueue's definition): +0.80%",
+    "max_step_pct": 5.0}
+HANDOVER_CONTINUATION[("Ethereum", "beacon_chain_eth")]["fallback"] = {
+    "marker_metric": "beacon_chain_eth_seam_step_pct", "only_point": BEACON_NODE_POINT,
+    "decided": "Jake 2026-11-24 (R18): the rebuild's ±1% overlap test did not pass on the store — the series switches "
+               "to actual balances at the seam as a DECLARED CHANGE OF QUANTITY",
+    "composition_change": "A DECLARED CHANGE OF QUANTITY at the seam (Jake 2026-11-24, R18): to validatorqueue's last "
+                          "row the series is the EFFECTIVE balance that ATTESTED; from the first beacon-node row it is "
+                          "the ACTUAL balance of ALL validators (rewards not yet swept, validators exiting or not "
+                          "attesting included) — about +0.80% on the same state (read 2026-11-23). The BigQuery "
+                          "rebuild did not agree with validatorqueue within ±1% on the 455 overlap days, so no "
+                          "rebuilt day is used; the days between the two legs are holes. No trend reads across the "
+                          "seam"}
+
+# R18: projects whose rule-in stock is declared but not read yet (every leg joins from a declared date) — filled by
+# build_workbook._rule_in_views on each build; the floats and the Credibility free-float row leave the term out for them.
+RULE_IN_PENDING: dict = {}

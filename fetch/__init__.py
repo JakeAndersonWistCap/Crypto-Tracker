@@ -64,6 +64,7 @@ from .browser_capture import BrowserCapture
 from .chainlink_fees import ChainlinkFees
 from .xref import CrossRefs
 from .staked_eth import BeaconNodeStakedEth, BeaconStakedEth, StakedEth  # noqa: F401
+from .ef_wallets import EFWallets  # noqa: F401
 from .treasury import TreasuryBills
 from .sky_msc import SkyMsc
 from .fluid_buybacks import FluidBuybacks
@@ -181,6 +182,9 @@ TIER_ORDER = [
     # declared cooldown (config.HOST_COOLDOWN) and BeaconStakedEth is no longer a tier. Staked ETH is read once a day from
     # a free public beacon node (Σ actual balances at the finalized state); past days come from staked_eth_rebuild.py.
     ("beacon_api", 1, lambda ctx: BeaconNodeStakedEth()),
+    # R18 (Jake 2026-11-24): the Ethereum Foundation's wallets — ETH + WETH held (published and INFERRED, apart) and the
+    # ETH its validators stake, once a day, keyless (a public RPC at one finalized block; the public beacon node by key)
+    ("ef_wallets", 1, lambda ctx: EFWallets()),
     # The 3-month US T-bill, the risk-free benchmark (Phase 3, 2026-10-12 night): Treasury's own daily bill rates, FRED
     # DTB3 the cross-check; stored under the pseudo-project Macro.
     ("treasury_bills", 1, lambda ctx: TreasuryBills()),
