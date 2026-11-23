@@ -15551,6 +15551,87 @@ def plume_rwa_points():
     return 0
 
 
+def plume_rwa_issuers():
+    """R18: Plume's RWA figure by the declared issuer list (config.RWA_ISSUERS) — each issuer's figure today from
+    yields.llama.fi/pools or /protocols, the list's sum, DefiLlama's RWA-category sum beside it, and what is on Plume
+    but not on the list. Read-only."""
+    import config                                          # noqa: PLC0415
+    import requests                                        # noqa: PLC0415
+    head("Plume — rwa_defillama_usd by the declared issuer list (R18): where each issuer sits today")
+    spec = config.RWA_ISSUERS["Plume"]
+    chain, hd = spec["chain"], {"User-Agent": "token-metrics-check/1.0"}
+    try:
+        ps = requests.get("https://api.llama.fi/protocols", headers=hd, timeout=90).json()
+        pools = requests.get("https://yields.llama.fi/pools", headers=hd, timeout=90).json().get("data") or []
+    except Exception as e:  # noqa: BLE001
+        print(f"  UNREACHABLE — {str(e)[:120]}")
+        return 0
+    by = {str(q.get("slug")): q for q in ps}
+    on = [q for q in pools if q.get("chain") == chain]
+    total, unread = 0.0, []
+    for it in spec["issuers"]:
+        q = by.get(it["slug"]) or {}
+        if it["read"] == "yields":
+            mine = [x for x in on if x.get("project") == it["slug"]]
+            gone = [i for i in it.get("pools", ()) if i not in {x.get("pool") for x in mine}]
+            v = sum(float(x["tvlUsd"]) for x in mine) if mine and not gone and all(x.get("tvlUsd") is not None for x in mine) else None
+            where = f"yields: {len(mine)} pool(s)" + (f", declared pool {gone[0][:8]} NOT LISTED" if gone else "")
+        else:
+            v = (q.get("chainTvls") or {}).get(chain)
+            where = "/protocols chainTvls"
+        if v is None:
+            unread.append(it["slug"])
+        else:
+            total += float(v)
+        print(f"  {it['slug']:<22} category {str(q.get('category')):<12} module {str(q.get('module'))[:18]:<18} "
+              f"{'UNREAD' if v is None else format(float(v), '>14,.0f')}  ({where})")
+    if unread:
+        print(f"  UNREAD: {', '.join(unread)} — no sum is formed (the run stores nothing for the day)")
+    else:
+        print(f"  the list's sum today {total:,.0f}")
+    cat = [q for q in ps if str(q.get("category", "")).lower() in ("rwa", "rwa lending") and chain in (q.get("chains") or [])]
+    print(f"  DefiLlama's RWA category on {chain} (cross-check row rwa_defillama_category_usd): "
+          f"{sum(float((q.get('chainTvls') or {}).get(chain) or 0) for q in cat):,.0f} over {len(cat)} protocol(s)")
+    listed = {it["slug"] for it in spec["issuers"]}
+    print("  on the chain, not on the list:")
+    other = {}
+    for x in on:
+        if x.get("project") not in listed:
+            other[x["project"]] = other.get(x["project"], 0.0) + float(x.get("tvlUsd") or 0)
+    for slug, v in sorted(other.items(), key=lambda kv: -kv[1]):
+        print(f"    yields  {slug:<22} {v:>14,.0f}  category {(by.get(slug) or {}).get('category')}"
+              + ("" if slug in spec["not_listed"] else "   <- NOT DECLARED either way: look at it"))
+    for q in sorted(ps, key=lambda q: -float((q.get("chainTvls") or {}).get(chain) or 0))[:8]:
+        if q.get("slug") not in listed and float((q.get("chainTvls") or {}).get(chain) or 0) > 1e6:
+            print(f"    tvl     {q['slug']:<22} {float(q['chainTvls'][chain]):>14,.0f}  category {q.get('category')}"
+                  + ("" if q["slug"] in spec["not_listed"] else "   <- NOT DECLARED either way: look at it"))
+    return 0
+
+
+def plume_rwa_archive(ts: str = "20261011091503"):
+    """R18: what DefiLlama's RWA category on Plume held BEFORE the issuers were moved — the Wayback Machine's copy of
+    api.llama.fi/protocols (2026-10-11 09:15 UTC; the cloud session could not reach web.archive.org). Lists every
+    protocol with a Plume Mainnet figure, RWA-category first, and the category sum. Read-only."""
+    import requests                                        # noqa: PLC0415
+    head(f"Plume — DefiLlama /protocols as archived {ts[:8]}: the RWA category on Plume Mainnet then (R18)")
+    chain = "Plume Mainnet"
+    try:
+        ps = requests.get(f"https://web.archive.org/web/{ts}id_/https://api.llama.fi/protocols",
+                          headers={"User-Agent": "token-metrics-check/1.0"}, timeout=300).json()
+    except Exception as e:  # noqa: BLE001
+        print(f"  UNREACHABLE — {str(e)[:120]}")
+        return 0
+    rows = [(str(q.get("category")), float((q.get("chainTvls") or {}).get(chain) or 0), str(q.get("slug")),
+             str(q.get("module"))) for q in ps if (q.get("chainTvls") or {}).get(chain)]
+    rwa = [r for r in rows if r[0].lower() in ("rwa", "rwa lending")]
+    for cat, v, slug, mod in sorted(rwa, key=lambda r: -r[1]):
+        print(f"  RWA   {slug:<28} {v:>14,.0f}  {cat}  module {mod[:30]}")
+    print(f"  RWA category sum on {chain}: {sum(r[1] for r in rwa):,.0f} over {len(rwa)} protocol(s)")
+    for cat, v, slug, mod in sorted((r for r in rows if r not in rwa), key=lambda r: -r[1])[:15]:
+        print(f"  other {slug:<28} {v:>14,.0f}  {cat}")
+    return 0
+
+
 def plume_payout_weeks(days: int = 24):
     """R17: PLUME paid by the staking treasury (RewardDistributed, native) per UTC day through rpc.plume.org — an
     independent read of emissions_claimed_tokens' events — and the last two complete weeks."""
@@ -15642,6 +15723,7 @@ CHECKS = (
     nearblocks_v3_parity,
     ethstore_check,
     geod_rule_read, plume_rwa_points, plume_payout_weeks,
+    plume_rwa_issuers, plume_rwa_archive,
 )
 
 # The three that need a value off the command line. Kept beside the registry rather than folded

@@ -30,6 +30,7 @@ ABSENT_RECHECK_NOTE = "14 days without an attempt (store.ABSENT_RECHECK_DAYS)"
 TIER = 1
 API = "https://api.llama.fi"
 STABLES = "https://stablecoins.llama.fi"
+YIELDS = "https://yields.llama.fi"
 
 # How the parent/child restructure check reads "recently", and how far the daily level must
 # have fallen below what the reported total implies. Blunt on purpose: this is not a sensitivity
@@ -1477,6 +1478,153 @@ class DefiLlama:
             return pd.DataFrame(columns=["date", "chain", "value"])
         return pd.concat(frames).groupby(["chain", "date"], as_index=False)["value"].sum()
 
+    # ------------------------------------------------------------------ RWA by a DECLARED ISSUER LIST (R18, Plume)
+    @staticmethod
+    def _daily_pool_tvl(pts, before=None) -> dict:
+        """ONE VALUE PER UTC DAY from a yields.llama.fi /chart/{pool} list: the pool's LAST snapshot of the day (the
+        list is one snapshot a day near 23:00 UTC, some days two; read 2026-11-23). `before`: days on or after it are
+        left out (today is not over). A point with no tvlUsd is no value (the day is then a hole, never 0)."""
+        last: dict = {}
+        for pt in pts or []:
+            try:
+                t = pd.Timestamp(pt["timestamp"])
+                v = pt.get("tvlUsd")
+                if v is None:
+                    continue
+                v = float(v)
+            except (KeyError, TypeError, ValueError):
+                continue
+            if t.tzinfo is not None:
+                t = t.tz_convert("UTC").tz_localize(None)
+            d = t.normalize()
+            if before is not None and d >= before:
+                continue
+            if d not in last or t >= last[d][0]:
+                last[d] = (t, v)
+        return {d: v for d, (_t, v) in last.items()}
+
+    def _build_rwa_issuers(self, chain: str, spec: dict, plan: list) -> tuple[dict, str | None]:
+        """{day: Σ over the DECLARED issuers of each one's value on `chain`} for every COMPLETE day from spec['from'],
+        or ({}, why) when an issuer could not be read. One value per issuer-pool (or protocol) and day. A day is formed
+        only where EVERY issuer has a value: a pool with no snapshot on a day inside its life, an issuer not served yet,
+        a protocol with no point — the day is left out whole (never a short sum). `plan`: [(issuer spec, pool ids or
+        None for a /protocol read)], from _rwa_issuers."""
+        now = pd.Timestamp(self._today)
+        yday = now - pd.Timedelta(days=1)
+        start = pd.Timestamp(spec["from"])
+        per = []
+        for it, ids in plan:
+            slug = it["slug"]
+            try:
+                if ids is None:
+                    j = self.http.get(f"{API}/protocol/{slug}")
+                    series = [self._daily_tvl(((j.get("chainTvls") or {}).get(chain) or {}).get("tvl") or [], before=now)]
+                else:
+                    series = [self._daily_pool_tvl((self.http.get(f"{YIELDS}/chart/{i}") or {}).get("data") or [],
+                                                   before=now) for i in ids]
+            except Exception as e:  # noqa: BLE001
+                log.warning("RWA issuer %s failed: %s", slug, e)
+                return {}, f"{slug} could not be read ({str(e)[:80]})"
+            if any(not x for x in series):
+                return {}, f"{slug}: a pool or protocol history came back empty"
+            tot, d = {}, max(min(min(x) for x in series), start)
+            while d <= yday:
+                v, ok = 0.0, True
+                for x in series:
+                    if d < min(x):
+                        continue                    # this pool was not listed yet (the issuer's other pools were)
+                    if d not in x:
+                        ok = False                  # a hole inside the pool's life: the issuer's day is not formed
+                        break
+                    v += x[d]
+                if ok:
+                    tot[d] = v
+                d += pd.Timedelta(days=1)
+            per.append(tot)
+        if not per:
+            return {}, "no issuer on the list"
+        days = set(per[0])
+        for tot in per[1:]:
+            days &= set(tot)
+        return {d: sum(tot[d] for tot in per) for d in sorted(days)}, None
+
+    def _rwa_issuers(self, chain: str, name: str, protocols: list, window_days, out) -> bool:
+        """R18 (Jake 2026-11-24): rwa_defillama_usd of a chain with a DECLARED ISSUER LIST (config.RWA_ISSUERS) = Σ of
+        the same issuers wherever DefiLlama now serves them — an issuer moved to its RWA product (module dummy.js: no
+        TVL on /protocols) is read from its yields.llama.fi pools on the chain, one still on /protocols from its
+        chainTvls. Today's row: one /pools call + the /protocols list already read. History: /chart/{pool} and
+        /protocol/{slug}, ONCE over the whole served span from spec['from'] (the declared handover), afterwards only
+        for owed days. An issuer that cannot be read — no pool listed, a declared pool gone, no chain figure — stores
+        NOTHING for the day and says so. Returns False when the read must be made again."""
+        import config                                      # noqa: PLC0415
+        from .base import catch_up_owed
+        spec = config.RWA_ISSUERS[name]
+        lab = f"{SOURCE}_rwa_issuers"         # its own measuring point (not "defillama:…": the clean-up of the
+        #                                       earlier leg matches that prefix)
+        try:
+            pools = (self.http.get(f"{YIELDS}/pools") or {}).get("data") or []
+        except Exception as e:  # noqa: BLE001
+            out.fail(SOURCE, name, f"{chain}: RWA issuer list — yields.llama.fi/pools could not be read ({str(e)[:80]}): "
+                                   f"NOTHING STORED (the next run reads it again)", TIER)
+            return False
+        by_slug: dict = {}
+        for q in pools:
+            if q.get("chain") == chain:
+                by_slug.setdefault(str(q.get("project")), []).append(q)
+        prot = {str(q.get("slug")): q for q in protocols or []}
+        total, unread, plan, parts = 0.0, [], [], []
+        for it in spec["issuers"]:
+            slug = it["slug"]
+            if it.get("read") == "yields":
+                ps = by_slug.get(slug) or []
+                ids = sorted(str(q.get("pool")) for q in ps)
+                gone = [i for i in it.get("pools", ()) if i not in ids]
+                if not ps or gone or any(q.get("tvlUsd") is None for q in ps):
+                    unread.append(f"{slug} (" + (f"declared pool {gone[0][:8]} not listed" if gone
+                                                 else f"no pool with a TVL on {chain}") + ")")
+                    continue
+                v = sum(float(q["tvlUsd"]) for q in ps)
+                plan.append((it, ids))
+            else:
+                v = ((prot.get(slug) or {}).get("chainTvls") or {}).get(chain)
+                if v is None:
+                    unread.append(f"{slug} (no {chain} figure on /protocols)")
+                    continue
+                v = float(v)
+                plan.append((it, None))
+            total += v
+            parts.append(f"{slug} {v:,.0f}")
+        if unread:
+            out.fail(SOURCE, name, f"{chain}: RWA issuer list — {'; '.join(unread)[:300]}: the sum is incomplete, NOTHING "
+                                   f"STORED (unknown is never 0; the next run reads them again)", TIER)
+            return False
+        out.add(tidy([(pd.Timestamp(self._today), total)], name, "rwa_defillama_usd", lab, TIER), SOURCE, name,
+                f"{chain}:rwa issuer list = Σ {len(plan)} declared issuer(s) ({'; '.join(parts)}) — yields /pools + "
+                f"/protocols", TIER)
+        key = f"defillama:rwa:issuers:{name}"
+        once = self.daily.due(key, "once")
+        stored = self._stored(name, "rwa_defillama_usd")
+        if stored and not once and not catch_up_owed(name, "rwa_defillama_usd"):
+            return True
+        hist, why = self._build_rwa_issuers(chain, spec, plan)
+        if why:
+            out.fail(SOURCE, name, f"{chain}: RWA issuer list history — {why}: NOTHING STORED for the past days (the next "
+                                   f"run reads them again)", TIER)
+            return False
+        rows = tidy(list(hist.items()), name, "rwa_defillama_usd", lab, TIER)
+        if rows.empty:
+            out.fail(SOURCE, name, f"{chain}: RWA issuer list history — no complete day from {spec['from']}", TIER)
+            return False
+        if not (once or not stored):
+            rows = window(rows, window_days)        # the routine window plus the owed days
+        out.add(rows, SOURCE, name,
+                f"{chain}:rwa issuer list history, {len(rows)} day(s) {rows['date'].min():%Y-%m-%d}.."
+                f"{rows['date'].max():%Y-%m-%d}" + (f" — the ONE rebuild of the declared handover from {spec['from']}"
+                                                    if once else ""), TIER)
+        if once:
+            self.daily.done(key, "once")
+        return True
+
     # ------------------------------------------------------------------ RWA share (G17-5), a weekly turn
     # chainTvls keys that are not a chain's own TVL (DefiLlama's default TVL leaves them out)
     _NOT_CHAIN_TVL = {"borrowed", "staking", "pool2", "treasury", "vesting", "offers", "doublecounted", "liquidstaking",
@@ -1590,7 +1738,12 @@ class DefiLlama:
             return
         # ONCE A DAY (2026-09-28): /protocols plus one full-history /protocol/{slug} per RWA
         # protocol on any wanted chain — the costliest call set here, for a daily figure.
-        if not self.daily.due("defillama:rwa", self._today):
+        # R18: not while a chain's issuer-list handover is still owed its ONE rebuild — the run's clean-up has already
+        # removed the earlier leg's rows from the handover day, so the read must not wait for tomorrow
+        import config as _cfg                              # noqa: PLC0415
+        owed_once = any(n in getattr(_cfg, "RWA_ISSUERS", {}) and self.daily.due(f"defillama:rwa:issuers:{n}", "once")
+                        for n in wanted.values())
+        if not self.daily.due("defillama:rwa", self._today) and not owed_once:
             for chain, name in wanted.items():
                 out.mark_current(SOURCE, name, "rwa_defillama_usd",
                                  f"{chain}: RWA category already rebuilt today ({self._today}); "
@@ -1615,6 +1768,11 @@ class DefiLlama:
         reread = {c: n for c, n in wanted.items() if n in getattr(config, "RWA_REREAD_ONCE", {})
                   and self.daily.due(f"defillama:rwa:daily-points:{n}", "once")}
         need_history.update(reread)
+        # R18: a chain with a DECLARED ISSUER LIST (config.RWA_ISSUERS) is summed by issuer, not by DefiLlama's category
+        issuers = {c: n for c, n in wanted.items() if n in getattr(config, "RWA_ISSUERS", {})}
+        for c in issuers:
+            need_history.pop(c, None)
+        issuers_ok = True
         today_rows = {}
         try:
             protocols = self.http.get(f"{API}/protocols")
@@ -1629,6 +1787,14 @@ class DefiLlama:
         for chain, name in wanted.items():
             v, n = today_rows[chain]              # R17: today's one-call sum for EVERY chain (the history build stops
             #                                       at yesterday: today is not over there)
+            if chain in issuers:
+                # the pure category figure stays on file as a cross-check row; the series is the issuer list's
+                if n:
+                    out.add(tidy([(pd.Timestamp(self._today), v)], name, "rwa_defillama_category_usd", SOURCE, TIER),
+                            SOURCE, name, f"{chain}:rwa CATEGORY cross-check = Σ chainTvls[{chain}] over {n} RWA-category "
+                                          f"protocol(s) still on /protocols", TIER)
+                issuers_ok = self._rwa_issuers(chain, name, protocols, window_days, out) and issuers_ok
+                continue
             if chain in need_history and not n:
                 continue
             if not n:
@@ -1638,13 +1804,15 @@ class DefiLlama:
             out.add(tidy([(pd.Timestamp(self._today), v)], name, "rwa_defillama_usd", SOURCE, TIER), SOURCE, name,
                     f"{chain}:rwa category = Σ chainTvls[{chain}] over {n} RWA protocol(s) from /protocols (one call)", TIER)
         if not need_history:
-            self.daily.done("defillama:rwa", self._today)
+            if issuers_ok:
+                self.daily.done("defillama:rwa", self._today)
             return
         wanted = need_history
         try:
             if self._rwa_by_chain is None:
                 self._rwa_by_chain = self._build_rwa_by_chain(set(wanted))
-                self.daily.done("defillama:rwa", self._today)
+                if issuers_ok:
+                    self.daily.done("defillama:rwa", self._today)
         except Exception as e:  # noqa: BLE001
             out.fail(SOURCE, None, f"RWA category: {e}", TIER)
             return

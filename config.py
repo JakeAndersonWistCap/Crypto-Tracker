@@ -47697,3 +47697,127 @@ NEARBLOCKS_BILLING = {
     "v1_v2": "switched off 2026-11-22 (api.nearblocks.io/api-docs/migration; /v1/plans answers HTTP 410) — every "
              "path here has been /v3 since 2026-10-13",
 }
+
+
+# ===================================================================================================================
+# ROUND 18 — PLUME's rwa_defillama_usd FOLLOWS A DECLARED ISSUER LIST (Jake 2026-11-24: "DefiLlama's RWA category on
+# Plume reads ~$1M because issuers re-filed elsewhere. Find where each issuer now sits and wire the same issuers so the
+# series stays like-for-like."). SPEC "Round 18 — Plume".
+# WHAT HAPPENED AT THE SOURCE (read 2026-11-23, api.llama.fi/protocols, 9,092 protocols): DefiLlama moved the tokenised-
+# asset issuers out of its TVL system into its RWA product. 74 of its 190 RWA-category protocols now read
+# module 'dummy.js', tvl null, chains [], chainTvls {} (47 carry 'rwaAssetIds'); /protocol/<slug> returns an EMPTY tvl
+# list — their TVL history is no longer served. Among them plume-vaults (Nest; 22 rwaAssetIds), centrifuge-protocol,
+# invesco-ustb. The RWA product's API (/rwa/current, /rwa/chain/{chain}, /rwa/chart/chain/{chain}) is on the PAID plan
+# only (api-docs.defillama.com/llms.txt; api.llama.fi/rwa/chain/... answers 404 'Route not found'). So the category sum
+# on Plume fell to the four small protocols still on /protocols: realtyx 471,383 + harvest-flow 514,109 +
+# spice-protocol 1,108 + fractit-fleet 9 = 986,609.
+# WHERE THE ISSUERS ARE STILL SERVED FREE: yields.llama.fi/pools lists each one's pools per chain with tvlUsd, and
+# /chart/{pool} serves the daily history (one snapshot a day near 23:00 UTC). On Plume Mainnet, 2026-11-23:
+#   plume-vaults 42,624,109 (11 pools) · centrifuge-protocol 15,943,882 (2) · invesco-ustb 3,280,094 (1) ·
+#   bitwise-uscc 16,865,284 (1).
+# THE LIST = the issuers DefiLlama files under RWA that are on Plume: those three (read from yields) + the four still on
+# /protocols. NOT on the list, each for a stated reason (`not_listed`), never silently.
+# THE HANDOVER: from 2026-05-21 — the first day every listed issuer's history is served (centrifuge-protocol's two Plume
+# pools start 2026-05-21). Days before it keep what the store holds (the category sum as DefiLlama served it then); no
+# trend reads across the day (series_handover: a SERIES BREAK). The quantity is not identical: Σ pool tvlUsd at the day's last
+# snapshot against Σ protocol chain TVL at 00:00 UTC, and the dump's category sum held more than these issuers
+# (the list reads 89% of the stored figure on 2026-06-01, 85% on 09-01, 82% on 09-17, 64% on 10-07; see `overlap`).
+RWA_ISSUERS = {
+    "Plume": {
+        "chain": "Plume Mainnet", "from": "2026-05-21", "declared": "2026-11-24", "read_on": "2026-11-23",
+        "issuers": (
+            {"issuer": "Plume Vaults (Nest)", "slug": "plume-vaults", "read": "yields",
+             "pools": ("f21c4938-864a-44bd-91fb-c492864fcb46", "ad047a62-5c88-4b43-bf42-4e4d0858c53a",
+                       "ae992838-303f-5a75-8dc7-0cb765396245", "867c563e-92a0-41be-a4de-7af5e9f9816b",
+                       "f6793703-310d-4d55-9295-38d39047f18c", "a960f0fd-0ed0-51dc-afcb-4196ae033c68",
+                       "7b5050c5-e711-497a-95c8-9c13011ae17f", "b5331747-f55e-457e-aadc-9635c96ed38a",
+                       "2d9c3f35-3e23-4f24-a95e-71fbd6198efb", "edd7686e-9d73-502b-9fc2-e54c22c061f4",
+                       "8479e5cf-e8b8-4e50-b1ef-cc9d2c1abd4e"),
+             "evidence": "DefiLlama id 5284, category RWA, tags Treasury Bills / Money Market Funds, previousNames Nest "
+                         "Staking / Nest Credit, url app.plume.org/vaults ('Plume's flagship real-world asset protocol'); "
+                         "its Plume history was served by /protocol/plume-vaults until the move (RETENTION_TESTS read it)",
+             "now": "module dummy.js, tvl null; 11 pools on Plume Mainnet, 42,624,109 (nOPAL 17,089,002, nFXCF "
+                    "14,517,152, nAXI 5,600,297, nTBILL 3,748,314, nALPHA 1,178,712, ...)"},
+            {"issuer": "Centrifuge / Anemoy (ACRDX, JTRSY)", "slug": "centrifuge-protocol", "read": "yields",
+             "pools": ("1dee4660-d688-4800-8e0f-7af0d77bcde1", "7c4e5b30-e9ee-450d-b162-5994998afd21"),
+             "evidence": "DefiLlama category RWA; Anemoy Tokenized Apollo Diversified Credit Fund Token (ACRDX, "
+                         "0x9477724b… on Plume, supply 15,061,147) and Janus Henderson Treasury Fund (JTRSY 0xa5d46525…, "
+                         "supply 496,381) — explorer.plume.org",
+             "now": "module dummy.js, tvl null; 2 pools on Plume Mainnet, 15,943,882"},
+            {"issuer": "Invesco USTB (the short-duration US government securities fund token)", "slug": "invesco-ustb",
+             "read": "yields", "pools": ("8db7cb71-f2b7-45c7-bbff-f32c88ef7b81",),
+             "evidence": "DefiLlama category RWA; token 0xe4fa682f… on Plume named 'Invesco Short Duration US Government "
+                         "Securities Fund' (USTB), supply 290,642 — explorer.plume.org. The dump's series moved with it "
+                         "(2026-06-12: USTB −5.0M, the stored figure −5.1M)",
+             "now": "module dummy.js, tvl null; 1 pool on Plume Mainnet, 3,280,094"},
+            {"issuer": "RealtyX", "slug": "realtyx", "read": "protocol",
+             "evidence": "DefiLlama category RWA, on /protocols", "now": "471,383"},
+            {"issuer": "Harvest Flow", "slug": "harvest-flow", "read": "protocol",
+             "evidence": "DefiLlama category RWA, on /protocols", "now": "514,109"},
+            {"issuer": "Spice Protocol", "slug": "spice-protocol", "read": "protocol",
+             "evidence": "DefiLlama category RWA, on /protocols", "now": "1,108"},
+            {"issuer": "Fractit Fleet", "slug": "fractit-fleet", "read": "protocol",
+             "evidence": "DefiLlama category RWA, on /protocols", "now": "9"},
+        ),
+        # on Plume, looked at, and NOT summed — the figure and the reason (all read 2026-11-23)
+        "not_listed": {
+            "bitwise-uscc": {
+                "usd": 16_865_284, "category": "Basis Trading",
+                "why": "not in the stored series: DefiLlama files it under Basis Trading, and the stored figure did not "
+                       "move when its Plume pool fell 22.06M -> 2.09M (2026-07-28..31: stored 148.86M -> 150.13M) or rose "
+                       "0.69M -> 13.10M (08-03..04: 150.57M -> 150.99M). 99.2% of the Plume supply sits in one wallet "
+                       "(0x7D967A27…, not a contract). Adding it is Jake's call (+16.9M)"},
+            "grove-finance": {
+                "usd": 15_288_609, "category": "Onchain Capital Allocator",
+                "why": "a HOLDER, not an issuer: Grove's ALMProxy 0x1DB91ad5… holds 14,963,131 of the 15,061,147 ACRDX on "
+                       "Plume (99.3%) — the same dollars as centrifuge-protocol's ACRDX pool (15,386,584). Summing both "
+                       "counts the fund twice"},
+            "nucleus": {
+                "usd": 4_177_987, "category": "Yield Aggregator",
+                "why": "a HOLDER, not an issuer: Nucleus is the BoringVault layer under Nest's vaults; its Plume TVL is "
+                       "what those vaults hold (it fell 27.6M -> 7.4M with USCC on 2026-07-28..31 and by 5.0M with USTB on "
+                       "2026-06-12). The vault shares are plume-vaults"},
+            "sierra-protocol": {
+                "usd": 6_060_580, "category": "Yield",
+                "why": "never in the RWA category as far as can be shown (on DefiLlama from 2026-09-10; the stored figure "
+                       "did not step that day: +2.29M against its 5.97M). What it holds on Plume was not established"},
+        },
+        # the overlap of the two measuring points on the days both exist (the fixture dump, as of 2026-10-13)
+        # {day: (stored then, the list)}
+        "overlap": {"2026-06-01": (99_655_487, 88_701_466), "2026-09-01": (100_897_014, 85_538_179),
+                    "2026-09-17": (116_018_399, 94_807_248), "2026-10-07": (116_740_329, 74_975_548)},
+        # STACKING INSIDE THE LIST (explorer.plume.org token holders, read 2026-11-23): a vault counted on top of what it
+        # holds. DefiLlama's category sum did the same, so the list keeps it (like-for-like); the size is on file.
+        "stacking": {
+            "USTB in nTBILL": {"usd": 3_275_000, "evidence": "290,121 of 290,642 USTB (99.8%) held by 0xE72Fe648… = the "
+                                                             "Nest Treasuries Vault (nTBILL)"},
+            "JTRSY in nTBILL": {"usd": 556_000, "evidence": "496,380 of 496,381 JTRSY (100.0%) held by the same vault"},
+            "nTBILL in nOPAL": {"usd": 3_472_000, "evidence": "3,263,375 of 3,523,017 nTBILL (92.6%) held by 0x119Dd7dA… "
+                                                              "= the Nest BlackOpal LiquidStone II Vault (nOPAL)"},
+        },
+    },
+}
+# the R17 one-off rebuild of Plume's window is superseded: the issuer list's own ONE rebuild restates every day from
+# 2026-05-21 (fetch/llama._rwa_issuers; a daily-checks mark keeps it to one)
+# THE HANDOVER IS DECLARED (rule 10), so the two legs are one series with a SERIES BREAK at the stitch and are not blanked
+# as an accidental change of measuring point; `declared` is the handover DAY.
+PROJECT_BY_NAME["Plume"].setdefault("series_handover", {})["rwa_defillama_usd"] = {
+    "ordered_points": ("defillama", "defillama_rwa_issuers"),
+    "why": "Jake 2026-11-24 (R18): DefiLlama moved Plume's RWA issuers out of its TVL API (module dummy.js), so its "
+           "category sum reads ~$1M; the series follows the same issuers where they are still served",
+    "composition_change": "THE STOCK STEPS at the switch: before 2026-05-21 DefiLlama's RWA-category sum on Plume as it "
+                          "served it then (it held more than the listed issuers, and doubled 306M -> 608M on 2026-05-06 "
+                          "and fell 603M -> 100M on 05-30); from 2026-05-21 the declared issuers' pools "
+                          "(yields.llama.fi) + the four RWA protocols still on /protocols (config.RWA_ISSUERS)",
+    "declared": RWA_ISSUERS["Plume"]["from"], "declared_on": "2026-11-24"}
+# The earlier leg's rows dated on or after the handover day go (the ~$1M category rows since DefiLlama's move, the
+# category rows of 2026-05-21.. on the old basis, and the days the list cannot form): one series, one basis a day.
+RUN_CLEANUPS = RUN_CLEANUPS + (
+    {"id": "R18-plume-rwa", "metric": "rwa_defillama_usd", "from": "handover", "source": "defillama",
+     "projects": ("Plume",),
+     "why": "a category-sum row of Plume's RWA series on or after its declared handover to the issuer list (R18)"},)
+METRICS["rwa_defillama_category_usd"] = {
+    "label": "RWA on chain — DefiLlama's RWA CATEGORY sum as /protocols serves it today ($) — CROSS-CHECK of "
+             "rwa_defillama_usd, which follows the declared issuer list (R18)",
+    "kind": "stock", "unit": "usd", "archetypes": [1], "tiers": [1], "sanity_min": 0, "sanity_max": 1e12,
+    "only_projects": ("Plume",), "view_only": True}

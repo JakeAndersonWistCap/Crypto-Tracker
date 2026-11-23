@@ -544,6 +544,8 @@ def test_4a_rwa_is_one_protocols_call_once_every_chain_has_history(monkeypatch, 
     class H:
         def get(self, url, params=None, **_):
             calls.append(url)
+            if url.endswith("yields.llama.fi/pools"):          # R18: Plume's issuer list reads one more LIST (no pool
+                return {"data": []}                            # here: Plume stores nothing, Ethereum is unchanged)
             assert url.endswith("/protocols"), "no per-protocol history call once history is stored"
             return [{"category": "RWA", "chains": [eth], "chainTvls": {eth: 10.0}},
                     {"category": "RWA Lending", "chains": [eth], "chainTvls": {eth: 5.0}},
@@ -552,7 +554,8 @@ def test_4a_rwa_is_one_protocols_call_once_every_chain_has_history(monkeypatch, 
     out = FetchOutput()
     d.rwa(chains, 30, out)
     f = out.frame()
-    assert len(calls) == 1 and f[f["project"] == "Ethereum"]["value"].tolist() == [15.0]
+    assert [c.rsplit("/", 1)[-1] for c in calls] == ["protocols", "pools"]
+    assert f[f["project"] == "Ethereum"]["value"].tolist() == [15.0]
     assert set(f["source"]) == {"defillama"}
 
 

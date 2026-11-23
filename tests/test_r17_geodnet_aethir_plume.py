@@ -190,6 +190,7 @@ def test_3_the_history_build_reads_989_156_for_the_day_that_read_1_503_373(tmp_p
 def test_3_a_protocol_that_cannot_be_read_stores_no_past_day(tmp_path, monkeypatch):
     monkeypatch.setattr(llama, "window", lambda f, w: f)
     monkeypatch.setenv("TOKEN_METRICS_DAILY_CHECKS", "")
+    monkeypatch.setattr(config, "RWA_ISSUERS", {})        # R18: the category read, as a chain without an issuer list
     d = _llama(tmp_path, stored=False, fail=("harvest-flow",))
     out = FetchOutput()
     d.rwa([config.PROJECT_BY_NAME["Plume"]], 30, out)
@@ -203,6 +204,7 @@ def test_3_plumes_window_is_rebuilt_once_then_one_call_a_day(tmp_path, monkeypat
     monkeypatch.setattr(llama, "window", lambda f, w: f)
     monkeypatch.setenv("TOKEN_METRICS_DAILY_CHECKS", "")
     assert "Plume" in config.RWA_REREAD_ONCE
+    monkeypatch.setattr(config, "RWA_ISSUERS", {})        # R18: the category read, as a chain without an issuer list
     plume = config.PROJECT_BY_NAME["Plume"]
     d = _llama(tmp_path)
     out = FetchOutput()
