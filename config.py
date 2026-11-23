@@ -47697,3 +47697,67 @@ NEARBLOCKS_BILLING = {
     "v1_v2": "switched off 2026-11-22 (api.nearblocks.io/api-docs/migration; /v1/plans answers HTTP 410) — every "
              "path here has been /v3 since 2026-10-13",
 }
+
+
+# ===== R18 — NEAR: THE P2P HISTORY BEFORE THE STORED YEAR, IN MONTHLY CHUNKS (Jake 2026-11-24; SPEC "Round 18 — Near") ==
+# Jake: "the archetype key and rank must not wait until late 2027 ... a backfill that runs in monthly chunks from
+# 2026-12-01 within the 900 GB budget (stage 2 never automatic)". No new metric and no new rule: the same SQL
+# (sql/near/bigquery_p2p_daily.sql), the same series (p2p_transfer_volume_usd), the same budget, per-query cap and top-up
+# reserve — on the calendar month BEFORE the stored run instead of inside the trailing 365 days. No BigQuery query was
+# run by Claude Code; every GB below is from a job Jake ran (cited) or is marked an estimate.
+#
+# WHY IT WAITS: A1's key is the 1-year change of the trailing-365-day settlement volume per circulating token, so the
+# daily series (DEX + P2P, a day only where both hold) must be hole-free for 730 days: held from r0, the key forms on
+# r0 + 729 (reader._settlement_forms_on). The daily run's own backfill stops at the trailing 365 days (r0 2025-12-29
+# on the store of 2026-11-23 -> 2027-12-28). Each calendar month of history fetched moves r0 back a month.
+#
+# WHICH TABLES (the P2P leg reads two; the DEX leg is DefiLlama's and bills nothing):
+#   receipt_actions  native NEAR: block_date, action_kind, receipt_predecessor_account_id, receipt_receiver_account_id,
+#                    args (a TRANSFER's deposit exists only inside `args`, a STRING of JSON — no table of the dataset
+#                    carries it as a column: transaction_actions holds `args` too). DAY-partitioned on block_date, NOT
+#                    clustered, so the dates prune and nothing else does: `args` is read for every action of every day.
+#   ft_events        NEP-141: day-partitioned, CLUSTERED on contract_account_id (the token list prunes it).
+# SIZES. Published only by a third party (a copy of `bq show` for each table of the dataset, near-tinker-union.notion.site
+# "BigQuery Schemas", lastModifiedTime 2024-11-27 — two years old, read 2026-11-23): receipt_actions 5,937.9 GB logical /
+# 10.21bn rows / 1,579 day partitions, of which 1,448.6 GB "active" (partitions written in the 90 days to 2024-11-27:
+# ~16 GB a day, every column); transaction_actions 2,543.9 GB; execution_outcomes 4,570.5 GB; receipt_details
+# 8,914.2 GB; account_changes 3,909.9 GB; transactions 1,295.4 GB; blocks 20.1 GB; ft_events not in the copy. NEAR's own
+# docs (docs.near.org/data-infrastructure/big-query) list the tables and publish no size. Measured on Jake's project
+# (the figures the plan uses): the P2P year dry-ran 1.91 TB (October 2026); the chunk 2025-11-28..2025-12-28 (31 days)
+# dry-ran 233.7 GB = 7.54 GB a day (2026-11-17); one day's top-up 2.84 GB (2026-11-17, after the April 2026 fall in
+# activity); the same `args` column over 2025-09-22..2026-10-17 dry-ran 2,001.57 GB against 242.37 GB for the narrow
+# columns alone (G2-A6) — `args` is ~88% of what the query bills.
+# CAN THE COST BE CUT INSIDE THE FROZEN RULES? No, not materially: the dates already prune to the chunk exactly; the
+# query already names only the 5 + 7 columns it uses; native and NEP-141 already run in ONE query sharing the
+# contracts list; the DEX leg costs 0 GB. The ~88% is `args`, which is not clustered and cannot be pruned by action
+# kind. The one route that would cut it — reading TRANSFER from transaction_actions (43% of receipt_actions' bytes in
+# the 2024 copy) — drops transfers made by receipts (delegate actions, wallet contracts) and is a change of measuring
+# point: NOT wired, a decision for Jake.
+NEAR_P2P_HISTORY = {
+    "project": "Near", "metric": "p2p_transfer_volume_usd", "sql": "bigquery_p2p_daily.sql",
+    "decided": "Jake 2026-11-24 (R18.5): monthly chunks from 2026-12-01 within the 900 GB budget; never automatic",
+    "first_run_month": "2026-12",
+    # THE FLOOR: no settlement day forms before it, so no chunk is ever asked before it. DefiLlama's /overview/dexs/near
+    # breakdown carries NEAR Intents from 2024-12-10 (read 2026-11-23: 1,920 days from 2021-08-22, NEAR Intents > 0 on
+    # every day 2024-12-10..2026-11-23), and a DEX day without it is not stored (D1-1, required_in_breakdown).
+    "floor": "2024-12-10",
+    "chunks_per_month": 1,                # what a month's approval covers unless the approval says more
+    "min_chunk_days": 7,                  # a stub of fewer days at a month's end is taken with the month before it
+    "key_days": 729,                      # held hole-free from r0, the key forms on r0 + 729
+    "est_gb_per_day": 7.54,               # 233.7 GB / 31 days, Jake's dry run of 2026-11-17 for 2025-11-28..12-28
+    "est_source": "233.7 GB dry run for 2025-11-28..2025-12-28 (Jake's run 2026-11-17); months before it are an "
+                  "ESTIMATE at the same GB a day — the chunk's own dry run (free) replaces it",
+    "topup_gb_per_day": 2.84,             # Jake's run of 2026-11-17 (the run-time reserve reads the state's latest)
+    # WHAT ELSE THE SAME LEDGER CARRIES, for the plan only (at run time the ledger itself decides): Ethereum's weekly
+    # P2P read (~13 GB a week, an estimate from table sizes, G7-8) every month; in December 2026 the daily run's own
+    # last chunk of the trailing year, 2025-12-01..2025-12-28 (28 days x 7.54 GB — not measured: the 31 days to
+    # 2025-12-28 dry-ran 233.7 GB). NOT in it: the wallets' all-time inflows (stage 1 dry-ran 242.37 GB on 2026-10-18;
+    # stage 2 needs its own approval) — a month that runs them has that much less room.
+    "other_gb": {"every_month": 56.0, "2026-12": 211.1},
+    "command": "python near_p2p_history.py run",
+    "never_automatic": "not in windows/daily_run.ps1, not in token_metrics.py, not in check_offline_items.py: it "
+                       "starts only from its own command under a dated approval of the same calendar month",
+}
+# Jake edits these: approved True, who, a YYYY-MM-DD date in the month of the run, and max_gb — the most ONE chunk may
+# scan (the refusal line prints the figure to approve). `chunks` above 1 lets that month take more than one.
+NEAR_P2P_HISTORY_APPROVAL = {"approved": False, "approved_by": None, "approved_on": None, "max_gb": None, "chunks": 1}
