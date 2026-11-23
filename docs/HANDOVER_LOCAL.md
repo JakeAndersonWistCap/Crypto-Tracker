@@ -122,3 +122,22 @@ Freeze order once a project reads READY on the store and the gate is green: one 
   the 11-20 export at the old code).
 - That 0x28C6c062… is a Binance wallet (Chainlink pack) was not re-read from a primary source.
 - The full gate has not run on Round 17. Run it before any freeze.
+
+## 7. Ethereum and Near — detail from the agent that did the work (2026-11-23)
+
+- Full suite at the agent's commit (before the merge with the rest of Round 17): 3086 passed, 1 skipped, 1 failed
+  (an xdist worker crash on `test_round_p4_q8`; it passes alone). The merged tree has NOT had a full run.
+- Ethereum staked ETH: `python staked_eth_rebuild.py` first (a test, stores nothing); only if it prints
+  OVERLAP TEST PASSED run `python staked_eth_rebuild.py --apply`. NOT PASSED is a decision for Jake: keep the series
+  stale, or declare the seam a change of quantity (actual balances read +0.80% above validatorqueue's definition).
+- Ethereum has other open lines on the fixture (revenue split, rule-3 cells, insider list, settlement series that
+  ends 2026-08-25): it needs its own round after the rebuild. `done_check.py --verbose` on the store shows which remain.
+- Near: a NearBlocks key does NOT fix the timeouts (a key is already set; a free key and a keyless caller are on the
+  same plan; only a paid plan lifts the limits). The fix is asking less. On the day the weekly lockup-list read runs,
+  the daily NearBlocks reads may say "not called" and are read the next day.
+- Near's Rank and Archetype key now carry the date they form (two years of settlement: late 2027 on the store as it
+  stands) and no longer block; NRR on settlement volume blocks until the run on or after 2026-12-01 that stores the
+  P2P days back to as-of minus 364.
+- Check lines: see the agent's block "11fg-ethereum-near" in SPEC "Round 17 — Ethereum and Near" and run:
+  `python token_metrics.py --project Ethereum --project Near`, then
+  `python done_check.py --verbose | Select-String "^(Ethereum|Near)" -Context 0,16`.
