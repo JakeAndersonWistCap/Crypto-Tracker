@@ -2781,13 +2781,22 @@ def _rule_minus(name: str) -> tuple:
     """R9.2: the issuer-side stock the rule counts IN our circulating and the references leave out — taken off OURS in
     the like-for-like comparison (a declared rule-basis difference: config.RULE_IN names it wallet by wallet)."""
     spec = config.circulating_onchain(name) or {}
-    return ("rule_in_off_float_tokens",) if (name in config.RULE_IN and spec.get("status") in ("established", "partial")
-                                             and config.RULE_IN[name].get("reference_leaves_out", True)) else ()
+    if not (name in config.RULE_IN and spec.get("status") in ("established", "partial")
+            and config.RULE_IN[name].get("reference_leaves_out", True)):
+        return ()
+    # R18 (config RULE_IN[...]["reference_minus"]): where the reference leaves out only PART of the off-float stock
+    # (Chainlink's own API and CoinGecko leave out the 33 listed wallets and count the Reserve, the vault and the path
+    # wallets), the declared legs are taken off ours — not the whole off-float sum
+    return tuple(config.RULE_IN[name].get("reference_minus") or ("rule_in_off_float_tokens",))
 
 
 def _rule_what(name: str) -> str:
+    rm = _rule_minus(name)
+    if rm and rm != ("rule_in_off_float_tokens",):
+        return (" − " + " − ".join(rm) + " (the part of the issuer stock THE RULE counts in circulating that the "
+                "reference leaves out: a declared rule-basis difference, named by wallet in config.RULE_IN)")
     return (" − rule_in_off_float_tokens (the issuer / treasury stock THE RULE counts in circulating and the reference "
-            "leaves out: a declared rule-basis difference, named by wallet in config.RULE_IN)") if _rule_minus(name) else ""
+            "leaves out: a declared rule-basis difference, named by wallet in config.RULE_IN)") if rm else ""
 
 
 def circulating_input(name: str) -> dict:

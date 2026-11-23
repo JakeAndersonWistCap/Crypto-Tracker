@@ -1111,8 +1111,10 @@ def test_g2_11_leakage_i_is_zero_when_nothing_was_distributed():
     cols = bw._cp_cols(bw.Refs(10, 10, ["2026-09"]), {})
     build = next(f for h, f, *_ in cols if h.startswith("Leakage (i)"))
     # D2-4d: Sky's share is now a number (the endowments' locked SKY, INSIDER_LOCK) — the route branch is Chainlink's
+    # R18 (Jake 2026-11-24, decision 5): Chainlink's share is wired too (a measured 0 floor) — an all-retired quarter
+    # still reads 0 whatever the share (was: the route text "33 non-circulating wallets" in the distributing branch)
     f = build(5, config.PROJECT_BY_NAME["Chainlink"])
-    assert f.startswith("=IF(NOT(ISNUMBER(") and "<=0,0," in f and "33 non-circulating wallets" in f
+    assert f.startswith("=IF(NOT(ISNUMBER(") and "<=0,0," in f and "insider_stake_principal_tokens" in f
     assert "sky_endowment_locked_tokens" in build(5, config.PROJECT_BY_NAME["Sky"])
 
 
