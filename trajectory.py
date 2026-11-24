@@ -424,9 +424,17 @@ def referenced_metrics(formula) -> set[str]:
     return set(_REF.findall(str(formula or "")))
 
 
+# R21 (Jake 2026-11-25, item 8): two Aerodrome views write their own day count and dollar totals into the source text
+# ("$1,616,243 paid over 6 day(s) …"), so every window length read as a new measuring point. The figures are not the
+# measuring point: for these metrics the basis is the text with every number replaced.
+COUNT_FREE_BASIS = ("token_yield_payday_pct", "rewards_tokens_payday_annual")
+
+
 def basis_of(metric: str, source: str) -> str:
     from fetch.base import _measuring_point
     src = str(source or "")
+    if metric in COUNT_FREE_BASIS:
+        src = re.sub(r"\$?\d[\d,]*(\.\d+)?%?", "N", src)
     if metric in BRACKET_BASIS:
         m = re.search(r"\[([^\]]*)\]", src)
         return _DATE.sub("", m.group(1)).strip() if m else src

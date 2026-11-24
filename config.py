@@ -50328,3 +50328,49 @@ PROJECT_BY_NAME["Aethir"].setdefault("series_handover", {})["holder_value_revenu
            "burn (to 0x…dEaD on Arbitrum) is the holder value",
     "composition_change": "a declared 0 (no payout mechanism) -> the fee burn x each day's price",
     "declared": "2026-11-02"}
+
+
+# ===== R21 (lead, item 8) — THE GUARD: three headlines blocked until the history is complete (Jake 2026-11-25) =====
+# Jake accepted R20's decision 1: Aerodrome's subsidy cover and net holder yield and Chainlink's net holder yield read
+# "blocked — unequal coverage" while a series that joined them (Aerodrome: Velodrome's revenue taken off before 10-22;
+# Chainlink: the node-payment and exchange-leg scans) holds less than the window. That is the behaviour he wants; the
+# allowance ends with no date of its own: it covers only that blocked reading.
+REGRESSION_ALLOWLIST += [
+    {"project": "Aerodrome", "match": ("CP SUBSIDY COVER", "CP NET HOLDER YIELD"), "accepted": "2026-11-25",
+     "reason": "R21 (Jake 2026-11-25, accepting R20 decision 1): blocked until the Velodrome revenue series "
+               "(velo_fees_usd / velo_revenue_usd / velo_holders_revenue_usd) cover the window — unknown, not the "
+               "unnetted figure"},
+    {"project": "Chainlink", "match": ("CP NET HOLDER YIELD",), "accepted": "2026-11-25",
+     "reason": "R21 (Jake 2026-11-25, accepting R20 decision 1): blocked until the node-payment and exchange-leg scans "
+               "(node_operator_payments_tokens, node_operator_payments_safe_tokens, issuer_exchange_outflow_tokens) "
+               "cover the window"},
+]
+# Chainlink's release (e) is formed net of the named outflows since R18/R20 (node payments to (b), the exchange leg to
+# (f)): the netted series is a declared component of the release, not a new measuring point.
+DECLARED_COMPONENTS[("Chainlink", "unlock_release_tokens")] = [
+    {"metric": "issuer_exchange_outflow_tokens", "from": None,
+     "source": "derived:unlock_release-staking_funding_release_tokens (ATTRIBUTION CONVENTION: FIFO matching of the "
+               "forwards to the releases (ACCEPTED, Jake 2026-10-14))-node_payments_release_tokens (ATTRIBUTION "
+               "CONVENTION: FIFO matching of the forwards to the releases (ACCEPTED, Jake 2026-10-14))-"
+               "issuer_exchange_outflow_tokens",
+     "why": "R18 (node payments to (b)) and R20 (the exchange leg to (f), Jake 2026-11-24): the release is formed net of "
+            "the named outflows; total dilution unchanged"}]
+
+
+# ===== R21 — FROZEN MOVES OF THE ROUND (tests/fixtures/frozen_moves_r21.json; the table: docs/moves_r21.md) =====
+def _load_r21_moves() -> int:
+    import json as _json
+    from pathlib import Path as _Path
+    p = _Path(__file__).resolve().parent / "tests" / "fixtures" / "frozen_moves_r21.json"
+    if not p.exists():
+        return 0
+    n = 0
+    for proj, cells in _json.loads(p.read_text(encoding="utf-8")).items():
+        for key, steps in cells.items():
+            for st in steps:
+                declare_later_move(proj, key, st["to"], st["why"], st["date"])
+                n += 1
+    return n
+
+
+R21_MOVES_DECLARED = _load_r21_moves()
