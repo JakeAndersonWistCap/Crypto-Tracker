@@ -140,6 +140,15 @@ def daily_burns(events: list[dict], burner: str, first_day, last_day) -> dict:
     return out
 
 
+def stray_transfers(events: list[dict], burner: str) -> list[dict]:
+    """R21: every Transfer to the dead address NOT sent by the burn contract - {day, from, tokens, tx}, oldest first.
+    Named on the burn's rows and excluded from the burn. It stays inside the balance proof (the dead address's balance
+    is the sum of ALL its inflows), so a stray never makes the read refuse (2026-10-21: 0.0159 ATH from 0xd4627ecb…)."""
+    out = [{"day": str(pd.Timestamp(e["ts"], unit="s").date()), "from": e["from"], "tokens": e["value"] / WEI,
+            "tx": e.get("tx", "")} for e in events if e["from"] != burner.lower()]
+    return sorted(out, key=lambda x: x["day"])
+
+
 class AethirChain:
     """Aethir's vesting stock, issuer wallets, issuer stake and fee burn, once a day (R20)."""
     SOURCE = SOURCE
@@ -349,10 +358,14 @@ class AethirChain:
         last = when.normalize() - pd.Timedelta(days=1)                   # the last COMPLETE UTC day
         days = daily_burns(got["events"], burn["burner"], burn["launch"], last)
         mine = [e for e in got["events"] if e["from"] == burn["burner"].lower()]
-        other = sum(e["value"] for e in got["events"] if e["from"] != burn["burner"].lower()) / WEI
+        strays = stray_transfers(got["events"], burn["burner"])
+        other = sum(x["tokens"] for x in strays)
+        named = "; ".join(f"{x['day']} {x['from'][:10]}… {x['tokens']:,.6f} ATH tx {str(x['tx'])[:12]}…"
+                          for x in strays[:5])
         note = (f"Σ Transfer({burn['burner'][:10]}… -> 0x…dEaD) per UTC day, {len(mine)} burn(s) "
                 f"{sum(e['value'] for e in mine) / WEI:,.4f} ATH to block {got['head']} via {host}; every Transfer to "
-                f"the dead address sums to its balance; {other:,.4f} ATH from other senders not counted")
+                f"the dead address sums to its balance; {len(strays)} transfer(s) from other senders, {other:,.6f} ATH, "
+                f"NOT the burn (inside the balance proof, out of the burn)" + (f": {named}" if strays else ""))
         out = []
         if days:
             out.append((burn["metric"], tidy(sorted(days.items()), name, burn["metric"], f"{POINT_BURN}[{note}]", TIER),
@@ -366,14 +379,26 @@ class AethirChain:
         return out
 
     # ------------------------------------------------------------------------------------------------ the run
+    @staticmethod
+    def mark_key(name: str, part: str, spec: dict) -> str:
+        """R21 (Jake 2026-11-25): the day's mark names the PROJECT and the SERIES it vouches for -
+        aethir_chain:<project>:<metric> - so the run keeps it only when that series reached the store
+        (token_metrics._mark_stored). The R20 keys ("aethir_chain:burn", "aethir_chain:ethereum") named no series: a
+        mark whose rows never reached the store was kept, and every later run that day logged "read today already",
+        0 rows."""
+        return f"{SOURCE}:{name}:" + (spec["burn"]["metric"] if part == "burn" else spec["held_metric"])
+
     def run(self, projects: list[dict], window_days, out):
         for p in projects:
             spec = spec_of(p)
             if not spec:
                 continue
             name, day = p["name"], str(today().date())
-            for part, fn in (("ethereum", self._run_ethereum), ("burn", self._run_burn)):
-                dkey = f"aethir_chain:{part}"
+            # R21: THE BURN FIRST - one cheap Arbitrum read (~11 s) that no longer waits behind the Ethereum history (14
+            # eth_getLogs of 1,000,000 blocks, 58 s measured alone on 2026-11-24): a tier cut off at its budget keeps
+            # the burn's frame (fetch._abandon keeps what a timed-out tier produced; gross_burn_tokens is a flow)
+            for part, fn in (("burn", self._run_burn), ("ethereum", self._run_ethereum)):
+                dkey = self.mark_key(name, part, spec)
                 if not self.daily.due(dkey, day):
                     out.mark_current(self.SOURCE, name, spec["held_metric"] if part == "ethereum"
                                      else spec["burn"]["metric"], f"Aethir chain read ({part}): read today already", TIER)
