@@ -104,14 +104,16 @@ def test_hl_burn_total_keeps_the_funds_own_reads_and_covers_q0():
     tb = g[("Hyperliquid", "total_burn_tokens")].drop_duplicates("date", keep="last")
     s = tb.set_index(pd.to_datetime(tb.date))["value"].astype(float)
     asof = pd.Timestamp("2026-10-13")
+    # R21 (Jake 2026-11-25, the default): the Assistance Fund is a HELD buyback — its reads are in no burn total. The
+    # total is the true burns (Core + the HyperEVM zero address) from the Core leg's first day; nothing before it.
     hole = s[(s.index >= "2026-09-12") & (s.index <= "2026-09-28")]
-    assert len(hole) >= 10 and hole.sum() > 300_000         # the Fund's spotClearinghouseState reads, kept
+    assert hole.sum() < 20_000                              # was > 300,000: the Fund's reads (no longer a burn)
+    assert s.index.min() == pd.Timestamp("2026-09-25")
     q0 = s[(s.index > asof - pd.Timedelta(days=90)) & (s.index <= asof)].sum()
-    # the Q0 total on Jake's stored rows (the dump refreshed from his export, R7C.A1: 2,474,408; the 10-13 dump read
-    # 2,467,817) — a value check within 0.5%, and far from the 2,146,959 of the broken leg
-    assert q0 == pytest.approx(2_474_408, rel=0.005)
+    # the Q0 total on Jake's stored rows: 52,260.63 (was 2,474,408 with the Fund's 2,380,274 + its history)
+    assert q0 == pytest.approx(52_260.63, abs=0.01)
     s_cov = bw._after_leg_gap(tb, s)
-    assert bw._window_coverage(s_cov, asof - pd.Timedelta(days=90), asof)[0] == 90
+    assert bw._window_coverage(s_cov, asof - pd.Timedelta(days=90), asof)[0] == 18      # was 90 (the Fund's history)
     # the retirement above DefiLlama's revenue_usd it exposes (114%) is the Fund's documented intake, not a gap
     f = config.PROJECT_BY_NAME["Hyperliquid"]["buyback_funding"]
     assert "hyperliquid-docs/trading/fees" in f["source_url"] and f["source_date"] == "2026-10-14"

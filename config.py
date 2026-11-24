@@ -51044,6 +51044,7 @@ _hl["burn_total"] = {
     # no history leg: the Fund's purchase history is not a burn, and the Core burns have none (unknown is never 0)
 }
 _hl["series_handover"].pop("total_burn_tokens", None)        # one basis now: derived:burn_total(core_burn_tokens)
+_hl["series_handover"].pop("burn_ex_chain_fee_tokens", None)
 _hl["burn_history"]["why"] = ("the Assistance Fund's purchases before its live read: tokens bought = DefiLlama holders "
                               "revenue / same-day price — the buyback's history (R21: held, not burned)")
 _hl["a1_burn_metric"] = "total_burn_tokens"
@@ -51094,36 +51095,39 @@ def apply_hyperliquid_burn_treatment(true_burn_a4: bool | None = None) -> None:
         if m == "total_burn_tokens" else
         {"formula": "fall_q0", "args": {"metric": "total_supply_gross"}, "tol": 15.0,
          "source": "the fall of tokenDetails.totalSupply across Q0 (the Core burns); the Assistance Fund is held (R21)"})
-    for k in ("gross_burn_day_priced_usd", "fees_base_day_priced_tokens"):
-        op = tuple(x for x in METRICS[k].get("only_projects") or () if x != "Hyperliquid")
-        METRICS[k]["only_projects"] = op + (("Hyperliquid",) if on else ())
+    for k in ("gross_burn_day_priced_usd", "fees_base_day_priced_tokens"):       # A4's $ series: held in both states
+        op = tuple(METRICS[k].get("only_projects") or ())
+        METRICS[k]["only_projects"] = op + (() if "Hyperliquid" in op else ("Hyperliquid",))
     apply_archetypes_r20()
 
 
 apply_hyperliquid_burn_treatment()
 
 # --- 4. net float pressure (the BURNS lane's lines, R21): the true burns from the float; the Fund's purchases are buying
-# (held) and its stock is a held buyback whose fall would return to the float (F7). The Core burns read the view that
-# also holds the days rebuilt from totalSupply's stored falls (burn_ex_chain_fee_tokens = core_burn_tokens + those days).
+# (held) and its stock is a held buyback whose fall would return to the float (F7). One series, total_burn_tokens — now
+# exactly the true burns (the Core burns + the HyperEVM zero address, both out of liquid HYPE) and the circulating
+# statement's own burn leg (one leg in both, never two).
 BURN_SERIES["Hyperliquid"] = (
-    {"metric": "burn_ex_chain_fee_tokens", "from": "float",
-     "why": "the Core burns: the fall in tokenDetails.totalSupply (deploy-gas and gossip auctions, order-priority fees, "
-            "HYPE spot-fee and dust burns) — HYPE paid as fees from spot balances (core_burn_tokens, plus the days rebuilt "
-            "from the stored totalSupply's falls)"},
-    {"metric": "hyperevm_priority_burn_tokens", "from": "float",
-     "why": "HyperEVM priority fees credited to the zero address (keyless, never fell in 596 readings): paid as gas from "
-            "liquid HYPE; out of our circulating (it is subtracted from tokenDetails' figure) and not inside totalSupply's "
-            "fall (docs/r21_hyperliquid_burns.md)"})
-for _k in (("Hyperliquid", "burn_ex_chain_fee_tokens"), ("Hyperliquid", "hyperevm_priority_burn_tokens")):
-    BURN_NOT_IN_NET.pop(_k, None)
+    {"metric": "total_burn_tokens", "from": "float",
+     "why": "the true burns only (R21; the Assistance Fund is a HELD buyback, on the buying line): the Core burns — the "
+            "fall in tokenDetails.totalSupply (deploy-gas and gossip auctions, order-priority fees, HYPE spot-fee and dust "
+            "burns), paid from spot balances — + the HyperEVM priority fees at the zero address (gas paid from liquid "
+            "HYPE; subtracted from our circulating, not inside totalSupply's fall). The HyperEVM base-fee burn is not "
+            "measured (docs/r21_hyperliquid_burns.md)"},)
 BURN_NOT_IN_NET.update({
-    ("Hyperliquid", "total_burn_tokens"): "burn_ex_chain_fee_tokens + hyperevm_priority_burn_tokens (A1's every burn), "
-                                          "both legs in the net on their own",
     ("Hyperliquid", "gross_burn_tokens"): "the Assistance Fund's purchases (stored name kept): HELD, not burned (R21, "
                                           "Jake's default) — on the buying line as buyback_held_tokens",
-    ("Hyperliquid", "core_burn_tokens"): "inside burn_ex_chain_fee_tokens (with the days rebuilt from totalSupply)",
+    ("Hyperliquid", "core_burn_tokens"): "the Core burns, inside total_burn_tokens",
+    ("Hyperliquid", "hyperevm_priority_burn_tokens"): "the HyperEVM zero-address burn, inside total_burn_tokens (R21)",
+    ("Hyperliquid", "burn_ex_chain_fee_tokens"): "the Core burns alone (A4's view), inside total_burn_tokens",
     ("Hyperliquid", "buyback_burned_tokens"): "the buyback x its burned share: 0 (the Fund holds what it buys, R21)",
 })
 FLOAT_RETURNS_HELD["Hyperliquid"] = {"held": _R21_HL_FUND,
                                      "why": "F7: HYPE leaving the Assistance Fund (none ever has) returns to the float"}
 METRICS["float_returned_tokens"]["only_projects"] = (*FLOAT_RETURNS, *FLOAT_RETURNS_HELD)
+# A4's "Cumulative burn ÷ max supply" reads burn_address_balance: for Hyperliquid that stock is the Assistance Fund, a
+# held buyback (R21) — never shown as a cumulative burn (read when the switch puts Hyperliquid on A4)
+BURN_ADDRESS_IS_HELD = {
+    "Hyperliquid": "n/a — burn_address_balance is the Assistance Fund, a HELD buyback (R21), not a burn; the true burns' "
+                   "cumulative (1bn − tokenDetails.totalSupply + the HyperEVM zero address, ~1.64M on 2026-11-24) is "
+                   "not stored as one stock"}

@@ -328,7 +328,8 @@ def test_g2_d2_circulating_is_written_net_of_the_hyperevm_burn_and_refused_witho
 
 def test_g2_d2_the_release_adds_the_hyperevm_burn_back():
     plus = config.CIRCULATING_ONCHAIN["Hyperliquid"]["release_first_party"]["plus"]
-    assert "hyperevm_priority_burn_tokens" in plus and "actual_buyback_tokens" in plus
+    # R21 (the Fund held, in circulating): its buyback no longer leaves circulating, so it is not added back
+    assert "hyperevm_priority_burn_tokens" in plus and "actual_buyback_tokens" not in plus
 
 
 def test_g2_d2_seed_reads_each_days_first_block_and_derives_the_burn(monkeypatch):

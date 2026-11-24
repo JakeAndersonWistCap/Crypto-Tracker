@@ -15934,6 +15934,9 @@ def _a4_phase2_cols(R: Refs) -> list[tuple]:
         return p.get("issuance_declared_zero") and p["name"] not in config.A4_RELEASE_ISSUANCE
 
     def cum(r, p):
+        held = (getattr(config, "BURN_ADDRESS_IS_HELD", None) or {}).get(p["name"])     # R21: the stock is no burn
+        if held:
+            return held
         if "burn_address_balance" not in config.metrics_for_project(p):
             return "n/a — no cumulative burn stock (burn_address_balance) on file"
         b, mx = R.D(r, "burn_address_balance", "now"), R.D(r, "max_supply", "now")

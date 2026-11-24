@@ -127,7 +127,8 @@ def test_4a_held_buybacks_are_listed_and_none_is_out_of_circulating():
     assert "treasury_holding_tokens" in config.RULE_IN["Fluid"]["off_float"]
     near = [r for r in config.HELD_BUYBACKS_R8 if r[0] == "Near"]
     assert len(near) == 3 and 4.3e6 < sum(r[2] for r in near) < 4.4e6
-    assert any(r[0] == "Hyperliquid" and r[3].startswith("burned") for r in config.HELD_BUYBACKS_R8)
+    # R21 (Jake 2026-11-25, the default): the Assistance Fund is a held buyback — in circulating, off float (was burned)
+    assert any(r[0] == "Hyperliquid" and r[3] == "in circulating, off float" for r in config.HELD_BUYBACKS_R8)
 
 
 # =========================================================================== 1: Aerodrome under the rule

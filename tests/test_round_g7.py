@@ -97,7 +97,8 @@ def test_0c_hyperevm_gas_burn_leaves_a4_and_is_added_on_a1(monkeypatch):
     bw._burn_total_views(groups)
     a1 = groups[("Hyperliquid", "total_burn_tokens")].set_index("date")["value"]
     a4 = groups[("Hyperliquid", "burn_ex_chain_fee_tokens")].set_index("date")["value"]
-    assert list(a1) == [110.0, 111.0, 111.0] and list(a4) == [110.0, 110.0, 110.0]
+    # R21 (the Fund held, out of every burn): was [110, 111, 111] / [110, 110, 110] with the Fund's 100 a day
+    assert list(a1) == [10.0, 11.0, 11.0] and list(a4) == [10.0, 10.0, 10.0]
 
 
 # ======================================================================================== 0d reference #102's date
