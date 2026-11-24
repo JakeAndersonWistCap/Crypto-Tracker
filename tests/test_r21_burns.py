@@ -253,7 +253,9 @@ def test_the_memo_says_where_each_burn_came_from_and_flags_off_float_burns(monke
                                                               [("2026-11-20", 1_000_000_000.0)])}
     m = free_float.burn_memo("Aerodrome", groups, "2026-11-20")
     assert m["staked"] == pytest.approx(10_400_000.0) and m["float"] == 0.0
-    assert m["off_float_rate"] == pytest.approx(10_400_000.0 * 365 / 90 / 1e9)
+    # each leg over its own days in the window: 400,000 over 4 days, the 10M over the 1 day its series covers (the memo
+    # annualises it over its mint's days where that series is stored — not in this test)
+    assert m["off_float_rate"] == pytest.approx((400_000.0 * 365 / 4 + 10_000_000.0 * 365 / 1) / 1e9)
     assert "MOVES THE HEADLINE BY MORE THAN 1 POINT" in m["text"] and "10,000,000 AERO minted 11-19" in m["text"]
     # Uniswap's 100M one-off left the Timelock: treasury; the burn-to-claim is from float
     g = {("Uniswap", "gross_burn_tokens"): _frame("Uniswap", "gross_burn_tokens",
@@ -328,7 +330,9 @@ def test_sky_on_the_dump_buying_burns_returned_and_f3(tmp_path):
     # the burns: the two Stage 2 spells (2,860,943.76 on 09-13 + 7,372,288 on 10-12), out of the Pause Proxy
     m = free_float.burn_memo("Sky", g, asof)
     assert m["treasury"] == pytest.approx(10_233_231.8, abs=1.0) and m["float"] == 0.0
-    assert m["off_float_rate"] == pytest.approx(10_233_231.8 * 365 / 90 / 5_880_380_760.3, rel=1e-6)   # 0.71%
+    # the monthly spells annualised by events x 12, as the burns cell: 10,233,231.8 / 2 x 12 = 61.4M a year, 1.04%
+    assert m["off_float_rate"] == pytest.approx(10_233_231.8 / 2 * 12 / 5_880_380_760.3, rel=1e-6)
+    assert "MOVES THE HEADLINE BY MORE THAN 1 POINT" in m["text"]
 
 
 def test_the_spec_records_the_round():

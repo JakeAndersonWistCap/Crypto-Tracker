@@ -2943,9 +2943,9 @@ def _src_header(A: Audit, sheet: str, prefix: str) -> str:
 
 # ---------------------------------------------------------------------------------------------- Comparison
 BUYING_PRESSURE_SHORT = "Buying pressure on float, % a year"     # P4-Q5c: the A3 tab and Comparison
-BUYING_PRESSURE_DEF = ("Revenue-funded buying that is burned or held, in tokens a year, ÷ the free float — the demand "
-                       "side of net float pressure. A buyback paid out to stakers, or funded by the treasury or "
-                       "emissions, is not in it. A held buyback is already out of the float while held.")
+BUYING_PRESSURE_DEF = ("Revenue-funded buying, held or paid out to stakers or customers, in tokens a year, ÷ the free "
+                       "float — the demand side of net float pressure (R21). A burned buyback is a burn (its own "
+                       "column), never buying; a buyback funded by the treasury or emissions is not in it.")
 COMPARISON_COLS = (
     # (key, header, source (sheet, prefix) | "@...", format, definition, family)
     ("hvy", "Holder value yield", (CP_TAB, "HOLDER VALUE YIELD"), FMT_PCT,
@@ -2964,8 +2964,8 @@ COMPARISON_COLS = (
     ("burns", "Burns on float, % a year", (CP_TAB, "BURNS ON FLOAT"), FMT_PCT,
      "Every burn, whatever its source (from float, staked or treasury — the CP memo gives the split), in tokens a year "
      "÷ the free float.", ""),
-    ("ret", "Bought tokens returned to float, % a year", (CP_TAB, "BOUGHT TOKENS RETURNED TO THE FLOAT"), FMT_PCT,
-     "Bought tokens paid out liquid, sold or transferred out of the holding wallet, in tokens a year ÷ the free "
+    ("ret", "Returned to float, % a year", (CP_TAB, "BOUGHT TOKENS RETURNED TO THE FLOAT"), FMT_PCT,
+     "Bought-back tokens paid out liquid, sold or transferred out of the holding wallet, in tokens a year ÷ the free "
      "float — a supply line of net float pressure.", ""),
     ("buy_press", BUYING_PRESSURE_SHORT, (CP_TAB, "BUYING PRESSURE ON FLOAT"), FMT_PCT, BUYING_PRESSURE_DEF, "buyback"),
     ("dil", "Total dilution, % of float", (CP_TAB, "TOTAL DILUTION = outflows a+b+c+d+e+f (annualised) ÷ free float"),

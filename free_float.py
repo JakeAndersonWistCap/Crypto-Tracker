@@ -318,14 +318,26 @@ def burn_memo(name: str, groups: dict, asof, window: tuple | None = None) -> dic
     """THE MEMO LINE (R21): where each burn of the window came from — {"float", "staked", "treasury", "not split"} in
     tokens (the declared source of each series, config.BURN_SERIES; Uniswap's one-offs out of an issuer-side wallet are
     'treasury' by their declared one_off_flows row) — plus the off-float share's effect on net float pressure
-    (tokens a year ÷ the free float, the window's sum x 365 ÷ its days), the one-offs named in the window
+    (tokens a year ÷ the free float, each leg annualised as the burns cell does: by events x cadence where declared,
+    else over the days its series — or its mint's, `annualise_as` — covers in the window), the one-offs named in the window
     (config.ONE_OFF_NAMED) and the text the CP cell shows. Never guessed: a series with no row in the window is named."""
     import build_workbook as bw                                          # noqa: PLC0415
     asof = pd.Timestamp(asof).normalize()
     start, end = window or (asof - pd.Timedelta(days=int(bw.GLOBALS["period_days"])), asof)
     start, end = pd.Timestamp(start), pd.Timestamp(end)
     out = {k: 0.0 for k in config.BURN_SOURCES}
+    yearly = {k: 0.0 for k in config.BURN_SOURCES}
     missing, parts = [], []
+    span = max((end - start).days, 1)
+
+    def per_year(metric, w, tot, cov_of=None):
+        ev = config.events_per_year(name, metric)
+        if ev:
+            n = int((w != 0).sum())
+            return tot / n * ev if n else tot * 365.0 / span
+        c = bw._daily(groups.get((name, cov_of or metric)))
+        cov = int(((c.index > start) & (c.index <= end)).sum()) if not c.empty else len(w)
+        return tot * 365.0 / min(max(cov, 1), span)
     p = config.PROJECT_BY_NAME.get(name) or {}
     for b in config.burn_series(name):
         s = bw._daily(groups.get((name, b["metric"])))
@@ -341,14 +353,16 @@ def burn_memo(name: str, groups: dict, asof, window: tuple | None = None) -> dic
                         and tot >= float(f["tokens"]):           # the one-off is in the series that window
                     tot -= float(f["tokens"])
                     out["treasury"] += float(f["tokens"])
+                    yearly["treasury"] += float(f["tokens"]) * 365.0 / span
                     parts.append(f"{float(f['tokens']):,.0f} {f['what']} (treasury)")
         out[b["from"]] += tot
+        yearly[b["from"]] += per_year(b["metric"], w, tot, b.get("annualise_as"))
         parts.append(f"{b['metric']} {tot:,.0f} ({b['from']})")
-    days = max((end - start).days, 1)
     ff = bw._daily(groups.get((name, FF))).dropna()
     ff = ff[ff.index <= end]
     off = out["staked"] + out["treasury"]
-    pts = (off * 365.0 / days / float(ff.iloc[-1])) if (len(ff) and float(ff.iloc[-1]) > 0) else None
+    pts = ((yearly["staked"] + yearly["treasury"]) / float(ff.iloc[-1])) if (len(ff) and float(ff.iloc[-1]) > 0) \
+        else None
     named = [o["what"] for o in config.ONE_OFF_NAMED.get(name, ())
              if pd.Timestamp(o["from"]) <= end and pd.Timestamp(o["to"]) > start]
     tot_all = sum(out.values())

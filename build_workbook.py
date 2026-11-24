@@ -14794,8 +14794,8 @@ def _held_buyback_note(p: dict) -> str:
 HELD_BUYBACK_HEAD = ("Held buyback inside circulating (tokens) — off the free float while held (R20; P4-Q5b)")
 # R20 (Jake 2026-11-24, item 5): the DEMAND SIDE of net float pressure — revenue-funded buying, burned or held. Was
 # (P4-Q5c): "... = all market buybacks (burned + held + distributed, tokens, annualised) ÷ tradeable float (P4-Q5c)"
-BUYING_PRESSURE_HEAD = ("BUYING PRESSURE ON FLOAT, % a year = revenue-funded buying, burned or held (tokens, annualised) ÷ "
-                        "free float — the demand side of net float pressure (R20)")
+BUYING_PRESSURE_HEAD = ("BUYING PRESSURE ON FLOAT, % a year = revenue-funded buying, held or paid out (tokens, annualised) "
+                        "÷ free float — the demand side of net float pressure; a burned buyback is a burn (R21)")
 ISSUER_HELD_HEAD = ("Issuer, foundation and treasury holdings inside circulating (tokens) — off the free float (R20)")
 DILUTION_MC_HEAD = ("DILUTION, % OF MARKET CAP = outflows a+b+c+d+e+f at each day's price (annualised) ÷ average market "
                     "cap over the window — what net holder yield subtracts (R20)")
@@ -14833,11 +14833,12 @@ def _buying_pressure_col(R: Refs) -> tuple:
 
     def note(p):
         h = config.held_buyback_float_metric(p["name"])
-        return ("Buying pressure on float (R20): revenue-funded buying that is burned or held (float_buying_tokens = "
-                "retired_buyback_tokens on the days the buyback was revenue-funded), annualised, ÷ the free float"
+        return ("Buying pressure on float (R21, Jake 2026-11-25): revenue-funded buying, held or paid out to stakers "
+                "(F2) or customers (F1) — float_buying_tokens = buyback_held_tokens + buyback_distributed_tokens on the "
+                "days the buyback was revenue-funded (+ purchases paid on to customers), annualised, ÷ the free float"
                 + (f" — which leaves out the held buyback ({h}) while it is held" if h else "")
-                + ". A buyback paid out to stakers, or funded by the treasury or emissions, is not in it. The demand "
-                  "side of net float pressure.")
+                + ". A burned buyback is on BURNS ON FLOAT, never here; a buyback funded by the treasury or emissions is "
+                  "not in it. The demand side of net float pressure.")
     return (BUYING_PRESSURE_HEAD, build, FMT_PCT, "calc", False, {"metric": "float_buying_tokens", "note_fn": note})
 
 

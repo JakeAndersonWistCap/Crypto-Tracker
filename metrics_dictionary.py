@@ -233,11 +233,28 @@ ENTRIES = {
                 "free_float_held_buybacks_tokens"],
         decided=[(J, "2026-11-24", "R20 Part 2 item 1: one float, the other versions deleted")]),
     "NET FLOAT PRESSURE": dict(
-        what="Revenue-funded buying that is burned or held, less new supply — both as % of the free float a year.",
-        formula="BUYING PRESSURE ON FLOAT − TOTAL DILUTION ÷ free float (float_buying_tokens annualised − outflows "
-                "a+b+c+d+e+f annualised, ÷ free_float_tokens)",
-        window="Q0 → year / now", unit="%", inputs=["float_buying_tokens", "free_float_tokens"],
-        decided=[(J, "2026-11-24", "R20 Part 2 item 5")]),
+        what="Revenue-funded buying + burns − new supply − bought tokens returned to the float, all as % of the free "
+             "float a year.",
+        formula="BUYING PRESSURE ON FLOAT + BURNS ON FLOAT − TOTAL DILUTION ÷ free float − BOUGHT TOKENS RETURNED TO "
+                "THE FLOAT (the four cells on the CP row)",
+        window="Q0 → year / now", unit="%",
+        inputs=["float_buying_tokens", "float_returned_tokens", "free_float_tokens"],
+        decided=[(J, "2026-11-24", "R20 Part 2 item 5"), (J, "2026-11-25", "R21 item 2: burns count; F1-F7")]),
+    "BURNS ON FLOAT": dict(
+        what="Every burn, whatever its source (from float, staked or treasury), a year ÷ the free float — a supply "
+             "reduction line of net float pressure, never buying.",
+        formula="Σ config.burn_series(project) — each series' Q0 sum annualised over its own covered days (by events x "
+                "cadence where declared; a mint-funded burn over its mint's days) ÷ free_float_tokens; 0 where the "
+                "project has no burn mechanism (config.BURN_NONE)",
+        window="Q0 → year / now", unit="%", inputs=["free_float_tokens"],
+        decided=[(J, "2026-11-25", "R21 item 2: any burn")]),
+    "BOUGHT TOKENS RETURNED TO THE FLOAT": dict(
+        what="Bought-back tokens paid out liquid, sold or transferred out of the holding wallet, a year ÷ the free "
+             "float — a supply line of net float pressure.",
+        formula="float_returned_tokens (config.FLOAT_RETURNS: the payout the purchases covered; FLOAT_RETURNS_HELD: "
+                "what left the holding) annualised ÷ free_float_tokens; 0 where nothing bought is held or paid liquid",
+        window="Q0 → year / now", unit="%", inputs=["float_returned_tokens", "free_float_tokens"],
+        decided=[(J, "2026-11-25", "R21 item 3: F1, F2, F3, F7")]),
     "DILUTION, % OF MARKET CAP": dict(
         what="Every outflow a year at each day's price, as a share of the average market cap over the window — the term "
              "net holder yield subtracts, on net holder yield's own base.",
@@ -512,11 +529,13 @@ ENTRIES = {
                 "unlock_release_tokens"],
         decided=[(J, "2026-11-03", "P4-Q5a: replaces retired ÷ emissions (P1-6) and its P3-2b fallback")]),
     "BUYING PRESSURE ON FLOAT, % a year": dict(
-        what="Revenue-funded buying that is burned or held, a year, ÷ the free float — the demand side of net float "
-             "pressure (R20). Was (P4-Q5c): every market buyback whatever its destination ÷ the tradeable float.",
-        formula="float_buying_tokens (retired_buyback_tokens on the days the buyback was revenue-funded) annualised "
-                "over its covered days ÷ free_float_tokens; 0 where no buyback mechanism exists; n/a where no buyback "
-                "is measured",
+        what="Revenue-funded buying, held or paid out to stakers or customers, a year, ÷ the free float — the demand "
+             "side of net float pressure (R21; a burned buyback is a burn). Was (R20): burned or held; (P4-Q5c): every "
+             "market buyback whatever its destination ÷ the tradeable float.",
+        formula="float_buying_tokens (buyback_held_tokens + buyback_distributed_tokens on the days the buyback was "
+                "revenue-funded, + purchases paid on to customers) annualised over its covered days ÷ "
+                "free_float_tokens; 0 where no buyback mechanism exists or nothing is bought on the market (Ethereum, "
+                "Uniswap, Aethir); n/a where no buyback is measured",
         window="Q0 → year / now", unit="%", inputs=["float_buying_tokens", "free_float_tokens"],
         decided=[(J, "2026-11-03", "P4-Q5c"), (J, "2026-11-24", "R20 Part 2 item 5: revenue-funded, burned or held")]),
     "Held buyback inside circulating (tokens)": dict(
