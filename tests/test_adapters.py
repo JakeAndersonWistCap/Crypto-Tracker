@@ -16073,10 +16073,19 @@ def test_ethereum_base_fee_burn_is_not_a_buyback_and_near_gas_burn_is_not_relabe
     assert config.relabelled_from("Near", "actual_buyback_tokens") is None
 
 
-def test_pendle_buyback_usd_is_holders_revenue_restated_from_the_spendle_overhaul():
+def _r21_reinstate_pendle_restatement(monkeypatch):
+    """R21 withdrew Pendle's restatement (its buyback is read from its buyback contract); the generic restatement
+    machinery is still tested on it, re-instated as it was (config._R21_PENDLE_RETIRED)."""
+    for k, v in config._R21_PENDLE_RETIRED.items():
+        if v is not None:
+            monkeypatch.setitem(config.PROJECT_BY_NAME["Pendle"], k, v)
+
+
+def test_pendle_buyback_usd_is_holders_revenue_restated_from_the_spendle_overhaul(monkeypatch):
     """Pendle's retirement rates were n/a: no buyback wallet is published. The sPENDLE docs put
     80% of V2 yield and swap fees into PENDLE buybacks for active sPENDLE holders — the holders
     revenue. Restated, labelled as such, and only from 2026-05-01 (post April 2026 overhaul)."""
+    _r21_reinstate_pendle_restatement(monkeypatch)
     from fetch import _restate_metrics
     from fetch.base import FetchOutput
 
@@ -16436,10 +16445,11 @@ def test_maple_stores_every_visible_monthly_buyback_on_a_routine_run(monkeypatch
     assert set(zeros.value) == {0.0} and all("newest-first" in s_ for s_ in zeros.source)
 
 
-def test_pendle_buyback_restatement_renders_at_read_time_and_yield_uses_real_plus_virtual():
+def test_pendle_buyback_restatement_renders_at_read_time_and_yield_uses_real_plus_virtual(monkeypatch):
     """Jake's --no-fetch rebuild: holders_revenue_usd stored (Q0 $1,373,516), actual_buyback_usd
     blank — the restatement only happened at fetch time. Now a read-time view, from 2026-05-01.
     And the protocol yield's denominator is real + virtual sPENDLE once the virtual is read."""
+    _r21_reinstate_pendle_restatement(monkeypatch)
     import build_workbook as bw
 
     asof = pd.Timestamp("2026-09-28")
@@ -16652,11 +16662,12 @@ def test_final_block_timestamps_are_cached_and_recent_ones_are_not():
     assert calls == [900, 1_010, 1_010], "the final block comes from disk; the recent one is re-read"
 
 
-def test_the_workbook_builds_from_a_store_holding_every_read_time_view(tmp_path):
+def test_the_workbook_builds_from_a_store_holding_every_read_time_view(tmp_path, monkeypatch):
     """Run 20260928T142424Z: fetch fine, BUILD CRASHED — aggregate() hit latest["is_manual"] on a
     view row. The declared-issuance view built NEAR's series from scratch and copied stored columns
     from a derived series that store did not have. The fixture never had that shape (NEAR supply
     with no derived issuance). This store holds every view type, in the shapes that failed."""
+    _r21_reinstate_pendle_restatement(monkeypatch)
     import build_workbook as bw
     import store as store_mod
 
@@ -17005,10 +17016,11 @@ def test_a_restated_column_is_not_a_gap_when_its_source_is_covered():
     assert not [g for g in gaps if g["metric"] == "customer_revenue_usd"], gaps
 
 
-def test_pendle_buyback_tokens_are_the_allocated_usd_over_the_same_day_price():
+def test_pendle_buyback_tokens_are_the_allocated_usd_over_the_same_day_price(monkeypatch):
     """2026-09-28 (Jake): Pendle's actual_buyback_tokens = actual_buyback_usd (holders revenue,
     from 2026-05-01) / price_usd on the SAME date. A day with no same-day price is absent, never
     valued at another day's price; April is outside the restatement and stays out."""
+    _r21_reinstate_pendle_restatement(monkeypatch)
     import build_workbook as bw
     from fetch import gaps as gp
 
