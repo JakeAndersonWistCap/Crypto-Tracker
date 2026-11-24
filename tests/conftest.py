@@ -5,6 +5,9 @@ import pytest
 def pytest_collection_finish(session):
     """P2f-4: the full suite stops before it starts, in one line, when the disk is too full for it (it ran at 1.7 GB
     free in the P2e round and died half-way with OSError 28). A targeted run needs far less. See disk_guard.py."""
+    # R21: the scan wiring as imported, before any test runs (tests/probe_unpinned.py)
+    import probe_unpinned
+    probe_unpinned.snapshot()
     import tempfile
     import disk_guard
     n = len(session.items)
