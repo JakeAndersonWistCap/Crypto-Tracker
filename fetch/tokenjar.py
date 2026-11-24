@@ -742,6 +742,8 @@ class TokenJarInflows:
                     if cs.get("not_read") or not cs.get("logs"):
                         continue
                     rec = self.cst(chain)["days"].get(day)
+                    if in_named_gap(cs, day, rec):
+                        continue                 # R21: a named gap — not asked (config named_gap: the cap)
                     if rec and rec.get("stage") == "read":
                         if rec.get("native") is None and cs.get("native") and \
                                 int(rec.get("native_tries") or 1) < NATIVE_TRIES and chain not in failed and self._left() > 0:
@@ -754,6 +756,7 @@ class TokenJarInflows:
                         self.cst(chain)["days"][day] = self.read_day(chain, cs, day)
                     except Exception as e:  # noqa: BLE001 — the day stays unread; this chain waits for the next run
                         failed[chain] = f"{day}: {str(e)[:200]}"
+                        count_gap_try(self.cst(chain), cs, day, str(e))
                     self._save()
                 day = shift(day, -1)
             if self._left() <= 0:
@@ -763,6 +766,9 @@ class TokenJarInflows:
             self._save()
         for c, why in failed.items():
             notes.append(f"{c} not read past {why}")
+        for c, cs in spec["chains"].items():
+            if cs.get("named_gap"):
+                notes.append(gap_label(cs, self.cst(c)))
         self._emit(name, out, notes)
         if failed:
             out.warn(SOURCE, name, "TokenJar chain-day(s) not read this run (retried next run): "
@@ -798,20 +804,23 @@ class TokenJarInflows:
                     why[chain] = str(e)[:160]
             self.st["balances"][day] = {"per": per, "not_read": why,
                                         "complete": not why and all(
-                                            (self.cst(c)["days"].get(spec["chains"][c]["from_day"]) or {}).get("stage")
-                                            == "read" for c in per)}
+                                            (self.cst(c)["days"].get(first_read_day(spec["chains"][c])) or {}).get(
+                                                "stage") == "read" for c in per)}
             self._save()
 
     # ------------------------------------------------------------------ emit
     def day_total(self, day: str) -> dict | None:
         """The day's total over every chain live that day, or None while a chain with a route has not read it."""
-        per, missing, declared, partial_native = {}, [], [], []
+        per, missing, declared, partial_native, gapped = {}, [], [], [], []
         for chain in self.live_chains(day):
             cs = self.spec["chains"][chain]
             if cs.get("not_read") or not cs.get("logs"):
                 (declared if cs.get("evidence_nil") else missing).append(chain)
                 continue
             rec = self.cst(chain)["days"].get(day)
+            if in_named_gap(cs, day, rec):
+                gapped.append(gap_label(cs, self.cst(chain), short=True))
+                continue
             if not rec or rec.get("stage") != "read":
                 return None
             per[chain] = rec
@@ -827,7 +836,7 @@ class TokenJarInflows:
         parts = "; ".join(f"{c} ${r['usd']:,.0f}" + (f" (LP ${r['lp_usd']:,.0f})" if r.get("lp_usd") else "")
                           for c, r in per.items() if r["usd"] or r["transfers"])
         quiet = [c for c, r in per.items() if not (r["usd"] or r["transfers"])]
-        bits = [parts or "nothing arrived"]
+        bits = [parts or "nothing arrived"] + gapped     # R21: a named gap first (the bracket is cut at 850)
         if quiet:
             bits.append("read, nothing arrived: " + ", ".join(quiet))
         if un:
@@ -889,6 +898,50 @@ class TokenJarInflows:
             out.add(pd.concat(frames, ignore_index=True), SOURCE, name, msg, TIER)
         else:
             out.warn(SOURCE, name, "nothing stored — " + msg, TIER)
+
+
+# ===================================================================================================== R21: a named gap
+# Jake 2026-11-25: "World Chain: Uniswap TokenJar isn't read past 2026-07-25 because Alchemy's explorer asked for a
+# 3,038s wait. Measure World Chain's share of TokenJar inflow. If it's small, make it a named gap with a cap and a
+# label". config TOKENJAR_INFLOWS[...]["chains"][<chain>]["named_gap"] = {through, max_tries, share, label, measured}:
+#   THE CAP     the chain's days on or before `through` are not asked; a later day the chain's routes refuse on
+#               `max_tries` runs (a time-budget stop is not a refusal) is marked stage "gap" and not asked again
+#   THE LABEL   the day's row names it — "<label> not read since <through> ...: <share> of inflow (named gap ...)" —
+#               and is summed over the chains read; it is NOT marked PARTIAL (declared, with its measured size), and the
+#               balance read counts the chain complete from the day after its gap. A gap day already read is counted.
+def in_named_gap(cs: dict, day: str, rec: dict | None) -> bool:
+    g = cs.get("named_gap")
+    if not g or (rec and rec.get("stage") == "read"):
+        return False
+    return day <= str(g["through"]) or bool(rec and rec.get("stage") == "gap")
+
+
+def count_gap_try(cst: dict, cs: dict, day: str, err: str) -> None:
+    """A named-gap chain's day refused by its routes: counted; at max_tries the day joins the gap (stage 'gap')."""
+    g = cs.get("named_gap")
+    if not g or "time budget reached" in err:
+        return
+    rec = cst["days"].setdefault(day, {"stage": "unread"})
+    rec["tries"] = int(rec.get("tries") or 0) + 1
+    rec["last_error"] = err[:200]
+    if rec["tries"] >= int(g.get("max_tries") or 3):
+        rec["stage"] = "gap"
+
+
+def first_read_day(cs: dict) -> str:
+    """The first day the chain is read from: its switch day, or the day after its named gap."""
+    g = cs.get("named_gap")
+    return shift(str(g["through"]), 1) if g and str(g["through"]) >= cs["from_day"] else cs["from_day"]
+
+
+def gap_label(cs: dict, cst: dict | None = None, short: bool = False) -> str:
+    """'<label> not read since <through>: <share> of inflow' + where (and, for the Run Log, how it was measured)."""
+    g = cs["named_gap"]
+    later = sorted(d for d, r in ((cst or {}).get("days") or {}).items() if r.get("stage") == "gap")
+    return (f"{g.get('label') or 'chain'} not read since {g['through']}: {g['share']} of inflow — a named gap (its "
+            f"days {cs['from_day']}..{g['through']} not asked"
+            + (f"; {len(later)} later day(s) refused on {g.get('max_tries', 3)} runs, {later[0]}..{later[-1]}"
+               if later else "") + (")" if short else f"; measured {g['measured']})"))
 
 
 def _slim(lg: dict) -> dict:

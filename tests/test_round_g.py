@@ -143,7 +143,9 @@ def test_g1_1_tiers_start_staggered_and_an_abandoned_tier_stops(monkeypatch):
     todo = [("a", 2, lambda ctx: Quick("a")), ("slow", 2, lambda ctx: Slow()), ("b", 2, lambda ctx: Quick("b"))]
     res = fetch._dispatch(todo, [], None, {})
     assert [r[0] for r in res] == ["a", "slow", "b"]
-    assert starts["slow"] - starts["a"] >= 0.12 and starts["b"] - starts["slow"] >= 0.12
+    # R21: tiers START longest budget first (fetch.start_order) — the stagger holds between consecutive starts
+    t = sorted(starts.values())
+    assert len(t) == 3 and all(b_ - a_ >= 0.12 for a_, b_ in zip(t, t[1:]))
     assert res[1][4] is True                            # timed out
     time.sleep(0.6)
     assert after_abandon and "abandoned" in after_abandon[0]

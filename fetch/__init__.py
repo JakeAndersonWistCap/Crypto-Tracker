@@ -56,6 +56,7 @@ from .etherscan_supply import EtherscanSupply
 from .balance_flow import BalanceFlow
 from .reward_vault import RewardVaultRates
 from .pendle_epochs import PendleEpochs
+from .pendle_buyback_chain import PendleBuybackChain
 from .ultrasound import UltrasoundHistory
 from .artemis import ArtemisCSV
 from .plume_settlement import PlumeSettlement
@@ -63,6 +64,7 @@ from .mev_relays import MevRelays
 from .browser_capture import BrowserCapture
 from .chainlink_fees import ChainlinkFees
 from .xref import CrossRefs
+from .price_onchain import OnchainPrices
 from .staked_eth import BeaconchainEth, BeaconNodeStakedEth, BeaconStakedEth, StakedEth  # noqa: F401
 from .ef_wallets import EFWallets  # noqa: F401
 from .aethir_chain import AethirChain  # noqa: F401
@@ -174,6 +176,8 @@ TIER_ORDER = [
     # Chainlink's customer-fee lines that bypass the fee aggregator, from each contract's events (2026-10-05).
     ("chainlink_fees", 2, lambda ctx: ChainlinkFees()),
     ("xref", 1, lambda ctx: CrossRefs(stored_long=ctx.get("stored_long"))),
+    # R21 (Jake 2026-11-25): the price cross-check's second source on chain, replacing DefiLlama's coins API
+    ("xref_onchain", 1, lambda ctx: OnchainPrices(stored_long=ctx.get("stored_long"))),
     # ETH staked (beaconcha.in votedether via validatorqueue.com's GitHub history), 2026-10-05.
     # R20 (Jake 2026-11-24): validatorqueue is RETIRED — its file has been stale since 2026-10-25; the reader
     # (StakedEth) is no longer a tier and is called by nobody. Its stored rows stand as beacon_chain_eth's history up
@@ -245,6 +249,8 @@ TIER_ORDER = [
     ("aethir_page", 3, lambda ctx: AethirPages()),
     # Pendle's per-epoch sPENDLE distributions and its own APR (spendle/data, 2026-09-29).
     ("pendle_api", 3, lambda ctx: PendleEpochs()),
+    # R21: Pendle's buyback contract on Ethereum — PENDLE bought, dated the day bought; the primary buyback.
+    ("pendle_buyback_chain", 2, lambda ctx: PendleBuybackChain()),
     # Ethereum's daily supply and staked-ETH history, one call (ultrasound.money API, 2026-09-30).
     ("ultrasound", 3, lambda ctx: UltrasoundHistory()),
     # Artemis settlement volume, from Jake's CSV exports in the repo root, read at run time (never committed).
@@ -2123,7 +2129,7 @@ def stored_fresh(last_dates: dict | None, asof=None) -> set:
 # Hobbyist rate): ~165 days a run, stopped 10 s before the budget so what was read is stored; the next run resumes.
 TIER_BUDGET_S = {
     "schedule:config": 15, "defillama": 150, "defillama_tvl": 150, "defillama_rwa_share": 150, "morpho_api": 60, "growthepie": 60,
-    "nearblocks": 180, "coingecko": 240, "price_history": 120, "hypercore_info": 60, "chainlink_fees": 180, "xref": 90, "validatorqueue": 30, "beacon_api": 180, "treasury_bills": 60, "sky_ssr": 120, "sky_msc": 60, "fluid_buybacks": 60, "geodnet_feed": 60, "pendle_latent": 60, "wm_supply": 60, "near_issuance": 120, "business": 900, "share_vault": 60,
+    "nearblocks": 180, "coingecko": 240, "price_history": 120, "hypercore_info": 60, "chainlink_fees": 180, "xref": 90, "xref_onchain": 150, "validatorqueue": 30, "beacon_api": 180, "treasury_bills": 60, "sky_ssr": 120, "sky_msc": 60, "fluid_buybacks": 60, "geodnet_feed": 60, "pendle_latent": 60, "wm_supply": 60, "near_issuance": 120, "business": 900, "share_vault": 60,
     # NEAR_RPC 90 -> 240 (R12.2, 2026-11-19): + the Foundation set's liquid NEAR, ~190 view_account calls (it stops
     # itself at its own budget_s and stores nothing short of every account), before the payout ledger (45 s)
     "chain": 240, "tron_node": 60, "near_rpc": 240, "explorer": 300, "balance_flow": 150, "maple_page": 60,
@@ -2131,7 +2137,10 @@ TIER_BUDGET_S = {
     # the L2 chain tiers (explorer_l2:<chain>, G3 item 1) take config.L2_TIER_BUDGET_S, set below
     # one epoch a week: ~10 Multicall3 batches + one DefiLlama price call; the daily totalWeight is one eth_call
     "aero_voter": 180,
-    "aethir_chain": 180,               # R20: ~45 eth_calls + ~30 eth_getLogs pieces (two chains), measured ~25 s
+    # R20: ~45 eth_calls + ~30 eth_getLogs pieces (two chains), measured ~25 s. R21 (Jake 2026-11-25): 180 -> 300 —
+    # measured 81 s alone on 2026-11-24 (the Ethereum history 58 s of it, 14 eth_getLogs of 1M blocks); the burn now
+    # reads first, so a cut-off costs the history only
+    "aethir_chain": 300,
     "aero_v3": 240,
     "aero_v3_epoch": 240,              # R8 item 2: stops itself at 200 s (fetch.aero_v3.EPOCH_BUDGET_S), scan saved
     "scrape": 240, "dune": 420, "ultrasound": 60, "plume_staking": 180, "plume_claims": 180, "blockscout_stats": 90,
@@ -2149,6 +2158,7 @@ TIER_BUDGET_S = {
     # next run from .cache/boros/state.json — the first read of 232 markets takes 4 runs, a day's top-up ~40 exports
     "boros": 480,
     "pendle_maturity": 150,
+    "pendle_buyback_chain": 120,      # R21: ~6 eth_getLogs (1M blocks each) + one balanceOf; stops itself at 100 s
     "ccip_value": 330,
     # R20 (Jake 2026-11-24: "tokenjar timed out again — the work doesn't fit 300s; give it the time it needs"): one day
     # on the twelve chains measured 870 calls / 231 s keyless, so 300 s held barely one day and nothing was stored when
@@ -2286,6 +2296,16 @@ class Heartbeat:
             self.beat()
 
 
+def start_order(todo) -> list:
+    """R21 (Jake 2026-11-24: "any tidy-up that makes the run faster, with no change to behaviour"): the order the
+    concurrent dispatcher STARTS tiers in — the longest budget first (stable: ties keep TIER_ORDER). Starts stay
+    staggered TIER_STAGGER_S apart, so the fetch stage's worst case was max(start offset + budget): business (900 s)
+    started 39 s in (position 78 of 105) and ended by 939 s; now the two 900 s tiers start at 0 and 0.5 s and it ends by
+    900.5 s. Only the start order changes: results are still returned, merged and validated in TIER_ORDER (the order
+    given), budgets and staggering are unchanged, and TOKEN_METRICS_SERIAL keeps the given order."""
+    return sorted(todo, key=lambda t: -_budget(t[0]))
+
+
 def _dispatch(todo, projects, window_days, ctx) -> list[tuple]:
     """Run every source concurrently, each under its own budget.
 
@@ -2338,7 +2358,7 @@ def _dispatch(todo, projects, window_days, ctx) -> list[tuple]:
                 start(name, tier, build)
                 settle(name, wait=True)
         else:
-            queue = list(todo)
+            queue = start_order(todo)
             pending, next_at = [], time.monotonic()
             while queue or pending:
                 while queue and time.monotonic() >= next_at:
@@ -2402,11 +2422,31 @@ def _recheck_robots(results, todo, projects, window_days, ctx):
     return out
 
 
+NO_WEB_CALLS = "no web calls (local/derived tier)"
+NO_ADAPTER = "FAULT: the adapter was not built (see its 'adapter crashed' line) — no call was made"
+
+
 def _http_summary(st: dict) -> str:
-    """The source's Http stats, if it has an Http client (fetch.base.Http.summary)."""
+    """The source's Http stats, if it has an Http client (fetch.base.Http.summary).
+
+    R21 (Jake's store run 2026-11-24: "no Http client" 63 times, including on tiers that make no web calls — it read
+    as a fault). A tier with no Http client of its own is described by the web calls counted against its thread
+    (fetch.base.web_calls: requests and web3 alike): none -> "no web calls (local/derived tier)"; some -> their count,
+    time and hosts. A tier whose adapter was never built (its factory raised) stays a FAULT. Was: "no Http client"."""
+    if st.get("adapter") is None:
+        return NO_ADAPTER
     http = getattr(st.get("adapter"), "http", None)
     fn = getattr(http, "summary", None)
-    return fn() if callable(fn) else "no Http client"
+    if callable(fn):
+        return fn()
+    from .base import web_calls                                    # noqa: PLC0415
+    wc = web_calls(st.get("thread"))
+    if not wc["calls"]:
+        return NO_WEB_CALLS
+    hosts = wc["hosts"]
+    return (f"{wc['calls']} web call(s) outside an Http client (web3 / requests; RPC timing in the RPC LATENCY lines), "
+            f"{wc['secs']:.0f}s in requests, {len(hosts)} host(s): " + ", ".join(hosts[:4])
+            + (f" and {len(hosts) - 4} more" if len(hosts) > 4 else ""))
 
 
 def _drop_stocks(frames: list) -> tuple[list, list[str]]:
