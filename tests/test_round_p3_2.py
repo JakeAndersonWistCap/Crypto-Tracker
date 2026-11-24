@@ -153,7 +153,10 @@ def test_p3_2b_fixture_ties_follow_net_holder_yield_on_summary_and_the_tab(built
     tr = _reader_col(ws, lambda h: h.startswith("Rank in"))
     tied = [n for n in srows if n in trows and XR.value("Summary", srows[n], sk) == 0.0
             and isinstance(XR.value("Summary", srows[n], sr), float)]
-    assert len(tied) >= 2, tied
+    # R21 (decision 5): the paused / off programmes that tied at 0 (Fluid, Morpho) are no longer ranked, so the fixture
+    # may hold no tie; any tie it holds still follows net holder yield
+    for n in ("Fluid", "Morpho"):
+        assert n not in tied and XR.value("Summary", srows[n], sr) == "unranked", n
     by_rank = sorted(tied, key=lambda n: XR.value("Summary", srows[n], sr))
     nhy = [XR.value("Summary", srows[n], sn) for n in by_rank]
     nums = [v for v in nhy if isinstance(v, float)]

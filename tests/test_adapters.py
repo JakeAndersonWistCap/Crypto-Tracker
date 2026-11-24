@@ -1784,9 +1784,10 @@ def test_pendles_fee_split_is_confirmed_from_its_own_docs_with_the_right_base():
 
     # THE BUYBACK CONTRACT IS REPORTED ABSENT, NOT GUESSED AT. Pendle's own deployment file was
     # read in full and does not name one; a distributor is not a purchaser.
+    # R21 (item 5): the contract is named in Pendle's docs (sPENDLE.md) and read on chain — no longer absent
     reg = config.PROJECT_BY_NAME["Pendle"]["deployment_registry"]
-    assert reg["buyback_contract"] is None
-    assert "NOT IN THE FILE" in reg["buyback_contract_status"]
+    assert reg["buyback_contract"] == config.PENDLE_BUYBACK_CHAIN["contract"]
+    assert "NAMED IN PENDLE'S DOCS" in reg["buyback_contract_status"]
     assert reg["treasury"] == "0x8270400d528c34e1596EF367eeDEc99080A1b592"
     assert reg["s_pendle"] == config.PROJECT_BY_NAME["Pendle"]["contracts"]["spendle"]["address"]
     print("pendle ok: 0.80 of V2 yield+swap fees, programmed, distributed under a ceiling, "
@@ -13271,8 +13272,9 @@ def test_the_buyback_pair_gaps_with_the_routes_reason_and_usd_always_follows_tok
 
     # 1c — Pendle's tokens are DERIVED from the $ allocated (2026-09-28), so its reason names
     # the two inputs; World Mobile's unpublished treasury is an ACCEPTED LIMIT, still with the why.
+    # R21 (item 5): Pendle's buyback is read from its own buyback contract (the $-derived route is retired)
     r, _ = reason("Pendle", "actual_buyback_tokens")
-    assert r.startswith("DERIVED: actual_buyback_usd / same-day price_usd") and "no contract of kind" not in r, r
+    assert r.startswith("READ ON CHAIN:") and "pendle_buyback_bought_tokens" in r and "no contract of kind" not in r, r
     r, _ = reason("World Mobile", "actual_buyback_tokens")
     assert r.startswith("ANSWERED, NOT OPEN — ACCEPTED LIMIT") and "never been published" in r \
         and "explorer label" in r, r
@@ -15641,7 +15643,7 @@ def test_a_burn_route_buyback_is_a_view_of_the_whole_burn_series():
     b, t, u = by["Hyperliquid|gross_burn_tokens"], by["Hyperliquid|actual_buyback_tokens"], by["Hyperliquid|actual_buyback_usd"]
     tot = by["Hyperliquid|total_burn_tokens"]
     assert b["q0"] == 290_000.0, b["q0"]                              # the Fund leg, unchanged
-    assert tot["q0"] == 348_000.0, tot["q0"]                           # 29 days x (10,000 + 2,000): A1's burn
+    assert tot["q0"] == 58_000.0, tot["q0"]                            # R21: the true burns only, 29 days x 2,000 (the Fund is held)
     # G11 B7: the buyback is the Fund's purchases only — the Core burns were never bought
     assert t["q0"] == 290_000.0, t["q0"]
     assert u["q0"] == 290_000.0 * 40 and u["q0_covered_days"] == b["q0_covered_days"] == 29
@@ -26229,10 +26231,12 @@ def test_ethereum_net_supply_change_is_computed_over_the_days_both_series_hold()
     assert len(net) == 7 and (net["value"] == 2_600.0).all()
 
 
-def test_fluid_buyback_input_is_wired_to_the_halt_and_l2_distributors_are_scanned_where_free():
+def test_fluid_buyback_input_is_wired_to_the_halt_and_l2_distributors_are_scanned_where_free(monkeypatch):
     """A6 + B8: the halted programme's 0 is a reference met only by a measured 0; Arbitrum's three distributors are
     scanned (L2 FLUID 0x61E030A5…); Base (no free logs) and Plasma are not — since F2 (2026-10-14) both are pre-wired in
     config.EXPLORER_PROBED_SCANS and open only for a chain Jake's Etherscan probe lists as served."""
+    from probe_unpinned import unpinned
+    unpinned(monkeypatch)                     # never the wiring a shared build pinned earlier on this worker
     ref = config.CREDIBILITY["Fluid"]["in_buyback"]["ref"]
     assert ref["manual"]["value"] == 0.0 and ref["tol"] == 0.0
     scans = {s["key"]: s for s in config.PROJECT_BY_NAME["Fluid"]["log_scans"]}
@@ -27859,7 +27863,9 @@ def test_hyperliquid_release_is_the_first_party_circulating_change_plus_the_af_b
               ("Hyperliquid", "pool_release_tokens"): mk("pool_release_tokens", [9.0] * 4)}
     bw._onchain_release_views(groups)
     rel = groups[("Hyperliquid", "pool_release_tokens")].set_index("date")["value"]
-    assert list(rel.round(6)) == [50.0, 50.0, 3_736_300.0]
+    # R21 (Jake's default): the Fund's purchases are HELD inside circulating, so they are no longer added back — the
+    # release is the circulating rise alone (a fall releases nothing)
+    assert list(rel.round(6)) == [0.0, 0.0, 3_736_200.0]
     assert ("Hyperliquid", "pool_release_tokens_coingecko") in groups
     f = config.CREDIBILITY["Hyperliquid"]["a4_pool_release"]
     assert f["verdict"] == "VERIFIED FINDING" and "3,736,300" in f["why"] and "9.92M" in f["why"]

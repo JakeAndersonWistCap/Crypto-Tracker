@@ -59,6 +59,10 @@ def _build(d: Path, layout: bool) -> dict:
         mp.setenv("TOKEN_METRICS_STORE_VALUES", "1")
         if not layout:
             mp.setattr(reader_layout, "apply_layout", lambda wb, ctx: {})
+        else:
+            # R21: the dumps render 5 cards now (C3: Sky's net holder yield is positive under F3) — the floor statement
+            # is read with a floor one above them (the production floor, 5, is restored after the build)
+            mp.setattr(reader_layout, "MIN_CARDS", 6)
         st = sm.Store(str(db))
         try:
             bw.build_workbook(st, d / "audit.xlsx", asof=pd.Timestamp(max(asofs)), reader_path=d / "reader.xlsx")
@@ -121,14 +125,14 @@ def test_the_floor_statement_when_fewer_than_five_cards_render(one):
     card, only the statement - how many rendered and each unmet condition."""
     last = one["last"]
     assert reader_layout.MIN_CARDS == 5
-    assert last["floor_met"] is False and last["cards"] == [] and last["rendered"] == ["C5", "C7", "C8", "C9"]
+    assert last["floor_met"] is False and last["cards"] == [] and last["rendered"] == ["C3", "C5", "C7", "C8", "C9"]
     ws = openpyxl.load_workbook(one["reader"])["Highlights"]
     text = [c.value for row in ws.iter_rows() for c in row if c.value is not None]
     assert text[:2] == [H.TITLE, H.FLOOR_NOTE]
-    assert text[2] == "Highlights: only 4 of 9 cards render, 5 are needed. Cards that did not render:"
-    assert text[-1] == "Cards that did: C5, C7, C8, C9"
+    assert text[2] == "Highlights: only 5 of 9 cards render, 6 are needed. Cards that did not render:"
+    assert text[-1] == "Cards that did: C3, C5, C7, C8, C9"
     unmet = text[3:-1]
-    assert [u.split(" ")[0].rstrip(":") for u in unmet] == ["C1", "C2", "C3", "C4", "C6"], unmet
+    assert [u.split(" ")[0].rstrip(":") for u in unmet] == ["C1", "C2", "C4", "C6"], unmet
     assert unmet == [o.strip() for o in last["omitted"]]                  # the same text the refusal printed
     assert not any(isinstance(v, str) and v.startswith("=") for v in text)   # no chip: no card at all
     assert all(not H.FORBIDDEN.search(v) for v in text)

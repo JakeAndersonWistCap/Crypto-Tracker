@@ -51137,3 +51137,23 @@ BURN_ADDRESS_IS_HELD = {
 BURN_NOT_IN_NET[("Uniswap", "buyback_burned_tokens")] = (
     "the burn-to-claim as a buyback x its burned share (source chain:ethereum:burn_dead:delta:as-buyback) — the same "
     "UNI as gross_burn_tokens (both read 0x…dEaD's rise), never summed with it")
+# R21 (lead, item 6 — the guard on the final commit): Hyperliquid's held default (Jake 2026-11-25) re-bases the series
+# that read the Assistance Fund as a burn. Each new basis is that declared treatment, not a new measuring point.
+_R21_HL_HELD_WHY = ("R21 item 6 (Jake 2026-11-25, the default until the report is decided): the Assistance Fund is a HELD "
+                    "buyback — inside circulating and total supply, off the free float, A4 off; the burns are the true "
+                    "burns only (docs/r21_hyperliquid_burns.md)")
+for _m, _src in (
+        ("fdv_usd", "derived:total_supply_gross-hyperevm_zero_address_balance"),
+        ("pool_release_tokens", "derived:d(circulating_supply_first_party)+hyperevm_priority_burn_tokens"),
+        ("total_burn_tokens", "derived:burn_total(core_burn_tokens)"),
+        ("burn_ex_chain_fee_tokens", "derived:burn_total(core_burn_tokens)"),
+        ("buyback_burned_tokens", "derived:actual_buyback_tokens x burn share (from start: burn 0% / hold 100% / distribute 0%)"),
+        ("buyback_held_tokens", "derived:actual_buyback_tokens x hold share (from start: burn 0% / hold 100% / distribute 0%)"),
+        ("buyback_distributed_tokens",
+         "derived:actual_buyback_tokens x distribute share (from start: burn 0% / hold 100% / distribute 0%)"),
+        ("retired_buyback_tokens",
+         "derived:actual_buyback_tokens x burn+hold share (from start: burn 0% / hold 100% / distribute 0%)"),
+        ("retired_buyback_usd",
+         "derived:actual_buyback_usd x burn+hold share (from start: burn 0% / hold 100% / distribute 0%)")):
+    DECLARED_COMPONENTS.setdefault(("Hyperliquid", _m), []).append({"metric": _m, "from": None, "source": _src,
+                                                                    "why": _R21_HL_HELD_WHY})

@@ -205,6 +205,8 @@ def test_f2_probe_writes_served_chains_and_never_prints_the_key(monkeypatch, tmp
 
 
 def test_f2_wire_probed_scans_opens_only_the_served_chains(monkeypatch):
+    from probe_unpinned import unpinned
+    unpinned(monkeypatch)                     # never the wiring a shared build pinned earlier on this worker
     saved = {k: copy.deepcopy(config.PROJECT_BY_NAME[k]) for k in ("Pendle", "Fluid")}
     routes = copy.deepcopy(config.EXPLORER_LOG_ROUTES)
     # wire_probed_scans also adds the Base scan's metric to Fluid's outflow (b): restored with everything else (left in
@@ -409,6 +411,8 @@ def test_f2_f4_unopened_scans_and_the_evm_burn_gap_with_their_own_reason(monkeyp
     """A probe-gated scan not yet opened names the probe and what it said; the HyperEVM burn names its read — never
     "no source configured"."""
     from fetch import gaps
+    from probe_unpinned import unpinned
+    unpinned(monkeypatch)                     # never the wiring a shared build pinned earlier on this worker
     monkeypatch.setattr(config, "explorer_probe_state",
                         lambda: {"probed_on": "2026-10-15", "served": [], "refused": {"56": "status '0' message 'NOTOK'"}})
     rows = {(g["project"], g["metric"]): g for g in gaps.detect(

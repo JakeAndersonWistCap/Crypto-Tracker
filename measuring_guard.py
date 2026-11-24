@@ -315,6 +315,10 @@ def _declared(project: str, metric: str) -> set:
     mb = (getattr(config, "MEASURED_BUYBACK", {}) or {}).get(project)
     if mb and metric in mb.get("points", {}):
         out.add(trajectory.basis_of(metric, mb["points"][metric]))
+    # R21 (item 5, Jake 2026-11-25): the buyback read from the contract (MEASURED_BUYBACK chain_metric) carries its own
+    # rows' source — on the guard's probe store that is the probe of the chain metric, never another measuring point
+    if mb and mb.get("chain_metric") and metric in ("actual_buyback_tokens", "actual_buyback_usd"):
+        out.add(trajectory.basis_of(metric, f"probe:{mb['chain_metric']}"))
     return out
 
 

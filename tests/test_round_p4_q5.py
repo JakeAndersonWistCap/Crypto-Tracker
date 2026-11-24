@@ -289,7 +289,8 @@ def test_buying_pressure_is_every_market_buyback_annualised_over_tradeable_float
 # was Maple 0.008541006768956963, Sky 0.024434984263792533, Hyperliquid 0.01691147794146245, Pendle
 # 0.009420640711118868, Chainlink 0.005996886350660165, Near 0.002418363439991883. Re-pinned in the Round 20 gate fix on
 # the 15 dumps; the same six figures read on the pre-Round-20 build (1894183), so Round 20 moved none of them.
-BEFORE_HVY = {"Maple": 0.010720597913026847, "Sky": 0.023648788113572274, "Hyperliquid": 0.015591883176373859,
+BEFORE_HVY = {"Maple": 0.010720597913026847, "Sky": 0.023648788113572274, "Hyperliquid": 0.014323244030331778,  # R21: was 0.015591883176373859 — the held Fund is in circulating (market cap +8.9%)
+             
               "Pendle": 0.01071647386102105, "Chainlink": 0.005392940384874894, "Near": 0.004504518825379258}
 
 
@@ -351,7 +352,8 @@ def test_fixture_keys_and_ranks(built):
     else:
         cb = _data(built, "Hyperliquid|buyback_burned_tokens", "Q0: days of the 90")
         ci = _data(built, "Hyperliquid|issuance_option_c_tokens", "Q0: days of the 90")
-        assert abs(cb - ci) <= 9 and 0 < hl < 5, (cb, ci, hl)
+        # R21 (item 6, Jake's default): the Fund HOLDS what it buys — nothing burned, so this reference reads 0
+        assert abs(cb - ci) <= 9 and hl == 0.0, (cb, ci, hl)
     # PR1.S1 (Jake 2026-11-05): each leg a rate over the days its rows cover (the days after a leg's last row are not
     # covered); the ratio of the 90-day sums was 0.6250996672617004
     def rate(m):

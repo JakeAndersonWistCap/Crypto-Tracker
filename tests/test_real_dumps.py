@@ -117,6 +117,11 @@ def test_real_maple_stays_signed_off(tmp_path, monkeypatch):
     archive restate the set."""
     o = evaluate_real(tmp_path, monkeypatch, "Maple")
     bad = {k: v["verdict"] for k, v in o.items() if str(v["verdict"]).startswith("CHECK")}
+    # R21 (runfix): the price cross-check reads on-chain pools (price_usd_onchain), a series this dump predates — its
+    # row says it has no reference; it is never a gap on our figure
+    if "in_price_onchain" in bad:
+        assert bad.pop("in_price_onchain") == "CHECK (no reference)"
+        assert not isinstance(o["in_price_onchain"]["ref"], (int, float))
     assert set(bad) <= {"in_circ"} | {k for k, v in bad.items() if v == "CHECK (inputs)"}, bad
     if "in_circ" in bad:
         ours, ref = float(o["in_circ"]["ours"]), float(o["in_circ"]["ref"])

@@ -248,7 +248,10 @@ def test_p2g_aerodrome_net_holder_yield_is_an_accepted_loss_while_parked(monkeyp
     # price, annualised) ÷ market cap"
     head = ("CP | NET HOLDER YIELD = holder value yield − dilution (outflows a+b+c+d+e+f at each day's price, annualised) "
             "÷ average market cap over the window")
-    assert config.regression_allowance("Aerodrome", head, on="2026-11-18") is None       # R8.1: unparked, so lapsed
+    # R8.1: unparked, so the parked allowance lapsed; R21 (Jake 2026-11-25, item 8) accepts it as blocked until the
+    # Velodrome revenue series cover the window — a different allowance, with its own reason
+    later = config.regression_allowance("Aerodrome", head, on="2026-11-25")
+    assert later and later["accepted"] == "2026-11-25" and "Velodrome revenue series" in later["reason"]
     monkeypatch.setattr(config, "project_parked", lambda p, day=None: p == "Aerodrome")
     a = config.regression_allowance("Aerodrome", head, on=ON)
     assert a and a["accepted"] == "2026-10-29" and "parked" in a["reason"]

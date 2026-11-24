@@ -18138,13 +18138,16 @@ def write_trajectory(wb, data_by_key: dict, asof=None) -> list[dict]:
         rec = {"key": k, "project": spec["project"]["name"], "tab": k.split("|")[0], "hid": spec["hid"],
                "header": spec["header"], "direction": d, **{lab: trajectory._num(v) for lab, v in zip(trajectory.LABELS, qs)}}
         why = []
+        q0_written = qs[0]                  # R21: the Q0 cell as written — an independent row's statistics blank below
         if w["independent"]:
             why.append("the headline does not read a trailing window (Config / text only)")
             qs = [None] * len(qs)
         # THE BASIS RULE (Jake 2026-10-12, decision 7 on 6f8c86c): no QoQ, growth or direction across a change of
         # basis — the statistics use only the quarters wholly on the current basis; the Q cells stay as they read
         brk, brk_text, step_at = None, "", None
-        q0_cell = qs[0]                     # the Q0 the credibility check compares, whatever the basis rule leaves
+        # the Q0 the credibility check compares, whatever the basis rule leaves; an independent row (its formula reads
+        # cells, not a Data window — net float pressure, R21) compares the Q0 it wrote, never a blank
+        q0_cell = q0_written if w["independent"] else qs[0]
         if asof is not None and not w["independent"]:
             since = pd.Timestamp(asof) - pd.Timedelta(days=int(config.TRAJECTORY["history_days"]))
             found = trajectory.basis_breaks(spec["project"]["name"], trajectory.referenced_metrics(w["q0_formula"]),

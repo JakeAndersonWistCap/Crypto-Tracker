@@ -91,7 +91,8 @@ def test_no_burn_series_is_missing_from_the_net():
         assert burn_legs <= declared, (n, burn_legs - declared)
     # the declared reasons are for real series only (no stale entry)
     for (n, m), why in config.BURN_NOT_IN_NET.items():
-        assert why and m in config.metrics_for_project(P[n]), (n, m)
+        # a build-time view (the buyback's burned / held / distributed split) is a real series of the Data sheet too
+        assert why and (m in config.metrics_for_project(P[n]) or m in config.BUYBACK_SPLIT_METRICS), (n, m)
 
 
 def test_the_burns_cell_reads_every_declared_series_each_over_its_own_days(monkeypatch):

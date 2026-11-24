@@ -250,8 +250,9 @@ def test_g3_2_hyperliquid_stake_is_bounded_by_the_net_total_never_by_circulating
     locked = f[f.metric == "locked_tokens"]
     assert len(locked) == 1 and round(float(locked.value.iloc[0]), 4) == 442_115_644.7157
     line = next(e.message for e in out.log if e.message.startswith("locked_tokens="))
-    assert ("net total=950,546,499.73 (total_supply_gross 998,862,059.40 [stored] − burn_address_balance "
-            "48,007,021.50 [this run] − hyperevm_zero_address_balance 308,538.17 [stored])") in line, line
+    # R21 (item 6, Jake's default): the Assistance Fund is HELD — inside the net total; only the EVM burn comes off
+    assert ("net total=998,553,521.23 (total_supply_gross 998,862,059.40 [stored] − hyperevm_zero_address_balance "
+            "308,538.17 [stored])") in line, line
     assert "222,445,714" not in line
     # a leg missing -> no bound, nothing stored, named; circulating is never the stand-in
     out = _hl_stake({k: v for k, v in legs.items() if k[1] != "hyperevm_zero_address_balance"})

@@ -24,7 +24,8 @@ import highlights as H  # noqa: E402
 import reader_layout  # noqa: E402
 import reader  # noqa: E402
 
-FIXTURE_CARDS = 4          # C5, C7, C8, C9 render on the committed dumps (the others need Jake's live numbers)
+FIXTURE_CARDS = 5          # R21: C3, C5, C7, C8, C9 render on the committed dumps (C3: Sky's net holder yield is
+                           # positive under F3); the others need Jake's live numbers
 
 
 # ======================================================================================================= conditions
@@ -896,10 +897,11 @@ def test_b_the_reader_has_highlights_first_and_the_fixture_cards(built):
     assert len(wb["Charts"]._charts) > 0
     last = built["last"]
     assert last["floor_met"] is True
-    assert last["cards"] == ["C5", "C7", "C8", "C9"], last["cards"]        # the fixture holds other numbers than Jake's store
+    # the fixture holds other numbers than Jake's store; R21: C3 renders (Sky's net holder yield +0.73% under F3)
+    assert last["cards"] == ["C3", "C5", "C7", "C8", "C9"], last["cards"]
     # R20: C2's line reads "C2: a cell it quotes is not on the reader" (Morpho is off the A2 tab) — the id without ":"
     why = {o.split(" ")[0].rstrip(":") for o in last["omitted"]}
-    assert why == {"C1", "C2", "C3", "C4", "C6"}, last["omitted"]
+    assert why == {"C1", "C2", "C4", "C6"}, last["omitted"]
 
 
 def test_fixture_cards_every_number_is_a_formula_and_the_text_is_clean(built):
@@ -940,11 +942,12 @@ def test_fixture_cards_every_number_is_a_formula_and_the_text_is_clean(built):
 def test_d_the_production_floor_of_five_is_not_met_on_the_fixture_numbers_and_lists_the_conditions(built):
     wb = openpyxl.load_workbook(built["dir"] / "reader.xlsx")
     wb.remove(wb["Highlights"])                                             # the reader without its Highlights tab
-    res = H.add_highlights(wb, None)                                        # min_cards = 5
-    assert res["floor_met"] is False and res["cards"] == [] and res["rendered"] == ["C5", "C7", "C8", "C9"]
+    # R21: 5 render on the fixture now (C3 too), so the not-met path is read with a floor of 6
+    res = H.add_highlights(wb, None, min_cards=6)
+    assert res["floor_met"] is False and res["cards"] == [] and res["rendered"] == ["C3", "C5", "C7", "C8", "C9"]
     msg = "\n".join(res["lines"])
-    assert "only 4 of 9" in msg and "5 are needed" in msg
+    assert "only 5 of 9" in msg and "6 are needed" in msg
     # R20: Morpho is off the A2 tab (Jake's tags), so C2 is omitted for a missing row, not a failed condition
     # (was "C2 Morpho")
-    for cid in ("C1 GEODNET", "C2: a cell it quotes is not on the reader", "C3", "C4 Hyperliquid", "C6 Fluid"):
+    for cid in ("C1 GEODNET", "C2: a cell it quotes is not on the reader", "C4 Hyperliquid", "C6 Fluid"):
         assert cid in msg, msg

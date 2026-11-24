@@ -536,6 +536,14 @@ def _tier_note(project: dict, metric: str, scrape_entries: dict) -> tuple[str, s
                 "Resolve actual_buyback_usd (a restatement of holders_revenue_usd) or price_usd; "
                 "this row fills from them with no source of its own.")
 
+    # ===== R21 (item 5): A BUYBACK READ FROM THE PROJECT'S OWN BUYBACK CONTRACT (config.MEASURED_BUYBACK chain_metric) =====
+    mb = (getattr(config, "MEASURED_BUYBACK", {}) or {}).get(name) or {}
+    if metric in ("actual_buyback_tokens", "actual_buyback_usd") and mb.get("chain_metric"):
+        return (f"READ ON CHAIN: {mb.get('chain_label', 'the buyback contract')} — {mb['chain_metric']} (the PENDLE "
+                f"bought, dated the day bought; fetch/pendle_buyback_chain.py), and it produced nothing for a day this "
+                f"run; the per-epoch amounts stand in only where it holds no row",
+                f"Check the Run Log's pendle_buyback_chain line for {name}; it resumes from its last block next run.")
+
     # ===== THE LAST-INFLOW DATE IS A BY-PRODUCT OF THE BUYBACK SCAN. Added 2026-09-28. =====
     # It has no source of its own: fetch/logscan.py writes it beside actual_buyback_tokens from
     # the same reconciled scan, so its gap is that scan's gap.
@@ -1304,6 +1312,12 @@ def _tier_note(project: dict, metric: str, scrape_entries: dict) -> tuple[str, s
                  "once every live chain is read",
                  "Check the Run Log's tokenjar line for {name} (it names the chain-day not read); the history comes "
                  "with python token_metrics.py --seed tokenjar.")
+    # R21 (item 5): Pendle's buyback contract reader (fetch/pendle_buyback_chain.py)
+    for m in ("pendle_buyback_bought_tokens", "pendle_buyback_paid_tokens"):
+        r3[m] = ("the buyback contract reader (fetch/pendle_buyback_chain.py: PENDLE Transfer events in and out of "
+                 "config.PENDLE_BUYBACK_CHAIN's contract on Ethereum) stored nothing this run: its getLogs did not "
+                 "answer, or it stopped at its own time cap before the day closed",
+                 "Check the Run Log's pendle_buyback_chain line for {name}; it resumes from its last block next run.")
     if metric in r3:
         why, fix = r3[metric]
         return why, fix.format(name=name)
