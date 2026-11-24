@@ -186,7 +186,8 @@ def test_sky_rewards_split_by_funding_period():
     parts = sum(float(g[("Sky", m)]["value"].sum()) for m in config.REWARD_FUNDING["Sky"]["to"].values())
     assert parts == pytest.approx(float(tot.drop_duplicates("date", keep="last")["value"].sum()))
     # R6.2 (Jake 2026-11-16): every SKY paid to stakers is emissions, outflow (c), whatever funded it; none is (e)
-    assert config.outflow_metrics("Sky", "c") == ("emissions_tokens",)
+    # R21 F3 (Jake 2026-11-25): only the part the SKY bought for stakers did not cover (was: emissions_tokens, all of it)
+    assert config.outflow_metrics("Sky", "c") == ("sky_staking_rewards_unfunded_tokens",)
     # no staker reward is an unlock: (e) holds only releases from a non-circulating set, if Sky has one
     assert set(config.outflow_metrics("Sky", "e")) <= {"unlock_release_tokens"}
 

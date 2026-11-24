@@ -228,22 +228,157 @@ def views(groups: dict, asof) -> None:
 
 
 def buying_views(groups: dict) -> None:
-    """float_buying_tokens — the demand side of net float pressure (R20 item 5): each day's RETIRED buyback (burned +
-    held) where the buyback was revenue-funded that day (config.holder_funding, the funding holder value yield credits
-    by); a day whose buyback was not revenue-funded is a measured 0. A buyback paid out to stakers is not in it."""
+    """float_buying_tokens — the demand side of net float pressure. R21 (Jake 2026-11-25, F1/F2, "any burn"): each
+    day's buyback HELD + DISTRIBUTED (buyback_held_tokens + buyback_distributed_tokens: paid to stakers counts as
+    buying, F2) where the buyback was revenue-funded that day (config.holder_funding), + the purchases paid on to
+    customers (config.BUYING_CUSTOMERS_F1, Ether.fi: "buying counts as buying"). A BURNED buyback is not here: it is on
+    the burns line, once, on the day it is burned. A day whose buyback was not revenue-funded is a measured 0.
+    Was (R20): retired_buyback_tokens (burned + held) on revenue-funded days."""
     import build_workbook as bw                                          # noqa: PLC0415
     for p in bw.scoped_projects():
         name = p["name"]
         groups.pop((name, "float_buying_tokens"), None)
-        rt = groups.get((name, "retired_buyback_tokens"))
-        if rt is None or rt.empty or config.buyback_route(name)["route"] == "none":
+        if config.buyback_route(name)["route"] == "none":
             continue
-        f = rt.copy()
-        ok = [config.holder_funding(name, d)[0] == "revenue" for d in pd.to_datetime(f["date"]).dt.normalize()]
-        f["value"] = [float(v) if k else 0.0 for v, k in zip(f["value"].astype(float), ok)]
-        f["metric"] = "float_buying_tokens"
-        f["source"] = "derived:retired_buyback_tokens where revenue-funded (config.holder_funding)"
-        groups[(name, "float_buying_tokens")] = f
+        legs = [m for m in ("buyback_held_tokens", "buyback_distributed_tokens")
+                if groups.get((name, m)) is not None and not groups[(name, m)].empty]
+        cust = config.BUYING_CUSTOMERS_F1.get(name)
+        cust = cust if cust and groups.get((name, cust)) is not None and not groups[(name, cust)].empty else None
+        if not legs and not cust:
+            continue
+        frames = [bw._daily(groups[(name, m)]) for m in legs]
+        if frames:
+            # the split series share one set of days (the purchase days the destination shares cover)
+            v = pd.concat(frames, axis=1).sum(axis=1, min_count=1).dropna()
+            ok = pd.Series([config.holder_funding(name, d)[0] == "revenue" for d in v.index], index=v.index)
+            v = v.where(ok, 0.0)
+        else:
+            v = pd.Series(dtype=float)
+        if cust:
+            c = bw._daily(groups[(name, cust)])
+            v = v.add(c, fill_value=0.0) if not v.empty else c
+        if v.empty:
+            continue
+        cols = groups[(name, (legs or [cust])[0])].columns
+        groups[(name, "float_buying_tokens")] = bw._as_stored(pd.DataFrame(
+            {"date": v.index, "project": name, "metric": "float_buying_tokens", "value": v.values, "tier": 2,
+             "source": "derived:float_buying[" + "+".join(legs) + " where revenue-funded (config.holder_funding)"
+                       + (f" + {cust} (F1)" if cust else "") + "]"}), cols)
+
+
+def returned_views(groups: dict) -> None:
+    """float_returned_tokens (R21 F1/F2/F3/F7): BOUGHT TOKENS RETURNED TO THE FLOAT, a supply line of net float
+    pressure. A declared payout leg (config.FLOAT_RETURNS): `paid` − `less` per day — the payout the purchases covered
+    (the uncovered part is already new supply), on the days both hold a row. A held buyback stock
+    (config.FLOAT_RETURNS_HELD, F7): each fall of the stock between consecutive readings, on the day it is read, less
+    the same day's burn out of that holding (a burn is a burn). Rises (purchases) are the buying line's."""
+    import build_workbook as bw                                          # noqa: PLC0415
+    for p in bw.scoped_projects():
+        name = p["name"]
+        groups.pop((name, "float_returned_tokens"), None)
+        spec, held = config.FLOAT_RETURNS.get(name), config.FLOAT_RETURNS_HELD.get(name)
+        if spec:
+            paid, less = bw._daily(groups.get((name, spec["paid"]))), bw._daily(groups.get((name, spec["less"])))
+            if paid.empty or less.empty:
+                continue
+            both = pd.concat([paid.rename("p"), less.rename("l")], axis=1).dropna()
+            v = (both["p"] - both["l"]).clip(lower=0.0)
+            src = f"derived:float_returned[{spec['paid']} − {spec['less']}]"
+            base = groups[(name, spec["paid"])]
+        elif held:
+            # what LEFT the holding = what was put in (the held buyback) − what the stock rose by, never below 0 and
+            # never taken back (a running maximum, as the cashback rule): a day-to-day wobble of the stock read is not
+            # a departure; a burn out of the holding is a burn, not a return
+            s = bw._daily(groups.get((name, held["held"]))).dropna()
+            if len(s) < 2:
+                continue
+            put = bw._daily(groups.get((name, "buyback_held_tokens"))).reindex(s.index.union(
+                bw._daily(groups.get((name, "buyback_held_tokens"))).index)).fillna(0.0)
+            put = put[put.index > s.index[0]].cumsum().reindex(s.index).ffill().fillna(0.0)
+            burned = [b["metric"] for b in config.burn_series(name) if b.get("from") == "treasury"]
+            out_b = pd.Series(0.0, index=s.index)
+            for m in burned:
+                bm = bw._daily(groups.get((name, m)))
+                out_b = out_b + bm[bm.index > s.index[0]].cumsum().reindex(s.index).ffill().fillna(0.0)
+            gap = (put - (s - s.iloc[0]) - out_b).clip(lower=0.0).cummax()
+            v = gap.diff().iloc[1:]
+            src = (f"derived:float_returned[the rise of max(0, Σ buyback_held_tokens − Δ{held['held']}"
+                   + (f" − Σ{'+'.join(burned)}" if burned else "") + ")]")
+            base = groups[(name, held["held"])]
+        else:
+            continue
+        if v.empty:
+            continue
+        groups[(name, "float_returned_tokens")] = bw._as_stored(pd.DataFrame(
+            {"date": v.index, "project": name, "metric": "float_returned_tokens", "value": v.values, "tier": 2,
+             "source": src}), base.columns)
+
+
+def burn_memo(name: str, groups: dict, asof, window: tuple | None = None) -> dict:
+    """THE MEMO LINE (R21): where each burn of the window came from — {"float", "staked", "treasury", "not split"} in
+    tokens (the declared source of each series, config.BURN_SERIES; Uniswap's one-offs out of an issuer-side wallet are
+    'treasury' by their declared one_off_flows row) — plus the off-float share's effect on net float pressure
+    (tokens a year ÷ the free float, each leg annualised as the burns cell does: by events x cadence where declared,
+    else over the days its series — or its mint's, `annualise_as` — covers in the window), the one-offs named in the window
+    (config.ONE_OFF_NAMED) and the text the CP cell shows. Never guessed: a series with no row in the window is named."""
+    import build_workbook as bw                                          # noqa: PLC0415
+    asof = pd.Timestamp(asof).normalize()
+    start, end = window or (asof - pd.Timedelta(days=int(bw.GLOBALS["period_days"])), asof)
+    start, end = pd.Timestamp(start), pd.Timestamp(end)
+    out = {k: 0.0 for k in config.BURN_SOURCES}
+    yearly = {k: 0.0 for k in config.BURN_SOURCES}
+    missing, parts = [], []
+    span = max((end - start).days, 1)
+
+    def per_year(metric, w, tot, cov_of=None):
+        ev = config.events_per_year(name, metric)
+        if ev:
+            n = int((w != 0).sum())
+            return tot / n * ev if n else tot * 365.0 / span
+        c = bw._daily(groups.get((name, cov_of or metric)))
+        cov = int(((c.index > start) & (c.index <= end)).sum()) if not c.empty else len(w)
+        return tot * 365.0 / min(max(cov, 1), span)
+    p = config.PROJECT_BY_NAME.get(name) or {}
+    for b in config.burn_series(name):
+        s = bw._daily(groups.get((name, b["metric"])))
+        w = s[(s.index > start) & (s.index <= end)]
+        if w.empty:
+            missing.append(b["metric"])
+            continue
+        tot = float(w.sum())
+        if b["metric"] == config.a1_burn_metric(name):
+            for f in p.get("one_off_flows") or ():
+                day = pd.Timestamp(f.get("landed") or f["window"][0])
+                if f.get("metric") == b["metric"] and f.get("from_stock") and start < day <= end \
+                        and tot >= float(f["tokens"]):           # the one-off is in the series that window
+                    tot -= float(f["tokens"])
+                    out["treasury"] += float(f["tokens"])
+                    yearly["treasury"] += float(f["tokens"]) * 365.0 / span
+                    parts.append(f"{float(f['tokens']):,.0f} {f['what']} (treasury)")
+        out[b["from"]] += tot
+        yearly[b["from"]] += per_year(b["metric"], w, tot, b.get("annualise_as"))
+        parts.append(f"{b['metric']} {tot:,.0f} ({b['from']})")
+    ff = bw._daily(groups.get((name, FF))).dropna()
+    ff = ff[ff.index <= end]
+    off = out["staked"] + out["treasury"]
+    pts = ((yearly["staked"] + yearly["treasury"]) / float(ff.iloc[-1])) if (len(ff) and float(ff.iloc[-1]) > 0) \
+        else None
+    named = [o["what"] for o in config.ONE_OFF_NAMED.get(name, ())
+             if pd.Timestamp(o["from"]) <= end and pd.Timestamp(o["to"]) > start]
+    tot_all = sum(out.values())
+    if not config.burn_series(name):
+        text = "no burn — " + (config.BURN_NONE.get(name) or "no burn series declared")
+    else:
+        text = (f"burns {start.date()}..{end.date()}: " + (", ".join(
+            f"from {k} {v:,.0f} ({v / tot_all:.0%})" for k, v in out.items() if v) if tot_all else "0 burned")
+            + (f" — {'; '.join(parts)}" if parts else "")
+            + (f"; NO ROW in the window: {', '.join(missing)}" if missing else ""))
+        if pts is not None and off:
+            text += (f". Off-float burns (staked + treasury) = {pts:+.2%} of the free float a year"
+                     + (" — MOVES THE HEADLINE BY MORE THAN 1 POINT" if pts > config.BURN_OFF_FLOAT_REPORT else ""))
+        if named:
+            text += ". One-off in the window (in the yearly rate, a named line): " + "; ".join(named)
+    return {**out, "off_float_rate": pts, "missing": missing, "one_offs": named, "text": text[:1500]}
 
 
 def _leg_kind(name: str, label: str, sign: int) -> str:
@@ -543,9 +678,10 @@ def check_workbook(audit_path, reader_path=None, rel: float = 1e-9) -> list[str]
 
 
 def check_nets(audit_path, rel: float = 1e-9) -> list[str]:
-    """The two nets on CP, each against its own two sides on the same row (R20 item 5): NET HOLDER YIELD = HOLDER VALUE
-    YIELD − DILUTION, % OF MARKET CAP; NET FLOAT PRESSURE = BUYING PRESSURE ON FLOAT − TOTAL DILUTION ÷ free float
-    (a buying pressure that is a by-design code counts 0). Rows where a side is not a number are skipped."""
+    """The two nets on CP, each against its own sides on the same row (R20 item 5; R21): NET HOLDER YIELD = HOLDER VALUE
+    YIELD − DILUTION, % OF MARKET CAP; NET FLOAT PRESSURE = BUYING PRESSURE ON FLOAT + BURNS ON FLOAT − TOTAL DILUTION ÷
+    free float − BOUGHT TOKENS RETURNED TO THE FLOAT (a buying pressure that is a by-design code counts 0). Rows where a
+    side is not a number are skipped."""
     import openpyxl                                                      # noqa: PLC0415
     wb = openpyxl.load_workbook(audit_path, data_only=True, read_only=True)
     ws = next(wb[n] for n in wb.sheetnames if n.startswith("CP"))
@@ -554,10 +690,11 @@ def check_nets(audit_path, rel: float = 1e-9) -> list[str]:
     num = lambda v: isinstance(v, (int, float)) and not isinstance(v, bool)  # noqa: E731
     hvy, dmc, nhy = col("HOLDER VALUE YIELD"), col("DILUTION, % OF MARKET CAP"), col("NET HOLDER YIELD")
     buy, nfp = col("BUYING PRESSURE ON FLOAT"), col("NET FLOAT PRESSURE")
+    brn, ret = col(BURNS_PREFIX), col(RETURNED_PREFIX)
     dil = next((j for j, h in enumerate(heads) if h.startswith("TOTAL DILUTION = outflows") and h.endswith("÷ free float")),
                None)
     out = []
-    if None in (hvy, dmc, nhy, buy, nfp, dil):
+    if None in (hvy, dmc, nhy, buy, nfp, dil, brn, ret):
         return ["CP: a column of the two nets is missing"]
     for r in body:
         name = str(r[0]).strip()
@@ -565,9 +702,75 @@ def check_nets(audit_path, rel: float = 1e-9) -> list[str]:
             out.append(f"{name}: net holder yield {r[nhy]:.6f} is not holder value yield {r[hvy]:.6f} − dilution % of "
                        f"market cap {r[dmc]:.6f}")
         b = 0.0 if name in config.BUYING_PRESSURE_BY_DESIGN else r[buy]
-        if num(b) and num(r[dil]) and num(r[nfp]) and abs(b - r[dil] - r[nfp]) > rel:
-            out.append(f"{name}: net float pressure {r[nfp]:.6f} is not buying pressure {b:.6f} − total dilution "
-                       f"÷ free float {r[dil]:.6f}")
-        if num(r[nfp]) and not (num(b) and num(r[dil])):
+        sides = (b, r[brn], r[dil], r[ret])
+        if all(num(x) for x in sides) and num(r[nfp]) and abs(b + r[brn] - r[dil] - r[ret] - r[nfp]) > rel:
+            out.append(f"{name}: net float pressure {r[nfp]:.6f} is not buying pressure {b:.6f} + burns {r[brn]:.6f} − "
+                       f"total dilution ÷ free float {r[dil]:.6f} − returned {r[ret]:.6f}")
+        if num(r[nfp]) and not all(num(x) for x in sides):
             out.append(f"{name}: net float pressure is a number while a side is not")
+    return out
+
+
+# ---------------------------------------------------------------------------------------------------------------------
+# R21 (Jake 2026-11-25, item 0): THE CHECK THAT EVERY PROJECT'S BURN SERIES IS IN ITS NET FLOAT PRESSURE.
+BURNS_PREFIX = "BURNS ON FLOAT"
+RETURNED_PREFIX = "BOUGHT TOKENS RETURNED TO THE FLOAT"
+
+
+def check_burns(audit_path) -> list[str]:
+    """Every project's declared burn series (config.burn_series) is in its net float pressure on CP. Returns the
+    violations (empty = clean):
+      - CP has no BURNS ON FLOAT column, or NET FLOAT PRESSURE does not read it on the row;
+      - a declared burn series the Data sheet holds for the project is not read by the row's burns cell;
+      - a project that declares a burn series shows a declared 0 (no series read) in its burns cell;
+      - a burn-named token flow on the Data sheet of one of the R21 projects is neither a declared burn series nor
+        declared not-in-the-net with its reason (config.BURN_NOT_IN_NET).
+    Reads the formulas (the audit file as written), so it needs no recalculation."""
+    import openpyxl                                                      # noqa: PLC0415
+    wb = openpyxl.load_workbook(audit_path, read_only=True)
+    # a series is STORED for a project where its Data row holds points (every metric has a row, most of them empty)
+    dh = [str(h or "") for h in next(wb["Data"].iter_rows(min_row=1, max_row=1, values_only=True))]
+    j_pts = next((j for j, h in enumerate(dh) if h == "Points"), None)
+    keys = set()
+    for r in wb["Data"].iter_rows(min_row=2, values_only=True):
+        if r and r[0] and (j_pts is None or (isinstance(r[j_pts], (int, float)) and r[j_pts] > 0)):
+            keys.add(str(r[0]))
+    ws = next(wb[n] for n in wb.sheetnames if n.startswith("CP"))
+    rows = list(ws.iter_rows())
+    hr = next((i for i, r in enumerate(rows[:12]) if r and str(r[0].value or "").strip() == "Project"), None)
+    if hr is None:
+        return ["CP: no project table"]
+    heads = [str(c.value or "") for c in rows[hr]]
+    jb = next((j for j, h in enumerate(heads) if h.startswith(BURNS_PREFIX)), None)
+    jn = next((j for j, h in enumerate(heads) if h.startswith("NET FLOAT PRESSURE")), None)
+    if jb is None or jn is None:
+        return ["CP: the BURNS ON FLOAT or NET FLOAT PRESSURE column is missing"]
+    out = []
+    for r in rows[hr + 1:]:
+        if not r or str(r[0].value or "").strip() in ("", "Project"):
+            continue
+        name = str(r[0].value).strip()
+        if name not in config.PROJECT_BY_NAME:
+            continue
+        bcell, ncell = r[jb], r[jn]
+        f_b, f_n = str(bcell.value or ""), str(ncell.value or "")
+        declared = [b["metric"] for b in config.burn_series(name)]
+        stored = [m for m in declared if f"{name}|{m}" in keys]
+        if f_n.startswith("=") and bcell.coordinate not in f_n.replace("$", ""):
+            out.append(f"{name}: net float pressure does not read its burns cell {bcell.coordinate}")
+        if not f_b.startswith("="):
+            continue                     # a text reason (the free float not formed, a series with no row): the net is n/a
+        for m in stored:
+            if f'|{m}"' not in f_b:
+                out.append(f"{name}: the burn series {m} is stored but not in net float pressure's burns cell")
+        if declared and f_b.replace(" ", "") in ("=0", "0"):
+            out.append(f"{name}: declares burn series ({', '.join(declared)}) but its burns cell is a declared 0")
+        if name in config.BURN_PROJECTS_R21:
+            for k in keys:
+                pn, _, m = k.partition("|")
+                md = config.METRICS.get(m) or {}
+                if pn == name and "burn" in m and md.get("kind") == "flow" and md.get("unit") == "tokens" \
+                        and m not in declared and (name, m) not in config.BURN_NOT_IN_NET:
+                    out.append(f"{name}: the burn series {m} is neither in net float pressure nor declared out of it "
+                               "(config.BURN_NOT_IN_NET)")
     return out

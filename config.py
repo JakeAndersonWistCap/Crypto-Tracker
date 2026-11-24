@@ -50677,3 +50677,233 @@ NAMED_SCAN_GAPS = {
         f"{PENDLE_BERACHAIN_GAP['share']} — {PENDLE_BERACHAIN_GAP['worth']}. Time-capped "
         f"(--seed pendle_berachain stops after {PENDLE_BERACHAIN_GAP['seed_cap_min']} min)."),
 }
+
+# =====================================================================================================================
+# ===== R21 — BURNS (Jake 2026-11-25; SPEC "Round 21 — burns"). Burns count in net float pressure; the bought-back-token
+# rules F1-F7; paused / off labels and "unranked". Code: free_float.py (buying_views, returned_views, burn_memo,
+# check_burns, check_nets), build_workbook._float_pressure_cols (CP), reader._arch_ranking. Tests: tests/test_r21_burns.py
+# =====================================================================================================================
+# ----- 1. EVERY BURN, A NAMED SUPPLY-REDUCTION LINE OF NET FLOAT PRESSURE ("any burn"). -----
+#   Net float pressure = revenue-funded buying + burns − new supply − bought tokens returned to the float, each in
+#   tokens a year ÷ the one free float. A burn is never buying: a buyback that is burned leaves the buying line and is
+#   counted once, as the burn (on the day it is burned). Burns of tokens that were off the float count too; the memo
+#   says where each burn came from — "float" (out of liquid hands), "staked" (out of a stake / lock), "treasury" (out of
+#   an issuer, treasury or held-buyback wallet) or "not split" (the series does not say) — never guessed.
+#   Per series: metric, from, why; `annualise_as` (a burn of tokens minted earlier on the same float is annualised over
+#   the covered days of the series its mint is in, so the two net exactly — Aerodrome's 10M of 2026-11-19 / 11-20).
+BURN_SOURCES = ("float", "staked", "treasury", "not split")
+BURN_SERIES = {
+    "Ethereum": ({"metric": "gross_burn_tokens", "from": "float",
+                  "why": "EIP-1559 base fee: ETH paid as gas by the sending accounts (liquid ETH; a validator's stake "
+                         "cannot pay gas) — eips.ethereum.org/EIPS/eip-1559"},),
+    "Uniswap": ({"metric": "gross_burn_tokens", "from": "float",
+                 "why": "burn-to-claim: UNI the claimant holds or buys, burned through the Firepit to release the "
+                        "TokenJar (proposal 93); the 100,000,000 one-off of 2025-12-27 left the Timelock (treasury) — "
+                        "split out by its declared one_off_flows row (from_stock)"},),
+    "Sky": ({"metric": "sky_stage2_burn_tokens", "from": "treasury",
+             "why": "SKY the Smart Burn Engine bought sits in the Pause Proxy (a held buyback, off the float) until a "
+                    "spell burns it — every Stage 2 burn is out of that holding"},),
+    "Near": ({"metric": "gross_burn_tokens_bigquery", "from": "float",
+              "why": "the protocol burns 70% of gas (nomicon.io economics): NEAR paid as gas by the sending accounts "
+                     "(liquid balances) — the chain's own record (block headers' total_supply falls)"},),
+    "Aethir": ({"metric": "gross_burn_tokens", "from": "float",
+                "why": "the daily fee burn (live 2026-11-02): ATH customers paid as network fees, taken from the "
+                       "service-fee escrow — not a stake, not an issuer wallet, so out of the float (R20.A3)"},),
+    "GEODNET": ({"metric": "gross_burn_tokens", "from": "float",
+                 "why": "GEOD bought on the market with revenue and burned on purchase — out of liquid hands"},),
+    "Aerodrome": ({"metric": "buyback_burned_tokens", "from": "staked",
+                   "why": "the Foundation's burned buyback: AERO it bought and LOCKED (veAERO) is burned out of the "
+                          "escrow (VotingEscrow.burnFees) — out of a stake"},
+                  {"metric": "foundation_aero_burned_other_tokens", "from": "staked",
+                   "annualise_as": "gross_issuance_accrued_tokens",
+                   "why": "AERO a Foundation wallet destroyed out of the escrow that is not a burned buyback — the "
+                          "10,000,000 minted 2026-11-19 (Gauge Caps surplus, in issuance (b)) and burned 11-20: it nets "
+                          "against that mint on the same float (annualised over the issuance series' covered days)"}),
+    "Hyperliquid": ({"metric": "total_burn_tokens", "from": "float",
+                     "why": "every HYPE burn the supply sees (A1's burn): the Assistance Fund's intake (HYPE bought on "
+                            "the market with fees) + the Core burns outside it (deploy gas, priority fees). The "
+                            "Fund's treatment (burned or held) is the Hyperliquid research lane's question; whatever "
+                            "is declared burned flows in here"},),
+}
+# A project with no burn mechanism says so (the burns line is a declared 0, never a code).
+BURN_NONE = {
+    "Chainlink": "no burn mechanism: the Reserve holds the LINK it buys (nothing is destroyed)",
+    "Fluid": "no burn mechanism: bought FLUID went to the governance treasury (held), never burned",
+    "Ether.fi": "no burn mechanism: bought ETHFI is paid to stakers or card users; nothing burned since 2025-09-19",
+    "Maple": "no burn mechanism: bought SYRUP lives in the Syrup Strategic Fund (held)",
+    "Pendle": "no burn mechanism: bought PENDLE is paid to sPENDLE holders as sPENDLE",
+    "Morpho": "no burn mechanism: fixed supply, the fee switch is off",
+}
+# Every other burn-named series of these projects, and why it is NOT a separate leg of the net (the test fails on a
+# burn series that is in neither list).
+BURN_NOT_IN_NET = {
+    ("Ethereum", "burn_cumulative_tokens"): "a stock (the protocol counter); its daily rise is gross_burn_tokens",
+    ("Uniswap", "one_off_burn_tokens"): "the dated display of the 100M one-off, already inside gross_burn_tokens",
+    ("Uniswap", "burn_address_balance"): "a stock (0x…dEaD); its daily rise is gross_burn_tokens",
+    ("Uniswap", "gross_burn_day_priced_usd"): "$, not tokens (the same burn x each day's price)",
+    ("Sky", "gross_burn_tokens"): "the Pause Proxy's whole burn history differenced (two unrelated events): its Stage 2 "
+                                  "leg is sky_stage2_burn_tokens, the rest other_burn_tokens",
+    ("Sky", "sky_stage2_burn_balance"): "a stock; its daily rise is sky_stage2_burn_tokens",
+    ("Sky", "buyback_burned_tokens"): "the buyback x its burned share on the PURCHASE day — an attribution; the burn "
+                                      "itself is sky_stage2_burn_tokens on the day the spell burns it",
+    ("Sky", "other_burn_balance"): "a stock; its daily rise is other_burn_tokens",
+    ("Sky", "other_burn_tokens"): "SKY destroyed by an UNRECOGNISED sender: declared not applicable as a burn of Sky's "
+                                  "(the five-way split, Jake 2026-09-24 — surfaced, not folded in, until the sender is "
+                                  "identified); 0 on every stored day",
+    ("Sky", "burn_address_balance"): "a stock",
+    ("Sky", "gross_burn_day_priced_usd"): "$, not tokens",
+    ("Near", "gross_burn_tokens"): "another read of the same protocol burn (A1 reads gross_burn_tokens_bigquery)",
+    ("Near", "near_chain_burn_tokens"): "the same burn on its own days (the headers' record, the rule x fees before) — "
+                                        "a second read of gross_burn_tokens_bigquery",
+    ("Near", "buyback_burned_tokens"): "the buyback x its burned share on the purchase day (Near's buyback is held)",
+    ("Aethir", "burn_address_balance"): "a stock; its daily rise is gross_burn_tokens",
+    ("GEODNET", "gross_burn_tokens_dune_monthly"): "the monthly cross-check of gross_burn_tokens, never summed with it",
+    ("GEODNET", "buyback_burned_tokens"): "the buyback x its burned share — the same tokens as gross_burn_tokens",
+    ("GEODNET", "burn_address_balance"): "a stock",
+    ("GEODNET", "gross_burn_day_priced_usd"): "$, not tokens",
+    ("Aerodrome", "foundation_aero_burned_tokens"): "the Foundation's own-stake burns = buyback_burned_tokens (its "
+                                                    "burned buyback, R20.A1); the rest is foundation_aero_burned_other",
+    ("Hyperliquid", "gross_burn_tokens"): "the Assistance Fund leg, inside total_burn_tokens",
+    ("Hyperliquid", "core_burn_tokens"): "the burns outside the Fund, inside total_burn_tokens",
+    ("Hyperliquid", "buyback_burned_tokens"): "the buyback x its burned share — the Fund leg's tokens",
+    ("Hyperliquid", "burn_ex_chain_fee_tokens"): "total_burn_tokens less the HyperEVM gas burn (A4's view), a subset",
+    ("Hyperliquid", "burn_auction_tokens"): "ASXN's history of a leg inside total_burn_tokens (the non-AF burns)",
+    ("Hyperliquid", "burn_hyperevm_tokens"): "ASXN's history of a leg inside total_burn_tokens (the non-AF burns)",
+    ("Hyperliquid", "hyperevm_burn_tokens_asxn"): "the cross-check of the HyperEVM burn leg",
+    ("Hyperliquid", "hyperevm_priority_burn_tokens"): "NOT in the supply the float is formed on (tokenDetails); whether "
+                                                       "it is inside core_burn_tokens is the Hyperliquid research "
+                                                       "lane's question (R21) — not added, never guessed",
+    ("Hyperliquid", "burn_address_balance"): "a stock",
+    ("Hyperliquid", "burn_auction_usd"): "$", ("Hyperliquid", "burn_hyperevm_usd"): "$",
+    ("Hyperliquid", "hyperevm_burn_usd_asxn"): "$", ("Hyperliquid", "gross_burn_day_priced_usd"): "$",
+    ("Hyperliquid", "total_burn_day_priced_usd"): "$",
+    **{(_n, "buyback_burned_tokens"): "the buyback x its burned share (0: nothing burned)"
+       for _n in ("Chainlink", "Fluid", "Ether.fi", "Maple", "Pendle")},
+}
+BURN_PROJECTS_R21 = ("Ethereum", "Uniswap", "Sky", "Near", "Aethir", "GEODNET", "Aerodrome", "Hyperliquid", "Chainlink",
+                     "Fluid", "Ether.fi", "Maple", "Pendle", "Morpho")
+
+
+def burn_series(project_name: str) -> tuple:
+    """The burn series net float pressure counts for this project ({metric, from, why} dicts): the declared list, () where
+    BURN_NONE says it has none, else (a project not reviewed in R21) A1's burn — every burn the supply sees — 'not
+    split'."""
+    if project_name in BURN_SERIES:
+        return BURN_SERIES[project_name]
+    if project_name in BURN_NONE:
+        return ()
+    p = PROJECT_BY_NAME.get(project_name) or {}
+    m = a1_burn_metric(project_name)
+    return ({"metric": m, "from": "not split", "why": "A1's burn (every burn the supply sees); not reviewed in R21"},) \
+        if p and m in metrics_for_project(p) else ()
+
+
+# Off-float burns that move the headline by more than this (net float pressure, % a year as a fraction) are reported.
+BURN_OFF_FLOAT_REPORT = 0.01
+
+# ----- 2. THE DEMAND SIDE: revenue-funded BUYING, whatever the bought tokens' destination except the burn (F2). -----
+#   float_buying_tokens = the buyback HELD + DISTRIBUTED (buyback_held_tokens + buyback_distributed_tokens) on the days
+#   it was revenue-funded (holder_funding) + the purchases paid on to customers (F1, Ether.fi: "buying counts as
+#   buying"). A project that buys nothing on the market reads a declared 0 (was: Ethereum n/a, Uniswap and Aethir
+#   "by design"): its burns are their own line.
+BUYING_ZERO_DECLARED = {
+    "Ethereum": "0 — nothing is bought on the market (no buyback programme); the EIP-1559 burn is on the burns line",
+    "Uniswap": "0 — the protocol buys no UNI on the market; burn-to-claim is on the burns line (Jake R21: a burn is "
+               "never labelled buying or demand)",
+    "Aethir": "0 — the protocol buys no ATH on the market; the daily fee burn is on the burns line (R21)",
+}
+for _n in ("Uniswap", "Aethir"):
+    BUYING_PRESSURE_BY_DESIGN.pop(_n, None)          # R21: a declared 0 (BUYING_ZERO_DECLARED), not a by-design code
+BUYING_CUSTOMERS_F1 = {"Ether.fi": "buyback_to_customers_tokens"}   # F1: purchases paid on to card users are buying
+METRICS["float_buying_tokens"] = dict(METRICS["float_buying_tokens"], label=(
+    "Revenue-funded buying (tokens a day) — the buyback held or distributed (buyback_held_tokens + "
+    "buyback_distributed_tokens) on the days it was revenue-funded (config.holder_funding), + purchases paid on to "
+    "customers (F1); a burned buyback is on the burns line, not here (R21; was R20: retired = burned + held)"))
+
+# ----- 3. BOUGHT TOKENS RETURNED TO THE FLOAT (F1, F2, F3, F7): a supply line of net float pressure. -----
+#   A payout of bought tokens that arrives LIQUID returns to the float on the day it leaves the programme wallet; one that
+#   arrives staked stays off (Pendle: paid as sPENDLE — nothing returns). Declared payout legs: `paid` − `less` (the part
+#   the purchases did not cover is already new supply, outflow (c)). A held buyback stock with no declared payout leg
+#   (F7): its fall returns to the float on the day it leaves the holding wallet (sale, payout or transfer), less what
+#   the wallet burned that day (a burn is a burn).
+FLOAT_RETURNS = {
+    "Ether.fi": {"paid": "cashback_paid_tokens", "less": "cashback_unfunded_tokens",
+                 "why": "F1: the programme's ETHFI paid to card users as cashback (CashbackDistributor 0x38F2fBb2… on OP), "
+                        "the part its purchases covered — the uncovered part is outflow (c). No recipient lock is visible "
+                        "on chain (the cashback lands liquid)"},
+    "Sky": {"paid": "emissions_tokens", "less": "sky_staking_rewards_unfunded_tokens",
+            "why": "F2/F3: SKY paid to stakers (the weekly vest out of the Pause Proxy, claimed liquid), the part the "
+                   "SKY bought for stakers covered — only the uncovered part is emissions, outflow (c)"},
+}
+FLOAT_RETURNS_HELD = {
+    "Maple": {"held": "ssf_holdings_tokens", "why": "F7: SYRUP leaving the Syrup Strategic Fund (sale, payout or "
+                                                    "transfer) returns to the float"},
+    "Near": {"held": "buyback_fund_balance", "why": "F7: NEAR leaving the buyback fund returns to the float"},
+}
+FLOAT_RETURNS_NONE = {
+    "Pendle": "F2: the buyback is paid to sPENDLE holders AS sPENDLE (already staked) — it stays off the float",
+}
+METRICS["float_returned_tokens"] = {
+    "label": "Bought tokens returned to the float (tokens a day): payouts of bought tokens that arrive liquid (F1/F2/F3) "
+             "and falls of a held buyback stock (F7), less what was burned — a supply line of net float pressure (R21)",
+    "kind": "flow", "unit": "tokens", "archetypes": [1, 2, 3, 4], "tiers": [2], "sanity_min": 0, "sanity_max": 1e12,
+    "view_only": True, "only_projects": (*FLOAT_RETURNS, *FLOAT_RETURNS_HELD)}
+
+# ----- 4. F3: A STAKING REWARD PAID FROM BOUGHT-BACK TOKENS IS NOT NEW SUPPLY (only the remainder is emissions). -----
+#   Checked for every project that pays staking rewards (STAKING_REWARDS_F3): only Sky's are paid out of bought tokens
+#   with a measured series (the vest out of the Pause Proxy, refilled by the Smart Burn Engine since Stage 2,
+#   2026-08-17). The same rule as the Ether.fi cashback (CASHBACK_FUNDING): uncovered = the rise in max(0, Σ paid −
+#   Σ bought) since the date — purchases before it are not counted (`bought_from_since`).
+CASHBACK_FUNDING["Sky"] = {
+    "paid": "emissions_tokens", "bought": "buyback_distributed_tokens", "out": "sky_staking_rewards_unfunded_tokens",
+    "since": "2026-08-17", "bought_from_since": True,
+    "source": "Sky Stage 2 (2026-08-17): 22.5% of Net Protocol Surplus buys SKY for SKY stakers; the weekly vest to "
+              "the staking farm is paid out of the Pause Proxy (docs/r20_research_frozen_audit.md section 3, F3)"}
+METRICS["sky_staking_rewards_unfunded_tokens"] = {
+    "label": "SKY staking rewards NOT covered by the SKY bought for stakers (the rise in max(0, Σ vest − Σ bought for "
+             "stakers) since 2026-08-17) — the part that is new supply, outflow (c) (R21 F3)",
+    "kind": "flow", "unit": "tokens", "archetypes": [3], "tiers": [2], "sanity_min": 0, "sanity_max": 1e12,
+    "only_projects": ("Sky",), "view_only": True}
+OUTFLOW_CATEGORIES["Sky"]["c"] = ("sky_staking_rewards_unfunded_tokens",)
+STAKING_REWARDS_F3 = {
+    "Sky": "paid from the Pause Proxy, refilled with SKY bought for stakers since 2026-08-17 — WIRED (CASHBACK_FUNDING)",
+    "Pendle": "the buyback paid as sPENDLE is not counted as emissions; emissions are gauge incentives (b), minted "
+              "against no purchase — nothing to net",
+    "Ether.fi": "sETHFI top-ups come from the Foundation's own stock (e); the old programme's purchases for stakers "
+                "stopped 2026-04-01 — nothing to net in the windows read",
+    "Aerodrome": "the rebase to lockers is minted (c); the Foundation's buyback is treasury-funded and locked — nothing "
+                 "to net",
+    "Hyperliquid": "staking rewards come from the pre-minted Future Emissions pool (a); bought HYPE goes to the "
+                   "Assistance Fund — nothing to net",
+    "Near": "validator rewards are minted each epoch (a); the buyback fund holds — nothing to net",
+    "Ethereum": "issuance is minted (b) — nothing to net",
+    "Chainlink": "staking rewards from issuer stock (a); the Reserve's LINK is not paid out — nothing to net",
+    "Aethir": "AI / Gaming pools paid from the staking emission schedule (a) — nothing to net",
+    "GEODNET": "no staking reward from bought GEOD (bought GEOD is burned)",
+    "Maple": "staking ended November 2025", "Fluid": "no staking rewards", "Morpho": "no staking rewards",
+    "Uniswap": "no staking rewards",
+}
+
+# ----- 5. F4 + decision 5: "paused" / "off" labelled by evidence; such a programme is UNRANKED (not ranked on a 0). ---
+ARCHETYPE_STATUS.update({"Fluid": {3: "paused, no restart condition stated"},
+                         "Ether.fi": {3: "not executing since 1 Apr"}, "Morpho": {3: "off"}})
+ARCHETYPE_STATUS_WHY.update({
+    ("Fluid", 3): "the governance post of 2026-05-11 (gov.fluid.io/t/1774) is headed 'Pause Buybacks' and states no "
+                  "date or condition to resume; the last purchase was 2026-03-20",
+    ("Ether.fi", 3): "the treasury buyback (up to $50M while ETHFI < $3) is still authorised, its condition met, but has "
+                     "bought nothing since 2026-04-01; no pause was announced (the programmatic buys go to card users)",
+    ("Morpho", 3): "the fee switch is off: fee 0 on every listed market, fee recipient the zero address, no proposal",
+})
+
+# ----- 6. F5: one-offs stay in the yearly rate as a NAMED line (they come off the float as fact). -----
+ONE_OFF_NAMED = {
+    "Sky": ({"from": "2026-11-19", "to": "2026-11-25",
+             "what": "the emergency one-off buyback, 750,000 USDS a day for 7 days (5.25M USDS), the SKY bought to be "
+                     "burned (forum.sky.money thread 28439, executed 2026-11-19 tx 0xebb6efef…); Splitter burn 90.81% "
+                     "for the week"},),
+    "Uniswap": ({"from": "2025-12-27", "to": "2025-12-27",
+                 "what": "the 100,000,000 UNI treasury burn of proposal 93 (from the Timelock)"},),
+    "Aerodrome": ({"from": "2026-11-19", "to": "2026-11-20",
+                   "what": "the 10,000,000 AERO minted 11-19 and burned 11-20 (nets against its mint)"},),
+}
+# F6 (Pendle's airdrops of other tokens) and F8 (dropped): see SPEC "Round 21 — burns".

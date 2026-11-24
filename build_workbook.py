@@ -6850,6 +6850,8 @@ def _cashback_funding_views(groups: dict) -> None:
         # before the programme nothing was bought: a payout then came out of stock in full
         b = bought.reindex(paid.index.union(bought.index))
         b[(b.index < since) & b.isna()] = 0.0
+        if spec.get("bought_from_since"):
+            b[b.index < since] = 0.0       # R21 F3 (Sky): only purchases from the date fund the payout
         both = pd.concat([paid.rename("p"), b.rename("b")], axis=1).dropna()
         if both.empty:
             continue
@@ -8800,7 +8802,8 @@ def aggregate(long: pd.DataFrame, fetch_status: pd.DataFrame, asof: pd.Timestamp
     _holder_value_views(groups)   # Phase 2: revenue-funded holder value, credited vs recorded (LITMUS A)
     _revenue_to_holders_views(groups)   # R20: A3's numerator — credited holder value less the protocol-rule fee burn
     _gross_burn_day_priced_usd_views(groups, asof)    # PR1B.3: $ burn = each day's burn x that day's price, the holder-value basis
-    free_float.buying_views(groups)   # R20: revenue-funded buying (burned or held) — net float pressure's demand side
+    free_float.buying_views(groups)   # R20/R21: revenue-funded buying (held or distributed) — net float pressure's demand side
+    free_float.returned_views(groups)  # R21: bought tokens returned to the float (F1/F2/F3/F7) — a supply line
     free_float.views(groups, asof)    # R20: THE ONE FREE FLOAT, its components and its daily movements
     _settlement_views(groups)
     _monthly_flow_views(groups)       # P2a D5b: complete-month flows from daily log scans (Maple's SSF Safe)
@@ -12011,13 +12014,14 @@ def a3_key_note(p: dict) -> str:
     name = p["name"]
     st = config.archetype_status(name, 3)
     halt = config.buyback_halt_text(name)          # PR2.3: a halted programme's 0 is a measured 0, dated
+    lab = ""
     if st:
-        return (halt + "\n\n" if halt else "") + (
-                f"A3 KEY (R20, Jake 2026-11-24): 0 — {st}: {config.ARCHETYPE_STATUS_WHY.get((name, 3), st)}. A "
-                f"programme labelled '{st}' reads 0 with the label (config.ARCHETYPE_STATUS).")
+        lab = (halt + "\n\n" if halt else "") + (
+            f"A3 KEY — {st} (R21, Jake 2026-11-25, decision 5): {config.ARCHETYPE_STATUS_WHY.get((name, 3), st)}. "
+            f"The key reads what the data reads (0 only where the data says 0) and the project is UNRANKED.\n\n")
     cats = a3_key_cats(p)
     bc = (config.HOLDER_VALUE.get(name) or {}).get("burn_credited")
-    return ("A3 KEY (R20, Jake 2026-11-24): revenue sent to holders ($) ÷ value of new supply ($), the same window, "
+    return lab + ("A3 KEY (R20, Jake 2026-11-24): revenue sent to holders ($) ÷ value of new supply ($), the same window, "
             f"each per covered day. Numerator {a3_key_numerator(name)} = revenue-funded market buybacks however the tokens "
             "end up (burned, held or distributed) + revenue paid directly to stakers, in any token"
             + (f", less the protocol-rule fee burn ({bc['metric']} x price — A4's)" if bc else "")
@@ -12041,8 +12045,8 @@ def _a3_key_col(R: Refs, data_by_key: dict | None = None) -> tuple:
         name = p["name"]
         # the label is today's: the key reads 0 with it. An earlier quarter (the trajectory re-runs this builder k
         # quarters back) keeps what was measured then — a programme paused in May still paid in March
-        if config.archetype_status(name, 3) and not _SHIFT["k"]:
-            return "=0"
+        # R21 (decision 5): a paused / off programme is no longer forced to 0 — the key reads what the data reads (0
+        # only where the data says 0), with the label; the reader leaves it unranked (reader._arch_ranking)
         nm = a3_key_numerator(name)
         if nm not in config.metrics_for_project(p):
             return "n/a — no revenue-to-holders series: no buyback programme and no declared payout to holders"
@@ -14902,13 +14906,14 @@ def _held_buyback_note(p: dict) -> str:
 HELD_BUYBACK_HEAD = ("Held buyback inside circulating (tokens) — off the free float while held (R20; P4-Q5b)")
 # R20 (Jake 2026-11-24, item 5): the DEMAND SIDE of net float pressure — revenue-funded buying, burned or held. Was
 # (P4-Q5c): "... = all market buybacks (burned + held + distributed, tokens, annualised) ÷ tradeable float (P4-Q5c)"
-BUYING_PRESSURE_HEAD = ("BUYING PRESSURE ON FLOAT, % a year = revenue-funded buying, burned or held (tokens, annualised) ÷ "
-                        "free float — the demand side of net float pressure (R20)")
+BUYING_PRESSURE_HEAD = ("BUYING PRESSURE ON FLOAT, % a year = revenue-funded buying, held or paid out (tokens, annualised) "
+                        "÷ free float — the demand side of net float pressure; a burned buyback is a burn (R21)")
 ISSUER_HELD_HEAD = ("Issuer, foundation and treasury holdings inside circulating (tokens) — off the free float (R20)")
 DILUTION_MC_HEAD = ("DILUTION, % OF MARKET CAP = outflows a+b+c+d+e+f at each day's price (annualised) ÷ average market "
                     "cap over the window — what net holder yield subtracts (R20)")
-NET_FLOAT_PRESSURE_HEAD = ("NET FLOAT PRESSURE, % a year = buying pressure on float − total dilution ÷ free float "
-                           "(revenue-funded buying, burned or held − new supply; both ÷ free float) (R20)")
+NET_FLOAT_PRESSURE_HEAD = ("NET FLOAT PRESSURE, % a year = buying pressure on float + burns on float − total dilution ÷ "
+                           "free float − bought tokens returned to the float (revenue-funded buying + burns − new "
+                           "supply; all ÷ free float) (R21)")
 
 
 def _buying_pressure_col(R: Refs) -> tuple:
@@ -14923,8 +14928,8 @@ def _buying_pressure_col(R: Refs) -> tuple:
         name = p["name"]
         route = config.buyback_route(name)
         if route["route"] == "none" or "actual_buyback_tokens" not in config.metrics_for_project(p):
-            if config.holder_value_absent(name) or _retirement_zero(p):
-                return "=0"
+            if config.holder_value_absent(name) or _retirement_zero(p) or name in config.BUYING_ZERO_DECLARED:
+                return "=0"                                     # R21: Ethereum, Uniswap, Aethir buy nothing — a 0
             if name in config.BUYING_PRESSURE_BY_DESIGN:          # P5-1.8: no market buyback by design — a code, not 0
                 return config.BUYING_PRESSURE_BY_DESIGN[name][:240]
             return ("n/a — no market buyback is measured for this project"
@@ -14940,12 +14945,96 @@ def _buying_pressure_col(R: Refs) -> tuple:
 
     def note(p):
         h = config.held_buyback_float_metric(p["name"])
-        return ("Buying pressure on float (R20): revenue-funded buying that is burned or held (float_buying_tokens = "
-                "retired_buyback_tokens on the days the buyback was revenue-funded), annualised, ÷ the free float"
+        return ("Buying pressure on float (R21, Jake 2026-11-25): revenue-funded buying, held or paid out to stakers "
+                "(F2) or customers (F1) — float_buying_tokens = buyback_held_tokens + buyback_distributed_tokens on the "
+                "days the buyback was revenue-funded (+ purchases paid on to customers), annualised, ÷ the free float"
                 + (f" — which leaves out the held buyback ({h}) while it is held" if h else "")
-                + ". A buyback paid out to stakers, or funded by the treasury or emissions, is not in it. The demand "
-                  "side of net float pressure.")
+                + ". A burned buyback is on BURNS ON FLOAT, never here; a buyback funded by the treasury or emissions is "
+                  "not in it. The demand side of net float pressure.")
     return (BUYING_PRESSURE_HEAD, build, FMT_PCT, "calc", False, {"metric": "float_buying_tokens", "note_fn": note})
+
+
+# R21 (Jake 2026-11-25, "any burn"): net float pressure's two new named lines, beside the buying line
+BURNS_HEAD = (free_float.BURNS_PREFIX + ", % a year = every burn, whatever its source (tokens, annualised) ÷ free float "
+              "— a supply reduction, not buying (R21)")
+RETURNED_HEAD = (free_float.RETURNED_PREFIX + ", % a year = bought tokens paid out liquid, sold or transferred out of the "
+                 "holding wallet (tokens, annualised) ÷ free float (R21)")
+BURN_MEMO_HEAD = "Burns — where they came from (memo: from float / staked / treasury, Q0)"
+
+
+def _float_pressure_cols(R: Refs, data_by_key: dict) -> list:
+    """R21: BURNS ON FLOAT (every declared burn series, config.burn_series, each annualised over its own covered days —
+    or over its mint's, `annualise_as` — summed, ÷ the free float), BOUGHT TOKENS RETURNED TO THE FLOAT
+    (float_returned_tokens, annualised, ÷ the free float) and the burn-source memo. A project with no burn mechanism
+    (config.BURN_NONE) or no return reads a declared 0; a declared series with no Data row is n/a, named."""
+    def has(name, m):
+        return f"{name}|{m}" in data_by_key
+
+    def burns(r, p):
+        name = p["name"]
+        legs = config.burn_series(name)
+        if not legs:
+            return "=0"
+        why = _cp_float_reason(p)
+        if why:
+            return why
+        held = [b for b in legs if has(name, b["metric"])]
+        # a leg declared a one-off EVENT series (RULE_IN _flow_events: a day with no row is a day with no event) that
+        # holds no row at all is no event yet, as on the circulating statement; any other missing leg is unknown
+        events = set((config.RULE_IN.get(name) or {}).get("_flow_events") or ())
+        miss = [b["metric"] for b in legs if not has(name, b["metric"]) and b["metric"] not in events]
+        if not held and not miss:
+            return "=0"
+        if miss:
+            return (f"n/a — burns: the declared burn series {', '.join(miss)} holds no row (unknown is never 0)")[:240]
+        f = _cp_float(R, r, p)
+        tot = "+".join(_annualise(R, r, p, b.get("annualise_as") or b["metric"], R.D(r, b["metric"], "q0"))
+                       for b in held)
+        # each leg annualised over its own covered days: two burn legs need not span the same days (no same-span block)
+        return _coverage_guard(R, r, [(f"burn {b['metric']}", b["metric"], "q0") for b in held],
+                               f"IF(ISNUMBER({f}),({tot})/({f}),{NA})", same_span=False)
+
+    def returned(r, p):
+        name = p["name"]
+        if name not in config.FLOAT_RETURNS and name not in config.FLOAT_RETURNS_HELD:
+            return "=0"
+        why = _cp_float_reason(p)
+        if why:
+            return why
+        if not has(name, "float_returned_tokens"):
+            return "n/a — bought tokens returned to the float: float_returned_tokens holds no row (unknown is never 0)"
+        f = _cp_float(R, r, p)
+        bt = R.D(r, "float_returned_tokens", "q0")
+        return _coverage_guard(R, r, [("returned", "float_returned_tokens", "q0")],
+                               f"IF(ISNUMBER({f}),({_annualise(R, r, p, 'float_returned_tokens', bt)})/({f}),{NA})")
+
+    def memo(r, p):
+        name = p["name"]
+        w = _WINDOWS.get("q0")
+        if not w:
+            return ""
+        return free_float.burn_memo(name, _LAST_GROUPS, w[1], (pd.Timestamp(w[0]) - pd.Timedelta(days=1),
+                                                               pd.Timestamp(w[1])))["text"]
+
+    def burns_note(p):
+        legs = config.burn_series(p["name"])
+        if not legs:
+            return f"BURNS ON FLOAT (R21): a declared 0 — {config.BURN_NONE.get(p['name'], 'no burn series')}."
+        return ("BURNS ON FLOAT (R21, Jake 2026-11-25: 'any burn') — every burn reduces the free float, whatever its "
+                "source; a supply reduction, never buying. The series: " + "; ".join(
+                    f"{b['metric']} (from {b['from']}: {b['why']})" for b in legs) + ".")
+
+    def returned_note(p):
+        n = p["name"]
+        sp = config.FLOAT_RETURNS.get(n) or config.FLOAT_RETURNS_HELD.get(n)
+        if sp:
+            return f"BOUGHT TOKENS RETURNED TO THE FLOAT (R21): {sp['why']}."
+        return ("BOUGHT TOKENS RETURNED TO THE FLOAT (R21): a declared 0 — "
+                + (config.FLOAT_RETURNS_NONE.get(n) or "no bought tokens are held or paid out liquid") + ".")
+    return [(BURNS_HEAD, burns, FMT_PCT, "calc", False, {"note_fn": burns_note}),
+            (RETURNED_HEAD, returned, FMT_PCT, "calc", False, {"metric": "float_returned_tokens",
+                                                              "note_fn": returned_note}),
+            (BURN_MEMO_HEAD, memo, FMT_TEXT, "text")]
 
 
 def _cp_inner(f):
@@ -15187,15 +15276,18 @@ def _cp_cols(R: Refs, data_by_key: dict) -> list[tuple]:
         reason) — unknown is never 0."""
         cell = lambda head: _TAB_CELLS.get(("CP", p["name"], head))  # noqa: E731
         d_at, s_at = cell(BUYING_PRESSURE_HEAD), cell(td_head)
-        if not d_at or not s_at:
-            return "n/a — net float pressure: its two sides are not on this row"
+        b_at, x_at = cell(BURNS_HEAD), cell(RETURNED_HEAD)
+        if not d_at or not s_at or not b_at or not x_at:
+            return "n/a — net float pressure: its sides are not on this row"
         ref = lambda at: f"'{at[0]}'!{at[1]}"  # noqa: E731
-        s = ref(s_at)
+        s, b, x = ref(s_at), ref(b_at), ref(x_at)
         d = "0" if p["name"] in config.BUYING_PRESSURE_BY_DESIGN else ref(d_at)
         no_s = f'IF({s}="","n/a — net float pressure: no outflow category on this project (no total dilution)",{s})'
+        # R21: + burns − bought tokens returned; a side that is not a number makes the net that side's own text
+        tail = f"IF(ISNUMBER({b}),IF(ISNUMBER({x}),{d}+{b}-{s}-{x},{x}),{b})"
         if d == "0":
-            return f"=IF(ISNUMBER({s}),0-{s},{no_s})"
-        return f"=IF(ISNUMBER({s}),IF(ISNUMBER({d}),{d}-{s},{d}),{no_s})"
+            return f"=IF(ISNUMBER({s}),{tail},{no_s})"
+        return f"=IF(ISNUMBER({s}),IF(ISNUMBER({d}),{tail},{d}),{no_s})"
 
     def funding_text(p):
         h = config.HOLDER_VALUE.get(p["name"]) or {}
@@ -15509,6 +15601,7 @@ def _cp_cols(R: Refs, data_by_key: dict) -> list[tuple]:
         ("Free float ÷ circulating", lambda r, p: _cp_float_reason(p) or calc(f"({flt(r, p)})/({circ(r, p)})"),
          FMT_PCT, "calc", False, {"note_fn": lambda p: _lock_zero_note(p)}),
         _buying_pressure_col(R),
+        *_float_pressure_cols(R, data_by_key),    # R21: burns, bought tokens returned, the burn-source memo
         # ---- EVERY RETIREMENT AND DILUTION RATE ON BOTH BASES (item 1) ----
         *rates,
         # ---- THE FIVE OUTFLOW CATEGORIES IN $ (amendment 3) ----
@@ -15533,9 +15626,11 @@ def _cp_cols(R: Refs, data_by_key: dict) -> list[tuple]:
             x for x in (_holder_value_note(p), one_off_dilution_note(p), lag_matched_note(p), as_published_note(p))
             if x), "fmt_fn": as_published_flag}),
         (NET_FLOAT_PRESSURE_HEAD, nfp, FMT_PCT, "calc", True, {"metric": config.FREE_FLOAT_METRIC, "note_fn": lambda p: (
-            "NET FLOAT PRESSURE (R20, Jake 2026-11-24) = revenue-funded buying that is burned or held − new supply "
-            "(outflows a+b+c+d+e+f), each in tokens a year ÷ the free float. Demand side: BUYING PRESSURE ON FLOAT; "
-            "supply side: TOTAL DILUTION ÷ free float (both on this row). Above 0 the float shrinks.")}),
+            "NET FLOAT PRESSURE (R21, Jake 2026-11-25) = revenue-funded buying + burns − new supply (outflows "
+            "a+b+c+d+e+f) − bought tokens returned to the float, each in tokens a year ÷ the free float. Buying: "
+            "BUYING PRESSURE ON FLOAT (held or distributed; a burned buyback is a burn); burns: BURNS ON FLOAT (every "
+            "burn, whatever its source — the memo says where each came from); supply: TOTAL DILUTION ÷ free float and "
+            "BOUGHT TOKENS RETURNED TO THE FLOAT — all on this row. Above 0 the float shrinks.")}),
         *_tbill_cols(R, [("Holder value yield", hvy), ("Net holder yield", nhy),
                          ("Staker yield — validator", lambda r, p: vyield(r, p)),
                          ("Staker yield — protocol, tokens", lambda r, p: tyield(r, p))]),

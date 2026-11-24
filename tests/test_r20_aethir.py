@@ -389,7 +389,8 @@ def test_before_the_burn_existed_it_is_a_declared_zero_and_after_it_only_what_wa
     b = bw._daily(groups[("Aethir", "gross_burn_tokens")])
     assert b[pd.Timestamp("2026-11-01")] == 0.0 and b[pd.Timestamp("2026-11-03")] == pytest.approx(512_764.4675)
     assert pd.Timestamp("2026-11-04") not in b.index and b.index.max() == pd.Timestamp("2026-11-05")
-    assert "Aethir" in config.BUYING_PRESSURE_BY_DESIGN
+    # R21 (Jake 2026-11-25): no longer a by-design code — a declared 0; the burn is its own line (BURNS ON FLOAT)
+    assert "Aethir" in config.BUYING_ZERO_DECLARED and "Aethir" not in config.BUYING_PRESSURE_BY_DESIGN
 
 
 # ====================================================================================== 4. unlocks, float, insiders

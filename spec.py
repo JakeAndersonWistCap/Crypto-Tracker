@@ -60,6 +60,9 @@ COLUMN_MAP: tuple[tuple[str, str, str], ...] = (
     ("*", "FREE FLOAT", "float"), ("*", "Free float ÷ circulating", "float"),
     ("*", "Issuer, foundation and treasury holdings", "float"),
     ("*", "NET FLOAT PRESSURE", "total_dilution"), ("*", "DILUTION, % OF MARKET CAP", "total_dilution"),
+    # R21: net float pressure's burns and returned lines, and the burn-source memo
+    ("*", "BURNS ON FLOAT", "total_dilution"), ("*", "BOUGHT TOKENS RETURNED TO THE FLOAT", "total_dilution"),
+    ("*", "Burns — where they came from", "notes"),
     ("*", "Destination effect on float", "lock_terms"), ("*", "Staking rate", "lock_rate"),
     ("*", "Lock rate", "lock_rate"), ("*", "Lock: contract vs dashboard", "cross_check"),
     ("*", "Holding demand — lock rate", "lock_rate"), ("*", "Holding demand — components", "lock_terms"),

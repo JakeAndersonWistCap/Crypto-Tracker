@@ -1873,6 +1873,21 @@ Item 5 (Pendle stale buying pressure) and Berachain. Config block "ROUND 21 — 
 | R21.P4 Where the bought PENDLE goes | — | Held in the buyback contract 3–6 days, then 100% to sPENDLE, arriving staked; nothing burned. |
 | R21.B1 Berachain | `--seed pendle_berachain` unbounded (48 min, 1,130 HTTP 429s). | Measured small (TVL $728 of $907.7M; fees 0.01% over 90 days; emissions 0 since 2026-01-26): a NAMED GAP (config.NAMED_SCAN_GAPS; Q-3 lacks 590.18, Q-4 18,126.19 PENDLE) with a 10-minute seed cap (PENDLE_BERACHAIN_GAP). Alchemy first whenever its plan serves the range (free plan: 10 blocks); a 429 is waited out (2, 4, 8, 16 s). |
 
+### Round 21 — burns (Jake 2026-11-25), old → new
+
+Burns count in net float pressure; the bought-back-token rules F1-F7; paused / off labels. Code: `free_float.py` (`buying_views`, `returned_views`, `burn_memo`, `check_burns`, `check_nets`), `build_workbook._float_pressure_cols` (CP), `reader._arch_ranking`; config block "R21 — BURNS" at the end of config.py. Tests: tests/test_r21_burns.py.
+
+| Item | What | Old | New |
+|---|---|---|---|
+| R21.B1 | Net float pressure | revenue-funded buying (burned or held) − total dilution, ÷ free float. | revenue-funded buying + BURNS − new supply (total dilution) − BOUGHT TOKENS RETURNED TO THE FLOAT, all ÷ the same free float. CP: new columns "BURNS ON FLOAT", "BOUGHT TOKENS RETURNED TO THE FLOAT" and the memo "Burns — where they came from". |
+| R21.B2 | Burns ("any burn") | Not in the net; a burned buyback was counted as buying. | Every burn series of a project (`config.BURN_SERIES`, each with its source: float / staked / treasury / not split), each annualised over its own covered days, a named supply-reduction line — never buying. Burns of off-float tokens count; the memo gives the split and flags off-float burns above 1 point a year. A mint-funded burn (Aerodrome's 10M) is annualised over its mint's days and nets it. Projects with none say so (`BURN_NONE`). Burn-named series not in the net carry their reason (`BURN_NOT_IN_NET`); the test fails on any other. `free_float.check_burns(audit)` = [] when every declared burn series is in the row's net. |
+| R21.B3 | Buying (F1, F2) | `retired_buyback_tokens` (burned + held) on revenue-funded days. Ethereum n/a; Uniswap and Aethir "by design". | Held + distributed buyback on revenue-funded days (a payout to stakers counts, F2) + purchases paid on to customers (Ether.fi, F1). A burned buyback is on the burns line. Ethereum, Uniswap, Aethir: a declared 0 (`BUYING_ZERO_DECLARED`). |
+| R21.B4 | Returned to the float (F1, F2, F7) | — | `float_returned_tokens`: Ether.fi's cashback the purchases covered; Sky's staking vest the purchases covered (liquid); Maple's SSF and Near's buyback fund: what left the holding (Σ put in − the stock's rise, a running maximum, less its burns). Pendle's sPENDLE payout stays off (0). |
+| R21.B5 | F3: staking rewards from bought tokens | Sky's whole vest was emissions (c). | (c) = the vest the SKY bought for stakers since 2026-08-17 did not cover (`sky_staking_rewards_unfunded_tokens`, the cashback rule). Every other staking project checked: nothing to net (`STAKING_REWARDS_F3`). |
+| R21.B6 | F4 labels; decision 5 | "paused" / "paused" / "off"; the A3 key forced to 0 and ranked. | Fluid "paused, no restart condition stated", Ether.fi "not executing since 1 Apr", Morpho "off". The key reads what the data reads (0 only where the data says 0) with the label; the rank reads "unranked". |
+| R21.B7 | F5 one-offs | — | Stay in the yearly rate; named in the memo (`ONE_OFF_NAMED`: Sky's emergency week, Uniswap's 100M, Aerodrome's 10M). |
+| R21.B8 | F6, F8 | — | F6 (Pendle's airdrops of other tokens) not wired: needs the epoch fetch to store `airdropInUSDs` (Pendle lane); $0 in every epoch since 2026-06-16. F8 dropped. |
+
 ### Round 20 — archetypes (Jake 2026-11-24), old → new
 
 | # | What | Old | New |

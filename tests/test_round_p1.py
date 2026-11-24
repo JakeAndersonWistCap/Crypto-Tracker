@@ -420,6 +420,14 @@ def test_p2a_a4_a_status_driven_zero_keeps_its_zero_and_shows_the_status(built):
     rr = _rows_of(ws)["Fluid"]
     for head in ("Holder value yield", "Archetype key"):
         c = ws.cell(rr, _col_of(ws, head))
+        if head == "Archetype key":
+            # R21 (decision 5): the key reads what the data reads (0 only where the data says 0), with the label;
+            # the rank is "unranked"
+            v = X.value("Summary", rr, c.column)
+            assert v == 0.0 or isinstance(v, str), v
+            assert "paused" in (c.number_format + (c.comment.text if c.comment else "")), head
+            assert ws.cell(rr, _col_of(ws, "Rank in archetype")).value == "unranked"
+            continue
         assert X.value("Summary", rr, c.column) == 0.0, head
         # R20: the key's label is the programme's status ("paused"); the halt's date stays in the comment
         assert ("halted since 2026-05-11" in c.number_format or "paused" in c.number_format) and \
@@ -756,17 +764,13 @@ def test_p5_1_7_uniswap_one_off_note_on_the_cells_and_in_project_notes(built):
 
 # ================================================================================================== P5-1.8
 def test_p5_1_8_uniswap_buying_pressure_reads_by_design(built):
-    """Uniswap buys no UNI on the market: the buying-pressure cell is a by-design code (never 0, never n/a), on the
-    CP tab and on the reader's Comparison tab; the done check accepts it."""
+    """R21 (Jake 2026-11-25): Uniswap buys no UNI on the market — the buying-pressure cell is a declared 0 (was the
+    by-design code); its burn-to-claim is the BURNS ON FLOAT line of net float pressure, never labelled buying."""
     import build_workbook as bw
     a = openpyxl.load_workbook(built["audit"])
     ws = a["CP Comparability"]
     c = next(c for c in range(1, ws.max_column + 1) if str(ws.cell(4, c).value or "") == bw.BUYING_PRESSURE_HEAD)
     row = next(r for r in range(5, ws.max_row + 1) if ws.cell(r, 1).value == "Uniswap")
-    assert ws.cell(row, c).value == config.BUYING_PRESSURE_BY_DESIGN["Uniswap"]
-    r = openpyxl.load_workbook(built["reader"])
-    cmp_ = r["Comparison"]
-    cc, rr = _col_of(cmp_, "Buying pressure on float, % a year"), _rows_of(cmp_)["Uniswap"]
-    cell = cmp_.cell(rr, cc)
-    assert cell.value == "by design", cell.value
-    assert "buys no UNI on the market" in cell.comment.text
+    assert ws.cell(row, c).value == "=0"
+    cb = next(c for c in range(1, ws.max_column + 1) if str(ws.cell(4, c).value or "") == bw.BURNS_HEAD)
+    assert '|gross_burn_tokens"' in str(ws.cell(row, cb).value)
