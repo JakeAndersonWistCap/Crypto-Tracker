@@ -100,6 +100,8 @@ def test_cp_on_the_real_aerodrome_dump(tmp_path, monkeypatch, dumps_20261009):
 
 def test_cp_net_holder_yield_and_whole_token_yield_on_the_real_pendle_dump(tmp_path, monkeypatch, dumps_20261009):
     import xlcalc
+    from probe_unpinned import unpinned
+    unpinned(monkeypatch)                     # never the wiring a shared build pinned earlier on this worker
     wb, rows = _built(tmp_path, monkeypatch, "Pendle")
     X = xlcalc.Workbook(wb)
     o = _row(wb, X, CP, "Pendle")

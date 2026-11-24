@@ -366,6 +366,8 @@ def test_b9_the_replaced_buyback_columns_are_declared_to_the_guard():
     import measuring_guard as mg
     # R21 (Jake 2026-11-25): the buyback contract's purchases join as a declared handover point.
     # Was: {"pendle_api:sPendleHistoricalData.buybackAmounts"}
+    # and, on the guard's probe store, the chain metric's own probe rows (R21 gate) — never another measuring point
     assert mg._declared("Pendle", "actual_buyback_tokens") == {"pendle_api:sPendleHistoricalData.buybackAmounts",
-                                                               "pendle_buyback_chain:ethereum"}
+                                                               "pendle_buyback_chain:ethereum",
+                                                               "probe:pendle_buyback_bought_tokens"}
     assert "derived:tokens*price" in mg._declared("Pendle", "actual_buyback_usd")

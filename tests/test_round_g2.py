@@ -751,6 +751,8 @@ def test_a7_served_alchemy_chains_open_their_routes_and_wire_their_scans(monkeyp
     BNB's and Berachain's Pendle gauge scans are wired (G2.7), and OP — whose scans already exist — gains the Transfers
     route after its explorers. A chain not served stays closed."""
     import check_offline_items as co
+    from probe_unpinned import unpinned
+    unpinned(monkeypatch)                     # never the wiring a shared build pinned earlier on this worker
     for n in ("Pendle", "Fluid", "Morpho"):
         monkeypatch.setitem(config.PROJECT_BY_NAME[n], "log_scans", list(config.PROJECT_BY_NAME[n]["log_scans"]))
     monkeypatch.setitem(config.PROJECT_BY_NAME["Pendle"], "emissions_from_metric",
