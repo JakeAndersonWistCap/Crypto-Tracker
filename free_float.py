@@ -714,9 +714,12 @@ def check_burns(audit_path) -> list[str]:
     Reads the formulas (the audit file as written), so it needs no recalculation."""
     import openpyxl                                                      # noqa: PLC0415
     wb = openpyxl.load_workbook(audit_path, read_only=True)
+    # a series is STORED for a project where its Data row holds points (every metric has a row, most of them empty)
+    dh = [str(h or "") for h in next(wb["Data"].iter_rows(min_row=1, max_row=1, values_only=True))]
+    j_pts = next((j for j, h in enumerate(dh) if h == "Points"), None)
     keys = set()
     for r in wb["Data"].iter_rows(min_row=2, values_only=True):
-        if r and r[0]:
+        if r and r[0] and (j_pts is None or (isinstance(r[j_pts], (int, float)) and r[j_pts] > 0)):
             keys.add(str(r[0]))
     ws = next(wb[n] for n in wb.sheetnames if n.startswith("CP"))
     rows = list(ws.iter_rows())
@@ -741,6 +744,8 @@ def check_burns(audit_path) -> list[str]:
         stored = [m for m in declared if f"{name}|{m}" in keys]
         if f_n.startswith("=") and bcell.coordinate not in f_n.replace("$", ""):
             out.append(f"{name}: net float pressure does not read its burns cell {bcell.coordinate}")
+        if not f_b.startswith("="):
+            continue                     # a text reason (the free float not formed, a series with no row): the net is n/a
         for m in stored:
             if f'|{m}"' not in f_b:
                 out.append(f"{name}: the burn series {m} is stored but not in net float pressure's burns cell")

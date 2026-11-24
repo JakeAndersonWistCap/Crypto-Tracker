@@ -50354,10 +50354,7 @@ BURN_SERIES = {
                         "split out by its declared one_off_flows row (from_stock)"},),
     "Sky": ({"metric": "sky_stage2_burn_tokens", "from": "treasury",
              "why": "SKY the Smart Burn Engine bought sits in the Pause Proxy (a held buyback, off the float) until a "
-                    "spell burns it — every Stage 2 burn is out of that holding"},
-            {"metric": "other_burn_tokens", "from": "not split",
-             "why": "SKY destroyed by a sender not identified (surfaced by the burn scan): a burn, whoever sent it — "
-                    "its source is not established"}),
+                    "spell burns it — every Stage 2 burn is out of that holding"},),
     "Near": ({"metric": "gross_burn_tokens_bigquery", "from": "float",
               "why": "the protocol burns 70% of gas (nomicon.io economics): NEAR paid as gas by the sending accounts "
                      "(liquid balances) — the chain's own record (block headers' total_supply falls)"},),
@@ -50402,6 +50399,9 @@ BURN_NOT_IN_NET = {
     ("Sky", "buyback_burned_tokens"): "the buyback x its burned share on the PURCHASE day — an attribution; the burn "
                                       "itself is sky_stage2_burn_tokens on the day the spell burns it",
     ("Sky", "other_burn_balance"): "a stock; its daily rise is other_burn_tokens",
+    ("Sky", "other_burn_tokens"): "SKY destroyed by an UNRECOGNISED sender: declared not applicable as a burn of Sky's "
+                                  "(the five-way split, Jake 2026-09-24 — surfaced, not folded in, until the sender is "
+                                  "identified); 0 on every stored day",
     ("Sky", "burn_address_balance"): "a stock",
     ("Sky", "gross_burn_day_priced_usd"): "$, not tokens",
     ("Near", "gross_burn_tokens"): "another read of the same protocol burn (A1 reads gross_burn_tokens_bigquery)",

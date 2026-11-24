@@ -52,7 +52,7 @@ def _is_burn_flow(m: str) -> bool:
 # ====================================================================================== 1. every project, every burn
 BURNS_R21 = {
     "Ethereum": {"gross_burn_tokens"}, "Uniswap": {"gross_burn_tokens"},
-    "Sky": {"sky_stage2_burn_tokens", "other_burn_tokens"}, "Near": {"gross_burn_tokens_bigquery"},
+    "Sky": {"sky_stage2_burn_tokens"}, "Near": {"gross_burn_tokens_bigquery"},
     "Aethir": {"gross_burn_tokens"}, "GEODNET": {"gross_burn_tokens"},
     "Aerodrome": {"buyback_burned_tokens", "foundation_aero_burned_other_tokens"},
     "Hyperliquid": {"total_burn_tokens"},
@@ -127,9 +127,10 @@ def _cp_book(path, rows, data_keys, burns_formula=None):
     wb = openpyxl.Workbook()
     wb.remove(wb.active)
     d = wb.create_sheet("Data")
-    d.append(["Key (project|metric)"])
+    d.append(["Key (project|metric)", "Points"])
     for k in data_keys:
-        d.append([k])
+        d.append([k, 5])
+    d.append(["Aerodrome|gross_burn_tokens", 0])          # a row with no points: not stored, not judged
     cp = wb.create_sheet("CP Comparability")
     cp.append(["x"])
     cp.append(["Project", bw.BURNS_HEAD, bw.NET_FLOAT_PRESSURE_HEAD])
@@ -264,7 +265,7 @@ def test_the_memo_says_where_each_burn_came_from_and_flags_off_float_burns(monke
     assert c["text"].startswith("no burn — no burn mechanism") and c["off_float_rate"] is None
     # a declared series with no row in the window is named, never read as 0
     s = free_float.burn_memo("Sky", {}, "2026-10-13")
-    assert s["missing"] == ["sky_stage2_burn_tokens", "other_burn_tokens"] and "NO ROW in the window" in s["text"]
+    assert s["missing"] == ["sky_stage2_burn_tokens"] and "NO ROW in the window" in s["text"]
 
 
 # ====================================================================================== 5. labels; unranked
