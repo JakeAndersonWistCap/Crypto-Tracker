@@ -92,7 +92,10 @@ class CrossRefs:
             if p["name"] in spec.get("lido_apr_projects", ()):
                 self._lido(p, day, out)
         if mine:
-            self._llama(mine, spec, day, out)
+            # R21 (Jake 2026-11-25: "coins.llama.fi: remove it from the price cross-check; it asks for 50-minute
+            # waits"): DefiLlama's coins API (price_usd_llama / price_usd_llama_at) is no longer read here; the second
+            # price source is on chain (fetch/price_onchain.py, tier xref_onchain) or Coinbase. The stored rows stay
+            # (price_usd's declared older leg reads them: build_workbook._price_history_views).
             self._at_spot(mine, spec, out)
 
     # ------------------------------------------------------------------ PR1.S7: the reference at our spot's instant
@@ -112,7 +115,7 @@ class CrossRefs:
                         pd.to_datetime(g["fetched_at"], errors="coerce", utc=True).dt.tz_localize(None)):
             if f is pd.NaT or f != f or f.normalize() != d or d < lo:
                 continue
-            if (str(d.date()), "price_usd_coinbase_at") in done and (str(d.date()), "price_usd_llama_at") in done:
+            if (str(d.date()), "price_usd_coinbase_at") in done:
                 continue
             out.append((d, f))
         return sorted(out)
@@ -120,11 +123,11 @@ class CrossRefs:
     def _at_spot(self, projects: list[dict], spec: dict, out) -> None:
         for p in projects:
             name = p["name"]
+            product = (spec.get("coinbase_product") or {}).get(name)
+            if not product:
+                continue                    # R21: no DefiLlama read at the instant; the on-chain tier reads its own
             for d, inst in self.spot_instants(name):
-                product = (spec.get("coinbase_product") or {}).get(name)
-                if product:
-                    self._coinbase_at(p, product, d, inst, out)
-                self._llama_at(p, d, inst, out)
+                self._coinbase_at(p, product, d, inst, out)
 
     def _coinbase_at(self, p: dict, product: str, day, inst, out) -> None:
         name = p["name"]

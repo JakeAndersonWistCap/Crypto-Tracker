@@ -50328,3 +50328,85 @@ PROJECT_BY_NAME["Aethir"].setdefault("series_handover", {})["holder_value_revenu
            "burn (to 0x…dEaD on Arbitrum) is the holder value",
     "composition_change": "a declared 0 (no payout mechanism) -> the fee burn x each day's price",
     "declared": "2026-11-02"}
+
+
+# ===== R21 RUNFIX (Jake 2026-11-25, from his 24 Nov store run) =====
+# (1) WORLD CHAIN'S TOKENJAR: A NAMED GAP WITH A CAP. Jake's run: the jar "isn't read past 2026-07-25 because Alchemy's
+# explorer asked for a 3,038s wait" (worldchain-mainnet.explorer.alchemy.com, the chain's only keyless log route; its
+# public RPC serves 100-block eth_getLogs, ~432 calls a day; 480.rpc.thirdweb.com answered HTTP 429 asking for an API
+# key, 2026-11-24). Days are read newest first, so World Chain's days 2026-03-07..2026-07-25 were never read and every
+# all-chain day in that span stayed unstored (day_total waits for every chain).
+# MEASURED 2026-11-24 (scratchpad r21_runfix): every ERC-20 transfer INTO the jar 0xbDb8…4918, Blockscout v2
+# token-transfers (7,103 transfers, 2026-03-08..2026-11-24), valued at each day's price (WLD and ETH: CoinGecko daily;
+# USDC $1; the rest at the explorer's current rate; UNI-V2 LP tokens unpriced, left out): $46,481 on 2026-03-07..07-25 =
+# 0.23% of Uniswap's all-chain revenue in the same days ($20,216,174, DefiLlama's released value on the 2026-11-20
+# export); $71,343 to 2026-11-19 = 0.107% of $66,403,360 since the switch. On chain, World Chain's Firepit
+# 0x455e…18C6 has released 7 times (nonce() 7 x threshold() 2,000 UNI = 14,000 UNI) of 14,672,000 UNI released on all
+# chains read (nonce x threshold per chain, 2026-11-24) = 0.095%. On the stored inflow (11-05..11-08) World Chain is $0
+# of $890,591.
+TOKENJAR_INFLOWS["Uniswap"]["chains"]["worldchain"]["named_gap"] = {
+    "through": "2026-07-25",       # the CAP: days on or before it are NOT ASKED (the reader stops asking World Chain)
+    "max_tries": 3,                # and a later day refused on 3 runs joins the gap (named on its row), never asked again
+    "share": "~0.2%",
+    "label": "World Chain",
+    "measured": "2026-11-24: $46,481 of ERC-20 inflow on 2026-03-07..07-25 = 0.23% of all-chain revenue in those days "
+                "($20.2M, DefiLlama); 7 Firepit releases x 2,000 UNI = 0.095% of the UNI released on all chains",
+    "decided": "Jake 2026-11-25 (R21): small, so a named gap with a cap and a label"}
+
+# (2) coins.llama.fi OUT OF THE PRICE CROSS-CHECK (Jake 2026-11-25: "it asks for 50-minute waits. Use CoinGecko or an
+# on-chain pool price instead"). CoinGecko is the price itself (a re-read would be FRESH-only), so the second source is
+# an ON-CHAIN market price (fetch/price_onchain.py) — or Coinbase where config already declares a product (Ethereum,
+# Chainlink, Near, Aerodrome, Uniswap: in_price, unchanged). Each pool below is the deepest Uniswap pool of the token
+# against WETH / USDC / USDT / USDS on its chain: factory getPool(token, quote, fee) / getPair, ranked by the quote
+# token's balance in the pool, read on chain 2026-11-24 (tenderly gateways). Same tolerance as the row it replaces (2%).
+
+
+def _r21_pool(chain, pool, token, quote, kind="uniswap_v3", token_dec=18, quote_dec=18, depth=""):
+    return {"kind": kind, "chain": chain, "pool": pool, "token": token, "quote": quote, "token_decimals": token_dec,
+            "quote_decimals": quote_dec, "depth": depth}
+
+
+PRICE_ONCHAIN = {
+    "Plume": _r21_pool("ethereum", "0xd845acdeb03fb3295e7735c232c588efc441d903",
+                       "0x4c1746a800d224393fe2470c70a35717ed4ea5f1", "WETH",
+                       depth="PLUME/WETH 1%: ~$10k of WETH (thin: PLUME trades mostly on its own chain)"),
+    "Aethir": _r21_pool("ethereum", "0xd31d41dffa3589bb0c0183e46a1eed983a5e5978",
+                        "0xbe0ed4138121ecfc5c0e56b40517da27e6c5226b", "WETH", depth="ATH/WETH 0.3%: ~$198k of WETH"),
+    "Maple": _r21_pool("ethereum", "0x27941a235804f33d81adabb2d56589c5f6ea6556",
+                       "0x643c4e15d7d62ad0abec4a9bd4b001aa3ef52d66", "WETH", depth="SYRUP/WETH 1%: ~$36k of WETH"),
+    "Morpho": _r21_pool("ethereum", "0xc8219b876753a85025156b22176c2edea17aac53",
+                        "0x58d97b57bb95320f9a05dc918aef65434969c2b2", "WETH", depth="MORPHO/WETH 0.3%: ~$104k of WETH"),
+    "Ether.fi": _r21_pool("ethereum", "0x06f00544c0bc62e6db10f46d370dfccdc23d8189",
+                          "0xfe0c30065b384f05761f15d0cc899d4f9f9cc0eb", "WETH", depth="ETHFI/WETH 0.3%: ~$316k of WETH"),
+    "Fluid": _r21_pool("ethereum", "0xc1cd3d0913f4633b43fcddbcd7342bc9b71c676f",
+                       "0x6f40d4a6237c257fff2db00fa0510deeecd303eb", "WETH", depth="FLUID/WETH 1%: ~$251k of WETH"),
+    "Sky": _r21_pool("ethereum", "0x2621cc0b3f3c079c1db0e80794aa24976f0b9e3c",
+                     "0x56072c95faa701256059aa122697b133aded9279", "USDS", kind="uniswap_v2",
+                     depth="SKY/USDS Uniswap v2: ~$3.4M of USDS (the v3 SKY/WETH pool held ~$22k)"),
+    "Pendle": _r21_pool("ethereum", "0x57af956d3e2cca3b86f3d8c6772c03ddca3eaacb",
+                        "0x808507121b80c02388fad14726482e061b8da827", "WETH", depth="PENDLE/WETH 0.3%: ~$179k of WETH"),
+    "GEODNET": _r21_pool("polygon", "0x39bfc628a34b07c5d65f207e59077dd3c8f10730",
+                         "0xac0f66379a6d7801d7726d5a943356a172549adb", "USDT", quote_dec=6,
+                         depth="GEOD/USDT 0.3% (Polygon): ~$53k of USDT"),
+    # a native coin with no Coinbase product: Hyperliquid's own spot order book (HYPE/USDC, spotMeta universe "@107",
+    # read 2026-11-24) — the candle OPEN at the instant, as Coinbase's is
+    "Hyperliquid": {"kind": "hypercore_spot", "pair": "@107", "depth": "HYPE/USDC spot on HyperCore"},
+}
+# the ETH/USD leg of a WETH-quoted pool, at the same block: Uniswap v3 USDC/WETH 0.05% (token0 USDC, token1 WETH, fee
+# 500 — read 2026-11-24); USDC at $1
+PRICE_ONCHAIN_ETH_USD = {"ethereum": _r21_pool("ethereum", "0x88e6A0c2dDD26FEEb64F039a2c41296FcB3f5640",
+                                               "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2", "USDC", quote_dec=6)}
+# archive state (eth_call at a past block): the keyed <CHAIN>_RPC_URL first (fetch.chain.rpc_endpoints), then these
+PRICE_ONCHAIN_RPC = {"ethereum": ("https://mainnet.gateway.tenderly.co", "https://ethereum-rpc.publicnode.com"),
+                     "polygon": ("https://polygon.gateway.tenderly.co",)}
+METRICS["price_usd_onchain"] = {
+    "label": "Price — an ON-CHAIN market at 00:00 UTC (the token's deepest Uniswap pool at the block of the instant, "
+             "WETH legs at the chain's USDC/WETH pool; HYPE: HyperCore spot candle open), CREDIBILITY reference only "
+             "(R21: replaces DefiLlama's coins API)",
+    "kind": "stock", "unit": "usd", "archetypes": [1, 2, 3, 4], "tiers": [1], "sanity_min": 0, "sanity_max": 1e7,
+    "view_only": True, "only_projects": tuple(PRICE_ONCHAIN)}
+METRICS["price_usd_onchain_at"] = {
+    "label": "Price — the same on-chain market at the instant of our spot price_usd row (the block at or before it; "
+             "HYPE: the 1-minute candle), CREDIBILITY reference only",
+    "kind": "stock", "unit": "usd", "archetypes": [1, 2, 3, 4], "tiers": [1], "sanity_min": 0, "sanity_max": 1e7,
+    "view_only": True, "only_projects": tuple(PRICE_ONCHAIN)}

@@ -16,6 +16,7 @@ import threading
 import time
 import urllib.parse
 import uuid
+import weakref
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 
@@ -865,6 +866,33 @@ def _retryable_connect(e: Exception) -> bool:
             and not isinstance(e, (requests.exceptions.Timeout, requests.exceptions.ProxyError)))
 
 
+# R21 (Jake's store run 2026-11-24: "no Http client" 63 times in the log, including on tiers that make no web calls):
+# EVERY web call (requests, web3's included) is counted against the TIER that made it — the owner thread
+# (pool_owner()), the thread fetch._dispatch names after the tier — so a tier with no Http client of its own says
+# whether it called the web at all (fetch._http_summary). Counting only: nothing about the call changes.
+_WEB_CALLS: "weakref.WeakKeyDictionary" = weakref.WeakKeyDictionary()
+_WEB_CALLS_LOCK = threading.Lock()
+
+
+def _count_web_call(host: str, secs: float) -> None:
+    owner = _owner_thread()
+    with _WEB_CALLS_LOCK:
+        rec = _WEB_CALLS.get(owner)
+        if rec is None:
+            rec = _WEB_CALLS[owner] = {"calls": 0, "secs": 0.0, "hosts": set()}
+        rec["calls"] += 1
+        rec["secs"] += float(secs)
+        rec["hosts"].add(host)
+
+
+def web_calls(thread) -> dict:
+    """{"calls", "secs", "hosts"} of the web calls made by `thread` and the pool workers it owns (zeros if none)."""
+    with _WEB_CALLS_LOCK:
+        rec = _WEB_CALLS.get(thread) if thread is not None else None
+        return {"calls": rec["calls"], "secs": rec["secs"], "hosts": sorted(rec["hosts"])} if rec else \
+            {"calls": 0, "secs": 0.0, "hosts": []}
+
+
 def _instrumented_send(self, request, stream=False, timeout=None, **kw):
     if timeout is None:
         timeout = DEFAULT_TIMEOUT
@@ -880,7 +908,11 @@ def _instrumented_send(self, request, stream=False, timeout=None, **kw):
         try:
             with connection_slot(host):
                 with waiting_on(f"{request.method} {host}"):
-                    return _ORIGINAL_SEND(adapter, request, stream=stream, timeout=timeout, **kw)
+                    t0 = time.monotonic()
+                    try:
+                        return _ORIGINAL_SEND(adapter, request, stream=stream, timeout=timeout, **kw)
+                    finally:
+                        _count_web_call(host, time.monotonic() - t0)
         except Exception as e:  # noqa: BLE001 — re-raised unless it is a connect failure worth one more try
             if attempt + 1 >= tries or not _retryable_connect(e):
                 raise
