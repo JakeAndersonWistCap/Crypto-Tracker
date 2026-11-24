@@ -209,7 +209,7 @@ def test_onchain_reader_reads_the_block_of_the_instant_and_values_weth_in_dollar
     assert px == pytest.approx(0.0005 * 3000, rel=1e-6) and "block 900000" in src and inst == _Chain.T0 + 12 * 900_000
     n = len(ch.calls)
     r.usd_at(spec, ts)                                   # the block of an instant is found once per run (shared)
-    assert ch.calls[n:].count("eth_getBlockByNumber") == 0
+    assert ch.calls[n:] == ["eth_call", "eth_call"]    # two slot0 reads: block and token0 are not asked again
 
 
 def test_onchain_reader_stores_only_days_the_store_lacks_and_names_a_failure(monkeypatch):
@@ -226,7 +226,7 @@ def test_onchain_reader_stores_only_days_the_store_lacks_and_names_a_failure(mon
     r.run([config.PROJECT_BY_NAME["Maple"]], None, out)
     f = out.frame()
     assert list(f["metric"]) == ["price_usd_onchain"] and float(f["value"].iloc[0]) == 1.5
-    assert any("not read (asked again next run)" in str(e.message) and "no endpoint answered" in str(e.message)
+    assert any("not made (asked again next run)" in str(e.message) and "no endpoint answered" in str(e.message)
                for e in out.log)
     # a first read takes FIRST_DAYS
     r2 = price_onchain.OnchainPrices(stored_long=None, env_rpcs={})

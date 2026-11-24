@@ -72,6 +72,7 @@ class OnchainPrices:
         self.clock = clock or time.monotonic
         self._env_rpcs = env_rpcs            # tests: chain -> [] ; None = fetch.chain.rpc_endpoints' keyed URLs
         self._blocks: dict = {}              # (chain, unix ts) -> (block, block ts): shared by every project
+        self._token0: dict = {}              # (chain, pool) -> token0
         self._t0 = None
 
     # ------------------------------------------------------------------ plumbing
@@ -151,12 +152,19 @@ class OnchainPrices:
             raise RuntimeError(f"{chain} {to[:10]}…: an empty answer to 0x{sel} at block {block:,}")
         return res[2:] if str(res).startswith("0x") else str(res)
 
+    def token0(self, chain: str, pool: str, block: int) -> str:
+        """A pool's token0 (immutable in Uniswap v2 / v3 pools): read once per run."""
+        key = (chain, pool.lower())
+        if key not in self._token0:
+            self._token0[key] = "0x" + self.eth_call(chain, pool, SEL["token0"], block)[-40:]
+        return self._token0[key]
+
     # ------------------------------------------------------------------ prices
     def pool_price(self, chain: str, pool: dict, block: int) -> float:
         """The pool's price of its token in its quote at `block` (quote units, not yet $)."""
         if pool["kind"] == "uniswap_v3":
             sqrtp = int(self.eth_call(chain, pool["pool"], SEL["slot0"], block)[:64], 16)
-            t0 = "0x" + self.eth_call(chain, pool["pool"], SEL["token0"], block)[-40:]
+            t0 = self.token0(chain, pool["pool"], block)
             is0 = t0.lower() == pool["token"].lower()
             d0, d1 = (pool["token_decimals"], pool["quote_decimals"]) if is0 else \
                 (pool["quote_decimals"], pool["token_decimals"])
@@ -164,7 +172,7 @@ class OnchainPrices:
         if pool["kind"] == "uniswap_v2":
             body = self.eth_call(chain, pool["pool"], SEL["getReserves"], block)
             r0, r1 = int(body[0:64], 16), int(body[64:128], 16)
-            t0 = "0x" + self.eth_call(chain, pool["pool"], SEL["token0"], block)[-40:]
+            t0 = self.token0(chain, pool["pool"], block)
             rt, rq = (r0, r1) if t0.lower() == pool["token"].lower() else (r1, r0)
             return v2_price(rt, rq, pool["token_decimals"], pool["quote_decimals"])
         raise ValueError(f"unknown pool kind {pool['kind']}")
@@ -225,46 +233,54 @@ class OnchainPrices:
 
     # ------------------------------------------------------------------ run
     def run(self, projects: list[dict], window_days, out):
+        """Every project's newest AT_DAYS days and spot instants first, then the older days of a first read, so a
+        run cut by the budget still leaves each project its latest comparison (a cut day is read next run)."""
         self._t0 = self.clock()
         names = set(config.CREDIBILITY_PROJECTS)
-        for p in projects:
-            name = p["name"]
-            spec = (config.PRICE_ONCHAIN or {}).get(name)
-            if name not in names or not spec:
-                continue
-            rows, fails = [], []
-            for d in self.days_wanted(name):
-                if self._left() <= 0:
-                    fails.append(f"{d.date()}: time budget reached — read next run")
-                    break
-                try:
-                    px, src, _inst = self.usd_at(spec, int(d.timestamp()))
-                    rows.append((d, px, src))
-                except Exception as e:  # noqa: BLE001 — named; asked again next run
-                    fails.append(f"{d.date()}: {str(e)[:160]}")
-            if rows:
-                frame = pd.concat([tidy([(d, v)], name, "price_usd_onchain", f"onchain:{s}", TIER) for d, v, s in rows],
+        todo = [(p["name"], config.PRICE_ONCHAIN[p["name"]]) for p in projects
+                if p["name"] in names and (config.PRICE_ONCHAIN or {}).get(p["name"])]
+        got = {n: {"day": [], "at": [], "fails": []} for n, _ in todo}
+        recent = today().normalize() - pd.Timedelta(days=AT_DAYS)
+        wanted = {n: self.days_wanted(n) for n, _ in todo}
+        passes = ([(n, s_, [d for d in wanted[n] if d >= recent][::-1], self.spot_instants(n)) for n, s_ in todo],
+                  [(n, s_, [d for d in wanted[n] if d < recent][::-1], []) for n, s_ in todo])
+        for one in passes:
+            for name, spec, days, spots in one:
+                g = got[name]
+                for d in days:
+                    if self._left() <= 0:
+                        g["fails"].append(f"{d.date()}: time budget reached — read next run")
+                        continue
+                    try:
+                        px, src, _inst = self.usd_at(spec, int(d.timestamp()))
+                        g["day"].append((d, px, f"onchain:{src}"))
+                    except Exception as e:  # noqa: BLE001 — named; asked again next run
+                        g["fails"].append(f"{d.date()}: {str(e)[:160]}")
+                for d, inst in spots:
+                    if self._left() <= 0:
+                        g["fails"].append(f"spot {inst}: time budget reached — read next run")
+                        continue
+                    try:
+                        px, src, when = self.usd_at(spec, int(pd.Timestamp(inst).timestamp()))
+                        stamp = pd.Timestamp(when, unit="s").strftime("%Y-%m-%dT%H:%M:%SZ")
+                        g["at"].append((d, px, f"onchain:{src}@{stamp}"))
+                    except Exception as e:  # noqa: BLE001
+                        g["fails"].append(f"spot {inst}: {str(e)[:160]}")
+        for name, spec in todo:
+            g = got[name]
+            if g["day"]:
+                frame = pd.concat([tidy([(d, v)], name, "price_usd_onchain", s_, TIER) for d, v, s_ in sorted(g["day"])],
                                   ignore_index=True)
-                out.add(frame, SOURCE, name, f"price_usd_onchain: {len(rows)} day(s) at 00:00 UTC from "
+                out.add(frame, SOURCE, name, f"price_usd_onchain: {len(g['day'])} day(s) at 00:00 UTC from "
                                              f"{spec['kind']} {spec.get('pool') or spec.get('pair')}", TIER)
-            at_rows = []
-            for d, inst in self.spot_instants(name):
-                if self._left() <= 0:
-                    fails.append(f"spot {inst}: time budget reached — read next run")
-                    break
-                try:
-                    px, src, when = self.usd_at(spec, int(pd.Timestamp(inst).timestamp()))
-                    stamp = pd.Timestamp(when, unit="s").strftime("%Y-%m-%dT%H:%M:%SZ")
-                    at_rows.append((d, px, f"onchain:{src}@{stamp}"))
-                except Exception as e:  # noqa: BLE001
-                    fails.append(f"spot {inst}: {str(e)[:160]}")
-            if at_rows:
-                frame = pd.concat([tidy([(d, v)], name, "price_usd_onchain_at", s, TIER) for d, v, s in at_rows],
+            if g["at"]:
+                frame = pd.concat([tidy([(d, v)], name, "price_usd_onchain_at", s_, TIER) for d, v, s_ in g["at"]],
                                   ignore_index=True)
-                out.add(frame, SOURCE, name, f"price_usd_onchain_at: {len(at_rows)} spot instant(s)", TIER)
+                out.add(frame, SOURCE, name, f"price_usd_onchain_at: {len(g['at'])} spot instant(s)", TIER)
+            fails = g["fails"]
             if fails:
-                out.fail(SOURCE, name, "price_usd_onchain: not read (asked again next run): " + "; ".join(fails[:4])
-                         + (f"; and {len(fails) - 4} more" if len(fails) > 4 else ""), TIER)
+                out.fail(SOURCE, name, f"price_usd_onchain: {len(fails)} read(s) not made (asked again next run): "
+                         + "; ".join(fails[:3]) + (f"; and {len(fails) - 3} more" if len(fails) > 3 else ""), TIER)
 
 
 def _host(url: str) -> str:
