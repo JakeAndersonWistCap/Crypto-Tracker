@@ -2513,6 +2513,8 @@ DERIVED_INPUTS = {
     "cp_float": ("in_circ", "@locked"),
     "cp_hvy": ("@buyback", "@price", "in_circ"),
     "cp_nhy": ("cp_hvy", "@emissions", "@price"),
+    # R20: net float pressure = revenue-funded buying − new supply, both ÷ the one free float
+    "cp_nfp": ("cp_float", "@buyback", "@emissions"),
     "cp_subsidy_cover": ("@fees", "@emissions", "@price"),
 }
 ALIASES = {

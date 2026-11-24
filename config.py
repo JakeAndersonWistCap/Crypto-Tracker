@@ -29519,6 +29519,7 @@ TRAJECTORY = {
         # CP (Phase 2, 2026-10-12): holder value and net holder yield are ratios on market cap (Valuation)
         "cp_float": ("Supply", 0), "cp_subsidy_cover": ("Fundamentals", 1),
         "cp_hvy": ("Valuation", 1), "cp_nhy": ("Valuation", 1),
+        "cp_nfp": ("Supply", 1),             # R20: net float pressure (more buying than new supply is better)
         # Phase 4 / Phase 3 (overnight 2026-10-12): more usage and a larger share are better
         "cp_business_1": ("Fundamentals", 1), "cp_business_2": ("Fundamentals", 1),
         "cp_business_3": ("Fundamentals", 1), "cp_business_4": ("Fundamentals", 1),
@@ -50318,3 +50319,12 @@ for _p, _tab, _head, _f in (("Aerodrome", "A4 Permanent Burn", "Burn execution",
             "R20 (gate fix): the project joined this tab by Jake's Round 20 tags and its attribute cell read a bare "
             "'n/a' with no reason (the coverage audit's BLANK-UNEXPLAINED); it now says why (config.ATTRIBUTE_TEXT). "
             "Text only: no figure moves", "2026-11-24")
+
+
+# ===== R20 (lead) — AETHIR'S HOLDER VALUE: a declared 0 to 2026-11-01, then the fee burn (a declared handover) =====
+PROJECT_BY_NAME["Aethir"].setdefault("series_handover", {})["holder_value_revenue_usd"] = {
+    "ordered_points": ("declared:zero", "derived:holder_value"),
+    "why": "R20 (Jake 2026-11-24, Part 4.4): nothing reached ATH holders before the daily fee burn; from 2026-11-02 the "
+           "burn (to 0x…dEaD on Arbitrum) is the holder value",
+    "composition_change": "a declared 0 (no payout mechanism) -> the fee burn x each day's price",
+    "declared": "2026-11-02"}

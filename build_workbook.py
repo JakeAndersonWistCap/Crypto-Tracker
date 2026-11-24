@@ -13680,6 +13680,7 @@ HEADLINE_IDS = (
     ("CP", "FREE FLOAT (tokens)", "cp_float"),
     ("CP", "HOLDER VALUE YIELD", "cp_hvy"),
     ("CP", "NET HOLDER YIELD", "cp_nhy"),
+    ("CP", "NET FLOAT PRESSURE", "cp_nfp"),          # R20: a headline; judged by its inputs
     ("CP", "SUBSIDY COVER", "cp_subsidy_cover"),
     ("CP", "BUSINESS 1 — core usage", "cp_business_1"),
     ("CP", "BUSINESS 2 — core usage", "cp_business_2"),

@@ -996,6 +996,7 @@ Every row's group and direction are declared (Jake's Phase 1 review 2026-10-12, 
 | Supply | `a4_pool_release` | -1 |
 | Supply | `circulating_supply` | +0 |
 | Supply | `cp_float` | +0 |
+| Supply | `cp_nfp` | +1 |
 | Supply | `master_circulating_supply_coingecko_cross_check` | +0 |
 | Supply | `master_circulating_supply_used` | +0 |
 | Supply | `master_net_supply_change_annualised_of_circulating` | -1 |
