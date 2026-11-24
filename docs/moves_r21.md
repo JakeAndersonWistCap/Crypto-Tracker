@@ -29,7 +29,7 @@ Every cell of a frozen project that moved on the 15-dump fixture build (as of 20
 | Uniswap | Item 2: net float pressure = revenue-funded buying + burns − new supply − bought tokens returned (all ÷ free float); burns now count, as a named supply-reduction line separate from buying | 2 |
 | Uniswap | Item 2: Uniswap's burn-to-claim is a burn, shown on the burns line, not buying; buying pressure reads a measured 0 (no revenue-funded buying held or paid out), no longer 'by design' | 3 |
 
-Total: 250 cells.
+Total: 259 cells — 250 below, and the 9 cp_nfp Trend cells declared first (item 1, at the end).
 
 ## Cells whose VALUE changed (not a rename, not a new or removed column)
 
@@ -467,3 +467,17 @@ Total: 250 cells.
 | Uniswap | reader / Summary / Buying pressure on float, % a year | by design | 0 | Item 2 |
 | Uniswap | reader / Summary / Confidence (share green) | 0.615385 | 0.642857 | the share of green cells is recounted over the Summary row's new and relabelled cells |
 | Uniswap | reader / Summary / Net float pressure | -0.0334923 | 0.00355283 | Item 2 |
+
+## Item 1 — the cp_nfp Trend row (declared first, on the baseline build at 4e1231d)
+
+| Project | Cell | Before | After | Reason |
+|---|---|---|---|---|
+| Aerodrome | audit / CP Comparability / Trend — cp_nfp (arrow · QoQ · 4Q growth/yr · quarters improved; Trajectory tab) | <absent> | – · 4Q n/a · QoQ n/a | Item 1 |
+| Ether.fi | audit / CP Comparability / Trend — cp_nfp (arrow · QoQ · 4Q growth/yr · quarters improved; Trajectory tab) | <absent> | – · 4Q n/a · QoQ n/a | Item 1 |
+| Fluid | audit / CP Comparability / Trend — cp_nfp (arrow · QoQ · 4Q growth/yr · quarters improved; Trajectory tab) | <absent> | – · 4Q n/a · QoQ n/a | Item 1 |
+| Hyperliquid | audit / CP Comparability / Trend — cp_nfp (arrow · QoQ · 4Q growth/yr · quarters improved; Trajectory tab) | <absent> | – · 4Q n/a · QoQ n/a | Item 1 |
+| Maple | audit / CP Comparability / Trend — cp_nfp (arrow · QoQ · 4Q growth/yr · quarters improved; Trajectory tab) | <absent> | – · 4Q n/a · QoQ n/a | Item 1 |
+| Morpho | audit / CP Comparability / Trend — cp_nfp (arrow · QoQ · 4Q growth/yr · quarters improved; Trajectory tab) | <absent> | – · 4Q n/a · QoQ n/a | Item 1 |
+| Pendle | audit / CP Comparability / Trend — cp_nfp (arrow · QoQ · 4Q growth/yr · quarters improved; Trajectory tab) | <absent> | – · 4Q n/a · QoQ n/a | Item 1 |
+| Sky | audit / CP Comparability / Trend — cp_nfp (arrow · QoQ · 4Q growth/yr · quarters improved; Trajectory tab) | <absent> | – · 4Q n/a · QoQ n/a | Item 1 |
+| Uniswap | audit / CP Comparability / Trend — cp_nfp (arrow · QoQ · 4Q growth/yr · quarters improved; Trajectory tab) | <absent> | – · 4Q n/a · QoQ n/a | Item 1 |
