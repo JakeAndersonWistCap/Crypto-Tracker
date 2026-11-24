@@ -50374,3 +50374,196 @@ def _load_r21_moves() -> int:
 
 
 R21_MOVES_DECLARED = _load_r21_moves()
+
+
+
+# =====================================================================================================================
+# ROUND 21 — HYPERLIQUID (Jake 2026-11-25): THE ASSISTANCE FUND IS A HELD BUYBACK (Jake's default), ONE SWITCH FOR A4.
+# Jake, verbatim: "6. Hyperliquid: research first, then decide. ... The default until you report is the held-buyback
+# treatment: circulating, off the float, A4 off. If the research shows part of it is a true burn, count that part under 2
+# and give it A4, scored on what is actually burned." The research is reported (docs/r21_hyperliquid_burns.md,
+# recommendation B); Jake has NOT decided on B, so this block wires the DEFAULT and makes B one switch.
+#   1. The Assistance Fund 0xfefe…fefe (keyless system address; "retrievable by a hard fork", the Foundation's own words;
+#      still inside tokenDetails.totalSupply) is a HELD BUYBACK: IN circulating (its balance, burn_address_balance — the
+#      same spotClearinghouseState read, equal to the tokenDetails listing af_noncirc_listed_tokens on every common day),
+#      OFF the free float (HELD_BUYBACK_FLOAT "subtract": the one float's held-buyback component), its purchases bought
+#      and HELD (BUYBACK_DESTINATION_SHARES hold 1.0), inside total supply and FDV (TOTAL_SUPPLY_NET less only the
+#      HyperEVM zero address). A4 stays off (R20 tags). A DECLARED CHANGE OF MEASURING POINT for circulating: the whole
+#      first-party series is restated from stored legs on one basis (build_workbook._held_buyback_in_circulating_views),
+#      a day without the Fund's row has no circulating (never a partial sum).
+#   2. The true burns stay burns, the Fund out of every burn series: total_burn_tokens (A1's every burn) = the Core burns
+#      (the fall in tokenDetails.totalSupply: core_burn_tokens, else the fall of total_supply_gross) + the HyperEVM
+#      zero-address priority fees (hyperevm_priority_burn_tokens, an optional component as before);
+#      burn_ex_chain_fee_tokens (A4's net change, G7 0c) = the Core burns. No history leg: before the Core leg's first
+#      complete day the burns are NOT MEASURED (ASXN's auction / HyperEVM legs are a part of the Core burns only), never
+#      the Fund's purchases. gross_burn_tokens keeps its stored name and stays the Fund's purchases (the buyback's
+#      measurement, burn_total buyback_metric), relabelled — it is no burn. The HyperEVM base-fee burn (EIP-1559, no
+#      address; ~0.1M lifetime, 36-83 a day, INFERRED) is NOT measured and NOT added (Jake's text did not ask; reported).
+#   3. HYPERLIQUID_TRUE_BURN_A4 — ONE SWITCH for option B: True turns A4 on (CONDITIONAL_ARCHETYPES) and scores it on the
+#      true burns only (HYPERLIQUID_TRUE_BURN_A4_METRIC); False (the default) leaves A4 off. apply_hyperliquid_burn_
+#      treatment(on) applies either state (the tests call it both ways).
+# Tests: tests/test_r21_hyperliquid.py. SPEC "Round 21 — hyperliquid".
+# =====================================================================================================================
+HYPERLIQUID_TRUE_BURN_A4 = False           # Jake's call (option B of docs/r21_hyperliquid_burns.md); off until he decides
+# What A4 is scored on when the switch is on: the Core burns (burn_ex_chain_fee_tokens) — G7 0c (Jake 2026-10-19) keeps
+# the HyperEVM gas burn on A1 only. Option B as the research wrote it also scores the zero address: "total_burn_tokens".
+HYPERLIQUID_TRUE_BURN_A4_METRIC = "burn_ex_chain_fee_tokens"
+_R21_HL_DECIDED = "Jake 2026-11-25 (R21 item 6: the default until the research is decided — the held-buyback treatment)"
+_R21_HL_FUND = "burn_address_balance"      # the Fund's HYPE (spotClearinghouseState 0xfefe…fefe), stored daily since 09-11
+_hl = PROJECT_BY_NAME["Hyperliquid"]
+
+# --- 1. circulating: + the Fund (a read-time restatement of the first-party series, one basis, all-or-no-row) -------
+CIRC_HELD_BUYBACK_IN = {
+    "Hyperliquid": {"metric": "circulating_supply_first_party", "held": _R21_HL_FUND,
+                    "point": "+ the Assistance Fund 0xfefe…fefe, a held buyback (R21)", "decided": _R21_HL_DECIDED}}
+_hl["series_handover"]["circulating_supply_first_party"]["ordered_points"] = tuple(
+    _hl["series_handover"]["circulating_supply_first_party"]["ordered_points"]) + (
+    "derived:released_staked[the rule: team + foundation + grants in][+ the Assistance Fund 0xfefe…fefe, a held "
+    "buyback (R21)]",)
+_hl["series_handover"]["circulating_supply_first_party"]["composition_change_r21"] = (
+    "2026-11-25 (R21, Jake's default): THE STOCK WIDENS on every day — the Assistance Fund's HYPE (48,009,594.74 on "
+    "2026-10-13; 49,020,514.77 on 2026-11-16) moves IN circulating as a held buyback (off the free float); it was out "
+    "as burned (the 2025-12 vote). The whole series is restated on one basis, so it is not a step inside the series")
+CIRCULATING_ONCHAIN["Hyperliquid"]["noncirculating_seen"]["0xfefefefefefefefefefefefefefefefefefefefe"]["identity"] = (
+    "Assistance Fund — listed non-circulating by tokenDetails; IN our circulating as a HELD BUYBACK, off the free "
+    "float (R21, Jake's default): keyless, but retrievable by a hard fork (Hyper Foundation, 2025-12-17)")
+CIRCULATING_ONCHAIN["Hyperliquid"]["why"] = (
+    "tokenDetails.circulatingSupply — Hyperliquid's own figure; its nonCirculatingUserBalances is the documented set "
+    "(logged each run). Under the rule the team wallet, the Foundation / Grants stake and spot (R9.2) and the Assistance "
+    "Fund (R21: a held buyback) are added back — in circulating, off the free float")
+# the release: d(circulating) + the HyperEVM burn. The Fund's purchase no longer leaves circulating, so it is no longer
+# added back (d(circulating) now holds it: the same release, the buyback not counted twice)
+CIRCULATING_ONCHAIN["Hyperliquid"]["release_first_party"]["plus"] = ("hyperevm_priority_burn_tokens",)
+HELD_BUYBACK_FLOAT["Hyperliquid"] = {
+    "how": "subtract", "held": _R21_HL_FUND,
+    "why": "the Assistance Fund 0xfefe…fefe (R21, Jake's default): fee-funded HYPE purchases held at a keyless system "
+           "address that a protocol upgrade could reach — inside circulating (R21), off the free float while held. Stock: "
+           "its HYPE balance (burn_address_balance, spotClearinghouseState)"}
+BUYBACK_DESTINATION_SHARES["Hyperliquid"] = [
+    {"from": None, "burn": 0.0, "hold": 1.0, "distribute": 0.0, "verified": True,
+     "source": "R21 (Jake's default, 2026-11-25): HELD — the bought HYPE stays as a spot balance of the Assistance Fund "
+               "0xfefe…fefe and inside tokenDetails.totalSupply; the Foundation: 'mathematically irretrievable without a "
+               "hard fork', protected by 'binding social consensus' (x.com/HyperFND/status/2001127850754367525, "
+               "2025-12-17); not destroyed (docs/r21_hyperliquid_burns.md, docs/r20_research_hl_uni_morpho.md (b))"}]
+_hl["destination_effect"] = "locked_supply"
+ATTRIBUTE_TEXT[("Hyperliquid", "buyback_destination")] = (
+    "hold — the Assistance Fund 0xfefe…fefe holds what it buys (R21, Jake's default: a held buyback, not a burn)")
+if "Hyperliquid" in PHASE2_ATTRIBUTES:
+    PHASE2_ATTRIBUTES["Hyperliquid"]["destination"] = {
+        "value": "held (keyless; a hard fork could move it)",
+        "detail": "the Assistance Fund (system address 0xfefe…fefe, no private key) converts fees to HYPE and holds it; "
+                  "the December 2025 vote is 'binding social consensus', the Foundation says the HYPE is retrievable by "
+                  "a hard fork, and it is still inside tokenDetails.totalSupply. R21 (Jake's default): a held buyback",
+        "source": "https://x.com/HyperFND/status/2001127850754367525 ; https://x.com/HyperFND/status/2003684257949188396 ;"
+                  " docs/r21_hyperliquid_burns.md"}
+_hl["not_applicable"]["treasury_holding_tokens"] = (
+    "NO PROTOCOL TREASURY HOLDS HYPE. The Assistance Fund's HYPE is a HELD BUYBACK (R21, Jake's default), read as "
+    "burn_address_balance and taken off the free float as held buybacks (HELD_BUYBACK_FLOAT); a treasury column would "
+    "duplicate it. The future-emissions pool is undistributed supply, out of circulating.")
+_hl["not_applicable"]["buyback_fund_balance"] = (
+    "THE FUND IS ALREADY READ, UNDER ANOTHER NAME: the Assistance Fund 0xfefe…fefe's HYPE is fetched every run as "
+    "burn_address_balance (stored name kept) and, from R21 (Jake's default), counted IN circulating as a held buyback and "
+    "OFF the free float (the held-buyback component). Reading it again as buyback_fund_balance would count it twice.")
+_hl.setdefault("metric_labels", {}).update({
+    "gross_burn_tokens": "Assistance Fund purchases (HYPE a day: the Fund's balance change) — HELD, not burned (R21, "
+                         "Jake's default); the buyback's measurement. Stored name kept",
+    "burn_address_balance": "Assistance Fund 0xfefe…fefe HYPE — a HELD BUYBACK (R21): in circulating, off the free float",
+    "total_burn_tokens": "HYPE burned — the Core burns (fall in tokenDetails.totalSupply) + the HyperEVM zero-address "
+                         "priority fees; the Assistance Fund is held, not burned (R21)",
+    "burn_ex_chain_fee_tokens": "HYPE burned except the HyperEVM gas burn — the Core burns only (R21: the Fund is held)",
+})
+_hl["burn_mechanism"]["note_r21"] = (
+    "R21 (Jake's default, 2026-11-25): the Assistance Fund is a HELD buyback, not a burn — the burns are the Core burns "
+    "(tokenDetails.totalSupply falls) and the HyperEVM zero address; docs/r21_hyperliquid_burns.md")
+# the R8 records of the rule audit: the Fund is now applied as held
+HELD_BUYBACKS_R8 = tuple(
+    (r[0], r[1], r[2], "in circulating, off float", "applied R21 (Jake's default; was burned, out of circulating and "
+                                                    "total)") if r[0] == "Hyperliquid" else r for r in HELD_BUYBACKS_R8)
+HYPERLIQUID_RULE_REFERENCES["r21_assistance_fund"] = (
+    "R21: ours also counts the Assistance Fund 0xfefe…fefe (49,291,415 listed non-circulating by tokenDetails on "
+    "2026-11-24) — in circulating as a held buyback, off the float; against tokenDetails the gap gains the Fund, "
+    "against CoinGecko / CoinMarketCap likewise (neither counts it)")
+CREDIBILITY["Hyperliquid"]["in_circ"]["ref"]["why"] += (
+    " R21 (Jake's default, 2026-11-25): ours also counts the Assistance Fund 0xfefe…fefe (49.29M on 2026-11-24, listed "
+    "non-circulating by tokenDetails) — in circulating as a held buyback, off the free float; every reference leaves it "
+    "out, so each gap gains the Fund, named.")
+
+# --- 2. total supply keeps the Fund; the burn series hold the true burns only ------------------------------------------
+TOTAL_SUPPLY_NET["Hyperliquid"] = {
+    "total": "total_supply_gross", "less": ("hyperevm_zero_address_balance",),
+    "label": "tokenDetails totalSupply − the HyperEVM zero address (burned); the Assistance Fund is inside it, held (R21)",
+    "decided": "Jake 2026-10-18 (G2-D2); R21 (Jake 2026-11-25): the Fund is held, not burned"}
+_hl["series_handover"]["total_supply"]["ordered_points"] = tuple(
+    _hl["series_handover"]["total_supply"]["ordered_points"]) + ("derived:total_supply_gross-hyperevm_zero_address_balance",)
+_hl["series_handover"]["total_supply"]["composition_change_r21"] = (
+    "2026-11-25 (R21): the Assistance Fund (48.0M on 2026-10-13) is no longer subtracted — it is held, not burned; the "
+    "whole series is restated, so it is not a step inside the series")
+TOTAL_SUPPLY_ONCHAIN_FIRST["Hyperliquid"]["why"] = TOTAL_SUPPLY_NET["Hyperliquid"]["label"]
+_hl["burn_total"] = {
+    "metric": "total_burn_tokens",
+    "components": ["core_burn_tokens"],
+    "core_from_stock": {"metric": "core_burn_tokens", "stock": "total_supply_gross"},
+    "optional_components": ["hyperevm_priority_burn_tokens"],
+    "buyback_metric": "gross_burn_tokens",      # the Fund's purchases: the buyback (held), never a burn
+    "a4_view": {"metric": "burn_ex_chain_fee_tokens"},
+    "decided_by": "Jake, 2026-09-29; R21 (Jake 2026-11-25): the Assistance Fund is held, out of the burn",
+    # no history leg: the Fund's purchase history is not a burn, and the Core burns have none (unknown is never 0)
+}
+_hl["series_handover"].pop("total_burn_tokens", None)        # one basis now: derived:burn_total(core_burn_tokens)
+_hl["burn_history"]["why"] = ("the Assistance Fund's purchases before its live read: tokens bought = DefiLlama holders "
+                              "revenue / same-day price — the buyback's history (R21: held, not burned)")
+_hl["a1_burn_metric"] = "total_burn_tokens"
+METRICS["burn_ex_chain_fee_tokens"]["label"] = (
+    "HYPE burned except the HyperEVM gas burn — the Core burns (the fall in tokenDetails.totalSupply); the Assistance "
+    "Fund is held, not burned (R21); A4's net supply change (G7 0c)")
+METRICS["total_burn_tokens"]["label"] = (
+    "HYPE burned in total — the Core burns (the fall in tokenDetails.totalSupply) + the HyperEVM zero-address priority "
+    "fees; the Assistance Fund is held, not burned (R21)")
+# the checks: A1's every burn against the two stocks it is the fall of (the zero address's rise − totalSupply's change,
+# across Q0: tolerance unchanged); the Fund's purchases against ASXN's buybacks beside (information only, as before)
+CREDIBILITY["Hyperliquid"]["a1_gross_burn"] = {
+    "formula": "delta_diff_q0", "args": {"a": "hyperevm_zero_address_balance", "b": "total_supply_gross"},
+    "tol": CREDIBILITY["Hyperliquid"]["a1_gross_burn"].get("tol", 15.0),
+    "source": "the HyperEVM zero address's balance change over Q0 − tokenDetails.totalSupply's change over Q0 (the Core "
+              "burns): the two stocks the true burns are the falls of. The Assistance Fund is held, not burned (R21)"}
+CREDIBILITY["Hyperliquid"]["in_a1_gross_burn_asxn"]["ref"] = dict(
+    CREDIBILITY["Hyperliquid"]["in_a1_gross_burn_asxn"]["ref"],
+    args={"metrics": ("burn_auction_usd", "hyperevm_burn_usd_asxn")},
+    source="ASXN deploy-auction burn + HyperEVM burn ($) / same-day price — ours is Hyperliquid's own supply reads "
+           "(tokenDetails.totalSupply's fall + the HyperEVM zero address)",
+    why="ASXN's deploy-auction + HyperEVM burns beside, for information only (a part of the Core burns); the Assistance "
+        "Fund is held, not burned (R21)")
+CREDIBILITY["Hyperliquid"]["in_a4_gross_burn_asxn"]["what"] = (
+    "the Assistance Fund's purchases (held, R21) vs ASXN's HyperCore Buybacks (beside, for information only)")
+CREDIBILITY["Hyperliquid"]["in_a4_gross_burn_asxn"]["ours"] = {"metric": "gross_burn_tokens", "window": "q0"}
+
+
+# --- 3. ONE SWITCH: option B's A4 on the true burns ---------------------------------------------------------------------
+def apply_hyperliquid_burn_treatment(true_burn_a4: bool | None = None) -> None:
+    """R21: write Hyperliquid's A4 state. False (Jake's default): A4 off; every burn metric is a true burn. True (option
+    B): A4 on (CONDITIONAL_ARCHETYPES), scored on the true burns only (HYPERLIQUID_TRUE_BURN_A4_METRIC) — the A4 burn,
+    its net change and the A4 credibility check all read it. The Fund is held in both states."""
+    on = HYPERLIQUID_TRUE_BURN_A4 if true_burn_a4 is None else bool(true_burn_a4)
+    c = CONDITIONAL_ARCHETYPES["Hyperliquid"]
+    c["on"] = on
+    c["needs"] = ("Jake's decision on option B (docs/r21_hyperliquid_burns.md): the Core burns and the HyperEVM burns are "
+                  "true burns; the Assistance Fund stays held either way")
+    c["why_off"] = ("Jake's default (R21, 2026-11-25): the held-buyback treatment — A4 off until he decides; the switch is "
+                    "config.HYPERLIQUID_TRUE_BURN_A4")
+    c["metric"] = HYPERLIQUID_TRUE_BURN_A4_METRIC
+    m = HYPERLIQUID_TRUE_BURN_A4_METRIC
+    _hl["a4_burn_metric"] = m
+    _hl["a4_net_burn_metric"] = m
+    CREDIBILITY["Hyperliquid"]["a4_gross_burn"] = (
+        {"formula": "delta_diff_q0", "args": {"a": "hyperevm_zero_address_balance", "b": "total_supply_gross"},
+         "tol": 15.0, "source": "the true burns' two stocks across Q0 (zero address's rise − totalSupply's change)"}
+        if m == "total_burn_tokens" else
+        {"formula": "fall_q0", "args": {"metric": "total_supply_gross"}, "tol": 15.0,
+         "source": "the fall of tokenDetails.totalSupply across Q0 (the Core burns); the Assistance Fund is held (R21)"})
+    for k in ("gross_burn_day_priced_usd", "fees_base_day_priced_tokens"):
+        op = tuple(x for x in METRICS[k].get("only_projects") or () if x != "Hyperliquid")
+        METRICS[k]["only_projects"] = op + (("Hyperliquid",) if on else ())
+    apply_archetypes_r20()
+
+
+apply_hyperliquid_burn_treatment()
