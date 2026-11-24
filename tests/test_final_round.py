@@ -549,8 +549,10 @@ def test_snapshot_on_the_real_pendle_dump(tmp_path, monkeypatch):
     assert p.read_text(encoding="utf-8").startswith("project,asof,")
 
 
-def test_metrics_doc_covers_every_headline_and_is_current():
+def test_metrics_doc_covers_every_headline_and_is_current(monkeypatch):
     import generate_metrics_doc as g
+    from probe_unpinned import unpinned
+    unpinned(monkeypatch)        # METRICS.md is generated in a fresh process — never on a shared build's pinned wiring
     assert g.main(["--check"]) == 0
 
 
