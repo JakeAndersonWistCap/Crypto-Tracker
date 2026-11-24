@@ -2131,7 +2131,10 @@ TIER_BUDGET_S = {
     # the L2 chain tiers (explorer_l2:<chain>, G3 item 1) take config.L2_TIER_BUDGET_S, set below
     # one epoch a week: ~10 Multicall3 batches + one DefiLlama price call; the daily totalWeight is one eth_call
     "aero_voter": 180,
-    "aethir_chain": 180,               # R20: ~45 eth_calls + ~30 eth_getLogs pieces (two chains), measured ~25 s
+    # R20: ~45 eth_calls + ~30 eth_getLogs pieces (two chains), measured ~25 s. R21 (Jake 2026-11-25): 180 -> 300 —
+    # measured 81 s alone on 2026-11-24 (the Ethereum history 58 s of it, 14 eth_getLogs of 1M blocks); the burn now
+    # reads first, so a cut-off costs the history only
+    "aethir_chain": 300,
     "aero_v3": 240,
     "aero_v3_epoch": 240,              # R8 item 2: stops itself at 200 s (fetch.aero_v3.EPOCH_BUDGET_S), scan saved
     "scrape": 240, "dune": 420, "ultrasound": 60, "plume_staking": 180, "plume_claims": 180, "blockscout_stats": 90,

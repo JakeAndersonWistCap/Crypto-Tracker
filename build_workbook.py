@@ -7720,6 +7720,60 @@ def _unlock_views(groups: dict) -> None:
                 _unlock_declared_zero_view(groups, name)
 
 
+UNLOCK_SCHEDULE_CHECK: dict = {}     # project -> {"text", "verdict", "blocks"} of the on-chain check (R21, Aethir)
+
+
+def unlock_schedule_check(sched: pd.Series, claims: pd.Series, asof, tol: float) -> tuple[str, list, list]:
+    """(verdict, [(block label, scheduled, claimed)], [blocks that disagree]) — pure (R21). Per 90-day block Q0..Q-4
+    that the claims series spans (its first row by the block's first day, its last by the block's end), what was
+    CLAIMED on chain cannot exceed what the schedule unlocked: claimed <= scheduled x (1 + tol)."""
+    rows, bad = [], []
+    if asof is not None and not sched.empty and not claims.empty:
+        for k in range(5):
+            a, b = _flow_window(asof, k)
+            v, nv = _flow_sum(sched, a, b)
+            w, nw = _flow_sum(claims, a, b)
+            if v is None or w is None or claims.index.min() > a + pd.Timedelta(days=1) or claims.index.max() < b:
+                continue
+            rows.append((trajectory.LABELS[k], v, w))
+            if w > v * (1 + tol):
+                bad.append(trajectory.LABELS[k])
+    verdict = ("no block holds both" if not rows else f"DISAGREES in {', '.join(bad)}" if bad else "agrees")
+    return verdict, rows, bad
+
+
+def _unlock_on_schedule_views(groups: dict) -> None:
+    """R21 (Jake 2026-11-25, decision 7; config.UNLOCK_ON_SCHEDULE): the UNLOCK is counted on the published vesting
+    schedule — unlock_release_tokens = the schedule's daily view (config.EVIDENCE_LADDER, built by _evidence_views just
+    before) — and the measured claims (the falls of the vesting contracts' stock, _unlock_views) move to a MEMO series
+    shown beside it. The claims are the on-chain check (unlock_schedule_check), said on the unlock's source and in
+    UNLOCK_SCHEDULE_CHECK. No schedule view: no unlock value (never the claims in its place)."""
+    UNLOCK_SCHEDULE_CHECK.clear()
+    asof = pd.Timestamp(_WINDOWS["q0"][1]) if _WINDOWS.get("q0") else None
+    for name, u in config.UNLOCK_ON_SCHEDULE.items():
+        if not any(p["name"] == name for p in scoped_projects()):
+            continue
+        claims = groups.pop((name, "unlock_release_tokens"), None)
+        if claims is not None and not claims.empty:
+            groups[(name, u["memo"])] = claims.assign(metric=u["memo"])
+        sched = groups.get((name, u["schedule"]))
+        if sched is None or sched.empty:
+            continue
+        s, c, tol = _daily(sched), _daily(groups.get((name, u["memo"]))), float(u["tolerance"])
+        verdict, rows, _bad = unlock_schedule_check(s, c, asof, tol)
+        text = (f"CHECK on chain — {u['check_what']}: claimed <= scheduled within {tol:.0%} per block: "
+                + ("; ".join(f"{lab} scheduled {v:,.0f} vs claimed {w:,.0f} (gap {v - w:,.0f})" for lab, v, w in rows)
+                   or "nothing to compare") + f" — {verdict}")
+        UNLOCK_SCHEDULE_CHECK[name] = {"verdict": verdict, "text": text, "blocks": rows}
+        groups[(name, "unlock_release_tokens")] = _as_stored(pd.DataFrame(
+            {"date": s.index, "project": name, "metric": "unlock_release_tokens", "value": s.values,
+             "tier": int(sched["tier"].iloc[0]) if "tier" in sched else 3,
+             "source": f"derived:unlock_on_schedule[{u['schedule']}: {u['label']}; {text}]"}), sched.columns)
+        if (name, u["schedule"]) in EVIDENCE_RESULTS:       # the unlock is the schedule's figure: graded as it is
+            ev = EVIDENCE_RESULTS[(name, u["schedule"])]
+            EVIDENCE_RESULTS[(name, "unlock_release_tokens")] = {**ev, "note": f"{ev.get('note', '')} {text}".strip()}
+
+
 def _burned_declared_zero_views(groups: dict) -> None:
     """R10.A1d (config.BURNED_DECLARED_ZERO): a project with NO burn mechanism of any kind (confirmed from its contracts)
     burns none of what is bought — the BURNED buyback is a declared 0 on every day its total supply is held, not the
@@ -8734,6 +8788,7 @@ def aggregate(long: pd.DataFrame, fetch_status: pd.DataFrame, asof: pd.Timestamp
     _cashback_funding_views(groups)  # round 3 W3: the cashback its market purchases did not cover — (c)
     EVIDENCE_RESULTS.clear()
     _evidence_views(groups, usd=False)  # G9 N: published / aggregator / mechanism figures in tokens (config.EVIDENCE_LADDER)
+    _unlock_on_schedule_views(groups)   # R21: Aethir's unlock on the published schedule; its claims a memo + the check
     _stock_rise_views(groups)     # G9 D2: a declared flow read as the rises of a published cumulative (config.STOCK_RISE_VIEWS)
     _supplier_b_views(groups)     # G9 I3: Aethir's (b) = checker schedule + weekly compute rewards before the measured sum
     _outflow_views(groups)        # Phase 2: the five outflow categories, tokens and $ (after unlocks and emissions)

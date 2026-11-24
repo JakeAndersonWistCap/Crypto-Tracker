@@ -50328,3 +50328,116 @@ PROJECT_BY_NAME["Aethir"].setdefault("series_handover", {})["holder_value_revenu
            "burn (to 0x…dEaD on Arbitrum) is the holder value",
     "composition_change": "a declared 0 (no payout mechanism) -> the fee burn x each day's price",
     "declared": "2026-11-02"}
+
+
+# ===== R21 — AETHIR (Jake 2026-11-25; SPEC "Round 21 — Aethir"). Everything below was read 2026-11-24 from a primary
+# source: Arbitrum and Ethereum (keyless public RPC: arb1.arbitrum.io, tenderly, publicnode), Sourcify (verified
+# source), docs.aethir.com (.md pages; unchanged since R20's copies of 2026-11-23 bar the header line). =================
+#
+# ----- 1. THE BURN'S "0 ROWS" ON 24 NOV (fetch/aethir_chain.py). Reproduced live 2026-11-24 16:21 UTC: the read itself
+# works on both endpoints (arb1 and tenderly, ~11 s): 23 Transfers to 0x…dEaD since block 516,000,000 — 22 burns
+# (12,586,244.98 ATH, 2026-11-03..2026-11-24) + the stray 0.015936806889 ATH of 2026-10-21 (0xd4627ecb…, tx 0xb9f6c90f…)
+# — sum to the dead balance 12,586,244.996919807 to the wei, and the frames carry 22 complete days 2026-11-02..11-23.
+# NOT the reconciliation (the stray is inside it: the proof sums every sender), NOT the window (the burn reads every day
+# from the launch whatever the run's window). A CODE FAULT in the run around it: (a) the day's marks were keyed
+# "aethir_chain:burn" / "aethir_chain:ethereum", which name no series, so token_metrics._mark_stored kept them whether
+# or not the rows reached the store — after any run that set the mark without storing the rows, every later run that
+# day logged "Aethir chain read (burn): read today already", 0 rows (reproduced here: a second fetch the same day logs
+# exactly that line, 0 rows); (b) the burn was read AFTER the Ethereum history (14 eth_getLogs of 1,000,000 blocks: 58 s
+# of the tier's 81 s measured alone; R20 measured ~25 s), inside a 180 s tier budget shared with ~45 concurrent tiers — a
+# cut-off there lost the burn with the history. Which of the two hit Jake's run is NOT VERIFIED (no Run Log or export of
+# the 24 Nov run here). Fix: marks keyed aethir_chain:<project>:<metric> (kept only when that series is stored), the
+# burn read FIRST, the budget 300 s; a stray transfer is named on the burn's rows and excluded from it.
+AETHIR_R21_BURN_READ = {
+    "on": "2026-11-24", "arbitrum_block": 527_169_944, "dead_balance": 12_586_244.996919807,
+    "burns": 22, "burned": 11_955_182.09375163 + 631_062.88723137,      # to 11-23, + the burn of 11-24
+    "stray": {"day": "2026-10-21", "from": "0xd4627ecb405b64448ee6b07dcf860bf55590c83d", "tokens": 0.015936806889073004,
+              "tx": "0xb9f6c90fbd7e629ef3a362cde2a17f9a75bfedc989ccbd4bd10f957400a828db"},
+    "complete_days_stored_by_one_run": ("2026-11-02", "2026-11-23")}
+
+# ----- 2. BUY-THEN-BURN OR A DIRECT BURN? A DIRECT BURN OF FEES (read 2026-11-24). The burn contract 0xf8ec8e8e… is
+# Sourcify-verified (exact match, chain 42161) as contracts/periphery/ServiceFeeBurner.sol: "Claims an
+# approver-authorized amount of service fee from AethirCore and sends it to this chain's canonical burn address, in a
+# single transaction"; settle() calls core.claimServiceFee(containers, vdata) and transfers what arrived to 0x…dEaD —
+# no router, no pool, no swap path in the code. Every burn transaction read (11-03 0x1da340b1…, 11-09 0xed3d55cf…, 11-24
+# 0xb107dfc5…) holds exactly four logs: ATH Transfer AethirCore 0x226dc7d2… -> burner, AethirCore's claim event, ATH
+# Transfer burner -> 0x…dEaD, ServiceFeeBurned — no Swap event. The ATH burned is ATH customers paid as service fees
+# (settled in ATH into AethirCore), claimed as the network fee's share and destroyed. The protocol buys nothing.
+# DRAFT FOR JAKE — NOT APPLIED (config.BUYING_PRESSURE_BY_DESIGN["Aethir"] and DECLARED_NA_REASONS stay as R20 set
+# them until he confirms). Proposed wording for the "no buyback programme declared" cell (Config & Sources) and the
+# buyback route:
+#   "n/a — no buyback programme: Aethir buys no ATH on the market. Since 2026-11-02 it BURNS ATH that customers paid
+#    as network fees — the ServiceFeeBurner 0xf8ec8e8e… (Arbitrum, Sourcify-verified) claims the fee share from
+#    AethirCore 0x226dc7d2… and sends it to 0x…dEaD in one transaction, no swap (read 2026-11-24). Counted as the burn
+#    (gross_burn_tokens, A4) and as credited holder value, not as a buyback."
+# (Had the code or the transactions shown a swap, the wording would have been "buy-then-burn: fee revenue buys ATH on
+# <DEX> and the bought ATH is burned" and the burn would have counted as a burned buyback; neither the code nor any
+# transaction read shows one.)
+
+# ----- 3. UNLOCKS ON THE PUBLISHED SCHEDULE (Jake's decision 7). unlock_release_tokens = the published team + investor
+# vesting (EVIDENCE_LADDER["Aethir", "insider_unlock_tokens"]: Team 12.5% of 42bn, 18-month cliff + 36 months linear
+# from 2025-12-12; Investors 11.5%, 12-month cliff + 24 months linear from 2025-06-12 — 11,406,584 ATH a day, 1.027bn a
+# 90-day block, 1.038bn a 91-day quarter, until 2027-06-11). R20's measured leg — the falls of the three MerkleVesters'
+# stock — becomes the memo `unlock_claims_tokens` beside it (CP detail column) and is the ON-CHAIN CHECK: per 90-day block
+# the claims span, CLAIMED <= SCHEDULED x (1 + 0%) (build_workbook.unlock_schedule_check; a claim cannot precede its
+# vesting). Live 2026-11-24 (Ethereum, the vesters' Transfer logs, as of 2026-11-24): Q0 scheduled 1,026,592,591 vs
+# claimed 514,104,186 (gap 512.5M); Q-1 1,026,592,591 vs 512,300,919; Q-2 1,026,592,591 vs 448,824,532; Q-3 969,110,839
+# vs 656,024,648; Q-4 595,479,452 vs 1,451,709,321 — DISAGREES in Q-4: the vesters also pay a category the schedule
+# leaves out (advisors 5%, terms unpublished; the vesters were funded 12.52bn, more than team + investors' 10.08bn).
+# Cumulative to 2026-11-24: scheduled 5,180,299,570; claimed on chain since the first funding 6.43bn (funded 12.52bn
+# less the 6,091,057,153 still held). The brief's "406M" Q0 claims was not reproduced (514.1M here, to 2026-11-24).
+METRICS["unlock_claims_tokens"] = {
+    "label": "MEMO — ATH CLAIMED from the vesting contracts (the fall of the three MerkleVesters' stock; a top-up "
+             "releases 0). Shown beside the unlock, which counts the published schedule (R21); the on-chain check",
+    "kind": "flow", "unit": "tokens", "archetypes": [2], "tiers": [2], "sanity_min": 0, "sanity_max": 42e9,
+    "only_projects": ("Aethir",), "view_only": True}
+UNLOCK_ON_SCHEDULE = {
+    "Aethir": {"schedule": "insider_unlock_tokens", "memo": "unlock_claims_tokens", "tolerance": 0.0,
+               "label": "the published vesting — team 12.5% (18-mo cliff, 36-mo linear) + investors 11.5% (12-mo "
+                        "cliff, 24-mo linear) of 42bn from listing 2024-06-12 (docs.aethir.com token-vesting); advisors "
+                        "and ecosystem not included (PARTIAL)",
+               "check_what": "ATH claimed from the three MerkleVesters (unlock_claims_tokens, Transfer logs)",
+               "decided": "Jake 2026-11-25 (R21, decision 7)"}}
+DETAIL_COLUMNS.append(
+    {"tab": "CP", "after": "Unlocks Q0", "header": "Detail — Claimed from the vesting contracts Q0 (tokens; on chain, a "
+                                                   "MEMO — the unlock counts the published schedule)",
+     "cells": {"Aethir": ("unlock_claims_tokens", "q0")}})
+
+# ----- 4. THE STAKING POOLS — WHO PAYS THE WEEKLY ATH (read 2026-11-24, Ethereum, the last 1,200,000 blocks to block
+# 26,486,222, ~167 days). Each pool's reward contract is a pair of EIP-1167 clones of Sourcify-verified code:
+#   Gaming pool 0x6F5c81fe… rewardDistributor() = RewardDistributor 0x417e1bcf… (impl 0xb68c1a82…, "Distributes any
+#     tokens transferred to the contract among veBPT holders"; getVotingEscrow() = the Gaming pool) <- its
+#     rewardFaucet() = RewardFaucet 0xaba1a7ac… (impl 0xe3a252cf…): 23 transfers of 1,000,000 ATH, one a week.
+#   AI pool 0x784BC33B… -> RewardDistributor 0x4ffac630… <- RewardFaucet 0x3553def4…: 23 x 1,000,000 ATH.
+#   THE FAUCETS' ONLY FUNDER: the Safe 0x3e7e6c3d… (3 x 10,000,000 ATH into each), the VestingWallet's beneficiary —
+#   ATH from the pre-minted allocation's releases. Besides the faucets, the distributors received 1,000,000 ATH each,
+#   once, from that same Safe. Both distributors' admin() is the genesis Safe 0x612407de…. No transfer from AethirCore
+#   (Arbitrum; the fees are settled there) or any fee address reaches a faucet or a distributor.
+# VERDICT: the AI and Gaming pools are EMISSIONS-funded (the docs: "each pool distributes 1,000,000 ATH per week", the
+# Staking Pools Emission Schedule; the chain: the issuer's Safe funds the faucets). The EigenLayer vault — the only pool
+# designed to be fee-funded ("rewards generated by Cloud Hosts who borrow ATH from the Vault", predeposit-rewards;
+# "Until then, eATH holders will not accrue any rewards") — is not active (R20: isStakingEnabled() false, read
+# 2026-11-23). Cloud Host / Edge stakes are slashable deposits. NO POOL IS FEE-FUNDED: A3 stays OFF and the UNIFORMITY
+# series is not wired (CONDITIONAL_ARCHETYPES["Aethir"]["on"] stays False).
+AETHIR_STAKING_POOLS["reward_funding"] = {
+    "read_on": "2026-11-24", "window": "Ethereum blocks 25,286,222..26,486,222 (ATH Transfer logs)",
+    "gaming_pool": {"distributor": "0x417e1bcf39742534ae65988e4eb3eac1a243cbc0",
+                    "faucet": "0xaba1a7ac1da115ac55316bf3a257fca9f9f8ee81", "weekly": 1_000_000.0, "weeks_seen": 23,
+                    "faucet_funded_by": {"0x3e7e6c3d084879837310d26b30e52d4b56a8c2f4": 30_000_000.0}},
+    "ai_pool": {"distributor": "0x4ffac630c56e41135a7b1f892d3af8061df3620d",
+                "faucet": "0x3553def49c3cf67ff206916017cd4013911ae828", "weekly": 1_000_000.0, "weeks_seen": 23,
+                "faucet_funded_by": {"0x3e7e6c3d084879837310d26b30e52d4b56a8c2f4": 30_000_000.0}},
+    "implementations": {"RewardDistributor": "0xb68c1a821d4b2c4dea32264dec0543c04d0fee5d",
+                        "RewardFaucet": "0xe3a252cf744531e96a73d40e71c8ceda6cadc9ca"},
+    "fee_address_seen": False,
+    "verdict": "EMISSIONS — both pools' weekly 1,000,000 ATH comes from the issuer's Safe 0x3e7e6c3d… through a "
+               "RewardFaucet; no fee address funds any pool; A3 stays off"}
+CONDITIONAL_ARCHETYPES["Aethir"]["why_off"] = (
+    "R21 (read 2026-11-24): no pool is fee-funded. The AI and Gaming pools' 1,000,000 ATH a week reaches each pool's "
+    "RewardDistributor (0x4ffac630…, 0x417e1bcf…) through a RewardFaucet (0x3553def4…, 0xaba1a7ac…) funded only by the "
+    "issuer's Safe 0x3e7e6c3d… (emissions; the docs' Staking Pools Emission Schedule); the fee-designed EigenLayer vault "
+    "never activated; Cloud Host / Edge stakes are deposits. Staking yield paid from emissions does not qualify A3")
+for _r in DECLARED_NA_REASONS.get("Aethir", []):
+    if "UNIFORMITY" in (_r.get("cols") or ()) and "RewardFaucet" not in _r.get("text", ""):
+        _r["text"] += (" — on chain (2026-11-24) each pool's weekly ATH comes from the issuer's Safe 0x3e7e6c3d… through "
+                       "a RewardFaucet; no fee address funds a pool (R21)")
