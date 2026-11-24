@@ -204,5 +204,7 @@ def test_no_pool_is_fee_funded_on_chain_and_a3_stays_off():
 
 def test_the_buyback_draft_is_not_applied():
     # the burn is a direct burn of fees (ServiceFeeBurner); the declaration waits for Jake: R20's by-design code stands
-    assert "Aethir" in config.BUYING_PRESSURE_BY_DESIGN
-    assert "ServiceFeeBurner" not in config.BUYING_PRESSURE_BY_DESIGN["Aethir"]
+    # R21 BURNS (Jake: "Uniswap and Aethir read 'buying: by design'. Fix all three"): buying is a declared 0 now;
+    # the draft declaration of the no-buyback line is still not applied (was: Aethir in BUYING_PRESSURE_BY_DESIGN)
+    assert "Aethir" not in config.BUYING_PRESSURE_BY_DESIGN and "Aethir" in config.BUYING_ZERO_DECLARED
+    assert "ServiceFeeBurner" not in str(config.DECLARED_NA_REASONS.get("Aethir", ""))
