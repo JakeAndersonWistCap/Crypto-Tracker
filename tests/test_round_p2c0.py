@@ -39,6 +39,9 @@ def test_lost_headlines_are_accepted_losses_with_a_reason(project, head, monkeyp
     # Aerodrome's hold while it is parked (R8.1 unparked it on 2026-11-17: the allowance is judged under the park)
     if project == "Aerodrome":
         monkeypatch.setattr(config, "project_parked", lambda p, day=None: True)
+    # Hyperliquid's allowance holds while option C fails — the state the last build in this process left; the case
+    # under test is that state (R21 gate: another build on the same worker had left option C passing)
+    monkeypatch.setattr(config, "option_c_active", lambda p: False)
     a = config.regression_allowance(project, head, on=ON)
     assert a and a["reason"].strip(), (project, head)
 

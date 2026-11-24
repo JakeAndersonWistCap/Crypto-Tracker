@@ -68,10 +68,12 @@ def test_0_probe_rows_cover_every_stored_series_the_dump_lacks():
 
 
 @pytest.mark.skipif(not (ROOT / "tests" / "fixtures" / "guard_baseline.json").exists(), reason="no committed baseline")
-def test_0_measuring_point_guard_on_the_fixture_store(tmp_path):
+def test_0_measuring_point_guard_on_the_fixture_store(tmp_path, monkeypatch):
     """THE GUARD (Jake, G8 item 0): build on the fixture store with probe rows and compare with the committed baseline —
     no series gains an undeclared basis and no headline that held a value loses it."""
     import measuring_guard as mg
+    from probe_unpinned import unpinned
+    unpinned(monkeypatch)        # the wiring the baseline was taken on (a fresh process), never a shared build's pin
     base = json.loads((ROOT / "tests" / "fixtures" / "guard_baseline.json").read_text(encoding="utf-8"))
     snap = mg.build(tmp_path)
     bad = mg.compare(base, snap)
