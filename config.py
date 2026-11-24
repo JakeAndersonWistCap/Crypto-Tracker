@@ -51131,3 +51131,9 @@ BURN_ADDRESS_IS_HELD = {
     "Hyperliquid": "n/a — burn_address_balance is the Assistance Fund, a HELD buyback (R21), not a burn; the true burns' "
                    "cumulative (1bn − tokenDetails.totalSupply + the HyperEVM zero address, ~1.64M on 2026-11-24) is "
                    "not stored as one stock"}
+# R21 (lead, item 2 — found by free_float.check_burns on the final build): Uniswap's burn-to-claim is read twice on the
+# Data sheet — gross_burn_tokens (the rise of 0x…dEaD) and, at build time, buyback_burned_tokens (the same Firepit
+# burns as actual_buyback_tokens x its burned share). One leg in the net, never both.
+BURN_NOT_IN_NET[("Uniswap", "buyback_burned_tokens")] = (
+    "the burn-to-claim as a buyback x its burned share (source chain:ethereum:burn_dead:delta:as-buyback) — the same "
+    "UNI as gross_burn_tokens (both read 0x…dEaD's rise), never summed with it")

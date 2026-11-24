@@ -519,8 +519,9 @@ def test_every_a3_row_holds_the_key_in_the_key_column_and_the_rank_in_the_rank_c
     rows = a3_rows(rec["reader"])
     assert {"Fluid", "Maple", "Sky", "Hyperliquid", "Uniswap", "Morpho"} <= {r[0] for r in rows}
     check_a3_rows(rows)
-    fluid = next(r for r in rows if r[0] == "Fluid")
-    assert fluid[1] == 0 and fluid[2] == '0.0"x — paused"'              # the key column holds the key: 0, paused
-    assert isinstance(fluid[3], (int, float)) and fluid[4] == '0" — paused"'
-    morpho = next(r for r in rows if r[0] == "Morpho")
-    assert morpho[1] == 0 and morpho[2] == '0.0"x — off"'
+    # R21 (decision 5): a paused / off programme reads "unranked"; its key is what the data reads (0 only where the
+    # data says 0, else a code) — never ranked on a key of 0
+    for name in ("Fluid", "Morpho"):
+        row = next(r for r in rows if r[0] == name)
+        assert row[3] == "unranked", row
+        assert row[1] == 0 or str(row[1]).split(" - ")[0] in reader.CODES, row

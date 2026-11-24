@@ -142,30 +142,18 @@ Freeze order once a project reads READY on the store and the gate is green: one 
   `python token_metrics.py --project Ethereum --project Near`, then
   `python done_check.py --verbose | Select-String "^(Ethereum|Near)" -Context 0,16`.
 
-## 8. Round 20 (2026-11-24) — rules, free float and fixes: THE NEXT RUN ON THE STORE, IN ORDER
+## 8. Round 21 (2026-11-25) — burns in the net, bought-back rules, Aethir, Pendle, Hyperliquid: THE NEXT RUN ON THE STORE, IN ORDER
 
-Round 20 changed rules (Jake's): new archetype definitions and tags, a new A3 key (revenue sent to holders ÷ value of
-new supply), ONE free float that every tab reads (`free_float.py`), daily float movements on the Flows sheet, two nets
-(net holder yield on market cap; net float pressure on the free float), "history filling", and the run fixes of the
-23 Nov store run. Nothing ran on the store and nothing was frozen. 1,118 frozen cells moved on the fixture, each
-declared with its reason: `docs/moves_r20.md`. Rounds 18 and 19 are in git history and in docs/r19_*.md, docs/r20_*.md.
+Round 21 changed rules (Jake's): every burn counts in net float pressure as its own line, separate from buying
+(net float pressure = revenue-funded buying + burns − new supply − bought tokens returned, all ÷ free float); the
+bought-back rules F1–F7; paused / off programmes show their label and "unranked" (decision 5); Hyperliquid's
+Assistance Fund is a held buyback by default; Aethir's burn reader fixed and its unlocks read on the published schedule;
+Pendle's buying reads its own buyback contract on chain. Nothing ran on the store and nothing was frozen. 259 frozen
+cells moved on the fixture, each declared with its reason: `docs/moves_r21.md` (Round 20's are in `docs/moves_r20.md`).
 
-Store state Jake reported on 23 Nov: done_check 10 READY (nine frozen + Chainlink); NOT READY Ethereum 8, Aethir 9,
-GEODNET 1, Near 1; Plume on hold.
-
-### New key Jake must add (after 2026-12-01 15:02 UTC, not before)
-
-beaconcha.in is the staked-ETH, validator-count and staking-yield source from Round 20. Its docs offer no standing free
-plan: a "Free Trial" of 30 days (1 request a second, 1,000 requests, one key), then 59 EUR a month. Until a key is
-set, the keyless public beacon node stores the day's staked ETH (cross-checked against ultrasound.money), so the
-series is live again from the next run; 2026-10-26 to that day is a named hole the key's first run closes.
-1. After 2026-12-01 15:02 UTC (the declared cooldown; starting earlier wastes trial days): log in at
-   https://beaconcha.in/login, open https://beaconcha.in/user/api-key-management, start the Free Trial, create the key.
-2. In `C:\Users\jake\Crypto-Tracker\.env` add the line `BEACONCHAIN_API_KEY=<the key>` (no quotes; nowhere else;
-   never paste it into a chat or a commit).
-3. `python check_offline_items.py env_keys` shows PRESENT, never the value. Do NOT run `ethstore_check` (it spends
-   trial requests). Never run `staked_eth_rebuild.py`: it now refuses (the 1,170 GB query is retired).
-Decision for Jake when the trial ends: pay, or make the keyless node the standing source.
+Baseline (Jake's 24 Nov run on 4e1231d): done_check 12 READY; Aethir and Pendle NOT READY; Plume on hold; World Mobile
+parked; both workbooks recalc 0 errors; check_workbook and check_nets printed []; compare all showed 1 undeclared move
+on each of the nine (the cp_nfp Trend row — now declared).
 
 ### The run, in order
 
@@ -182,87 +170,107 @@ gcloud auth application-default set-quota-project near-data-510309
 python project_freeze.py --compare all
 #    expect: nine lines, each "0 undeclared move(s)"
 python check_offline_items.py env_keys
-#    expect: BEACONCHAIN_API_KEY ABSENT until December, the others PRESENT
-python -c "import sqlite3; c=sqlite3.connect('file:metrics.db?mode=ro', uri=True); [print(r) for r in c.execute('select date, value, fetched_at from metrics where project=? and metric=? and date>=? order by date', ('Morpho','noncirculating_holding_tokens','2026-11-18'))]"
-#    Morpho: 2026-11-20 = 283719215.78; a later row 16.5M lower (run before 15:37 UTC on 23 Nov) or 65M lower (after)
+#    expect: ALCHEMY_API_KEY PRESENT (Berachain asks it first); BEACONCHAIN_API_KEY ABSENT (not needed this run)
 python -m fetch.aethir_chain
-#    stores nothing: "schedule matches", two DIRECT and two INFERRED wallets with locked 0.00, 21+ burns >= 11,955,182.09 ATH
-python near_p2p_history.py plan
-#    starts "THE COMBINED SCHEDULE", chunks 1/2/2/3, key forms 2027-03-31
+#    stores nothing. Expect "schedule matches"; the burns read FIRST (no longer after the slow history): 22+ days from
+#    2026-11-02, sum >= 11,955,182.09 ATH, one stray 0.0159 ATH transfer excluded; the claims check
+#    "claimed <= scheduled" may fail for Q-4 (advisor vesters) — a printed finding, not an error
 
 # 2. the daily run (takes the run lock itself). New this round, filled with no extra command:
-#    Ethereum   staked ETH from the public beacon node ("cross-check agrees"); EF wallets; settlement P2P pieces
-#               (5 of 13 fit November's budget, the other 8 on the first December run: all 89 days by 2026-12-01)
-#    Aethir     aethir_chain: vesting stock, issuer wallets, insider stake, the daily fee burn (455 past days once)
-#    Aerodrome  gauge_caps_surplus_tokens ("over 9 pot(s)"); aero_leaf lines for the seven other chains
-#    Chainlink  node_payments_safe_out and exchange_leg_out scans (the flag cell opens "RAISED - 11.4x ...")
-#    Uniswap    tokenjar has 900 s (no TIER TIMED OUT)
-#    Near       NearBlocks tier budget 750 s: no "NOT CALLED" line
+#    Aethir      gross_burn_tokens has rows again (the 24 Nov run stored 0: the burn read sat behind the history scan)
+#    Pendle      pendle_buyback_chain: every PENDLE in and out of the buyback contract 0x9e08…896b (~6 getLogs, <=100 s)
+#    prices      the on-chain pool cross-check replaces coins.llama.fi in the price check (Uniswap v3 / Sky v2 pools,
+#                GEODNET on Polygon, Hyperliquid's own book; Coinbase stays for ETH, LINK, NEAR, AERO, UNI)
+#    Uniswap     World Chain's TokenJar slice is a named gap with its cap (~0.23% of inflow), never a TIER TIMED OUT
+#    Run Log     "Http client" lines are relabelled by what they time (web calls, waits); longest tiers start first
 python token_metrics.py
 
 # 3. catch-ups
 python archive_backfill.py --project Aerodrome --run --budget-min 45
-#    "Gauge Caps surplus ... ~33 row(s) written"; "staker revenue on the other chains ... N row(s)" (5-6 min an epoch; re-run to continue)
+#    as last round; re-run to continue
 python token_metrics.py --seed pendle_berachain
-#    "HISTORY REPAIR ... re-reading blocks", every trace line naming rpc.berachain.com, then reconciled
+#    stops itself after 10 minutes and names what it left unread (Berachain is 0.0001% of Pendle's TVL; Q-3 lacks
+#    590.18 and Q-4 18,126.19 PENDLE of gauge emissions; Q0..Q-2 unaffected). Free Alchemy plan: 10 blocks a call,
+#    so the 10,000-block ranges go to rpc.berachain.com. Only if the Alchemy plan is paid: add
+#    ALCHEMY_GETLOGS_MAX_RANGE=10000 to .env first.
 python token_metrics.py --seed tokenjar
 
 # 4. build, check
 python token_metrics.py
-python -c "import free_float as f; print(f.check_workbook('token_metrics_audit.xlsx','token_metrics.xlsx')); print(f.check_nets('token_metrics_audit.xlsx'))"
-#    expect: [] and []   (every tab shows the one float; each net equals its two sides)
+python -c "import free_float as f; a='token_metrics_audit.xlsx'; print(f.check_workbook(a,'token_metrics.xlsx')); print(f.check_nets(a)); print(f.check_burns(a))"
+#    expect: []  []  []
+#    check_workbook: every tab shows the one free float; check_nets: each net equals its sides; check_burns (NEW):
+#    every project's burn series is read by its net float pressure, or declared out of it with its reason
 python done_check.py --verbose > logs\done.txt
-#    expect a line "HISTORY FILLING: N cell(s) shown grey, not counted"
 python headline_check.py --audit token_metrics_audit.xlsx --reader token_metrics.xlsx --db metrics.db --out ..\tm-exports\headline_check.md
 python project_freeze.py --compare all
+#    expect: nine lines, each "0 undeclared move(s)" (compare all reads the 15 dumps, not the store)
 foreach ($p in 'Aerodrome','Chainlink','Ethereum','GEODNET','Aethir','Near','Morpho','Ether.fi','Maple','Sky','Pendle','Fluid','Hyperliquid','Uniswap') { python store_export.py --project $p --out-dir ..\tm-exports }
-
-# 5. December only (on or after 2026-12-01), each needing Jake's dated approval in config
-python near_p2p_history.py dry-run
-python near_p2p_history.py run
 ```
 
-### Expected done_check after that run (predictions from the fixture and four exports; not seen on the store)
+### Expected done_check after that run
+
+Read from a build of the ten store exports on file (Aerodrome, Ether.fi, Maple, Morpho 20 Nov; Fluid, Pendle 18 Nov;
+Sky 17 Nov; Hyperliquid 16 Nov; Near, Uniswap 20 Nov) at this code, each at its own as-of; not seen on the store.
 
 | Project | Expected | Notes |
 |---|---|---|
-| Aerodrome, Ether.fi, Maple, Morpho | READY | READY on the 20 Nov exports at this code. Morpho's total dilution will read about 89% of float unless the two wallets that received 65M MORPHO from the DAO treasury on 23 Nov are classified (section 9). |
-| Fluid, Hyperliquid, Pendle, Sky, Uniswap | READY expected | Not built from their exports this round. New columns (dilution % of market cap, net float pressure) block wherever net holder yield already blocked. |
-| Chainlink | READY | The (f) cells read BLOCKED until its scans store rows (first run). |
-| Ethereum | 3 lines: key, rank, NRR | They form once the 89 settlement days are in (by 2026-12-01) if the Artemis CSV + rebuild are hole-free for 365 / 730 days; else "history filling". Staked ETH live again; the four rule-3 lines declared; insider share and yield form. Risk: the static `validator_apr_gross` reference can read BROKEN against a daily yield; burn_30d reference was BROKEN on the fixture. |
-| Aethir | 2 lines: UNIFORMITY, "no buyback programme declared" | Both true statements needing Jake's declaration. Float falls by 7.72bn (issuer wallets off). |
-| GEODNET | READY | Uniformity is declared n/a; insider share should clear on the store. |
-| Near | READY or 1 line | Key, rank and NRR read "history filling" (not counted). |
+| Aerodrome, Ether.fi, Hyperliquid, Maple, Uniswap, Near, Sky | READY | READY on their exports at this code. |
+| Morpho | READY | Key 0 (the fee switch is off), rank "unranked" with its label "off" (decision 5). Total dilution still ~45% of float on the 20 Nov export; on the store the 23 Nov 65M claims make it about 89% (section 9). |
+| Fluid | READY | READY on its 18 Nov export at this code. Key and rank read "paused, no restart condition stated" and "unranked" (decision 5). |
+| Pendle | READY | Was STALE on 24 Nov. The new chain reader dates each epoch's buyback on the day it is bought, so buying pressure is current. On the 18 Nov export without the reader's rows it still reads STALE (16 days; its only lines); with them, READY (the Pendle lane's build). |
+| Chainlink, GEODNET, Ethereum | READY | READY on 24 Nov. Nothing this round blocks them: Chainlink's net holder yield is allowed "blocked until the history is complete" (Jake, item 8); burns lines are a declared 0 (Chainlink) or the burn series (GEODNET, Ethereum EIP-1559, now in the net, no longer n/a). |
+| Aethir | 1–2 lines | The burn has rows again and the unlocks read the published schedule. What can stay: "no buyback programme declared" until Jake confirms the buyback wording (section 9), and UNIFORMITY (no staker yield: the pools are emissions-funded, A3 off). |
 | Plume | on hold | No change. |
+| World Mobile | parked | No change. |
 
 ### Freeze commands (do NOT run until done_check reads READY on the store AND the full gate is green)
 
-Already-frozen projects moved this round: re-baseline each (the declared moves stay as the record), one commit each.
+One commit per project. The nine already frozen are re-baselined (their declared moves stay in config as the record);
+Chainlink, GEODNET, Ethereum and Near are newly frozen.
 ```
-python gate.py --rev HEAD --out ..\tm-gate --workers 4
-foreach ($p in 'Aerodrome','Ether.fi','Fluid','Hyperliquid','Maple','Morpho','Pendle','Sky','Uniswap') { python project_freeze.py --write $p }
-python project_freeze.py --write Chainlink
-python project_freeze.py --write GEODNET
-#   for Chainlink and GEODNET also add a FROZEN_PROJECTS entry at the end of config.py (copy the Ether.fi block:
-#   baseline tests/fixtures/frozen_<name>.json, since <today>, why <the store export it read READY on>)
+python gate.py --rev HEAD --out ..\tm-gate --workers 3
+#    expect GATE_EXIT 0
+
+# the nine, re-baselined
+foreach ($p in 'Aerodrome','Ether.fi','Fluid','Hyperliquid','Maple','Morpho','Pendle','Sky','Uniswap') {
+  python project_freeze.py --write $p
+  git add tests/fixtures
+  git commit -m "freeze: re-baseline $p after Round 21 (declared moves kept; done_check READY on the store, gate green)"
+}
+
+# the four new ones: first add the entry at the END of config.py (copy the Ether.fi block), e.g. for Chainlink
+#   FROZEN_PROJECTS["Chainlink"] = {
+#       "baseline": "tests/fixtures/frozen_chainlink.json", "since": "<today>",
+#       "why": "done_check READY on Jake's store at this code (export <its store_export file>); the full gate green"}
+# (baseline names: frozen_chainlink.json, frozen_geodnet.json, frozen_ethereum.json, frozen_near.json)
+foreach ($p in 'Chainlink','GEODNET','Ethereum','Near') {
+  # (add that project's FROZEN_PROJECTS entry to config.py, then:)
+  python project_freeze.py --write $p
+  git add config.py tests/fixtures
+  git commit -m "freeze: $p (done_check READY on the store, gate green)"
+}
 python project_freeze.py --compare all
-git add tests/fixtures config.py
-git commit -m "freeze: <project> (done_check READY on the store, gate green)"
+#    expect: thirteen lines, each "0 undeclared move(s)"
+git push -u origin claude/crypto-metrics-supply-demand-ovkg8g
 ```
-Ethereum, Aethir and Near are not expected READY on this run; freeze them when they are.
+Aethir, Plume and World Mobile are not frozen; freeze Aethir when it reads READY.
 
-## 9. Decisions open after Round 20 (Jake's)
+## 9. Decisions open after Round 21 (Jake's)
 
-- Morpho: who controls 0xb6914e90… (12.5M) and 0xd9e0f068… (52.5M)? If Morpho's, add them to the issuer set (a
-  treasury move); if not, the 65M is a real unlock and dilution near 89% of float is right.
-- Hyperliquid: the Assistance Fund's HYPE can be moved by a hard fork (the Foundation's own words). Treat as a held
-  buyback (circulating +49.3M, float unchanged, A4 off) or keep as burned? A4 is off either way this round.
-- Net float pressure for projects whose buying is a protocol burn (Uniswap reads −3.35%, Ethereum n/a): should
-  fee burns count as the demand side?
-- Paused / off keys read 0 and rank at the bottom even where the project has no data (Ether.fi on the fixture).
-- The eight rule questions in docs/r20_research_frozen_audit.md (buybacks paid to non-holders, buybacks paid to
-  stakers in net float pressure, staking rewards paid from bought-back tokens, the wording of "paused", one-off
-  buybacks, in-kind airdrops, held-buyback falls, authorised-but-unissued supply).
-- beaconcha.in after the 30-day trial: pay or use the keyless node.
-- Aethir: outflow (e) on the published-schedule model (about 1.04bn a quarter) or the measured vester claims (406M).
+- Hyperliquid (docs/r21_hyperliquid_burns.md): the default wired is the Fund HELD (circulating +48.0M, off the float,
+  A4 off). Recommendation B: keep the Fund held and count the three true burns (HyperCore supply fall ~4,316 HYPE/day,
+  zero-address priority fees ~278/day, the HyperEVM base fee ~96k lifetime INFERRED and not yet subtracted), with A4 on
+  them (~1.71M a year, 1.72% of float). One switch: `HYPERLIQUID_TRUE_BURN_A4` in config.
+- Morpho (docs/r21_morpho_wallets.md): both wallets are Paul Frambot's (the Safe's ENS paulframbot.eth, renewed by the
+  EOA); the 23 Nov transfers were vest() claims from the founder Vester (fully vested 2025-06-11). It stays a real unlock
+  (~89% of float) until you decide. Recommendation C: treat founder claims of already-vested tokens as not new supply
+  (dilution 39.5%; 23.8% if the 6 and 11 Nov claims go too). 50.36M is vested and unclaimed.
+- Aethir's buyback wording (draft, NOT applied): "Aethir has no buy-then-burn programme. The ServiceFeeBurner
+  (0xf8ec…) claims a share of service fees from AethirCore in ATH and sends it to 0x…dEaD: a direct fee burn, not a
+  buyback — no swap." Confirm and it becomes the declared reason.
+- Aethir's outflow (e): the published schedule (~1.04bn a quarter) is wired, the measured claims (Q0 514.1M) shown beside.
+- beaconcha.in after 2026-12-01 15:02 UTC: start the 30-day trial then (steps in git history, Round 20 section 8), or
+  keep the keyless public beacon node as the standing source.
+- Near's December P2P history chunks (near_p2p_history.py) need your dated approval in config before they run.
 - Highlights: three cards were written for the old tags and key and may not render.

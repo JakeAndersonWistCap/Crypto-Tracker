@@ -434,6 +434,9 @@ def judge_suspects(hits: list, project: str, already: list) -> list:
             continue
         if config.declared_na_reason(project, h["reason"]):
             continue                   # PR1B.5: a declared reason (config.DECLARED_NA_REASONS), decided with its source
+        if (str(h["code"]).strip().lower() == "unranked"
+                and "not ranked (Jake 2026-11-25, decision 5)" in str(h["reason"] or "")):
+            continue                   # R21 (decision 5): a labelled paused / off programme, unranked by decision
         kind, tab = h["tab"].split(":", 1)
         key = (tab if kind == "reader" else f"audit {tab}", h["header"] or "(no header)")
         if key in seen:

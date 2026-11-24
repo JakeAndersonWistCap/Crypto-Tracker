@@ -26,3 +26,16 @@ def test_8_a_day_count_in_the_source_text_is_not_a_new_measuring_point():
     assert b6 == b88
     # other metrics keep their numbers: a changed ratio IS a different basis
     assert trajectory.basis_of("gross_issuance_tokens", "derived:x0.044") != trajectory.basis_of("gross_issuance_tokens", "derived:x0.05")
+
+
+def test_a_decision_5_unranked_is_not_a_rule_3_blocker_on_either_path():
+    """Morpho on the 20 Nov export: the rank reads "unranked" with its 'off' label (decision 5). The rule-3 scan of both
+    workbooks (judge_suspects) must accept it as classify() does — it did not, so Morpho read NOT READY."""
+    import done_check
+    reason = ("Unranked — off: the fee switch is off: fee 0 on every listed market. A paused or off programme is shown "
+              "with its label and not ranked (Jake 2026-11-25, decision 5); its key shows 0 only where the data says 0.")
+    hit = {"project": "Morpho", "tab": "reader:Summary", "header": "Rank in archetype", "code": "unranked",
+           "reason": reason}
+    assert done_check.judge_suspects([hit], "Morpho", []) == []
+    other = dict(hit, reason="Unranked — no fee switch exists")       # a mechanism-absent reason without the decision
+    assert done_check.judge_suspects([other], "Morpho", []) != [] or not __import__("rule3").is_suspect(other["reason"])

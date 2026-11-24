@@ -1,75 +1,1819 @@
 {
 "Aerodrome": {
+"audit|A3 Revenue Buyback|BUYING PRESSURE ON FLOAT, % a year = revenue-funded buying, held or paid out (tokens, annualised) ÷ free float — the demand side of net float pressure; a burned buyback is a burn (R21)": [
+{
+"date": "2026-11-25",
+"from": "<absent>",
+"to": 0.0,
+"why": "R21 (Jake 2026-11-25) Item 2/3: new lines in net float pressure — burns on float (every burn, any source), bought tokens returned to the float (F1/F2/F7), the burn-source memo, and buying pressure on float on the A3 tab; new rows, read from the same float"
+}
+],
+"audit|CP Comparability|BOUGHT TOKENS RETURNED TO THE FLOAT, % a year = bought tokens paid out liquid, sold or transferred out of the holding wallet (tokens, annualised) ÷ free float (R21)": [
+{
+"date": "2026-11-25",
+"from": "<absent>",
+"to": 0.0,
+"why": "R21 (Jake 2026-11-25) Item 2/3: new lines in net float pressure — burns on float (every burn, any source), bought tokens returned to the float (F1/F2/F7), the burn-source memo, and buying pressure on float on the A3 tab; new rows, read from the same float"
+}
+],
+"audit|CP Comparability|BURNS ON FLOAT, % a year = every burn, whatever its source (tokens, annualised) ÷ free float — a supply reduction, not buying (R21)": [
+{
+"date": "2026-11-25",
+"from": "<absent>",
+"to": "n/a — foundation_aero_burned_other_tokens (q0): no rows stored",
+"why": "R21 (Jake 2026-11-25) Item 2/3: new lines in net float pressure — burns on float (every burn, any source), bought tokens returned to the float (F1/F2/F7), the burn-source memo, and buying pressure on float on the A3 tab; new rows, read from the same float"
+}
+],
+"audit|CP Comparability|BUYING PRESSURE ON FLOAT, % a year = revenue-funded buying, held or paid out (tokens, annualised) ÷ free float — the demand side of net float pressure; a burned buyback is a burn (R21)": [
+{
+"date": "2026-11-25",
+"from": "<absent>",
+"to": 0.0,
+"why": "R21 (Jake 2026-11-25) Item 2/3: new lines in net float pressure — burns on float (every burn, any source), bought tokens returned to the float (F1/F2/F7), the burn-source memo, and buying pressure on float on the A3 tab; new rows, read from the same float"
+}
+],
+"audit|CP Comparability|Burns — where they came from (memo: from float / staked / treasury, Q0)": [
+{
+"date": "2026-11-25",
+"from": "<absent>",
+"to": "burns 2026-07-14..2026-10-13: 0 burned — buyback_burned_tokens 0 (staked); NO ROW in the window: foundation_aero_burned_other_tokens",
+"why": "R21 (Jake 2026-11-25) Item 2/3: new lines in net float pressure — burns on float (every burn, any source), bought tokens returned to the float (F1/F2/F7), the burn-source memo, and buying pressure on float on the A3 tab; new rows, read from the same float"
+}
+],
+"audit|CP Comparability|NET FLOAT PRESSURE, % a year = buying pressure on float + burns on float − total dilution ÷ free float − bought tokens returned to the float (revenue-funded buying + burns − new supply; all ÷ free float) (R21)": [
+{
+"date": "2026-11-25",
+"from": "<absent>",
+"to": "n/a — foundation_aero_burned_other_tokens (q0): no rows stored",
+"why": "R21 (Jake 2026-11-25) Item 2/3: new lines in net float pressure — burns on float (every burn, any source), bought tokens returned to the float (F1/F2/F7), the burn-source memo, and buying pressure on float on the A3 tab; new rows, read from the same float"
+}
+],
 "audit|CP Comparability|Trend — cp_nfp (arrow · QoQ · 4Q growth/yr · quarters improved; Trajectory tab)": [
 {
 "date": "2026-11-25",
 "from": "<absent>",
 "to": "– · 4Q n/a · QoQ n/a",
 "why": "R21 (Jake 2026-11-25) Item 1: the new net float pressure row (cp_nfp, R20) has its own Trend cell beside it; a new row, no figure moved"
+}
+],
+"reader|Comparison|Burns on float, % a year": [
+{
+"date": "2026-11-25",
+"from": "<absent>",
+"to": "n/a",
+"why": "R21 (Jake 2026-11-25) Item 2/3: new lines in net float pressure — burns on float (every burn, any source), bought tokens returned to the float (F1/F2/F7), the burn-source memo, and buying pressure on float on the A3 tab; new rows, read from the same float"
+}
+],
+"reader|Comparison|Net float pressure": [
+{
+"date": "2026-11-25",
+"from": -0.269054101,
+"to": "parked",
+"why": "R21 (Jake 2026-11-25) Item 2: Aerodrome's burns line needs foundation_aero_burned_other_tokens, which the dumps do not hold (the store does): net float pressure is unknown, so the parked project shows 'parked' — never a 0"
+}
+],
+"reader|Comparison|Returned to float, % a year": [
+{
+"date": "2026-11-25",
+"from": "<absent>",
+"to": 0.0,
+"why": "R21 (Jake 2026-11-25) Item 2/3: new lines in net float pressure — burns on float (every burn, any source), bought tokens returned to the float (F1/F2/F7), the burn-source memo, and buying pressure on float on the A3 tab; new rows, read from the same float"
+}
+],
+"reader|Summary|Confidence (share green)": [
+{
+"date": "2026-11-25",
+"from": 0.214285714,
+"to": 0.153846154,
+"why": "R21 (Jake 2026-11-25) the share of green cells is recounted over the Summary row's new and relabelled cells"
+}
+],
+"reader|Summary|Net float pressure": [
+{
+"date": "2026-11-25",
+"from": -0.269054101,
+"to": "parked",
+"why": "R21 (Jake 2026-11-25) Item 2: Aerodrome's burns line needs foundation_aero_burned_other_tokens, which the dumps do not hold (the store does): net float pressure is unknown, so the parked project shows 'parked' — never a 0"
 }
 ]
 },
 "Ether.fi": {
+"audit|A3 Revenue Buyback|BUYING PRESSURE ON FLOAT, % a year = revenue-funded buying, held or paid out (tokens, annualised) ÷ free float — the demand side of net float pressure; a burned buyback is a burn (R21)": [
+{
+"date": "2026-11-25",
+"from": "<absent>",
+"to": 0.0,
+"why": "R21 (Jake 2026-11-25) Item 2/3: new lines in net float pressure — burns on float (every burn, any source), bought tokens returned to the float (F1/F2/F7), the burn-source memo, and buying pressure on float on the A3 tab; new rows, read from the same float"
+}
+],
+"audit|A3 Revenue Buyback|REVENUE TO HOLDERS ÷ NEW SUPPLY (x) = revenue sent to holders ($) ÷ value of new supply ($), same window, per covered day — A3's rank key (R20)": [
+{
+"date": "2026-11-25",
+"from": 0.0,
+"to": "n/a — outflow_c_usd (q0): BLOCKED — BLOCKED — outflow (c) is not formed: cashback_unfunded_tokens: no rows stored",
+"why": "R21 (Jake 2026-11-25) Item 3 (F4) / decision 5: a paused / off programme shows its label and 'unranked'; its key is what the data reads (blocked here: a new-supply input has no rows on the dumps), never a forced 0"
+}
+],
+"audit|CP Comparability|BOUGHT TOKENS RETURNED TO THE FLOAT, % a year = bought tokens paid out liquid, sold or transferred out of the holding wallet (tokens, annualised) ÷ free float (R21)": [
+{
+"date": "2026-11-25",
+"from": "<absent>",
+"to": "n/a — float_returned_tokens (q0): no rows stored",
+"why": "R21 (Jake 2026-11-25) Item 2/3: new lines in net float pressure — burns on float (every burn, any source), bought tokens returned to the float (F1/F2/F7), the burn-source memo, and buying pressure on float on the A3 tab; new rows, read from the same float"
+}
+],
+"audit|CP Comparability|BURNS ON FLOAT, % a year = every burn, whatever its source (tokens, annualised) ÷ free float — a supply reduction, not buying (R21)": [
+{
+"date": "2026-11-25",
+"from": "<absent>",
+"to": 0.0,
+"why": "R21 (Jake 2026-11-25) Item 2/3: new lines in net float pressure — burns on float (every burn, any source), bought tokens returned to the float (F1/F2/F7), the burn-source memo, and buying pressure on float on the A3 tab; new rows, read from the same float"
+}
+],
+"audit|CP Comparability|BUYING PRESSURE ON FLOAT, % a year = revenue-funded buying, held or paid out (tokens, annualised) ÷ free float — the demand side of net float pressure; a burned buyback is a burn (R21)": [
+{
+"date": "2026-11-25",
+"from": "<absent>",
+"to": 0.0,
+"why": "R21 (Jake 2026-11-25) Item 2/3: new lines in net float pressure — burns on float (every burn, any source), bought tokens returned to the float (F1/F2/F7), the burn-source memo, and buying pressure on float on the A3 tab; new rows, read from the same float"
+}
+],
+"audit|CP Comparability|Burns — where they came from (memo: from float / staked / treasury, Q0)": [
+{
+"date": "2026-11-25",
+"from": "<absent>",
+"to": "no burn — no burn mechanism: bought ETHFI is paid to stakers or card users; nothing burned since 2025-09-19",
+"why": "R21 (Jake 2026-11-25) Item 2/3: new lines in net float pressure — burns on float (every burn, any source), bought tokens returned to the float (F1/F2/F7), the burn-source memo, and buying pressure on float on the A3 tab; new rows, read from the same float"
+}
+],
+"audit|CP Comparability|NET FLOAT PRESSURE, % a year = buying pressure on float + burns on float − total dilution ÷ free float − bought tokens returned to the float (revenue-funded buying + burns − new supply; all ÷ free float) (R21)": [
+{
+"date": "2026-11-25",
+"from": "<absent>",
+"to": "n/a — outflow_c_tokens (q0): BLOCKED — BLOCKED — outflow (c) is not formed: cashback_unfunded_tokens: no rows stored",
+"why": "R21 (Jake 2026-11-25) Item 2/3: new lines in net float pressure — burns on float (every burn, any source), bought tokens returned to the float (F1/F2/F7), the burn-source memo, and buying pressure on float on the A3 tab; new rows, read from the same float"
+}
+],
 "audit|CP Comparability|Trend — cp_nfp (arrow · QoQ · 4Q growth/yr · quarters improved; Trajectory tab)": [
 {
 "date": "2026-11-25",
 "from": "<absent>",
 "to": "– · 4Q n/a · QoQ n/a",
 "why": "R21 (Jake 2026-11-25) Item 1: the new net float pressure row (cp_nfp, R20) has its own Trend cell beside it; a new row, no figure moved"
+}
+],
+"reader|A3 Revenue Buyback|Rank in A3": [
+{
+"date": "2026-11-25",
+"from": 5.0,
+"to": "unranked",
+"why": "R21 (Jake 2026-11-25) Item 3 (F4) / decision 5: a paused / off programme shows its label and 'unranked'; its key is what the data reads (blocked here: a new-supply input has no rows on the dumps), never a forced 0"
+}
+],
+"reader|A3 Revenue Buyback|Revenue to holders ÷ new supply (x)": [
+{
+"date": "2026-11-25",
+"from": 0.0,
+"to": "blocked",
+"why": "R21 (Jake 2026-11-25) Item 3 (F4) / decision 5: a paused / off programme shows its label and 'unranked'; its key is what the data reads (blocked here: a new-supply input has no rows on the dumps), never a forced 0"
+}
+],
+"reader|A3 Revenue Buyback|To holders ÷ new supply, latest": [
+{
+"date": "2026-11-25",
+"from": 0.0,
+"to": "blocked",
+"why": "R21 (Jake 2026-11-25) Item 3 (F4) / decision 5: a paused / off programme shows its label and 'unranked'; its key is what the data reads (blocked here: a new-supply input has no rows on the dumps), never a forced 0"
+}
+],
+"reader|A3 Revenue Buyback|To holders ÷ new supply, −1 qtr": [
+{
+"date": "2026-11-25",
+"from": "n/a",
+"to": "blocked",
+"why": "R21 (Jake 2026-11-25) Item 3 (F4) / decision 5: a paused / off programme shows its label and 'unranked'; its key is what the data reads (blocked here: a new-supply input has no rows on the dumps), never a forced 0"
+}
+],
+"reader|A3 Revenue Buyback|To holders ÷ new supply, −2 qtrs": [
+{
+"date": "2026-11-25",
+"from": "n/a",
+"to": "blocked",
+"why": "R21 (Jake 2026-11-25) Item 3 (F4) / decision 5: a paused / off programme shows its label and 'unranked'; its key is what the data reads (blocked here: a new-supply input has no rows on the dumps), never a forced 0"
+}
+],
+"reader|A3 Revenue Buyback|To holders ÷ new supply, −3 qtrs": [
+{
+"date": "2026-11-25",
+"from": "n/a",
+"to": "blocked",
+"why": "R21 (Jake 2026-11-25) Item 3 (F4) / decision 5: a paused / off programme shows its label and 'unranked'; its key is what the data reads (blocked here: a new-supply input has no rows on the dumps), never a forced 0"
+}
+],
+"reader|Comparison|Burns on float, % a year": [
+{
+"date": "2026-11-25",
+"from": "<absent>",
+"to": 0.0,
+"why": "R21 (Jake 2026-11-25) Item 2/3: new lines in net float pressure — burns on float (every burn, any source), bought tokens returned to the float (F1/F2/F7), the burn-source memo, and buying pressure on float on the A3 tab; new rows, read from the same float"
+}
+],
+"reader|Comparison|Returned to float, % a year": [
+{
+"date": "2026-11-25",
+"from": "<absent>",
+"to": "n/a",
+"why": "R21 (Jake 2026-11-25) Item 2/3: new lines in net float pressure — burns on float (every burn, any source), bought tokens returned to the float (F1/F2/F7), the burn-source memo, and buying pressure on float on the A3 tab; new rows, read from the same float"
+}
+],
+"reader|Summary|Archetype key": [
+{
+"date": "2026-11-25",
+"from": 0.0,
+"to": "blocked",
+"why": "R21 (Jake 2026-11-25) Item 3 (F4) / decision 5: a paused / off programme shows its label and 'unranked'; its key is what the data reads (blocked here: a new-supply input has no rows on the dumps), never a forced 0"
+}
+],
+"reader|Summary|Archetypes": [
+{
+"date": "2026-11-25",
+"from": "A3 paused",
+"to": "A3 not executing since 1 Apr",
+"why": "R21 (Jake 2026-11-25) Item 3 (F4) / decision 5: a paused / off programme shows its label and 'unranked'; its key is what the data reads (blocked here: a new-supply input has no rows on the dumps), never a forced 0"
+}
+],
+"reader|Summary|Confidence (share green)": [
+{
+"date": "2026-11-25",
+"from": 0.777777778,
+"to": 0.75,
+"why": "R21 (Jake 2026-11-25) the share of green cells is recounted over the Summary row's new and relabelled cells"
+}
+],
+"reader|Summary|Rank in archetype": [
+{
+"date": "2026-11-25",
+"from": 5.0,
+"to": "unranked",
+"why": "R21 (Jake 2026-11-25) Item 3 (F4) / decision 5: a paused / off programme shows its label and 'unranked'; its key is what the data reads (blocked here: a new-supply input has no rows on the dumps), never a forced 0"
 }
 ]
 },
 "Fluid": {
+"audit|A3 Revenue Buyback|BUYING PRESSURE ON FLOAT, % a year = revenue-funded buying, held or paid out (tokens, annualised) ÷ free float — the demand side of net float pressure; a burned buyback is a burn (R21)": [
+{
+"date": "2026-11-25",
+"from": "<absent>",
+"to": 0.0,
+"why": "R21 (Jake 2026-11-25) Item 2/3: new lines in net float pressure — burns on float (every burn, any source), bought tokens returned to the float (F1/F2/F7), the burn-source memo, and buying pressure on float on the A3 tab; new rows, read from the same float"
+}
+],
+"audit|A3 Revenue Buyback|REVENUE TO HOLDERS ÷ NEW SUPPLY (x) = revenue sent to holders ($) ÷ value of new supply ($), same window, per covered day — A3's rank key (R20)": [
+{
+"date": "2026-11-25",
+"from": 0.0,
+"to": "n/a — outflow_b_usd (q0): BLOCKED — BLOCKED — outflow (b) is not formed: emissions_tokens_base: no rows stored; emissions_tokens_plasma: no rows stored",
+"why": "R21 (Jake 2026-11-25) Item 3 (F4) / decision 5: a paused / off programme shows its label and 'unranked'; its key is what the data reads (blocked here: a new-supply input has no rows on the dumps), never a forced 0"
+}
+],
+"audit|CP Comparability|BOUGHT TOKENS RETURNED TO THE FLOAT, % a year = bought tokens paid out liquid, sold or transferred out of the holding wallet (tokens, annualised) ÷ free float (R21)": [
+{
+"date": "2026-11-25",
+"from": "<absent>",
+"to": 0.0,
+"why": "R21 (Jake 2026-11-25) Item 2/3: new lines in net float pressure — burns on float (every burn, any source), bought tokens returned to the float (F1/F2/F7), the burn-source memo, and buying pressure on float on the A3 tab; new rows, read from the same float"
+}
+],
+"audit|CP Comparability|BURNS ON FLOAT, % a year = every burn, whatever its source (tokens, annualised) ÷ free float — a supply reduction, not buying (R21)": [
+{
+"date": "2026-11-25",
+"from": "<absent>",
+"to": 0.0,
+"why": "R21 (Jake 2026-11-25) Item 2/3: new lines in net float pressure — burns on float (every burn, any source), bought tokens returned to the float (F1/F2/F7), the burn-source memo, and buying pressure on float on the A3 tab; new rows, read from the same float"
+}
+],
+"audit|CP Comparability|BUYING PRESSURE ON FLOAT, % a year = revenue-funded buying, held or paid out (tokens, annualised) ÷ free float — the demand side of net float pressure; a burned buyback is a burn (R21)": [
+{
+"date": "2026-11-25",
+"from": "<absent>",
+"to": 0.0,
+"why": "R21 (Jake 2026-11-25) Item 2/3: new lines in net float pressure — burns on float (every burn, any source), bought tokens returned to the float (F1/F2/F7), the burn-source memo, and buying pressure on float on the A3 tab; new rows, read from the same float"
+}
+],
+"audit|CP Comparability|Burns — where they came from (memo: from float / staked / treasury, Q0)": [
+{
+"date": "2026-11-25",
+"from": "<absent>",
+"to": "no burn — no burn mechanism: bought FLUID went to the governance treasury (held), never burned",
+"why": "R21 (Jake 2026-11-25) Item 2/3: new lines in net float pressure — burns on float (every burn, any source), bought tokens returned to the float (F1/F2/F7), the burn-source memo, and buying pressure on float on the A3 tab; new rows, read from the same float"
+}
+],
+"audit|CP Comparability|NET FLOAT PRESSURE, % a year = buying pressure on float + burns on float − total dilution ÷ free float − bought tokens returned to the float (revenue-funded buying + burns − new supply; all ÷ free float) (R21)": [
+{
+"date": "2026-11-25",
+"from": "<absent>",
+"to": "n/a — outflow_b_tokens (q0): BLOCKED — BLOCKED — outflow (b) is not formed: emissions_tokens_base: no rows stored; emissions_tokens_plasma: no rows stored",
+"why": "R21 (Jake 2026-11-25) Item 2/3: new lines in net float pressure — burns on float (every burn, any source), bought tokens returned to the float (F1/F2/F7), the burn-source memo, and buying pressure on float on the A3 tab; new rows, read from the same float"
+}
+],
 "audit|CP Comparability|Trend — cp_nfp (arrow · QoQ · 4Q growth/yr · quarters improved; Trajectory tab)": [
 {
 "date": "2026-11-25",
 "from": "<absent>",
 "to": "– · 4Q n/a · QoQ n/a",
 "why": "R21 (Jake 2026-11-25) Item 1: the new net float pressure row (cp_nfp, R20) has its own Trend cell beside it; a new row, no figure moved"
+}
+],
+"reader|A3 Revenue Buyback|Rank in A3": [
+{
+"date": "2026-11-25",
+"from": 4.0,
+"to": "unranked",
+"why": "R21 (Jake 2026-11-25) Item 3 (F4) / decision 5: a paused / off programme shows its label and 'unranked'; its key is what the data reads (blocked here: a new-supply input has no rows on the dumps), never a forced 0"
+}
+],
+"reader|A3 Revenue Buyback|Revenue to holders ÷ new supply (x)": [
+{
+"date": "2026-11-25",
+"from": 0.0,
+"to": "blocked",
+"why": "R21 (Jake 2026-11-25) Item 3 (F4) / decision 5: a paused / off programme shows its label and 'unranked'; its key is what the data reads (blocked here: a new-supply input has no rows on the dumps), never a forced 0"
+}
+],
+"reader|A3 Revenue Buyback|To holders ÷ new supply, latest": [
+{
+"date": "2026-11-25",
+"from": 0.0,
+"to": "blocked",
+"why": "R21 (Jake 2026-11-25) Item 3 (F4) / decision 5: a paused / off programme shows its label and 'unranked'; its key is what the data reads (blocked here: a new-supply input has no rows on the dumps), never a forced 0"
+}
+],
+"reader|A3 Revenue Buyback|To holders ÷ new supply, −1 qtr": [
+{
+"date": "2026-11-25",
+"from": "n/a",
+"to": "blocked",
+"why": "R21 (Jake 2026-11-25) Item 3 (F4) / decision 5: a paused / off programme shows its label and 'unranked'; its key is what the data reads (blocked here: a new-supply input has no rows on the dumps), never a forced 0"
+}
+],
+"reader|Comparison|Burns on float, % a year": [
+{
+"date": "2026-11-25",
+"from": "<absent>",
+"to": 0.0,
+"why": "R21 (Jake 2026-11-25) Item 2/3: new lines in net float pressure — burns on float (every burn, any source), bought tokens returned to the float (F1/F2/F7), the burn-source memo, and buying pressure on float on the A3 tab; new rows, read from the same float"
+}
+],
+"reader|Comparison|Returned to float, % a year": [
+{
+"date": "2026-11-25",
+"from": "<absent>",
+"to": 0.0,
+"why": "R21 (Jake 2026-11-25) Item 2/3: new lines in net float pressure — burns on float (every burn, any source), bought tokens returned to the float (F1/F2/F7), the burn-source memo, and buying pressure on float on the A3 tab; new rows, read from the same float"
+}
+],
+"reader|Summary|Archetype key": [
+{
+"date": "2026-11-25",
+"from": 0.0,
+"to": "blocked",
+"why": "R21 (Jake 2026-11-25) Item 3 (F4) / decision 5: a paused / off programme shows its label and 'unranked'; its key is what the data reads (blocked here: a new-supply input has no rows on the dumps), never a forced 0"
+}
+],
+"reader|Summary|Archetypes": [
+{
+"date": "2026-11-25",
+"from": "A3 paused",
+"to": "A3 paused, no restart condition stated",
+"why": "R21 (Jake 2026-11-25) Item 3 (F4) / decision 5: a paused / off programme shows its label and 'unranked'; its key is what the data reads (blocked here: a new-supply input has no rows on the dumps), never a forced 0"
+}
+],
+"reader|Summary|Confidence (share green)": [
+{
+"date": "2026-11-25",
+"from": 0.888888889,
+"to": 0.875,
+"why": "R21 (Jake 2026-11-25) the share of green cells is recounted over the Summary row's new and relabelled cells"
+}
+],
+"reader|Summary|Rank in archetype": [
+{
+"date": "2026-11-25",
+"from": 4.0,
+"to": "unranked",
+"why": "R21 (Jake 2026-11-25) Item 3 (F4) / decision 5: a paused / off programme shows its label and 'unranked'; its key is what the data reads (blocked here: a new-supply input has no rows on the dumps), never a forced 0"
 }
 ]
 },
 "Hyperliquid": {
+"audit|A1 Infrastructure|Detail — Supply overhang, % of total supply (reserve ÷ total supply, latest)": [
+{
+"date": "2026-11-25",
+"from": 0.432155966,
+"to": 0.411378274,
+"why": "R21 (Jake 2026-11-25) Item 6: Hyperliquid's default until Jake decides — the Assistance Fund is a held buyback (inside circulating, +48.0M; off the free float; A4 off); 'burn' now counts only true burns (HyperCore supply fall and zero-address fees), so gross burn, net issuance and every per-circulating ratio move"
+}
+],
+"audit|A1 Infrastructure|Gross burn Q0 (tokens) — every burn, fee-market included": [
+{
+"date": "2026-11-25",
+"from": 2474408.02,
+"to": 52260.6283,
+"why": "R21 (Jake 2026-11-25) Item 6: Hyperliquid's default until Jake decides — the Assistance Fund is a held buyback (inside circulating, +48.0M; off the free float; A4 off); 'burn' now counts only true burns (HyperCore supply fall and zero-address fees), so gross burn, net issuance and every per-circulating ratio move"
+}
+],
+"audit|A1 Infrastructure|NET ISSUANCE AFTER BURN Q0 (tokens) — issuance − every burn, on the basis A4 uses": [
+{
+"date": "2026-11-25",
+"from": -2474408.02,
+"to": -52260.6283,
+"why": "R21 (Jake 2026-11-25) Item 6: Hyperliquid's default until Jake decides — the Assistance Fund is a held buyback (inside circulating, +48.0M; off the free float; A4 off); 'burn' now counts only true burns (HyperCore supply fall and zero-address fees), so gross burn, net issuance and every per-circulating ratio move"
+}
+],
+"audit|A1 Infrastructure|NET ISSUANCE AFTER BURN, annualised % of circulating (+ is net inflation; fee-market burns included)": [
+{
+"date": "2026-11-25",
+"from": -0.0185918181,
+"to": -0.00190902787,
+"why": "R21 (Jake 2026-11-25) Item 6: Hyperliquid's default until Jake decides — the Assistance Fund is a held buyback (inside circulating, +48.0M; off the free float; A4 off); 'burn' now counts only true burns (HyperCore supply fall and zero-address fees), so gross burn, net issuance and every per-circulating ratio move"
+}
+],
+"audit|A1 Infrastructure|NRR HEADROOM (trading throughput) = M2/GDP ÷ NRR — valuation headroom, not a target": [
+{
+"date": "2026-11-25",
+"from": 45.5346796,
+"to": 41.8153555,
+"why": "R21 (Jake 2026-11-25) Item 6: Hyperliquid's default until Jake decides — the Assistance Fund is a held buyback (inside circulating, +48.0M; off the free float; A4 off); 'burn' now counts only true burns (HyperCore supply fall and zero-address fees), so gross burn, net issuance and every per-circulating ratio move"
+}
+],
+"audit|A1 Infrastructure|NRR ON TRADING THROUGHPUT — market cap ÷ trailing-365d DEX + perps volume (DefiLlama)": [
+{
+"date": "2026-11-25",
+"from": 0.0155925112,
+"to": 0.0169794084,
+"why": "R21 (Jake 2026-11-25) Item 6: Hyperliquid's default until Jake decides — the Assistance Fund is a held buyback (inside circulating, +48.0M; off the free float; A4 off); 'burn' now counts only true burns (HyperCore supply fall and zero-address fees), so gross burn, net issuance and every per-circulating ratio move"
+}
+],
+"audit|A1 Infrastructure|Staking rate = staked inside circulating ÷ circulating": [
+{
+"date": "2026-11-25",
+"from": 0.374631896,
+"to": 0.34403154,
+"why": "R21 (Jake 2026-11-25) Item 6: Hyperliquid's default until Jake decides — the Assistance Fund is a held buyback (inside circulating, +48.0M; off the free float; A4 off); 'burn' now counts only true burns (HyperCore supply fall and zero-address fees), so gross burn, net issuance and every per-circulating ratio move"
+}
+],
+"audit|A1 Infrastructure|Trend — a1_gross_burn (arrow · QoQ · 4Q growth/yr · quarters improved; Trajectory tab)": [
+{
+"date": "2026-11-25",
+"from": "SERIES BREAK 2026-09-25 · – · STEP CHANGE at Q0 · QoQ n/a",
+"to": "– · 4Q n/a · QoQ n/a — Q0 is part-held",
+"why": "R21 (Jake 2026-11-25) Item 6: Hyperliquid's default until Jake decides — the Assistance Fund is a held buyback (inside circulating, +48.0M; off the free float; A4 off); 'burn' now counts only true burns (HyperCore supply fall and zero-address fees), so gross burn, net issuance and every per-circulating ratio move"
+}
+],
+"audit|A1 Infrastructure|Trend — a1_net_issuance (arrow · QoQ · 4Q growth/yr · quarters improved; Trajectory tab)": [
+{
+"date": "2026-11-25",
+"from": "SERIES BREAK 2026-09-25 · – · STEP CHANGE at Q0 · QoQ n/a",
+"to": "– · 4Q n/a · QoQ n/a — Q0 is part-held",
+"why": "R21 (Jake 2026-11-25) Item 6: Hyperliquid's default until Jake decides — the Assistance Fund is a held buyback (inside circulating, +48.0M; off the free float; A4 off); 'burn' now counts only true burns (HyperCore supply fall and zero-address fees), so gross burn, net issuance and every per-circulating ratio move"
+}
+],
+"audit|A1 Infrastructure|Trend — a1_net_issuance_pct (arrow · QoQ · 4Q growth/yr · quarters improved; Trajectory tab)": [
+{
+"date": "2026-11-25",
+"from": "SERIES BREAK 2026-09-25 · – · STEP CHANGE at Q0 · QoQ n/a",
+"to": "SERIES BREAK 2026-09-24 · – · STEP CHANGE at Q0 · QoQ n/a",
+"why": "R21 (Jake 2026-11-25) Item 6: Hyperliquid's default until Jake decides — the Assistance Fund is a held buyback (inside circulating, +48.0M; off the free float; A4 off); 'burn' now counts only true burns (HyperCore supply fall and zero-address fees), so gross burn, net issuance and every per-circulating ratio move"
+}
+],
+"audit|A3 Revenue Buyback|Actual buyback Q0 BURNED (tokens)": [
+{
+"date": "2026-11-25",
+"from": 2380273.5,
+"to": 0.0,
+"why": "R21 (Jake 2026-11-25) Item 6: Hyperliquid's default until Jake decides — the Assistance Fund is a held buyback (inside circulating, +48.0M; off the free float; A4 off); 'burn' now counts only true burns (HyperCore supply fall and zero-address fees), so gross burn, net issuance and every per-circulating ratio move"
+}
+],
+"audit|A3 Revenue Buyback|Actual buyback Q0 HELD (tokens) — treasury, reserve, foundation-locked": [
+{
+"date": "2026-11-25",
+"from": 0.0,
+"to": 2380273.5,
+"why": "R21 (Jake 2026-11-25) Item 6: Hyperliquid's default until Jake decides — the Assistance Fund is a held buyback (inside circulating, +48.0M; off the free float; A4 off); 'burn' now counts only true burns (HyperCore supply fall and zero-address fees), so gross burn, net issuance and every per-circulating ratio move"
+}
+],
+"audit|A3 Revenue Buyback|Actual buyback as % of supply (annualised) — RETIRED (burned + held) only": [
+{
+"date": "2026-11-25",
+"from": 0.0178845249,
+"to": 0.0164236967,
+"why": "R21 (Jake 2026-11-25) Item 6: Hyperliquid's default until Jake decides — the Assistance Fund is a held buyback (inside circulating, +48.0M; off the free float; A4 off); 'burn' now counts only true burns (HyperCore supply fall and zero-address fees), so gross burn, net issuance and every per-circulating ratio move"
+}
+],
+"audit|A3 Revenue Buyback|BURNED ÷ (EMISSIONS + UNLOCKS) (x) = BURNED buyback ÷ (emissions + unlocks), per covered day, at the emission rate IN FORCE — a reference (A3's rank key until Round 20)": [
+{
+"date": "2026-11-25",
+"from": 0.296591773,
+"to": 0.0,
+"why": "R21 (Jake 2026-11-25) Item 6: Hyperliquid's default until Jake decides — the Assistance Fund is a held buyback (inside circulating, +48.0M; off the free float; A4 off); 'burn' now counts only true burns (HyperCore supply fall and zero-address fees), so gross burn, net issuance and every per-circulating ratio move"
+}
+],
+"audit|A3 Revenue Buyback|BUYBACK AS % OF SUPPLY (annualised, implied)": [
+{
+"date": "2026-11-25",
+"from": 0.0181198683,
+"to": 0.0166398169,
+"why": "R21 (Jake 2026-11-25) Item 6: Hyperliquid's default until Jake decides — the Assistance Fund is a held buyback (inside circulating, +48.0M; off the free float; A4 off); 'burn' now counts only true burns (HyperCore supply fall and zero-address fees), so gross burn, net issuance and every per-circulating ratio move"
+}
+],
+"audit|A3 Revenue Buyback|BUYING PRESSURE ON FLOAT, % a year = revenue-funded buying, held or paid out (tokens, annualised) ÷ free float — the demand side of net float pressure; a burned buyback is a burn (R21)": [
+{
+"date": "2026-11-25",
+"from": "<absent>",
+"to": 0.0970550318,
+"why": "R21 (Jake 2026-11-25) Item 6: Hyperliquid's default until Jake decides — the Assistance Fund is a held buyback (inside circulating, +48.0M; off the free float; A4 off); 'burn' now counts only true burns (HyperCore supply fall and zero-address fees), so gross burn, net issuance and every per-circulating ratio move"
+}
+],
+"audit|A3 Revenue Buyback|Buyback % supply at Q1 (−3m window, split as at Q1)": [
+{
+"date": "2026-11-25",
+"from": 0.0192118917,
+"to": 0.0176426426,
+"why": "R21 (Jake 2026-11-25) Item 6: Hyperliquid's default until Jake decides — the Assistance Fund is a held buyback (inside circulating, +48.0M; off the free float; A4 off); 'burn' now counts only true burns (HyperCore supply fall and zero-address fees), so gross burn, net issuance and every per-circulating ratio move"
+}
+],
+"audit|A3 Revenue Buyback|Buyback % supply at Q2 (−6m, split as at Q2)": [
+{
+"date": "2026-11-25",
+"from": 0.0359936238,
+"to": 0.0330536239,
+"why": "R21 (Jake 2026-11-25) Item 6: Hyperliquid's default until Jake decides — the Assistance Fund is a held buyback (inside circulating, +48.0M; off the free float; A4 off); 'burn' now counts only true burns (HyperCore supply fall and zero-address fees), so gross burn, net issuance and every per-circulating ratio move"
+}
+],
+"audit|A3 Revenue Buyback|Buyback destination": [
+{
+"date": "2026-11-25",
+"from": "burn",
+"to": "hold — the Assistance Fund 0xfefe…fefe holds what it buys (R21, Jake's default: a held buyback, not a burn)",
+"why": "R21 (Jake 2026-11-25) Item 6: Hyperliquid's default until Jake decides — the Assistance Fund is a held buyback (inside circulating, +48.0M; off the free float; A4 off); 'burn' now counts only true burns (HyperCore supply fall and zero-address fees), so gross burn, net issuance and every per-circulating ratio move"
+}
+],
+"audit|A3 Revenue Buyback|Buyback to LOCKED supply (destination = hold) — off the free float while held": [
+{
+"date": "2026-11-25",
+"from": "n/a — buyback_fund_balance (now): not applicable to this project — THE FUND IS ALREADY READ, UNDER ITS CORRECT NAME. Repurchased HYPE goes to the Assistance Fund at 0xfefe...fEfe, whose balance IS the cumulative burn — recognised as permane",
+"to": "n/a — Data: not applicable to this project — THE FUND IS ALREADY READ, UNDER ANOTHER NAME: the Assistance Fund 0xfefe…fefe's HYPE is fetched every run as burn_address_balance (stored name kept) and, from R21 (Jake's default), counted IN cir",
+"why": "R21 (Jake 2026-11-25) Item 6: Hyperliquid's default until Jake decides — the Assistance Fund is a held buyback (inside circulating, +48.0M; off the free float; A4 off); 'burn' now counts only true burns (HyperCore supply fall and zero-address fees), so gross burn, net issuance and every per-circulating ratio move"
+}
+],
+"audit|A3 Revenue Buyback|Buyback to YIELD PAYOUT (destination = distribute) — re-enters float, never netted against burn": [
+{
+"date": "2026-11-25",
+"from": "n/a — Destination effect on float is 'removed_from_supply' (declared), not 'yield_payout' — this line applies only to that destination",
+"to": "n/a — Destination effect on float is 'locked_supply' (declared), not 'yield_payout' — this line applies only to that destination",
+"why": "R21 (Jake 2026-11-25) Item 6: Hyperliquid's default until Jake decides — the Assistance Fund is a held buyback (inside circulating, +48.0M; off the free float; A4 off); 'burn' now counts only true burns (HyperCore supply fall and zero-address fees), so gross burn, net issuance and every per-circulating ratio move"
+}
+],
+"audit|A3 Revenue Buyback|CIRCULATING RETIREMENT RATE (tokens) = RETIRED buyback tokens (burned + held, annualised) ÷ circulating — primary": [
+{
+"date": "2026-11-25",
+"from": 0.0178845249,
+"to": 0.0164236967,
+"why": "R21 (Jake 2026-11-25) Item 6: Hyperliquid's default until Jake decides — the Assistance Fund is a held buyback (inside circulating, +48.0M; off the free float; A4 off); 'burn' now counts only true burns (HyperCore supply fall and zero-address fees), so gross burn, net issuance and every per-circulating ratio move"
+}
+],
+"audit|A3 Revenue Buyback|Circulating retirement rate ($) = RETIRED buyback $ (burned + held, annualised) ÷ market cap — alongside": [
+{
+"date": "2026-11-25",
+"from": 0.0169114779,
+"to": 0.0155301293,
+"why": "R21 (Jake 2026-11-25) Item 6: Hyperliquid's default until Jake decides — the Assistance Fund is a held buyback (inside circulating, +48.0M; off the free float; A4 off); 'burn' now counts only true burns (HyperCore supply fall and zero-address fees), so gross burn, net issuance and every per-circulating ratio move"
+}
+],
+"audit|A3 Revenue Buyback|Circulating supply": [
+{
+"date": "2026-11-25",
+"from": 539758896.0,
+"to": 587768491.0,
+"why": "R21 (Jake 2026-11-25) Item 6: Hyperliquid's default until Jake decides — the Assistance Fund is a held buyback (inside circulating, +48.0M; off the free float; A4 off); 'burn' now counts only true burns (HyperCore supply fall and zero-address fees), so gross burn, net issuance and every per-circulating ratio move"
+}
+],
+"audit|A3 Revenue Buyback|Contract vs dashboard divergence (flagged when beyond tolerance)": [
+{
+"date": "2026-11-25",
+"from": "n/a — buyback_fund_balance (now): not applicable to this project — THE FUND IS ALREADY READ, UNDER ITS CORRECT NAME. Repurchased HYPE goes to the Assistance Fund at 0xfefe...fEfe, whose balance IS the cumulative burn — recognised as permane",
+"to": "n/a — buyback_fund_balance (now): not applicable to this project — THE FUND IS ALREADY READ, UNDER ANOTHER NAME: the Assistance Fund 0xfefe…fefe's HYPE is fetched every run as burn_address_balance (stored name kept) and, from R21 (Jake's de",
+"why": "R21 (Jake 2026-11-25) Item 6: Hyperliquid's default until Jake decides — the Assistance Fund is a held buyback (inside circulating, +48.0M; off the free float; A4 off); 'burn' now counts only true burns (HyperCore supply fall and zero-address fees), so gross burn, net issuance and every per-circulating ratio move"
+}
+],
+"audit|A3 Revenue Buyback|Destination effect on float": [
+{
+"date": "2026-11-25",
+"from": "removed_from_supply",
+"to": "locked_supply",
+"why": "R21 (Jake 2026-11-25) Item 6: Hyperliquid's default until Jake decides — the Assistance Fund is a held buyback (inside circulating, +48.0M; off the free float; A4 off); 'burn' now counts only true burns (HyperCore supply fall and zero-address fees), so gross burn, net issuance and every per-circulating ratio move"
+}
+],
+"audit|A3 Revenue Buyback|FDV ($)": [
+{
+"date": "2026-11-25",
+"from": 76962297900.0,
+"to": 80849471900.0,
+"why": "R21 (Jake 2026-11-25) Item 6: Hyperliquid's default until Jake decides — the Assistance Fund is a held buyback (inside circulating, +48.0M; off the free float; A4 off); 'burn' now counts only true burns (HyperCore supply fall and zero-address fees), so gross burn, net issuance and every per-circulating ratio move"
+}
+],
+"audit|A3 Revenue Buyback|FDV RETIREMENT RATE (tokens) = RETIRED buyback tokens (burned + held, annualised) ÷ FDV supply (the total supply FDV uses) — always read with the rate to its left": [
+{
+"date": "2026-11-25",
+"from": 0.0101555892,
+"to": 0.00966731711,
+"why": "R21 (Jake 2026-11-25) Item 6: Hyperliquid's default until Jake decides — the Assistance Fund is a held buyback (inside circulating, +48.0M; off the free float; A4 off); 'burn' now counts only true burns (HyperCore supply fall and zero-address fees), so gross burn, net issuance and every per-circulating ratio move"
+}
+],
+"audit|A3 Revenue Buyback|FDV retirement rate ($) = RETIRED buyback $ (burned + held, annualised) ÷ FDV — alongside": [
+{
+"date": "2026-11-25",
+"from": 0.00960305203,
+"to": 0.00914134545,
+"why": "R21 (Jake 2026-11-25) Item 6: Hyperliquid's default until Jake decides — the Assistance Fund is a held buyback (inside circulating, +48.0M; off the free float; A4 off); 'burn' now counts only true burns (HyperCore supply fall and zero-address fees), so gross burn, net issuance and every per-circulating ratio move"
+}
+],
+"audit|A3 Revenue Buyback|Fees ÷ FDV (annualised)": [
+{
+"date": "2026-11-25",
+"from": 0.0120705522,
+"to": 0.0114902103,
+"why": "R21 (Jake 2026-11-25) Item 6: Hyperliquid's default until Jake decides — the Assistance Fund is a held buyback (inside circulating, +48.0M; off the free float; A4 off); 'burn' now counts only true burns (HyperCore supply fall and zero-address fees), so gross burn, net issuance and every per-circulating ratio move"
+}
+],
+"audit|A3 Revenue Buyback|Lock rate = locked inside circulating ÷ circulating (stake held by wallets outside circulating excluded)": [
+{
+"date": "2026-11-25",
+"from": 0.374631896,
+"to": 0.34403154,
+"why": "R21 (Jake 2026-11-25) Item 6: Hyperliquid's default until Jake decides — the Assistance Fund is a held buyback (inside circulating, +48.0M; off the free float; A4 off); 'burn' now counts only true burns (HyperCore supply fall and zero-address fees), so gross burn, net issuance and every per-circulating ratio move"
+}
+],
+"audit|A3 Revenue Buyback|Market cap ($)": [
+{
+"date": "2026-11-25",
+"from": 43702446000.0,
+"to": 47589620000.0,
+"why": "R21 (Jake 2026-11-25) Item 6: Hyperliquid's default until Jake decides — the Assistance Fund is a held buyback (inside circulating, +48.0M; off the free float; A4 off); 'burn' now counts only true burns (HyperCore supply fall and zero-address fees), so gross burn, net issuance and every per-circulating ratio move"
+}
+],
+"audit|CP Comparability|BOUGHT TOKENS RETURNED TO THE FLOAT, % a year = bought tokens paid out liquid, sold or transferred out of the holding wallet (tokens, annualised) ÷ free float (R21)": [
+{
+"date": "2026-11-25",
+"from": "<absent>",
+"to": 0.0,
+"why": "R21 (Jake 2026-11-25) Item 6: Hyperliquid's default until Jake decides — the Assistance Fund is a held buyback (inside circulating, +48.0M; off the free float; A4 off); 'burn' now counts only true burns (HyperCore supply fall and zero-address fees), so gross burn, net issuance and every per-circulating ratio move"
+}
+],
+"audit|CP Comparability|BURNS ON FLOAT, % a year = every burn, whatever its source (tokens, annualised) ÷ free float — a supply reduction, not buying (R21)": [
+{
+"date": "2026-11-25",
+"from": "<absent>",
+"to": 0.0112813068,
+"why": "R21 (Jake 2026-11-25) Item 6: Hyperliquid's default until Jake decides — the Assistance Fund is a held buyback (inside circulating, +48.0M; off the free float; A4 off); 'burn' now counts only true burns (HyperCore supply fall and zero-address fees), so gross burn, net issuance and every per-circulating ratio move"
+}
+],
+"audit|CP Comparability|BUYING PRESSURE ON FLOAT, % a year = revenue-funded buying, held or paid out (tokens, annualised) ÷ free float — the demand side of net float pressure; a burned buyback is a burn (R21)": [
+{
+"date": "2026-11-25",
+"from": "<absent>",
+"to": 0.0970550318,
+"why": "R21 (Jake 2026-11-25) Item 6: Hyperliquid's default until Jake decides — the Assistance Fund is a held buyback (inside circulating, +48.0M; off the free float; A4 off); 'burn' now counts only true burns (HyperCore supply fall and zero-address fees), so gross burn, net issuance and every per-circulating ratio move"
+}
+],
+"audit|CP Comparability|Burn rate (every burn, fee-market included — A1's basis, annualised) ÷ circulating": [
+{
+"date": "2026-11-25",
+"from": 0.0185918181,
+"to": 0.00190902787,
+"why": "R21 (Jake 2026-11-25) Item 6: Hyperliquid's default until Jake decides — the Assistance Fund is a held buyback (inside circulating, +48.0M; off the free float; A4 off); 'burn' now counts only true burns (HyperCore supply fall and zero-address fees), so gross burn, net issuance and every per-circulating ratio move"
+}
+],
+"audit|CP Comparability|Burn rate (every burn, fee-market included — A1's basis, annualised) ÷ free float": [
+{
+"date": "2026-11-25",
+"from": 0.100893343,
+"to": 0.0112813068,
+"why": "R21 (Jake 2026-11-25) Item 6: Hyperliquid's default until Jake decides — the Assistance Fund is a held buyback (inside circulating, +48.0M; off the free float; A4 off); 'burn' now counts only true burns (HyperCore supply fall and zero-address fees), so gross burn, net issuance and every per-circulating ratio move"
+}
+],
+"audit|CP Comparability|Burns — where they came from (memo: from float / staked / treasury, Q0)": [
+{
+"date": "2026-11-25",
+"from": "<absent>",
+"to": "burns 2026-07-14..2026-10-13: from float 52,261 (100%) — total_burn_tokens 52,261 (float)",
+"why": "R21 (Jake 2026-11-25) Item 6: Hyperliquid's default until Jake decides — the Assistance Fund is a held buyback (inside circulating, +48.0M; off the free float; A4 off); 'burn' now counts only true burns (HyperCore supply fall and zero-address fees), so gross burn, net issuance and every per-circulating ratio move"
+}
+],
+"audit|CP Comparability|Circulating supply (tokens) — our convention, the figure in use": [
+{
+"date": "2026-11-25",
+"from": 539758896.0,
+"to": 587768491.0,
+"why": "R21 (Jake 2026-11-25) Item 6: Hyperliquid's default until Jake decides — the Assistance Fund is a held buyback (inside circulating, +48.0M; off the free float; A4 off); 'burn' now counts only true burns (HyperCore supply fall and zero-address fees), so gross burn, net issuance and every per-circulating ratio move"
+}
+],
+"audit|CP Comparability|DILUTION, % OF MARKET CAP = outflows a+b+c+d+e+f at each day's price (annualised) ÷ average market cap over the window — what net holder yield subtracts (R20)": [
+{
+"date": "2026-11-25",
+"from": 0.047139246,
+"to": 0.0433037444,
+"why": "R21 (Jake 2026-11-25) Item 6: Hyperliquid's default until Jake decides — the Assistance Fund is a held buyback (inside circulating, +48.0M; off the free float; A4 off); 'burn' now counts only true burns (HyperCore supply fall and zero-address fees), so gross burn, net issuance and every per-circulating ratio move"
+}
+],
+"audit|CP Comparability|Destination durability (burn / held-timelocked / held-discretionary)": [
+{
+"date": "2026-11-25",
+"from": "burn — Assistance Fund (system address 0xfefe...fe, no private key) converts fees to HYPE automatically; docs: 'HYPE in the assistance fund is burned'. Validator stake-weighted vote recognised all past AND future AF HYPE as burned: 85% for / 7% against / 8% not voting, vote closed 2025-12-24 04:00 UTC, result posted 2025-12-24 (~37.1-37.5M HYPE). NOT 27 Dec. Slashed HIP-3 deployer stake is also burned.",
+"to": "held (keyless; a hard fork could move it) — the Assistance Fund (system address 0xfefe…fefe, no private key) converts fees to HYPE and holds it; the December 2025 vote is 'binding social consensus', the Foundation says the HYPE is retrievable by a hard fork, and it is still inside tokenDetails.totalSupply. R21 (Jake's default): a held buyback",
+"why": "R21 (Jake 2026-11-25) Item 6: Hyperliquid's default until Jake decides — the Assistance Fund is a held buyback (inside circulating, +48.0M; off the free float; A4 off); 'burn' now counts only true burns (HyperCore supply fall and zero-address fees), so gross burn, net issuance and every per-circulating ratio move"
+}
+],
+"audit|CP Comparability|Dilution (a) security emissions (annualised) ÷ circulating": [
+{
+"date": "2026-11-25",
+"from": 0.00841334785,
+"to": 0.00772613608,
+"why": "R21 (Jake 2026-11-25) Item 6: Hyperliquid's default until Jake decides — the Assistance Fund is a held buyback (inside circulating, +48.0M; off the free float; A4 off); 'burn' now counts only true burns (HyperCore supply fall and zero-address fees), so gross burn, net issuance and every per-circulating ratio move"
+}
+],
+"audit|CP Comparability|Dilution (e) unlocks (annualised) ÷ circulating": [
+{
+"date": "2026-11-25",
+"from": 0.0416084658,
+"to": 0.0382098393,
+"why": "R21 (Jake 2026-11-25) Item 6: Hyperliquid's default until Jake decides — the Assistance Fund is a held buyback (inside circulating, +48.0M; off the free float; A4 off); 'burn' now counts only true burns (HyperCore supply fall and zero-address fees), so gross burn, net issuance and every per-circulating ratio move"
+}
+],
+"audit|CP Comparability|Discretionary supply ÷ circulating": [
+{
+"date": "2026-11-25",
+"from": 0.000288093451,
+"to": 0.000264561653,
+"why": "R21 (Jake 2026-11-25) Item 6: Hyperliquid's default until Jake decides — the Assistance Fund is a held buyback (inside circulating, +48.0M; off the free float; A4 off); 'burn' now counts only true burns (HyperCore supply fall and zero-address fees), so gross burn, net issuance and every per-circulating ratio move"
+}
+],
+"audit|CP Comparability|ETF / ETP holdings ÷ circulating": [
+{
+"date": "2026-11-25",
+"from": 0.010240303,
+"to": 0.00940386349,
+"why": "R21 (Jake 2026-11-25) Item 6: Hyperliquid's default until Jake decides — the Assistance Fund is a held buyback (inside circulating, +48.0M; off the free float; A4 off); 'burn' now counts only true burns (HyperCore supply fall and zero-address fees), so gross burn, net issuance and every per-circulating ratio move"
+}
+],
+"audit|CP Comparability|Flow demand — buyback $ (every funding source, annualised) ÷ market cap": [
+{
+"date": "2026-11-25",
+"from": 0.0169114779,
+"to": 0.0155301293,
+"why": "R21 (Jake 2026-11-25) Item 6: Hyperliquid's default until Jake decides — the Assistance Fund is a held buyback (inside circulating, +48.0M; off the free float; A4 off); 'burn' now counts only true burns (HyperCore supply fall and zero-address fees), so gross burn, net issuance and every per-circulating ratio move"
+}
+],
+"audit|CP Comparability|Free float ÷ circulating": [
+{
+"date": "2026-11-25",
+"from": 0.184272001,
+"to": 0.169220455,
+"why": "R21 (Jake 2026-11-25) Item 6: Hyperliquid's default until Jake decides — the Assistance Fund is a held buyback (inside circulating, +48.0M; off the free float; A4 off); 'burn' now counts only true burns (HyperCore supply fall and zero-address fees), so gross burn, net issuance and every per-circulating ratio move"
+}
+],
+"audit|CP Comparability|HOLDER VALUE YIELD = revenue-funded $ retired + $ distributed + liquid bribes to voters (annualised) ÷ average market cap over the window — treasury- or emissions-funded buybacks are NOT credited (LITMUS A); fee-market burns are on A1 net issuance": [
+{
+"date": "2026-11-25",
+"from": 0.0155918832,
+"to": 0.014323244,
+"why": "R21 (Jake 2026-11-25) Item 6: Hyperliquid's default until Jake decides — the Assistance Fund is a held buyback (inside circulating, +48.0M; off the free float; A4 off); 'burn' now counts only true burns (HyperCore supply fall and zero-address fees), so gross burn, net issuance and every per-circulating ratio move"
+}
+],
+"audit|CP Comparability|Held buyback inside circulating (tokens) — off the free float while held (R20; P4-Q5b)": [
+{
+"date": "2026-11-25",
+"from": "<absent>",
+"to": 48009594.7,
+"why": "R21 (Jake 2026-11-25) Item 6: Hyperliquid's default until Jake decides — the Assistance Fund is a held buyback (inside circulating, +48.0M; off the free float; A4 off); 'burn' now counts only true burns (HyperCore supply fall and zero-address fees), so gross burn, net issuance and every per-circulating ratio move"
+}
+],
+"audit|CP Comparability|Holding demand — lock rate = locked ÷ circulating": [
+{
+"date": "2026-11-25",
+"from": 0.374631896,
+"to": 0.34403154,
+"why": "R21 (Jake 2026-11-25) Item 6: Hyperliquid's default until Jake decides — the Assistance Fund is a held buyback (inside circulating, +48.0M; off the free float; A4 off); 'burn' now counts only true burns (HyperCore supply fall and zero-address fees), so gross burn, net issuance and every per-circulating ratio move"
+}
+],
+"audit|CP Comparability|Insider share of circulating = insider-held tokens counted inside circulating ÷ circulating": [
+{
+"date": "2026-11-25",
+"from": 0.558514731,
+"to": 0.512894617,
+"why": "R21 (Jake 2026-11-25) Item 6: Hyperliquid's default until Jake decides — the Assistance Fund is a held buyback (inside circulating, +48.0M; off the free float; A4 off); 'burn' now counts only true burns (HyperCore supply fall and zero-address fees), so gross burn, net issuance and every per-circulating ratio move"
+}
+],
+"audit|CP Comparability|Market cap ($)": [
+{
+"date": "2026-11-25",
+"from": 43702446000.0,
+"to": 47589620000.0,
+"why": "R21 (Jake 2026-11-25) Item 6: Hyperliquid's default until Jake decides — the Assistance Fund is a held buyback (inside circulating, +48.0M; off the free float; A4 off); 'burn' now counts only true burns (HyperCore supply fall and zero-address fees), so gross burn, net issuance and every per-circulating ratio move"
+}
+],
+"audit|CP Comparability|NET FLOAT PRESSURE, % a year = buying pressure on float + burns on float − total dilution ÷ free float − bought tokens returned to the float (revenue-funded buying + burns − new supply; all ÷ free float) (R21)": [
+{
+"date": "2026-11-25",
+"from": "<absent>",
+"to": -0.16312006,
+"why": "R21 (Jake 2026-11-25) Item 6: Hyperliquid's default until Jake decides — the Assistance Fund is a held buyback (inside circulating, +48.0M; off the free float; A4 off); 'burn' now counts only true burns (HyperCore supply fall and zero-address fees), so gross burn, net issuance and every per-circulating ratio move"
+}
+],
+"audit|CP Comparability|NET HOLDER YIELD = holder value yield − dilution (outflows a+b+c+d+e+f at each day's price, annualised) ÷ average market cap over the window": [
+{
+"date": "2026-11-25",
+"from": -0.0315473628,
+"to": -0.0289805003,
+"why": "R21 (Jake 2026-11-25) Item 6: Hyperliquid's default until Jake decides — the Assistance Fund is a held buyback (inside circulating, +48.0M; off the free float; A4 off); 'burn' now counts only true burns (HyperCore supply fall and zero-address fees), so gross burn, net issuance and every per-circulating ratio move"
+}
+],
+"audit|CP Comparability|Retirement rate (RETIRED buyback tokens, burned + held, annualised) ÷ circulating": [
+{
+"date": "2026-11-25",
+"from": 0.0178845249,
+"to": 0.0164236967,
+"why": "R21 (Jake 2026-11-25) Item 6: Hyperliquid's default until Jake decides — the Assistance Fund is a held buyback (inside circulating, +48.0M; off the free float; A4 off); 'burn' now counts only true burns (HyperCore supply fall and zero-address fees), so gross burn, net issuance and every per-circulating ratio move"
+}
+],
+"audit|CP Comparability|TOTAL DILUTION = outflows a+b+c+d+e+f (annualised) ÷ circulating": [
+{
+"date": "2026-11-25",
+"from": 0.0500218136,
+"to": 0.0459359754,
+"why": "R21 (Jake 2026-11-25) Item 6: Hyperliquid's default until Jake decides — the Assistance Fund is a held buyback (inside circulating, +48.0M; off the free float; A4 off); 'burn' now counts only true burns (HyperCore supply fall and zero-address fees), so gross burn, net issuance and every per-circulating ratio move"
+}
+],
+"audit|CP Comparability|Total supply (tokens)": [
+{
+"date": "2026-11-25",
+"from": 950543705.0,
+"to": 998553300.0,
+"why": "R21 (Jake 2026-11-25) Item 6: Hyperliquid's default until Jake decides — the Assistance Fund is a held buyback (inside circulating, +48.0M; off the free float; A4 off); 'burn' now counts only true burns (HyperCore supply fall and zero-address fees), so gross burn, net issuance and every per-circulating ratio move"
+}
+],
+"audit|CP Comparability|Treasury-company (DAT) holdings ÷ circulating": [
+{
+"date": "2026-11-25",
+"from": 0.0755761513,
+"to": 0.0694030059,
+"why": "R21 (Jake 2026-11-25) Item 6: Hyperliquid's default until Jake decides — the Assistance Fund is a held buyback (inside circulating, +48.0M; off the free float; A4 off); 'burn' now counts only true burns (HyperCore supply fall and zero-address fees), so gross burn, net issuance and every per-circulating ratio move"
+}
+],
 "audit|CP Comparability|Trend — cp_nfp (arrow · QoQ · 4Q growth/yr · quarters improved; Trajectory tab)": [
 {
 "date": "2026-11-25",
 "from": "<absent>",
 "to": "– · 4Q n/a · QoQ n/a",
 "why": "R21 (Jake 2026-11-25) Item 1: the new net float pressure row (cp_nfp, R20) has its own Trend cell beside it; a new row, no figure moved"
+}
+],
+"audit|CP Comparability|UNIFORMITY = whole-token yield ÷ staker yield (1 = every holder alike) (PROPOSED)": [
+{
+"date": "2026-11-25",
+"from": 0.374631896,
+"to": 0.34403154,
+"why": "R21 (Jake 2026-11-25) Item 6: Hyperliquid's default until Jake decides — the Assistance Fund is a held buyback (inside circulating, +48.0M; off the free float; A4 off); 'burn' now counts only true burns (HyperCore supply fall and zero-address fees), so gross burn, net issuance and every per-circulating ratio move"
+}
+],
+"audit|CP Comparability|Whole-token yield — validator = staker yield × staked share (locked ÷ circulating, now)": [
+{
+"date": "2026-11-25",
+"from": 0.00858738527,
+"to": 0.00788595793,
+"why": "R21 (Jake 2026-11-25) Item 6: Hyperliquid's default until Jake decides — the Assistance Fund is a held buyback (inside circulating, +48.0M; off the free float; A4 off); 'burn' now counts only true burns (HyperCore supply fall and zero-address fees), so gross burn, net issuance and every per-circulating ratio move"
+}
+],
+"audit|Master|Buyback % of supply (annualised, implied, split as at this window)": [
+{
+"date": "2026-11-25",
+"from": 0.0181198683,
+"to": 0.0166398169,
+"why": "R21 (Jake 2026-11-25) Item 6: Hyperliquid's default until Jake decides — the Assistance Fund is a held buyback (inside circulating, +48.0M; off the free float; A4 off); 'burn' now counts only true burns (HyperCore supply fall and zero-address fees), so gross burn, net issuance and every per-circulating ratio move"
+}
+],
+"audit|Master|Circulating supply (used)": [
+{
+"date": "2026-11-25",
+"from": 539758896.0,
+"to": 587768491.0,
+"why": "R21 (Jake 2026-11-25) Item 6: Hyperliquid's default until Jake decides — the Assistance Fund is a held buyback (inside circulating, +48.0M; off the free float; A4 off); 'burn' now counts only true burns (HyperCore supply fall and zero-address fees), so gross burn, net issuance and every per-circulating ratio move"
+}
+],
+"audit|Master|FDV ($)": [
+{
+"date": "2026-11-25",
+"from": 76962297900.0,
+"to": 80849471900.0,
+"why": "R21 (Jake 2026-11-25) Item 6: Hyperliquid's default until Jake decides — the Assistance Fund is a held buyback (inside circulating, +48.0M; off the free float; A4 off); 'burn' now counts only true burns (HyperCore supply fall and zero-address fees), so gross burn, net issuance and every per-circulating ratio move"
+}
+],
+"audit|Master|Fees ÷ FDV (annualised)": [
+{
+"date": "2026-11-25",
+"from": 0.0120705522,
+"to": 0.0114902103,
+"why": "R21 (Jake 2026-11-25) Item 6: Hyperliquid's default until Jake decides — the Assistance Fund is a held buyback (inside circulating, +48.0M; off the free float; A4 off); 'burn' now counts only true burns (HyperCore supply fall and zero-address fees), so gross burn, net issuance and every per-circulating ratio move"
+}
+],
+"audit|Master|Gross burn Q0 (tokens)": [
+{
+"date": "2026-11-25",
+"from": 2474408.02,
+"to": 52260.6283,
+"why": "R21 (Jake 2026-11-25) Item 6: Hyperliquid's default until Jake decides — the Assistance Fund is a held buyback (inside circulating, +48.0M; off the free float; A4 off); 'burn' now counts only true burns (HyperCore supply fall and zero-address fees), so gross burn, net issuance and every per-circulating ratio move"
+}
+],
+"audit|Master|Issuance − burn Q0 (tokens) — a component of the supply change, NOT the net supply change": [
+{
+"date": "2026-11-25",
+"from": -2474408.02,
+"to": -52260.6283,
+"why": "R21 (Jake 2026-11-25) Item 6: Hyperliquid's default until Jake decides — the Assistance Fund is a held buyback (inside circulating, +48.0M; off the free float; A4 off); 'burn' now counts only true burns (HyperCore supply fall and zero-address fees), so gross burn, net issuance and every per-circulating ratio move"
+}
+],
+"audit|Master|Issuance − burn, annualised % of circulating — a component, NOT the net supply change": [
+{
+"date": "2026-11-25",
+"from": -0.0185918181,
+"to": -0.00190902787,
+"why": "R21 (Jake 2026-11-25) Item 6: Hyperliquid's default until Jake decides — the Assistance Fund is a held buyback (inside circulating, +48.0M; off the free float; A4 off); 'burn' now counts only true burns (HyperCore supply fall and zero-address fees), so gross burn, net issuance and every per-circulating ratio move"
+}
+],
+"audit|Master|Market cap ($)": [
+{
+"date": "2026-11-25",
+"from": 43702446000.0,
+"to": 47589620000.0,
+"why": "R21 (Jake 2026-11-25) Item 6: Hyperliquid's default until Jake decides — the Assistance Fund is a held buyback (inside circulating, +48.0M; off the free float; A4 off); 'burn' now counts only true burns (HyperCore supply fall and zero-address fees), so gross burn, net issuance and every per-circulating ratio move"
+}
+],
+"audit|Master|Trend — master_gross_burn_q0_tokens (arrow · QoQ · 4Q growth/yr · quarters improved; Trajectory tab)": [
+{
+"date": "2026-11-25",
+"from": "SERIES BREAK 2026-09-25 · – · STEP CHANGE at Q0 · QoQ n/a",
+"to": "– · 4Q n/a · QoQ n/a — Q0 is part-held",
+"why": "R21 (Jake 2026-11-25) Item 6: Hyperliquid's default until Jake decides — the Assistance Fund is a held buyback (inside circulating, +48.0M; off the free float; A4 off); 'burn' now counts only true burns (HyperCore supply fall and zero-address fees), so gross burn, net issuance and every per-circulating ratio move"
+}
+],
+"audit|Master|Turnover = 30d volume ÷ market cap (x)": [
+{
+"date": "2026-11-25",
+"from": 0.629963507,
+"to": 0.578507376,
+"why": "R21 (Jake 2026-11-25) Item 6: Hyperliquid's default until Jake decides — the Assistance Fund is a held buyback (inside circulating, +48.0M; off the free float; A4 off); 'burn' now counts only true burns (HyperCore supply fall and zero-address fees), so gross burn, net issuance and every per-circulating ratio move"
+}
+],
+"reader|A1 Infrastructure|Circulating supply": [
+{
+"date": "2026-11-25",
+"from": 539758896.0,
+"to": 587768491.0,
+"why": "R21 (Jake 2026-11-25) Item 6: Hyperliquid's default until Jake decides — the Assistance Fund is a held buyback (inside circulating, +48.0M; off the free float; A4 off); 'burn' now counts only true burns (HyperCore supply fall and zero-address fees), so gross burn, net issuance and every per-circulating ratio move"
+}
+],
+"reader|A1 Infrastructure|FDV": [
+{
+"date": "2026-11-25",
+"from": 76962297900.0,
+"to": 80849471900.0,
+"why": "R21 (Jake 2026-11-25) Item 6: Hyperliquid's default until Jake decides — the Assistance Fund is a held buyback (inside circulating, +48.0M; off the free float; A4 off); 'burn' now counts only true burns (HyperCore supply fall and zero-address fees), so gross burn, net issuance and every per-circulating ratio move"
+}
+],
+"reader|A1 Infrastructure|Fees ÷ FDV, a year": [
+{
+"date": "2026-11-25",
+"from": 0.0120705522,
+"to": 0.0114902103,
+"why": "R21 (Jake 2026-11-25) Item 6: Hyperliquid's default until Jake decides — the Assistance Fund is a held buyback (inside circulating, +48.0M; off the free float; A4 off); 'burn' now counts only true burns (HyperCore supply fall and zero-address fees), so gross burn, net issuance and every per-circulating ratio move"
+}
+],
+"reader|A1 Infrastructure|Gross burn, 90 days (tokens)": [
+{
+"date": "2026-11-25",
+"from": 2474408.02,
+"to": 52260.6283,
+"why": "R21 (Jake 2026-11-25) Item 6: Hyperliquid's default until Jake decides — the Assistance Fund is a held buyback (inside circulating, +48.0M; off the free float; A4 off); 'burn' now counts only true burns (HyperCore supply fall and zero-address fees), so gross burn, net issuance and every per-circulating ratio move"
+}
+],
+"reader|A1 Infrastructure|Market cap": [
+{
+"date": "2026-11-25",
+"from": 43702446000.0,
+"to": 47589620000.0,
+"why": "R21 (Jake 2026-11-25) Item 6: Hyperliquid's default until Jake decides — the Assistance Fund is a held buyback (inside circulating, +48.0M; off the free float; A4 off); 'burn' now counts only true burns (HyperCore supply fall and zero-address fees), so gross burn, net issuance and every per-circulating ratio move"
+}
+],
+"reader|A1 Infrastructure|NRR headroom (throughput)": [
+{
+"date": "2026-11-25",
+"from": 45.5346796,
+"to": 41.8153555,
+"why": "R21 (Jake 2026-11-25) Item 6: Hyperliquid's default until Jake decides — the Assistance Fund is a held buyback (inside circulating, +48.0M; off the free float; A4 off); 'burn' now counts only true burns (HyperCore supply fall and zero-address fees), so gross burn, net issuance and every per-circulating ratio move"
+}
+],
+"reader|A1 Infrastructure|NRR on trading throughput": [
+{
+"date": "2026-11-25",
+"from": 0.0155925112,
+"to": 0.0169794084,
+"why": "R21 (Jake 2026-11-25) Item 6: Hyperliquid's default until Jake decides — the Assistance Fund is a held buyback (inside circulating, +48.0M; off the free float; A4 off); 'burn' now counts only true burns (HyperCore supply fall and zero-address fees), so gross burn, net issuance and every per-circulating ratio move"
+}
+],
+"reader|A1 Infrastructure|Net issuance after burn (tokens)": [
+{
+"date": "2026-11-25",
+"from": -2474408.02,
+"to": -52260.6283,
+"why": "R21 (Jake 2026-11-25) Item 6: Hyperliquid's default until Jake decides — the Assistance Fund is a held buyback (inside circulating, +48.0M; off the free float; A4 off); 'burn' now counts only true burns (HyperCore supply fall and zero-address fees), so gross burn, net issuance and every per-circulating ratio move"
+}
+],
+"reader|A1 Infrastructure|Net issuance after burn, % a year": [
+{
+"date": "2026-11-25",
+"from": -0.0185918181,
+"to": -0.00190902787,
+"why": "R21 (Jake 2026-11-25) Item 6: Hyperliquid's default until Jake decides — the Assistance Fund is a held buyback (inside circulating, +48.0M; off the free float; A4 off); 'burn' now counts only true burns (HyperCore supply fall and zero-address fees), so gross burn, net issuance and every per-circulating ratio move"
+}
+],
+"reader|A1 Infrastructure|Quarter change [45]": [
+{
+"date": "2026-11-25",
+"from": "blocked",
+"to": "n/a",
+"why": "R21 (Jake 2026-11-25) Item 6: Hyperliquid's default until Jake decides — the Assistance Fund is a held buyback (inside circulating, +48.0M; off the free float; A4 off); 'burn' now counts only true burns (HyperCore supply fall and zero-address fees), so gross burn, net issuance and every per-circulating ratio move"
+}
+],
+"reader|A1 Infrastructure|Staking rate": [
+{
+"date": "2026-11-25",
+"from": 0.374631896,
+"to": 0.34403154,
+"why": "R21 (Jake 2026-11-25) Item 6: Hyperliquid's default until Jake decides — the Assistance Fund is a held buyback (inside circulating, +48.0M; off the free float; A4 off); 'burn' now counts only true burns (HyperCore supply fall and zero-address fees), so gross burn, net issuance and every per-circulating ratio move"
+}
+],
+"reader|A1 Infrastructure|Total yield, non-stakers": [
+{
+"date": "2026-11-25",
+"from": -0.0314299956,
+"to": -0.0440269475,
+"why": "R21 (Jake 2026-11-25) Item 6: Hyperliquid's default until Jake decides — the Assistance Fund is a held buyback (inside circulating, +48.0M; off the free float; A4 off); 'burn' now counts only true burns (HyperCore supply fall and zero-address fees), so gross burn, net issuance and every per-circulating ratio move"
+}
+],
+"reader|A1 Infrastructure|Total yield, stakers": [
+{
+"date": "2026-11-25",
+"from": -0.00850780088,
+"to": -0.0211047528,
+"why": "R21 (Jake 2026-11-25) Item 6: Hyperliquid's default until Jake decides — the Assistance Fund is a held buyback (inside circulating, +48.0M; off the free float; A4 off); 'burn' now counts only true burns (HyperCore supply fall and zero-address fees), so gross burn, net issuance and every per-circulating ratio move"
+}
+],
+"reader|A3 Revenue Buyback|Bought back and burned (tokens)": [
+{
+"date": "2026-11-25",
+"from": 2380273.5,
+"to": 0.0,
+"why": "R21 (Jake 2026-11-25) Item 6: Hyperliquid's default until Jake decides — the Assistance Fund is a held buyback (inside circulating, +48.0M; off the free float; A4 off); 'burn' now counts only true burns (HyperCore supply fall and zero-address fees), so gross burn, net issuance and every per-circulating ratio move"
+}
+],
+"reader|A3 Revenue Buyback|Bought back and held (tokens)": [
+{
+"date": "2026-11-25",
+"from": 0.0,
+"to": 2380273.5,
+"why": "R21 (Jake 2026-11-25) Item 6: Hyperliquid's default until Jake decides — the Assistance Fund is a held buyback (inside circulating, +48.0M; off the free float; A4 off); 'burn' now counts only true burns (HyperCore supply fall and zero-address fees), so gross burn, net issuance and every per-circulating ratio move"
+}
+],
+"reader|A3 Revenue Buyback|Burned ÷ (emissions + unlocks)": [
+{
+"date": "2026-11-25",
+"from": 0.296591773,
+"to": 0.0,
+"why": "R21 (Jake 2026-11-25) Item 6: Hyperliquid's default until Jake decides — the Assistance Fund is a held buyback (inside circulating, +48.0M; off the free float; A4 off); 'burn' now counts only true burns (HyperCore supply fall and zero-address fees), so gross burn, net issuance and every per-circulating ratio move"
+}
+],
+"reader|A3 Revenue Buyback|Buyback destination": [
+{
+"date": "2026-11-25",
+"from": "burn",
+"to": "hold — the Assistance Fund 0xfefe…fefe holds what it buys (R21, Jake's default: a held buyback, not a burn)",
+"why": "R21 (Jake 2026-11-25) Item 6: Hyperliquid's default until Jake decides — the Assistance Fund is a held buyback (inside circulating, +48.0M; off the free float; A4 off); 'burn' now counts only true burns (HyperCore supply fall and zero-address fees), so gross burn, net issuance and every per-circulating ratio move"
+}
+],
+"reader|A3 Revenue Buyback|Circulating supply": [
+{
+"date": "2026-11-25",
+"from": 539758896.0,
+"to": 587768491.0,
+"why": "R21 (Jake 2026-11-25) Item 6: Hyperliquid's default until Jake decides — the Assistance Fund is a held buyback (inside circulating, +48.0M; off the free float; A4 off); 'burn' now counts only true burns (HyperCore supply fall and zero-address fees), so gross burn, net issuance and every per-circulating ratio move"
+}
+],
+"reader|A3 Revenue Buyback|Effect on float": [
+{
+"date": "2026-11-25",
+"from": "removed_from_supply",
+"to": "locked_supply",
+"why": "R21 (Jake 2026-11-25) Item 6: Hyperliquid's default until Jake decides — the Assistance Fund is a held buyback (inside circulating, +48.0M; off the free float; A4 off); 'burn' now counts only true burns (HyperCore supply fall and zero-address fees), so gross burn, net issuance and every per-circulating ratio move"
+}
+],
+"reader|A3 Revenue Buyback|FDV": [
+{
+"date": "2026-11-25",
+"from": 76962297900.0,
+"to": 80849471900.0,
+"why": "R21 (Jake 2026-11-25) Item 6: Hyperliquid's default until Jake decides — the Assistance Fund is a held buyback (inside circulating, +48.0M; off the free float; A4 off); 'burn' now counts only true burns (HyperCore supply fall and zero-address fees), so gross burn, net issuance and every per-circulating ratio move"
+}
+],
+"reader|A3 Revenue Buyback|Fees ÷ FDV, a year": [
+{
+"date": "2026-11-25",
+"from": 0.0120705522,
+"to": 0.0114902103,
+"why": "R21 (Jake 2026-11-25) Item 6: Hyperliquid's default until Jake decides — the Assistance Fund is a held buyback (inside circulating, +48.0M; off the free float; A4 off); 'burn' now counts only true burns (HyperCore supply fall and zero-address fees), so gross burn, net issuance and every per-circulating ratio move"
+}
+],
+"reader|A3 Revenue Buyback|Holder value yield": [
+{
+"date": "2026-11-25",
+"from": 0.0155918832,
+"to": 0.014323244,
+"why": "R21 (Jake 2026-11-25) Item 6: Hyperliquid's default until Jake decides — the Assistance Fund is a held buyback (inside circulating, +48.0M; off the free float; A4 off); 'burn' now counts only true burns (HyperCore supply fall and zero-address fees), so gross burn, net issuance and every per-circulating ratio move"
+}
+],
+"reader|A3 Revenue Buyback|Implied buyback %, 3 months ago": [
+{
+"date": "2026-11-25",
+"from": 0.0192118917,
+"to": 0.0176426426,
+"why": "R21 (Jake 2026-11-25) Item 6: Hyperliquid's default until Jake decides — the Assistance Fund is a held buyback (inside circulating, +48.0M; off the free float; A4 off); 'burn' now counts only true burns (HyperCore supply fall and zero-address fees), so gross burn, net issuance and every per-circulating ratio move"
+}
+],
+"reader|A3 Revenue Buyback|Implied buyback %, 6 months ago": [
+{
+"date": "2026-11-25",
+"from": 0.0359936238,
+"to": 0.0330536239,
+"why": "R21 (Jake 2026-11-25) Item 6: Hyperliquid's default until Jake decides — the Assistance Fund is a held buyback (inside circulating, +48.0M; off the free float; A4 off); 'burn' now counts only true burns (HyperCore supply fall and zero-address fees), so gross burn, net issuance and every per-circulating ratio move"
+}
+],
+"reader|A3 Revenue Buyback|Implied buyback, % of supply a year": [
+{
+"date": "2026-11-25",
+"from": 0.0181198683,
+"to": 0.0166398169,
+"why": "R21 (Jake 2026-11-25) Item 6: Hyperliquid's default until Jake decides — the Assistance Fund is a held buyback (inside circulating, +48.0M; off the free float; A4 off); 'burn' now counts only true burns (HyperCore supply fall and zero-address fees), so gross burn, net issuance and every per-circulating ratio move"
+}
+],
+"reader|A3 Revenue Buyback|Lock rate, % of circulating": [
+{
+"date": "2026-11-25",
+"from": 0.374631896,
+"to": 0.34403154,
+"why": "R21 (Jake 2026-11-25) Item 6: Hyperliquid's default until Jake decides — the Assistance Fund is a held buyback (inside circulating, +48.0M; off the free float; A4 off); 'burn' now counts only true burns (HyperCore supply fall and zero-address fees), so gross burn, net issuance and every per-circulating ratio move"
+}
+],
+"reader|A3 Revenue Buyback|Market cap": [
+{
+"date": "2026-11-25",
+"from": 43702446000.0,
+"to": 47589620000.0,
+"why": "R21 (Jake 2026-11-25) Item 6: Hyperliquid's default until Jake decides — the Assistance Fund is a held buyback (inside circulating, +48.0M; off the free float; A4 off); 'burn' now counts only true burns (HyperCore supply fall and zero-address fees), so gross burn, net issuance and every per-circulating ratio move"
+}
+],
+"reader|A3 Revenue Buyback|Retired, % of supply a year": [
+{
+"date": "2026-11-25",
+"from": 0.0178845249,
+"to": 0.0164236967,
+"why": "R21 (Jake 2026-11-25) Item 6: Hyperliquid's default until Jake decides — the Assistance Fund is a held buyback (inside circulating, +48.0M; off the free float; A4 off); 'burn' now counts only true burns (HyperCore supply fall and zero-address fees), so gross burn, net issuance and every per-circulating ratio move"
+}
+],
+"reader|A3 Revenue Buyback|Retirement rate ($), % of FDV": [
+{
+"date": "2026-11-25",
+"from": 0.00960305203,
+"to": 0.00914134545,
+"why": "R21 (Jake 2026-11-25) Item 6: Hyperliquid's default until Jake decides — the Assistance Fund is a held buyback (inside circulating, +48.0M; off the free float; A4 off); 'burn' now counts only true burns (HyperCore supply fall and zero-address fees), so gross burn, net issuance and every per-circulating ratio move"
+}
+],
+"reader|A3 Revenue Buyback|Retirement rate ($), % of mkt cap": [
+{
+"date": "2026-11-25",
+"from": 0.0169114779,
+"to": 0.0155301293,
+"why": "R21 (Jake 2026-11-25) Item 6: Hyperliquid's default until Jake decides — the Assistance Fund is a held buyback (inside circulating, +48.0M; off the free float; A4 off); 'burn' now counts only true burns (HyperCore supply fall and zero-address fees), so gross burn, net issuance and every per-circulating ratio move"
+}
+],
+"reader|A3 Revenue Buyback|Retirement rate, % of FDV supply": [
+{
+"date": "2026-11-25",
+"from": 0.0101555892,
+"to": 0.00966731711,
+"why": "R21 (Jake 2026-11-25) Item 6: Hyperliquid's default until Jake decides — the Assistance Fund is a held buyback (inside circulating, +48.0M; off the free float; A4 off); 'burn' now counts only true burns (HyperCore supply fall and zero-address fees), so gross burn, net issuance and every per-circulating ratio move"
+}
+],
+"reader|A3 Revenue Buyback|Retirement rate, % of circulating": [
+{
+"date": "2026-11-25",
+"from": 0.0178845249,
+"to": 0.0164236967,
+"why": "R21 (Jake 2026-11-25) Item 6: Hyperliquid's default until Jake decides — the Assistance Fund is a held buyback (inside circulating, +48.0M; off the free float; A4 off); 'burn' now counts only true burns (HyperCore supply fall and zero-address fees), so gross burn, net issuance and every per-circulating ratio move"
+}
+],
+"reader|Business|Burn change, 30d vs prior 30d": [
+{
+"date": "2026-11-25",
+"from": -0.102372849,
+"to": "n/a",
+"why": "R21 (Jake 2026-11-25) Item 6: Hyperliquid's default until Jake decides — the Assistance Fund is a held buyback (inside circulating, +48.0M; off the free float; A4 off); 'burn' now counts only true burns (HyperCore supply fall and zero-address fees), so gross burn, net issuance and every per-circulating ratio move"
+}
+],
+"reader|Comparison|Burns on float, % a year": [
+{
+"date": "2026-11-25",
+"from": "<absent>",
+"to": 0.0112813068,
+"why": "R21 (Jake 2026-11-25) Item 6: Hyperliquid's default until Jake decides — the Assistance Fund is a held buyback (inside circulating, +48.0M; off the free float; A4 off); 'burn' now counts only true burns (HyperCore supply fall and zero-address fees), so gross burn, net issuance and every per-circulating ratio move"
+}
+],
+"reader|Comparison|Dilution, % of market cap": [
+{
+"date": "2026-11-25",
+"from": 0.047139246,
+"to": 0.0433037444,
+"why": "R21 (Jake 2026-11-25) Item 6: Hyperliquid's default until Jake decides — the Assistance Fund is a held buyback (inside circulating, +48.0M; off the free float; A4 off); 'burn' now counts only true burns (HyperCore supply fall and zero-address fees), so gross burn, net issuance and every per-circulating ratio move"
+}
+],
+"reader|Comparison|Fees ÷ FDV, a year": [
+{
+"date": "2026-11-25",
+"from": 0.0120705522,
+"to": 0.0114902103,
+"why": "R21 (Jake 2026-11-25) Item 6: Hyperliquid's default until Jake decides — the Assistance Fund is a held buyback (inside circulating, +48.0M; off the free float; A4 off); 'burn' now counts only true burns (HyperCore supply fall and zero-address fees), so gross burn, net issuance and every per-circulating ratio move"
+}
+],
+"reader|Comparison|Holder value yield": [
+{
+"date": "2026-11-25",
+"from": 0.0155918832,
+"to": 0.014323244,
+"why": "R21 (Jake 2026-11-25) Item 6: Hyperliquid's default until Jake decides — the Assistance Fund is a held buyback (inside circulating, +48.0M; off the free float; A4 off); 'burn' now counts only true burns (HyperCore supply fall and zero-address fees), so gross burn, net issuance and every per-circulating ratio move"
+}
+],
+"reader|Comparison|Lock rate, % of circulating": [
+{
+"date": "2026-11-25",
+"from": 0.374631896,
+"to": 0.34403154,
+"why": "R21 (Jake 2026-11-25) Item 6: Hyperliquid's default until Jake decides — the Assistance Fund is a held buyback (inside circulating, +48.0M; off the free float; A4 off); 'burn' now counts only true burns (HyperCore supply fall and zero-address fees), so gross burn, net issuance and every per-circulating ratio move"
+}
+],
+"reader|Comparison|Net float pressure": [
+{
+"date": "2026-11-25",
+"from": -0.174401367,
+"to": -0.16312006,
+"why": "R21 (Jake 2026-11-25) Item 6: Hyperliquid's default until Jake decides — the Assistance Fund is a held buyback (inside circulating, +48.0M; off the free float; A4 off); 'burn' now counts only true burns (HyperCore supply fall and zero-address fees), so gross burn, net issuance and every per-circulating ratio move"
+}
+],
+"reader|Comparison|Net holder yield": [
+{
+"date": "2026-11-25",
+"from": -0.0315473628,
+"to": -0.0289805003,
+"why": "R21 (Jake 2026-11-25) Item 6: Hyperliquid's default until Jake decides — the Assistance Fund is a held buyback (inside circulating, +48.0M; off the free float; A4 off); 'burn' now counts only true burns (HyperCore supply fall and zero-address fees), so gross burn, net issuance and every per-circulating ratio move"
+}
+],
+"reader|Comparison|Returned to float, % a year": [
+{
+"date": "2026-11-25",
+"from": "<absent>",
+"to": 0.0,
+"why": "R21 (Jake 2026-11-25) Item 6: Hyperliquid's default until Jake decides — the Assistance Fund is a held buyback (inside circulating, +48.0M; off the free float; A4 off); 'burn' now counts only true burns (HyperCore supply fall and zero-address fees), so gross burn, net issuance and every per-circulating ratio move"
+}
+],
+"reader|Comparison|Revenue ÷ market cap, a year": [
+{
+"date": "2026-11-25",
+"from": 0.0167815547,
+"to": 0.0154108183,
+"why": "R21 (Jake 2026-11-25) Item 6: Hyperliquid's default until Jake decides — the Assistance Fund is a held buyback (inside circulating, +48.0M; off the free float; A4 off); 'burn' now counts only true burns (HyperCore supply fall and zero-address fees), so gross burn, net issuance and every per-circulating ratio move"
+}
+],
+"reader|Summary|Dilution, % of market cap": [
+{
+"date": "2026-11-25",
+"from": 0.047139246,
+"to": 0.0433037444,
+"why": "R21 (Jake 2026-11-25) Item 6: Hyperliquid's default until Jake decides — the Assistance Fund is a held buyback (inside circulating, +48.0M; off the free float; A4 off); 'burn' now counts only true burns (HyperCore supply fall and zero-address fees), so gross burn, net issuance and every per-circulating ratio move"
+}
+],
+"reader|Summary|FDV": [
+{
+"date": "2026-11-25",
+"from": 76962297900.0,
+"to": 80849471900.0,
+"why": "R21 (Jake 2026-11-25) Item 6: Hyperliquid's default until Jake decides — the Assistance Fund is a held buyback (inside circulating, +48.0M; off the free float; A4 off); 'burn' now counts only true burns (HyperCore supply fall and zero-address fees), so gross burn, net issuance and every per-circulating ratio move"
+}
+],
+"reader|Summary|Holder value yield": [
+{
+"date": "2026-11-25",
+"from": 0.0155918832,
+"to": 0.014323244,
+"why": "R21 (Jake 2026-11-25) Item 6: Hyperliquid's default until Jake decides — the Assistance Fund is a held buyback (inside circulating, +48.0M; off the free float; A4 off); 'burn' now counts only true burns (HyperCore supply fall and zero-address fees), so gross burn, net issuance and every per-circulating ratio move"
+}
+],
+"reader|Summary|Market cap": [
+{
+"date": "2026-11-25",
+"from": 43702446000.0,
+"to": 47589620000.0,
+"why": "R21 (Jake 2026-11-25) Item 6: Hyperliquid's default until Jake decides — the Assistance Fund is a held buyback (inside circulating, +48.0M; off the free float; A4 off); 'burn' now counts only true burns (HyperCore supply fall and zero-address fees), so gross burn, net issuance and every per-circulating ratio move"
+}
+],
+"reader|Summary|Net float pressure": [
+{
+"date": "2026-11-25",
+"from": -0.174401367,
+"to": -0.16312006,
+"why": "R21 (Jake 2026-11-25) Item 6: Hyperliquid's default until Jake decides — the Assistance Fund is a held buyback (inside circulating, +48.0M; off the free float; A4 off); 'burn' now counts only true burns (HyperCore supply fall and zero-address fees), so gross burn, net issuance and every per-circulating ratio move"
+}
+],
+"reader|Summary|Net holder yield": [
+{
+"date": "2026-11-25",
+"from": -0.0315473628,
+"to": -0.0289805003,
+"why": "R21 (Jake 2026-11-25) Item 6: Hyperliquid's default until Jake decides — the Assistance Fund is a held buyback (inside circulating, +48.0M; off the free float; A4 off); 'burn' now counts only true burns (HyperCore supply fall and zero-address fees), so gross burn, net issuance and every per-circulating ratio move"
 }
 ]
 },
 "Maple": {
+"audit|A3 Revenue Buyback|BUYING PRESSURE ON FLOAT, % a year = revenue-funded buying, held or paid out (tokens, annualised) ÷ free float — the demand side of net float pressure; a burned buyback is a burn (R21)": [
+{
+"date": "2026-11-25",
+"from": "<absent>",
+"to": "n/a — free float: a component is not read — maple_ssf_safe_tokens (held buybacks): no rows stored",
+"why": "R21 (Jake 2026-11-25) Item 2/3: new lines in net float pressure — burns on float (every burn, any source), bought tokens returned to the float (F1/F2/F7), the burn-source memo, and buying pressure on float on the A3 tab; new rows, read from the same float"
+}
+],
+"audit|CP Comparability|BOUGHT TOKENS RETURNED TO THE FLOAT, % a year = bought tokens paid out liquid, sold or transferred out of the holding wallet (tokens, annualised) ÷ free float (R21)": [
+{
+"date": "2026-11-25",
+"from": "<absent>",
+"to": "n/a — free float: a component is not read — maple_ssf_safe_tokens (held buybacks): no rows stored",
+"why": "R21 (Jake 2026-11-25) Item 2/3: new lines in net float pressure — burns on float (every burn, any source), bought tokens returned to the float (F1/F2/F7), the burn-source memo, and buying pressure on float on the A3 tab; new rows, read from the same float"
+}
+],
+"audit|CP Comparability|BURNS ON FLOAT, % a year = every burn, whatever its source (tokens, annualised) ÷ free float — a supply reduction, not buying (R21)": [
+{
+"date": "2026-11-25",
+"from": "<absent>",
+"to": 0.0,
+"why": "R21 (Jake 2026-11-25) Item 2/3: new lines in net float pressure — burns on float (every burn, any source), bought tokens returned to the float (F1/F2/F7), the burn-source memo, and buying pressure on float on the A3 tab; new rows, read from the same float"
+}
+],
+"audit|CP Comparability|BUYING PRESSURE ON FLOAT, % a year = revenue-funded buying, held or paid out (tokens, annualised) ÷ free float — the demand side of net float pressure; a burned buyback is a burn (R21)": [
+{
+"date": "2026-11-25",
+"from": "<absent>",
+"to": "n/a — free float: a component is not read — maple_ssf_safe_tokens (held buybacks): no rows stored",
+"why": "R21 (Jake 2026-11-25) Item 2/3: new lines in net float pressure — burns on float (every burn, any source), bought tokens returned to the float (F1/F2/F7), the burn-source memo, and buying pressure on float on the A3 tab; new rows, read from the same float"
+}
+],
+"audit|CP Comparability|Burns — where they came from (memo: from float / staked / treasury, Q0)": [
+{
+"date": "2026-11-25",
+"from": "<absent>",
+"to": "no burn — no burn mechanism: bought SYRUP lives in the Syrup Strategic Fund (held)",
+"why": "R21 (Jake 2026-11-25) Item 2/3: new lines in net float pressure — burns on float (every burn, any source), bought tokens returned to the float (F1/F2/F7), the burn-source memo, and buying pressure on float on the A3 tab; new rows, read from the same float"
+}
+],
+"audit|CP Comparability|NET FLOAT PRESSURE, % a year = buying pressure on float + burns on float − total dilution ÷ free float − bought tokens returned to the float (revenue-funded buying + burns − new supply; all ÷ free float) (R21)": [
+{
+"date": "2026-11-25",
+"from": "<absent>",
+"to": "n/a — free float: a component is not read — maple_ssf_safe_tokens (held buybacks): no rows stored",
+"why": "R21 (Jake 2026-11-25) Item 2/3: new lines in net float pressure — burns on float (every burn, any source), bought tokens returned to the float (F1/F2/F7), the burn-source memo, and buying pressure on float on the A3 tab; new rows, read from the same float"
+}
+],
 "audit|CP Comparability|Trend — cp_nfp (arrow · QoQ · 4Q growth/yr · quarters improved; Trajectory tab)": [
 {
 "date": "2026-11-25",
 "from": "<absent>",
 "to": "– · 4Q n/a · QoQ n/a",
 "why": "R21 (Jake 2026-11-25) Item 1: the new net float pressure row (cp_nfp, R20) has its own Trend cell beside it; a new row, no figure moved"
+}
+],
+"reader|Comparison|Burns on float, % a year": [
+{
+"date": "2026-11-25",
+"from": "<absent>",
+"to": 0.0,
+"why": "R21 (Jake 2026-11-25) Item 2/3: new lines in net float pressure — burns on float (every burn, any source), bought tokens returned to the float (F1/F2/F7), the burn-source memo, and buying pressure on float on the A3 tab; new rows, read from the same float"
+}
+],
+"reader|Comparison|Returned to float, % a year": [
+{
+"date": "2026-11-25",
+"from": "<absent>",
+"to": "n/a",
+"why": "R21 (Jake 2026-11-25) Item 2/3: new lines in net float pressure — burns on float (every burn, any source), bought tokens returned to the float (F1/F2/F7), the burn-source memo, and buying pressure on float on the A3 tab; new rows, read from the same float"
 }
 ]
 },
 "Morpho": {
+"audit|A3 Revenue Buyback|BUYING PRESSURE ON FLOAT, % a year = revenue-funded buying, held or paid out (tokens, annualised) ÷ free float — the demand side of net float pressure; a burned buyback is a burn (R21)": [
+{
+"date": "2026-11-25",
+"from": "<absent>",
+"to": 0.0,
+"why": "R21 (Jake 2026-11-25) Item 2/3: new lines in net float pressure — burns on float (every burn, any source), bought tokens returned to the float (F1/F2/F7), the burn-source memo, and buying pressure on float on the A3 tab; new rows, read from the same float"
+}
+],
+"audit|A3 Revenue Buyback|REVENUE TO HOLDERS ÷ NEW SUPPLY (x) = revenue sent to holders ($) ÷ value of new supply ($), same window, per covered day — A3's rank key (R20)": [
+{
+"date": "2026-11-25",
+"from": 0.0,
+"to": "n/a — outflow_b_usd (q0): BLOCKED — BLOCKED — outflow (b) is not formed: emissions_tokens: BLOCKED — the sum of emissions_tokens_claims_ethereum, emissions_tokens_claims_arbitrum, emissions_tokens_claims_base, emissions_tokens_claims_katana",
+"why": "R21 (Jake 2026-11-25) Item 3 (F4) / decision 5: a paused / off programme shows its label and 'unranked'; its key is what the data reads (blocked here: a new-supply input has no rows on the dumps), never a forced 0"
+}
+],
+"audit|CP Comparability|BOUGHT TOKENS RETURNED TO THE FLOAT, % a year = bought tokens paid out liquid, sold or transferred out of the holding wallet (tokens, annualised) ÷ free float (R21)": [
+{
+"date": "2026-11-25",
+"from": "<absent>",
+"to": 0.0,
+"why": "R21 (Jake 2026-11-25) Item 2/3: new lines in net float pressure — burns on float (every burn, any source), bought tokens returned to the float (F1/F2/F7), the burn-source memo, and buying pressure on float on the A3 tab; new rows, read from the same float"
+}
+],
+"audit|CP Comparability|BURNS ON FLOAT, % a year = every burn, whatever its source (tokens, annualised) ÷ free float — a supply reduction, not buying (R21)": [
+{
+"date": "2026-11-25",
+"from": "<absent>",
+"to": 0.0,
+"why": "R21 (Jake 2026-11-25) Item 2/3: new lines in net float pressure — burns on float (every burn, any source), bought tokens returned to the float (F1/F2/F7), the burn-source memo, and buying pressure on float on the A3 tab; new rows, read from the same float"
+}
+],
+"audit|CP Comparability|BUYING PRESSURE ON FLOAT, % a year = revenue-funded buying, held or paid out (tokens, annualised) ÷ free float — the demand side of net float pressure; a burned buyback is a burn (R21)": [
+{
+"date": "2026-11-25",
+"from": "<absent>",
+"to": 0.0,
+"why": "R21 (Jake 2026-11-25) Item 2/3: new lines in net float pressure — burns on float (every burn, any source), bought tokens returned to the float (F1/F2/F7), the burn-source memo, and buying pressure on float on the A3 tab; new rows, read from the same float"
+}
+],
+"audit|CP Comparability|Burns — where they came from (memo: from float / staked / treasury, Q0)": [
+{
+"date": "2026-11-25",
+"from": "<absent>",
+"to": "no burn — no burn mechanism: fixed supply, the fee switch is off",
+"why": "R21 (Jake 2026-11-25) Item 2/3: new lines in net float pressure — burns on float (every burn, any source), bought tokens returned to the float (F1/F2/F7), the burn-source memo, and buying pressure on float on the A3 tab; new rows, read from the same float"
+}
+],
+"audit|CP Comparability|NET FLOAT PRESSURE, % a year = buying pressure on float + burns on float − total dilution ÷ free float − bought tokens returned to the float (revenue-funded buying + burns − new supply; all ÷ free float) (R21)": [
+{
+"date": "2026-11-25",
+"from": "<absent>",
+"to": "n/a — outflow_b_tokens (q0): BLOCKED — BLOCKED — outflow (b) is not formed: emissions_tokens: BLOCKED — the sum of emissions_tokens_claims_ethereum, emissions_tokens_claims_arbitrum, emissions_tokens_claims_base, emissions_tokens_claims_kat",
+"why": "R21 (Jake 2026-11-25) Item 2/3: new lines in net float pressure — burns on float (every burn, any source), bought tokens returned to the float (F1/F2/F7), the burn-source memo, and buying pressure on float on the A3 tab; new rows, read from the same float"
+}
+],
 "audit|CP Comparability|Trend — cp_nfp (arrow · QoQ · 4Q growth/yr · quarters improved; Trajectory tab)": [
 {
 "date": "2026-11-25",
 "from": "<absent>",
 "to": "– · 4Q n/a · QoQ n/a",
 "why": "R21 (Jake 2026-11-25) Item 1: the new net float pressure row (cp_nfp, R20) has its own Trend cell beside it; a new row, no figure moved"
+}
+],
+"reader|A3 Revenue Buyback|Rank in A3": [
+{
+"date": "2026-11-25",
+"from": 3.0,
+"to": "unranked",
+"why": "R21 (Jake 2026-11-25) Item 3 (F4) / decision 5: a paused / off programme shows its label and 'unranked'; its key is what the data reads (blocked here: a new-supply input has no rows on the dumps), never a forced 0"
+}
+],
+"reader|A3 Revenue Buyback|Revenue to holders ÷ new supply (x)": [
+{
+"date": "2026-11-25",
+"from": 0.0,
+"to": "blocked",
+"why": "R21 (Jake 2026-11-25) Item 3 (F4) / decision 5: a paused / off programme shows its label and 'unranked'; its key is what the data reads (blocked here: a new-supply input has no rows on the dumps), never a forced 0"
+}
+],
+"reader|A3 Revenue Buyback|To holders ÷ new supply, latest": [
+{
+"date": "2026-11-25",
+"from": 0.0,
+"to": "blocked",
+"why": "R21 (Jake 2026-11-25) Item 3 (F4) / decision 5: a paused / off programme shows its label and 'unranked'; its key is what the data reads (blocked here: a new-supply input has no rows on the dumps), never a forced 0"
+}
+],
+"reader|A3 Revenue Buyback|To holders ÷ new supply, −1 qtr": [
+{
+"date": "2026-11-25",
+"from": "n/a",
+"to": "blocked",
+"why": "R21 (Jake 2026-11-25) Item 3 (F4) / decision 5: a paused / off programme shows its label and 'unranked'; its key is what the data reads (blocked here: a new-supply input has no rows on the dumps), never a forced 0"
+}
+],
+"reader|A3 Revenue Buyback|To holders ÷ new supply, −2 qtrs": [
+{
+"date": "2026-11-25",
+"from": "n/a",
+"to": "blocked",
+"why": "R21 (Jake 2026-11-25) Item 3 (F4) / decision 5: a paused / off programme shows its label and 'unranked'; its key is what the data reads (blocked here: a new-supply input has no rows on the dumps), never a forced 0"
+}
+],
+"reader|A3 Revenue Buyback|To holders ÷ new supply, −3 qtrs": [
+{
+"date": "2026-11-25",
+"from": "n/a",
+"to": "blocked",
+"why": "R21 (Jake 2026-11-25) Item 3 (F4) / decision 5: a paused / off programme shows its label and 'unranked'; its key is what the data reads (blocked here: a new-supply input has no rows on the dumps), never a forced 0"
+}
+],
+"reader|Comparison|Burns on float, % a year": [
+{
+"date": "2026-11-25",
+"from": "<absent>",
+"to": 0.0,
+"why": "R21 (Jake 2026-11-25) Item 2/3: new lines in net float pressure — burns on float (every burn, any source), bought tokens returned to the float (F1/F2/F7), the burn-source memo, and buying pressure on float on the A3 tab; new rows, read from the same float"
+}
+],
+"reader|Comparison|Returned to float, % a year": [
+{
+"date": "2026-11-25",
+"from": "<absent>",
+"to": 0.0,
+"why": "R21 (Jake 2026-11-25) Item 2/3: new lines in net float pressure — burns on float (every burn, any source), bought tokens returned to the float (F1/F2/F7), the burn-source memo, and buying pressure on float on the A3 tab; new rows, read from the same float"
+}
+],
+"reader|Summary|Archetype key": [
+{
+"date": "2026-11-25",
+"from": 0.0,
+"to": "blocked",
+"why": "R21 (Jake 2026-11-25) Item 3 (F4) / decision 5: a paused / off programme shows its label and 'unranked'; its key is what the data reads (blocked here: a new-supply input has no rows on the dumps), never a forced 0"
+}
+],
+"reader|Summary|Confidence (share green)": [
+{
+"date": "2026-11-25",
+"from": 0.5,
+"to": 0.428571429,
+"why": "R21 (Jake 2026-11-25) the share of green cells is recounted over the Summary row's new and relabelled cells"
+}
+],
+"reader|Summary|Rank in archetype": [
+{
+"date": "2026-11-25",
+"from": 3.0,
+"to": "unranked",
+"why": "R21 (Jake 2026-11-25) Item 3 (F4) / decision 5: a paused / off programme shows its label and 'unranked'; its key is what the data reads (blocked here: a new-supply input has no rows on the dumps), never a forced 0"
 }
 ]
 },
 "Pendle": {
+"audit|A3 Revenue Buyback|BUYING PRESSURE ON FLOAT, % a year = revenue-funded buying, held or paid out (tokens, annualised) ÷ free float — the demand side of net float pressure; a burned buyback is a burn (R21)": [
+{
+"date": "2026-11-25",
+"from": "<absent>",
+"to": 0.0239766081,
+"why": "R21 (Jake 2026-11-25) Item 2/3: new lines in net float pressure — burns on float (every burn, any source), bought tokens returned to the float (F1/F2/F7), the burn-source memo, and buying pressure on float on the A3 tab; new rows, read from the same float"
+}
+],
+"audit|CP Comparability|BOUGHT TOKENS RETURNED TO THE FLOAT, % a year = bought tokens paid out liquid, sold or transferred out of the holding wallet (tokens, annualised) ÷ free float (R21)": [
+{
+"date": "2026-11-25",
+"from": "<absent>",
+"to": 0.0,
+"why": "R21 (Jake 2026-11-25) Item 2/3: new lines in net float pressure — burns on float (every burn, any source), bought tokens returned to the float (F1/F2/F7), the burn-source memo, and buying pressure on float on the A3 tab; new rows, read from the same float"
+}
+],
+"audit|CP Comparability|BURNS ON FLOAT, % a year = every burn, whatever its source (tokens, annualised) ÷ free float — a supply reduction, not buying (R21)": [
+{
+"date": "2026-11-25",
+"from": "<absent>",
+"to": 0.0,
+"why": "R21 (Jake 2026-11-25) Item 2/3: new lines in net float pressure — burns on float (every burn, any source), bought tokens returned to the float (F1/F2/F7), the burn-source memo, and buying pressure on float on the A3 tab; new rows, read from the same float"
+}
+],
+"audit|CP Comparability|BUYING PRESSURE ON FLOAT, % a year = revenue-funded buying, held or paid out (tokens, annualised) ÷ free float — the demand side of net float pressure; a burned buyback is a burn (R21)": [
+{
+"date": "2026-11-25",
+"from": "<absent>",
+"to": 0.0239766081,
+"why": "R21 (Jake 2026-11-25) Item 2/3: new lines in net float pressure — burns on float (every burn, any source), bought tokens returned to the float (F1/F2/F7), the burn-source memo, and buying pressure on float on the A3 tab; new rows, read from the same float"
+}
+],
+"audit|CP Comparability|Burns — where they came from (memo: from float / staked / treasury, Q0)": [
+{
+"date": "2026-11-25",
+"from": "<absent>",
+"to": "no burn — no burn mechanism: bought PENDLE is paid to sPENDLE holders as sPENDLE",
+"why": "R21 (Jake 2026-11-25) Item 2/3: new lines in net float pressure — burns on float (every burn, any source), bought tokens returned to the float (F1/F2/F7), the burn-source memo, and buying pressure on float on the A3 tab; new rows, read from the same float"
+}
+],
+"audit|CP Comparability|NET FLOAT PRESSURE, % a year = buying pressure on float + burns on float − total dilution ÷ free float − bought tokens returned to the float (revenue-funded buying + burns − new supply; all ÷ free float) (R21)": [
+{
+"date": "2026-11-25",
+"from": "<absent>",
+"to": "n/a — outflow_b_tokens (q0): BLOCKED — BLOCKED — outflow (b) is not formed: emissions_tokens: BLOCKED — the sum of emissions_tokens_gauge_mainnet, emissions_tokens_gauge_arbitrum, emissions_tokens_gauge_optimism, emissions_tokens_gauge_bsc,",
+"why": "R21 (Jake 2026-11-25) Item 2/3: new lines in net float pressure — burns on float (every burn, any source), bought tokens returned to the float (F1/F2/F7), the burn-source memo, and buying pressure on float on the A3 tab; new rows, read from the same float"
+}
+],
 "audit|CP Comparability|Trend — cp_nfp (arrow · QoQ · 4Q growth/yr · quarters improved; Trajectory tab)": [
 {
 "date": "2026-11-25",
 "from": "<absent>",
 "to": "– · 4Q n/a · QoQ n/a",
 "why": "R21 (Jake 2026-11-25) Item 1: the new net float pressure row (cp_nfp, R20) has its own Trend cell beside it; a new row, no figure moved"
+}
+],
+"reader|A3 Revenue Buyback|Buying pressure on float, % a year": [
+{
+"date": "2026-11-25",
+"from": 0.0,
+"to": 0.0239766081,
+"why": "R21 (Jake 2026-11-25) Item 5: Pendle's buying pressure reads its own per-epoch buyback from the buyback contract on chain (DefiLlama the cross-check); the fixture's DefiLlama line had stopped, so it read 0"
+}
+],
+"reader|Comparison|Burns on float, % a year": [
+{
+"date": "2026-11-25",
+"from": "<absent>",
+"to": 0.0,
+"why": "R21 (Jake 2026-11-25) Item 2/3: new lines in net float pressure — burns on float (every burn, any source), bought tokens returned to the float (F1/F2/F7), the burn-source memo, and buying pressure on float on the A3 tab; new rows, read from the same float"
+}
+],
+"reader|Comparison|Buying pressure on float, % a year": [
+{
+"date": "2026-11-25",
+"from": 0.0,
+"to": 0.0239766081,
+"why": "R21 (Jake 2026-11-25) Item 5: Pendle's buying pressure reads its own per-epoch buyback from the buyback contract on chain (DefiLlama the cross-check); the fixture's DefiLlama line had stopped, so it read 0"
+}
+],
+"reader|Comparison|Returned to float, % a year": [
+{
+"date": "2026-11-25",
+"from": "<absent>",
+"to": 0.0,
+"why": "R21 (Jake 2026-11-25) Item 2/3: new lines in net float pressure — burns on float (every burn, any source), bought tokens returned to the float (F1/F2/F7), the burn-source memo, and buying pressure on float on the A3 tab; new rows, read from the same float"
+}
+],
+"reader|Summary|Buying pressure on float, % a year": [
+{
+"date": "2026-11-25",
+"from": 0.0,
+"to": 0.0239766081,
+"why": "R21 (Jake 2026-11-25) Item 5: Pendle's buying pressure reads its own per-epoch buyback from the buyback contract on chain (DefiLlama the cross-check); the fixture's DefiLlama line had stopped, so it read 0"
 }
 ]
 },
 "Sky": {
+"audit|A3 Revenue Buyback|BUYING PRESSURE ON FLOAT, % a year = revenue-funded buying, held or paid out (tokens, annualised) ÷ free float — the demand side of net float pressure; a burned buyback is a burn (R21)": [
+{
+"date": "2026-11-25",
+"from": "<absent>",
+"to": 0.0559574793,
+"why": "R21 (Jake 2026-11-25) Item 2/3: new lines in net float pressure — burns on float (every burn, any source), bought tokens returned to the float (F1/F2/F7), the burn-source memo, and buying pressure on float on the A3 tab; new rows, read from the same float"
+}
+],
+"audit|A3 Revenue Buyback|REVENUE TO HOLDERS ÷ NEW SUPPLY (x) = revenue sent to holders ($) ÷ value of new supply ($), same window, per covered day — A3's rank key (R20)": [
+{
+"date": "2026-11-25",
+"from": 0.909856099,
+"to": 1.44725258,
+"why": "R21 (Jake 2026-11-25) Item 3 (F3): staking rewards covered by USDS-funded SKY purchases are not new supply — only the unfunded part is outflow (c); dilution, the A3 key and both nets move with it; Sky's Stage 2 treasury burns join the burns line (F7 returns: the purchased SKY paid out to stakers leaves the holding wallet)"
+}
+],
+"audit|A3 Revenue Buyback|Trend — a3_revenue_vs_new_supply (arrow · QoQ · 4Q growth/yr · quarters improved; Trajectory tab)": [
+{
+"date": "2026-11-25",
+"from": "– · NEW since Q-3 · 1/2 improved · QoQ +260.9%",
+"to": "– · NEW since Q-3 · 1/2 improved · QoQ +474.1%",
+"why": "R21 (Jake 2026-11-25) Item 3 (F3): staking rewards covered by USDS-funded SKY purchases are not new supply — only the unfunded part is outflow (c); dilution, the A3 key and both nets move with it; Sky's Stage 2 treasury burns join the burns line (F7 returns: the purchased SKY paid out to stakers leaves the holding wallet)"
+}
+],
+"audit|CP Comparability|BOUGHT TOKENS RETURNED TO THE FLOAT, % a year = bought tokens paid out liquid, sold or transferred out of the holding wallet (tokens, annualised) ÷ free float (R21)": [
+{
+"date": "2026-11-25",
+"from": "<absent>",
+"to": 0.0407480784,
+"why": "R21 (Jake 2026-11-25) Item 2/3: new lines in net float pressure — burns on float (every burn, any source), bought tokens returned to the float (F1/F2/F7), the burn-source memo, and buying pressure on float on the A3 tab; new rows, read from the same float"
+}
+],
+"audit|CP Comparability|BURNS ON FLOAT, % a year = every burn, whatever its source (tokens, annualised) ÷ free float — a supply reduction, not buying (R21)": [
+{
+"date": "2026-11-25",
+"from": "<absent>",
+"to": 0.0104413971,
+"why": "R21 (Jake 2026-11-25) Item 2/3: new lines in net float pressure — burns on float (every burn, any source), bought tokens returned to the float (F1/F2/F7), the burn-source memo, and buying pressure on float on the A3 tab; new rows, read from the same float"
+}
+],
+"audit|CP Comparability|BUYING PRESSURE ON FLOAT, % a year = revenue-funded buying, held or paid out (tokens, annualised) ÷ free float — the demand side of net float pressure; a burned buyback is a burn (R21)": [
+{
+"date": "2026-11-25",
+"from": "<absent>",
+"to": 0.0559574793,
+"why": "R21 (Jake 2026-11-25) Item 2/3: new lines in net float pressure — burns on float (every burn, any source), bought tokens returned to the float (F1/F2/F7), the burn-source memo, and buying pressure on float on the A3 tab; new rows, read from the same float"
+}
+],
+"audit|CP Comparability|Burns — where they came from (memo: from float / staked / treasury, Q0)": [
+{
+"date": "2026-11-25",
+"from": "<absent>",
+"to": "burns 2026-07-14..2026-10-13: from treasury 10,233,232 (100%) — sky_stage2_burn_tokens 10,233,232 (treasury). Off-float burns (staked + treasury) = +1.04% of the free float a year — MOVES THE HEADLINE BY MORE THAN 1 POINT",
+"why": "R21 (Jake 2026-11-25) Item 2/3: new lines in net float pressure — burns on float (every burn, any source), bought tokens returned to the float (F1/F2/F7), the burn-source memo, and buying pressure on float on the A3 tab; new rows, read from the same float"
+}
+],
+"audit|CP Comparability|DILUTION, % OF MARKET CAP = outflows a+b+c+d+e+f at each day's price (annualised) ÷ average market cap over the window — what net holder yield subtracts (R20)": [
+{
+"date": "2026-11-25",
+"from": 0.0259917894,
+"to": 0.0163404705,
+"why": "R21 (Jake 2026-11-25) Item 3 (F3): staking rewards covered by USDS-funded SKY purchases are not new supply — only the unfunded part is outflow (c); dilution, the A3 key and both nets move with it; Sky's Stage 2 treasury burns join the burns line (F7 returns: the purchased SKY paid out to stakers leaves the holding wallet)"
+}
+],
+"audit|CP Comparability|Dilution (c) demand-side incentives (annualised) ÷ circulating": [
+{
+"date": "2026-11-25",
+"from": 0.0318674866,
+"to": 0.0216066631,
+"why": "R21 (Jake 2026-11-25) Item 3 (F3): staking rewards covered by USDS-funded SKY purchases are not new supply — only the unfunded part is outflow (c); dilution, the A3 key and both nets move with it; Sky's Stage 2 treasury burns join the burns line (F7 returns: the purchased SKY paid out to stakers leaves the holding wallet)"
+}
+],
+"audit|CP Comparability|Dilution (c) demand-side incentives (annualised) ÷ free float": [
+{
+"date": "2026-11-25",
+"from": 0.126553082,
+"to": 0.0858050036,
+"why": "R21 (Jake 2026-11-25) Item 3 (F3): staking rewards covered by USDS-funded SKY purchases are not new supply — only the unfunded part is outflow (c); dilution, the A3 key and both nets move with it; Sky's Stage 2 treasury burns join the burns line (F7 returns: the purchased SKY paid out to stakers leaves the holding wallet)"
+}
+],
+"audit|CP Comparability|NET FLOAT PRESSURE, % a year = buying pressure on float + burns on float − total dilution ÷ free float − bought tokens returned to the float (revenue-funded buying + burns − new supply; all ÷ free float) (R21)": [
+{
+"date": "2026-11-25",
+"from": "<absent>",
+"to": -0.0601542056,
+"why": "R21 (Jake 2026-11-25) Item 2/3: new lines in net float pressure — burns on float (every burn, any source), bought tokens returned to the float (F1/F2/F7), the burn-source memo, and buying pressure on float on the A3 tab; new rows, read from the same float"
+}
+],
+"audit|CP Comparability|NET HOLDER YIELD = holder value yield − dilution (outflows a+b+c+d+e+f at each day's price, annualised) ÷ average market cap over the window": [
+{
+"date": "2026-11-25",
+"from": -0.00234300128,
+"to": 0.00730831762,
+"why": "R21 (Jake 2026-11-25) Item 3 (F3): staking rewards covered by USDS-funded SKY purchases are not new supply — only the unfunded part is outflow (c); dilution, the A3 key and both nets move with it; Sky's Stage 2 treasury burns join the burns line (F7 returns: the purchased SKY paid out to stakers leaves the holding wallet)"
+}
+],
+"audit|CP Comparability|Outflow (c) demand-side incentives — $ a year (each day's tokens x that day's price, annualised)": [
+{
+"date": "2026-11-25",
+"from": 47514881.2,
+"to": 29871568.4,
+"why": "R21 (Jake 2026-11-25) Item 3 (F3): staking rewards covered by USDS-funded SKY purchases are not new supply — only the unfunded part is outflow (c); dilution, the A3 key and both nets move with it; Sky's Stage 2 treasury burns join the burns line (F7 returns: the purchased SKY paid out to stakers leaves the holding wallet)"
+}
+],
+"audit|CP Comparability|Outflow categories — basis and what has no series yet (config OUTFLOW_CATEGORIES)": [
+{
+"date": "2026-11-25",
+"from": "(c) emissions_tokens, (d) sky_ecosystem_out_tokens; SKY rewards to stakers are emissions — outflow (c) in every funding period (R6.2, Jake 2026-11-16: released from the treasury, not an unlock): minted to 2025-06-01, paid from Pause Proxy reserves, or from SKY bought back (from 2026-08-17; the buyback is credited once, as holder revenue). The USDS -> SKY farm 0x0650CAF1… stopped paying 2026-01-26; LSSKY -> SKY vests 17/18 since R7B.B1 (2026-11-16): no unlock — the endowments are circulating, so their releases are not unlocks",
+"to": "(c) sky_staking_rewards_unfunded_tokens, (d) sky_ecosystem_out_tokens; SKY rewards to stakers are emissions — outflow (c) in every funding period (R6.2, Jake 2026-11-16: released from the treasury, not an unlock): minted to 2025-06-01, paid from Pause Proxy reserves, or from SKY bought back (from 2026-08-17; the buyback is credited once, as holder revenue). The USDS -> SKY farm 0x0650CAF1… stopped paying 2026-01-26; LSSKY -> SKY vests 17/18 since R7B.B1 (2026-11-16): no unlock — the endowments are circulating, so their releases are not unlocks",
+"why": "R21 (Jake 2026-11-25) Item 3 (F3): staking rewards covered by USDS-funded SKY purchases are not new supply — only the unfunded part is outflow (c); dilution, the A3 key and both nets move with it; Sky's Stage 2 treasury burns join the burns line (F7 returns: the purchased SKY paid out to stakers leaves the holding wallet)"
+}
+],
+"audit|CP Comparability|TOTAL DILUTION = outflows a+b+c+d+e+f (annualised) ÷ circulating": [
+{
+"date": "2026-11-25",
+"from": 0.0318674866,
+"to": 0.0216066631,
+"why": "R21 (Jake 2026-11-25) Item 3 (F3): staking rewards covered by USDS-funded SKY purchases are not new supply — only the unfunded part is outflow (c); dilution, the A3 key and both nets move with it; Sky's Stage 2 treasury burns join the burns line (F7 returns: the purchased SKY paid out to stakers leaves the holding wallet)"
+}
+],
+"audit|CP Comparability|TOTAL DILUTION = outflows a+b+c+d+e+f (annualised) ÷ free float": [
+{
+"date": "2026-11-25",
+"from": 0.126553082,
+"to": 0.0858050036,
+"why": "R21 (Jake 2026-11-25) Item 3 (F3): staking rewards covered by USDS-funded SKY purchases are not new supply — only the unfunded part is outflow (c); dilution, the A3 key and both nets move with it; Sky's Stage 2 treasury burns join the burns line (F7 returns: the purchased SKY paid out to stakers leaves the holding wallet)"
+}
+],
 "audit|CP Comparability|Trend — cp_nfp (arrow · QoQ · 4Q growth/yr · quarters improved; Trajectory tab)": [
 {
 "date": "2026-11-25",
@@ -77,15 +1821,271 @@
 "to": "– · 4Q n/a · QoQ n/a",
 "why": "R21 (Jake 2026-11-25) Item 1: the new net float pressure row (cp_nfp, R20) has its own Trend cell beside it; a new row, no figure moved"
 }
+],
+"reader|A3 Revenue Buyback|Buying pressure on float, % a year": [
+{
+"date": "2026-11-25",
+"from": 0.0236813433,
+"to": 0.0559574793,
+"why": "R21 (Jake 2026-11-25) Item 3 (F3): staking rewards covered by USDS-funded SKY purchases are not new supply — only the unfunded part is outflow (c); dilution, the A3 key and both nets move with it; Sky's Stage 2 treasury burns join the burns line (F7 returns: the purchased SKY paid out to stakers leaves the holding wallet)"
+}
+],
+"reader|A3 Revenue Buyback|Key: change vs previous quarter": [
+{
+"date": "2026-11-25",
+"from": 2.60927856,
+"to": 4.74105918,
+"why": "R21 (Jake 2026-11-25) Item 3 (F3): staking rewards covered by USDS-funded SKY purchases are not new supply — only the unfunded part is outflow (c); dilution, the A3 key and both nets move with it; Sky's Stage 2 treasury burns join the burns line (F7 returns: the purchased SKY paid out to stakers leaves the holding wallet)"
+}
+],
+"reader|A3 Revenue Buyback|Revenue to holders ÷ new supply (x)": [
+{
+"date": "2026-11-25",
+"from": 0.909856099,
+"to": 1.44725258,
+"why": "R21 (Jake 2026-11-25) Item 3 (F3): staking rewards covered by USDS-funded SKY purchases are not new supply — only the unfunded part is outflow (c); dilution, the A3 key and both nets move with it; Sky's Stage 2 treasury burns join the burns line (F7 returns: the purchased SKY paid out to stakers leaves the holding wallet)"
+}
+],
+"reader|A3 Revenue Buyback|To holders ÷ new supply, latest": [
+{
+"date": "2026-11-25",
+"from": 0.909856099,
+"to": 1.44725258,
+"why": "R21 (Jake 2026-11-25) Item 3 (F3): staking rewards covered by USDS-funded SKY purchases are not new supply — only the unfunded part is outflow (c); dilution, the A3 key and both nets move with it; Sky's Stage 2 treasury burns join the burns line (F7 returns: the purchased SKY paid out to stakers leaves the holding wallet)"
+}
+],
+"reader|Comparison|Burns on float, % a year": [
+{
+"date": "2026-11-25",
+"from": "<absent>",
+"to": 0.0104413971,
+"why": "R21 (Jake 2026-11-25) Item 2/3: new lines in net float pressure — burns on float (every burn, any source), bought tokens returned to the float (F1/F2/F7), the burn-source memo, and buying pressure on float on the A3 tab; new rows, read from the same float"
+}
+],
+"reader|Comparison|Buying pressure on float, % a year": [
+{
+"date": "2026-11-25",
+"from": 0.0236813433,
+"to": 0.0559574793,
+"why": "R21 (Jake 2026-11-25) Item 3 (F3): staking rewards covered by USDS-funded SKY purchases are not new supply — only the unfunded part is outflow (c); dilution, the A3 key and both nets move with it; Sky's Stage 2 treasury burns join the burns line (F7 returns: the purchased SKY paid out to stakers leaves the holding wallet)"
+}
+],
+"reader|Comparison|Dilution, % of market cap": [
+{
+"date": "2026-11-25",
+"from": 0.0259917894,
+"to": 0.0163404705,
+"why": "R21 (Jake 2026-11-25) Item 3 (F3): staking rewards covered by USDS-funded SKY purchases are not new supply — only the unfunded part is outflow (c); dilution, the A3 key and both nets move with it; Sky's Stage 2 treasury burns join the burns line (F7 returns: the purchased SKY paid out to stakers leaves the holding wallet)"
+}
+],
+"reader|Comparison|Net float pressure": [
+{
+"date": "2026-11-25",
+"from": -0.102871739,
+"to": -0.0601542056,
+"why": "R21 (Jake 2026-11-25) Item 3 (F3): staking rewards covered by USDS-funded SKY purchases are not new supply — only the unfunded part is outflow (c); dilution, the A3 key and both nets move with it; Sky's Stage 2 treasury burns join the burns line (F7 returns: the purchased SKY paid out to stakers leaves the holding wallet)"
+}
+],
+"reader|Comparison|Net holder yield": [
+{
+"date": "2026-11-25",
+"from": -0.00234300128,
+"to": 0.00730831762,
+"why": "R21 (Jake 2026-11-25) Item 3 (F3): staking rewards covered by USDS-funded SKY purchases are not new supply — only the unfunded part is outflow (c); dilution, the A3 key and both nets move with it; Sky's Stage 2 treasury burns join the burns line (F7 returns: the purchased SKY paid out to stakers leaves the holding wallet)"
+}
+],
+"reader|Comparison|Returned to float, % a year": [
+{
+"date": "2026-11-25",
+"from": "<absent>",
+"to": 0.0407480784,
+"why": "R21 (Jake 2026-11-25) Item 2/3: new lines in net float pressure — burns on float (every burn, any source), bought tokens returned to the float (F1/F2/F7), the burn-source memo, and buying pressure on float on the A3 tab; new rows, read from the same float"
+}
+],
+"reader|Comparison|Total dilution, % of float": [
+{
+"date": "2026-11-25",
+"from": 0.126553082,
+"to": 0.0858050036,
+"why": "R21 (Jake 2026-11-25) Item 3 (F3): staking rewards covered by USDS-funded SKY purchases are not new supply — only the unfunded part is outflow (c); dilution, the A3 key and both nets move with it; Sky's Stage 2 treasury burns join the burns line (F7 returns: the purchased SKY paid out to stakers leaves the holding wallet)"
+}
+],
+"reader|Summary|Archetype key": [
+{
+"date": "2026-11-25",
+"from": 0.909856099,
+"to": 1.44725258,
+"why": "R21 (Jake 2026-11-25) Item 3 (F3): staking rewards covered by USDS-funded SKY purchases are not new supply — only the unfunded part is outflow (c); dilution, the A3 key and both nets move with it; Sky's Stage 2 treasury burns join the burns line (F7 returns: the purchased SKY paid out to stakers leaves the holding wallet)"
+}
+],
+"reader|Summary|Buying pressure on float, % a year": [
+{
+"date": "2026-11-25",
+"from": 0.0236813433,
+"to": 0.0559574793,
+"why": "R21 (Jake 2026-11-25) Item 3 (F3): staking rewards covered by USDS-funded SKY purchases are not new supply — only the unfunded part is outflow (c); dilution, the A3 key and both nets move with it; Sky's Stage 2 treasury burns join the burns line (F7 returns: the purchased SKY paid out to stakers leaves the holding wallet)"
+}
+],
+"reader|Summary|Dilution, % of market cap": [
+{
+"date": "2026-11-25",
+"from": 0.0259917894,
+"to": 0.0163404705,
+"why": "R21 (Jake 2026-11-25) Item 3 (F3): staking rewards covered by USDS-funded SKY purchases are not new supply — only the unfunded part is outflow (c); dilution, the A3 key and both nets move with it; Sky's Stage 2 treasury burns join the burns line (F7 returns: the purchased SKY paid out to stakers leaves the holding wallet)"
+}
+],
+"reader|Summary|Net float pressure": [
+{
+"date": "2026-11-25",
+"from": -0.102871739,
+"to": -0.0601542056,
+"why": "R21 (Jake 2026-11-25) Item 3 (F3): staking rewards covered by USDS-funded SKY purchases are not new supply — only the unfunded part is outflow (c); dilution, the A3 key and both nets move with it; Sky's Stage 2 treasury burns join the burns line (F7 returns: the purchased SKY paid out to stakers leaves the holding wallet)"
+}
+],
+"reader|Summary|Net holder yield": [
+{
+"date": "2026-11-25",
+"from": -0.00234300128,
+"to": 0.00730831762,
+"why": "R21 (Jake 2026-11-25) Item 3 (F3): staking rewards covered by USDS-funded SKY purchases are not new supply — only the unfunded part is outflow (c); dilution, the A3 key and both nets move with it; Sky's Stage 2 treasury burns join the burns line (F7 returns: the purchased SKY paid out to stakers leaves the holding wallet)"
+}
+],
+"reader|Summary|Total dilution, % of float": [
+{
+"date": "2026-11-25",
+"from": 0.126553082,
+"to": 0.0858050036,
+"why": "R21 (Jake 2026-11-25) Item 3 (F3): staking rewards covered by USDS-funded SKY purchases are not new supply — only the unfunded part is outflow (c); dilution, the A3 key and both nets move with it; Sky's Stage 2 treasury burns join the burns line (F7 returns: the purchased SKY paid out to stakers leaves the holding wallet)"
+}
+],
+"reader|Summary|Total dilution, tokens a year": [
+{
+"date": "2026-11-25",
+"from": 744180309.0,
+"to": 504566093.0,
+"why": "R21 (Jake 2026-11-25) Item 3 (F3): staking rewards covered by USDS-funded SKY purchases are not new supply — only the unfunded part is outflow (c); dilution, the A3 key and both nets move with it; Sky's Stage 2 treasury burns join the burns line (F7 returns: the purchased SKY paid out to stakers leaves the holding wallet)"
+}
 ]
 },
 "Uniswap": {
+"audit|A3 Revenue Buyback|BUYING PRESSURE ON FLOAT, % a year = revenue-funded buying, held or paid out (tokens, annualised) ÷ free float — the demand side of net float pressure; a burned buyback is a burn (R21)": [
+{
+"date": "2026-11-25",
+"from": "<absent>",
+"to": 0.0,
+"why": "R21 (Jake 2026-11-25) Item 2/3: new lines in net float pressure — burns on float (every burn, any source), bought tokens returned to the float (F1/F2/F7), the burn-source memo, and buying pressure on float on the A3 tab; new rows, read from the same float"
+}
+],
+"audit|CP Comparability|BOUGHT TOKENS RETURNED TO THE FLOAT, % a year = bought tokens paid out liquid, sold or transferred out of the holding wallet (tokens, annualised) ÷ free float (R21)": [
+{
+"date": "2026-11-25",
+"from": "<absent>",
+"to": 0.0,
+"why": "R21 (Jake 2026-11-25) Item 2/3: new lines in net float pressure — burns on float (every burn, any source), bought tokens returned to the float (F1/F2/F7), the burn-source memo, and buying pressure on float on the A3 tab; new rows, read from the same float"
+}
+],
+"audit|CP Comparability|BURNS ON FLOAT, % a year = every burn, whatever its source (tokens, annualised) ÷ free float — a supply reduction, not buying (R21)": [
+{
+"date": "2026-11-25",
+"from": "<absent>",
+"to": 0.0370451033,
+"why": "R21 (Jake 2026-11-25) Item 2/3: new lines in net float pressure — burns on float (every burn, any source), bought tokens returned to the float (F1/F2/F7), the burn-source memo, and buying pressure on float on the A3 tab; new rows, read from the same float"
+}
+],
+"audit|CP Comparability|BUYING PRESSURE ON FLOAT, % a year = revenue-funded buying, held or paid out (tokens, annualised) ÷ free float — the demand side of net float pressure; a burned buyback is a burn (R21)": [
+{
+"date": "2026-11-25",
+"from": "<absent>",
+"to": 0.0,
+"why": "R21 (Jake 2026-11-25) Item 2/3: new lines in net float pressure — burns on float (every burn, any source), bought tokens returned to the float (F1/F2/F7), the burn-source memo, and buying pressure on float on the A3 tab; new rows, read from the same float"
+}
+],
+"audit|CP Comparability|Burns — where they came from (memo: from float / staked / treasury, Q0)": [
+{
+"date": "2026-11-25",
+"from": "<absent>",
+"to": "burns 2026-07-14..2026-10-13: from float 5,864,001 (100%) — gross_burn_tokens 5,864,001 (float)",
+"why": "R21 (Jake 2026-11-25) Item 2/3: new lines in net float pressure — burns on float (every burn, any source), bought tokens returned to the float (F1/F2/F7), the burn-source memo, and buying pressure on float on the A3 tab; new rows, read from the same float"
+}
+],
+"audit|CP Comparability|NET FLOAT PRESSURE, % a year = buying pressure on float + burns on float − total dilution ÷ free float − bought tokens returned to the float (revenue-funded buying + burns − new supply; all ÷ free float) (R21)": [
+{
+"date": "2026-11-25",
+"from": "<absent>",
+"to": 0.00355283381,
+"why": "R21 (Jake 2026-11-25) Item 2/3: new lines in net float pressure — burns on float (every burn, any source), bought tokens returned to the float (F1/F2/F7), the burn-source memo, and buying pressure on float on the A3 tab; new rows, read from the same float"
+}
+],
 "audit|CP Comparability|Trend — cp_nfp (arrow · QoQ · 4Q growth/yr · quarters improved; Trajectory tab)": [
 {
 "date": "2026-11-25",
 "from": "<absent>",
 "to": "– · 4Q n/a · QoQ n/a",
 "why": "R21 (Jake 2026-11-25) Item 1: the new net float pressure row (cp_nfp, R20) has its own Trend cell beside it; a new row, no figure moved"
+}
+],
+"reader|A3 Revenue Buyback|Buying pressure on float, % a year": [
+{
+"date": "2026-11-25",
+"from": "by design",
+"to": 0.0,
+"why": "R21 (Jake 2026-11-25) Item 2: Uniswap's burn-to-claim is a burn, shown on the burns line, not buying; buying pressure reads a measured 0 (no revenue-funded buying held or paid out), no longer 'by design'"
+}
+],
+"reader|Comparison|Burns on float, % a year": [
+{
+"date": "2026-11-25",
+"from": "<absent>",
+"to": 0.0370451033,
+"why": "R21 (Jake 2026-11-25) Item 2/3: new lines in net float pressure — burns on float (every burn, any source), bought tokens returned to the float (F1/F2/F7), the burn-source memo, and buying pressure on float on the A3 tab; new rows, read from the same float"
+}
+],
+"reader|Comparison|Buying pressure on float, % a year": [
+{
+"date": "2026-11-25",
+"from": "by design",
+"to": 0.0,
+"why": "R21 (Jake 2026-11-25) Item 2: Uniswap's burn-to-claim is a burn, shown on the burns line, not buying; buying pressure reads a measured 0 (no revenue-funded buying held or paid out), no longer 'by design'"
+}
+],
+"reader|Comparison|Net float pressure": [
+{
+"date": "2026-11-25",
+"from": -0.0334922695,
+"to": 0.00355283381,
+"why": "R21 (Jake 2026-11-25) Item 2: net float pressure = revenue-funded buying + burns − new supply − bought tokens returned (all ÷ free float); burns now count, as a named supply-reduction line separate from buying"
+}
+],
+"reader|Comparison|Returned to float, % a year": [
+{
+"date": "2026-11-25",
+"from": "<absent>",
+"to": 0.0,
+"why": "R21 (Jake 2026-11-25) Item 2/3: new lines in net float pressure — burns on float (every burn, any source), bought tokens returned to the float (F1/F2/F7), the burn-source memo, and buying pressure on float on the A3 tab; new rows, read from the same float"
+}
+],
+"reader|Summary|Buying pressure on float, % a year": [
+{
+"date": "2026-11-25",
+"from": "by design",
+"to": 0.0,
+"why": "R21 (Jake 2026-11-25) Item 2: Uniswap's burn-to-claim is a burn, shown on the burns line, not buying; buying pressure reads a measured 0 (no revenue-funded buying held or paid out), no longer 'by design'"
+}
+],
+"reader|Summary|Confidence (share green)": [
+{
+"date": "2026-11-25",
+"from": 0.615384615,
+"to": 0.642857143,
+"why": "R21 (Jake 2026-11-25) the share of green cells is recounted over the Summary row's new and relabelled cells"
+}
+],
+"reader|Summary|Net float pressure": [
+{
+"date": "2026-11-25",
+"from": -0.0334922695,
+"to": 0.00355283381,
+"why": "R21 (Jake 2026-11-25) Item 2: net float pressure = revenue-funded buying + burns − new supply − bought tokens returned (all ÷ free float); burns now count, as a named supply-reduction line separate from buying"
 }
 ]
 }
