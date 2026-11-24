@@ -300,11 +300,12 @@ def test_the_exchange_sends_line_is_named_where_a_series_exists():
 
 # ====================================================================================== 5. the two nets
 def test_float_buying_is_the_retired_buyback_on_revenue_funded_days_only(monkeypatch):
-    """Net float pressure's demand side: revenue-funded buying that is burned or held. Aerodrome's Foundation buys with
-    its own voting rewards (config.HOLDER_VALUE funding: treasury) — a measured 0; Hyperliquid's default is revenue."""
+    """Net float pressure's demand side: revenue-funded buying. R21 (Jake 2026-11-25): held or DISTRIBUTED (F2); a
+    burned buyback is on the burns line (was R20: burned or held). Aerodrome's Foundation buys with its own voting
+    rewards (config.HOLDER_VALUE funding: treasury) — a measured 0; Hyperliquid's default is revenue."""
     assert config.holder_funding("Aerodrome", "2026-10-01")[0] != "revenue"
     assert config.holder_funding("Hyperliquid", "2026-10-01")[0] == "revenue"
-    groups = {(n, "retired_buyback_tokens"): _frame(n, "retired_buyback_tokens", _days("2026-10-01", [7, 8, 9]))
+    groups = {(n, "buyback_held_tokens"): _frame(n, "buyback_held_tokens", _days("2026-10-01", [7, 8, 9]))
               for n in ("Aerodrome", "Hyperliquid")}
     monkeypatch.setattr(bw, "scoped_projects", lambda: [config.PROJECT_BY_NAME[n] for n in ("Aerodrome", "Hyperliquid")])
     free_float.buying_views(groups)
@@ -316,7 +317,7 @@ def test_float_buying_is_the_retired_buyback_on_revenue_funded_days_only(monkeyp
 def test_the_headers_say_the_base_of_each_net():
     assert "÷ average market cap over the window" in bw.DILUTION_MC_HEAD and "÷ average market cap" in bw.CP_NHY_HEAD
     assert "÷ free float" in bw.BUYING_PRESSURE_HEAD and "revenue-funded" in bw.BUYING_PRESSURE_HEAD
-    assert "both ÷ free float" in bw.NET_FLOAT_PRESSURE_HEAD
+    assert "all ÷ free float" in bw.NET_FLOAT_PRESSURE_HEAD and "+ burns on float" in bw.NET_FLOAT_PRESSURE_HEAD  # R21
     assert bw.FREE_FLOAT_HEAD.startswith("FREE FLOAT (tokens) = circulating − staked/locked/earning − issuer")
 
 

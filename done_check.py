@@ -155,6 +155,9 @@ def classify(code: str, reason: str, asof: date, accepted: bool = False) -> tupl
     code = str(code or "").strip().lower()
     if accepted:
         return True, "accepted", "on the allowlist"
+    if code == "unranked" and "not ranked (Jake 2026-11-25, decision 5)" in (reason or ""):
+        # R21 (decision 5): a paused / off programme reads its label and "unranked" by Jake's decision — not a gap
+        return True, "by design", "unranked by decision 5 (paused / off programme, labelled)"
     if rule3.is_suspect(reason):
         return False, "rule-3", "rule-3 suspect"
     if code == "no new supply":                     # P4-Q5a: A3's key by its definition (ranked first), not missing

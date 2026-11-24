@@ -125,8 +125,10 @@ def test_a_retag_moves_no_series():
 
 
 def test_the_status_labels():
-    assert config.ARCHETYPE_STATUS == {"Fluid": {3: "paused"}, "Ether.fi": {3: "paused"}, "Morpho": {3: "off"}}
-    assert config.archetype_status("Fluid", 3) == "paused" and config.archetype_status("Morpho", 3) == "off"
+    # R21 (Jake 2026-11-25, F4): labelled by evidence (was "paused", "paused", "off")
+    assert config.ARCHETYPE_STATUS == {"Fluid": {3: "paused, no restart condition stated"},
+                                       "Ether.fi": {3: "not executing since 1 Apr"}, "Morpho": {3: "off"}}
+    assert config.archetype_status("Fluid", 3).startswith("paused") and config.archetype_status("Morpho", 3) == "off"
     assert config.archetype_status("Maple", 3) == "" and config.archetype_status("Fluid", 4) == ""
 
 
@@ -191,13 +193,14 @@ def test_the_numerator_is_the_credited_holder_value_less_the_protocol_fee_burn(m
 
 
 def test_the_key_reads_zero_for_a_paused_or_off_programme_and_names_its_legs():
-    col = bw._a3_key_col(None)
+    col = bw._a3_key_col(type("R", (), {"D": lambda self, r, m, c="q0": f"V!{m}_{c}"})())   # R21: builds read refs
     head, build, _fmt, kind, _bold, meta = col
     assert head == bw.A3_KEY_HEAD and kind == "calc" and meta["metric_fn"] is bw.a3_key_numerator
     for name in ("Fluid", "Ether.fi", "Morpho"):
-        assert build(5, config.PROJECT_BY_NAME[name]) == "=0", name
+        # R21 (decision 5): no longer forced to 0 — the key reads what the data reads; the reader leaves it unranked
+        assert build(5, config.PROJECT_BY_NAME[name]) != "=0", name
         note = bw.a3_key_note(config.PROJECT_BY_NAME[name])
-        assert f"0 — {config.archetype_status(name, 3)}" in note
+        assert f"A3 KEY — {config.archetype_status(name, 3)}" in note and "UNRANKED" in note
     note = bw.a3_key_note(config.PROJECT_BY_NAME["Maple"])
     assert "revenue sent to holders ($) ÷ value of new supply ($)" in note
     assert "treasury- or emissions-funded buyback is recorded, not counted" in note
@@ -278,9 +281,10 @@ def test_no_new_supply_ranks_first_and_unknown_is_never_zero(monkeypatch):
 
 
 def test_a_paused_key_is_zero_today_and_measured_in_an_earlier_quarter(monkeypatch):
-    """Fluid (paused): the key reads 0 with the label; a quarter before the pause keeps what was measured then."""
+    """Fluid (paused): R21 (decision 5) — the key reads what the data reads (was: forced to 0), with the label and
+    unranked; a quarter before the pause keeps what was measured then."""
     v, f = _new_key("Fluid", {}, monkeypatch)
-    assert f == "=0" and v == 0
+    assert f != "=0" and "holder_value_revenue_usd" in f
     p = config.PROJECT_BY_NAME["Fluid"]
     monkeypatch.setitem(bw._SHIFT, "k", 2)
     f2 = bw._a3_key_col(bw.Refs(100, 10, ["2026-09"]), {})[1](5, p)
@@ -454,9 +458,10 @@ def test_the_status_label_sits_beside_the_key_and_the_rank_and_both_stay_numbers
     data = reader.Data(wb.create_sheet(reader.DATA_SHEET))
     reader.put_number(sh, data, 5, sh.cols[2], "Fluid", "key", 0.0, None, "", zero_label="halted since 2026-05-11")
     reader.put_number(sh, data, 5, sh.cols[3], "Fluid", "rank", 4, None, "")
-    assert reader.status_label_cells(sh, 5, sh.cols[2], sh.cols[3], "Fluid", 3) == "paused"
+    lab = config.archetype_status("Fluid", 3)                  # R21: "paused, no restart condition stated"
+    assert reader.status_label_cells(sh, 5, sh.cols[2], sh.cols[3], "Fluid", 3) == lab
     key, rank = sh.ws.cell(5, 3), sh.ws.cell(5, 4)
-    assert key.number_format == '0.0"x — paused"' and rank.number_format == '0" — paused"'
+    assert key.number_format == f'0.0"x — {lab}"' and rank.number_format == f'0" — {lab}"'
     assert data.value("Fluid", "key") == 0.0 and data.value("Fluid", "rank") == 4.0      # the key is 0, the rank 4
     assert key.value == f"={data.ref('Fluid', 'key')}" and rank.value == f"={data.ref('Fluid', 'rank')}"
     # no label, no change
@@ -498,10 +503,11 @@ def check_a3_rows(rows: list) -> None:
             assert all(_DIGIT.search(s) for s in _sections(kf)), (n, kf)
             assert 'x' in kf, (n, kf)                                    # a ratio's format, not a rank's
         lab = config.archetype_status(n, 3)
-        if lab and isinstance(k, (int, float)):
-            assert k == 0 and kf.endswith(f'— {lab}"'), (n, k, kf)
-            if isinstance(rk, (int, float)):
-                assert rf.endswith(f'— {lab}"'), (n, rf)
+        if lab:
+            # R21 (decision 5): the label + "unranked"; the key is what the data reads (was: 0, ranked)
+            assert rk == "unranked", (n, rk)
+            if isinstance(k, (int, float)):
+                assert kf.endswith(f'— {lab}"'), (n, k, kf)
     order = sorted(ranked, key=lambda x: x[2])
     nums = [k for _n, k, _rk in order if isinstance(k, (int, float))]
     assert nums == sorted(nums, reverse=True), order                     # ranked by the key column's own values

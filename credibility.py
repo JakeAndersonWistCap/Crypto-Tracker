@@ -1457,8 +1457,9 @@ def _common_day(p, long, a, b, asof):
 # price_usd_llama_at: DefiLlama's historical price within its 600-second search width — fetch/xref.py), each stamped
 # "@<UTC instant>" in its source. The headline's own price (the latest row: the price every "now" figure uses) is
 # checked at its instant where such a reference is stored; otherwise the latest completed 00:00 day, said so.
-AT_REFS = {"price_usd_coinbase": "price_usd_coinbase_at", "price_usd_llama": "price_usd_llama_at"}
-AT_WINDOW_S = {"price_usd_coinbase_at": 60, "price_usd_llama_at": 600}
+AT_REFS = {"price_usd_coinbase": "price_usd_coinbase_at", "price_usd_llama": "price_usd_llama_at",
+           "price_usd_onchain": "price_usd_onchain_at"}   # R21: the on-chain market at the instant
+AT_WINDOW_S = {"price_usd_coinbase_at": 60, "price_usd_llama_at": 600, "price_usd_onchain_at": 60}
 _AT = re.compile(r"@(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2})?Z?)")
 
 
@@ -2520,7 +2521,7 @@ DERIVED_INPUTS = {
 ALIASES = {
     # a1_gross_issuance: the fee-burn chains' issuance headline left A4 for A1 (Phase 2 amendment 1, 2026-10-12)
     "@issuance": ("a4_gross_issuance", "a1_gross_issuance", "a4_pool_release", "in_issuance"),
-    "@price": ("in_price", "in_price_llama"),
+    "@price": ("in_price", "in_price_onchain"),
     "@buyback": ("in_reserve_month", "in_buyback_july", "@burn_route", "in_buyback"),
     "@revenue": ("in_revenue",),
     "@locked": ("in_locked", "in_shares"),
@@ -2671,7 +2672,7 @@ def wiring_inputs(name: str, rows: dict) -> dict:
             "what": "FDV ($) = price x our total supply — judged by its inputs (price, total supply); CoinGecko's FDV "
                     "beside it as information",
             "ours": {"metric": "fdv_usd", "window": "now"}, "fmt": '$#,##0;($#,##0);-',
-            "inputs": ("in_price" if product else "in_price_llama", "in_total_supply_coingecko"),
+            "inputs": ("in_price" if product else "in_price_onchain", "in_total_supply_coingecko"),
             "ref": {"metric": "fdv_usd_coingecko", "window": "now", "tol": 1.0, "same_source": True,
                     "source": "CoinGecko fully_diluted_valuation (fdv_usd_coingecko)",
                     "note": "The price is CoinGecko's on both sides, so a match is FRESH-only; the supply leg is judged "
@@ -2741,13 +2742,14 @@ def wiring_inputs(name: str, rows: dict) -> dict:
 
 
 def price_inputs(name: str) -> dict:
-    """Price beside a second source on the SAME instant (00:00 UTC of the latest completed day both hold):
-    Coinbase Exchange where a product is declared, and DefiLlama's price for the token's verified address
-    for every project (the second source where Coinbase has none, a third where it does)."""
-    from fetch.xref import CrossRefs
-    p = config.PROJECT_BY_NAME[name]
+    """Price beside a second source on the SAME instant (the instant of the price used; else 00:00 UTC of the latest
+    completed day both hold): Coinbase Exchange where a product is declared, and an ON-CHAIN market where config
+    declares one (config.PRICE_ONCHAIN: the token's deepest Uniswap pool, or HyperCore's spot book for HYPE).
+
+    R21 (Jake 2026-11-25: "coins.llama.fi: remove it from the price cross-check ... Use CoinGecko or an on-chain pool
+    price instead"): the DefiLlama row (in_price_llama, price_usd_llama) is gone. CoinGecko is the price itself, so it
+    cannot be the check (a re-read is FRESH-only); the on-chain price is independent of it, with the same 2% tolerance."""
     fmt = '$#,##0.0000;($#,##0.0000);-'
-    key, indep = CrossRefs.llama_key(p)
     out = {}
     product = (config.CREDIBILITY_XREF.get("coinbase_product") or {}).get(name)
     if product:
@@ -2759,23 +2761,24 @@ def price_inputs(name: str) -> dict:
                                    "args": {"metric": "price_usd", "ref": "price_usd_coinbase", "side": "ref"},
                                    "source": f"Coinbase Exchange {product}: the daily candle's OPEN = the price at 00:00 "
                                              f"UTC, the instant CoinGecko's daily point is stamped"}}
-    out["in_price_llama"] = {
-        "what": f"Price vs DefiLlama {key} (at the instant of the price used; else 00:00 UTC of the latest completed "
-                f"day both hold)",
-        "ours": {"py": "price_at_use", "args": {"metric": "price_usd", "ref": "price_usd_llama", "side": "ours"}},
-        "fmt": fmt,
-        "ref": {"formula": "price_at_use", "tol": 2.0, "same_source": not indep,
-                # a native coin's DefiLlama price is CoinGecko's relayed (sign-off round 2026-10-07): where Coinbase
-                # lists it the exchange price is the independent check (in_price) and this row is a third reading;
-                # where it does not (HYPE), the relay agreeing is recorded as a documented limitation
-                **({} if indep else {"fresh_label": "N/A (relay of CoinGecko; Coinbase is the independent check)"
-                                     if product else "DOCUMENTED LIMITATION (DefiLlama relays CoinGecko; no "
-                                                     "exchange candle wired)"}),
-                "args": {"metric": "price_usd", "ref": "price_usd_llama", "side": "ref"},
-                "source": f"DefiLlama coins API, {key}" + ("" if indep else " — CoinGecko's own price relayed"),
-                "note": ("DefiLlama prices a listed token partly from CoinGecko, so a match here is weaker evidence "
-                         "than an exchange price." if indep else
-                         "No token address on file (a native coin): DefiLlama relays CoinGecko — FRESH-only.")}}
+    oc = (getattr(config, "PRICE_ONCHAIN", {}) or {}).get(name)
+    if oc:
+        if oc["kind"] == "hypercore_spot":
+            where = f"HyperCore spot {oc['pair']} (HYPE/USDC), the candle OPEN at the instant"
+        else:
+            where = (f"{oc['kind']} pool {oc['pool']} on {oc['chain']} at the block of the instant"
+                     + (" x ETH/USD from the chain's USDC/WETH pool at the same block" if oc["quote"] == "WETH"
+                        else f" ({oc['quote']} at $1)"))
+        out["in_price_onchain"] = {
+            "what": "Price vs an on-chain market (at the instant of the price used; else 00:00 UTC of the latest "
+                    "completed day both hold)",
+            "ours": {"py": "price_at_use", "args": {"metric": "price_usd", "ref": "price_usd_onchain", "side": "ours"}},
+            "fmt": fmt,
+            "ref": {"formula": "price_at_use", "tol": 2.0,
+                    "args": {"metric": "price_usd", "ref": "price_usd_onchain", "side": "ref"},
+                    "source": f"on chain: {where} ({oc.get('depth') or 'depth not recorded'})",
+                    "note": "A market price read from chain state, independent of CoinGecko's aggregate (R21: replaces "
+                            "DefiLlama's coins API)."}}
     return out
 
 

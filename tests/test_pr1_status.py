@@ -74,9 +74,9 @@ def test_s7_the_price_used_is_checked_at_its_own_instant():
     far = _px_long(base + [("2026-10-13", "price_usd_coinbase_at", 8.0, "coinbase_exchange:UNI-USD:open@2026-10-13T12:00:00Z",
                             "2026-10-14T08:00:00Z")])
     assert cred.same_instant(far, "Uniswap", pd.Timestamp("2026-10-13"), "price_usd_coinbase") is None
-    for ref in ("price_usd_coinbase", "price_usd_llama"):
-        rows = cred.price_inputs("Uniswap")
-        r_ = rows["in_price" if ref.endswith("coinbase") else "in_price_llama"]
+    # R21: DefiLlama's row is gone (coins.llama.fi out of the cross-check); the on-chain row is judged the same way
+    for name, key in (("Uniswap", "in_price"), ("Maple", "in_price_onchain")):
+        r_ = cred.price_inputs(name)[key]
         assert r_["ours"]["py"] == "price_at_use" and r_["ref"]["formula"] == "price_at_use"
 
 
@@ -129,12 +129,12 @@ def test_s7_xref_reads_the_references_at_the_spots_instant():
         xref.today = old
     cb = [c for c in calls if "coinbase" in c[0]][0]
     assert cb[1]["granularity"] == 60 and cb[1]["start"].startswith("2026-11-04T18:42:00")
-    assert any(f"/{int(pd.Timestamp('2026-11-04 18:42:13').timestamp())}/" in c[0] for c in calls)
+    assert not [c for c in calls if "llama" in c[0]]       # R21: coins.llama.fi is no longer asked
     frames = pd.concat(out.frames, ignore_index=True) if hasattr(out, "frames") else None
     assert frames is not None
     got = {r.metric: (r.value, r.source) for r in frames.itertuples()}
     assert got["price_usd_coinbase_at"] == (8.01, "coinbase_exchange:UNI-USD:open@2026-11-04T18:42:00Z")
-    assert got["price_usd_llama_at"][0] == 8.03 and got["price_usd_llama_at"][1].endswith("@2026-11-04T18:43:00Z")
+    assert "price_usd_llama_at" not in got
 
 
 def _col(ws, header, row=4):

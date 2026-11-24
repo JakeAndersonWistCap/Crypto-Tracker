@@ -845,10 +845,16 @@ def seed_pendle_berachain(st, log) -> int:
     run_id = fetch.new_run_id()
     out = fetch.FetchOutput()
     t0 = time.monotonic()
-    log.info("--seed pendle_berachain: no time budget — runs to completion, resumable (pages checkpointed); progress "
-             "lines carry the ETA")
+    # R21 (Jake 2026-11-25: 48 minutes for 99 rows; Berachain is ~0% of Pendle — config.PENDLE_BERACHAIN_GAP): a TIME
+    # CAP, then a NAMED GAP saying what is unread. Was (G10-5c): no time budget, run to completion.
+    gap = getattr(config, "PENDLE_BERACHAIN_GAP", {}) or {}
+    cap_min = float(gap.get("seed_cap_min") or 0) or None
+    log.info("--seed pendle_berachain: %s — resumable (pages and the repair's ranges checkpointed); progress lines "
+             "carry the ETA", f"stops after {cap_min:g} minutes (config.PENDLE_BERACHAIN_GAP)" if cap_min else
+             "no time cap")
     with Heartbeat():
-        LogScan(own_tier=spec.get("own_tier"), unbounded=True).run([{**p, "log_scans": [spec]}], None, out)
+        LogScan(own_tier=spec.get("own_tier"), unbounded=True, cap_s=cap_min * 60 if cap_min else None).run(
+            [{**p, "log_scans": [spec]}], None, out)
     prior = st.latest_values()
     frames = [validate_frame(f, prior, out) for f in out.frames]
     written = sum(st.upsert(f) for f in frames if f is not None and not f.empty)
@@ -857,7 +863,21 @@ def seed_pendle_berachain(st, log) -> int:
         log.info("--seed pendle_berachain: %s — %s", e.status, e.message)
     log.info("--seed pendle_berachain: AFTER (%.0fs) — %d row(s) stored%s", time.monotonic() - t0, written,
              "" if written else " (run it again: the pages resume where they stopped)")
+    if not written and gap:
+        # THE NAMED GAP (R21): what stays unread, what it is worth, and why it is not chased further
+        unread = "; ".join(e.message for e in out.log if "IN PROGRESS" in str(e.message) or "stopped" in str(e.message))
+        msg = berachain_gap_line(gap, cap_min, time.monotonic() - t0, unread)
+        st.record_fetch(run_id, "explorer", "Pendle", 0, "skipped", msg, 2)
+        log.info("--seed pendle_berachain: %s", msg)
     return 0 if written else 1
+
+
+def berachain_gap_line(gap: dict, cap_min, seconds: float, unread: str) -> str:
+    """R21: the one line naming Pendle's Berachain gauge history as a gap — the cap, what is unread, its size."""
+    return (f"pendle_berachain NAMED GAP — stopped at the time cap ({f'{cap_min:g} min' if cap_min else 'none'}; ran "
+            f"{seconds:.0f} s) with the gauge "
+            f"history unreconciled; unread: {unread[:400] or 'see the trace lines above'}. Worth: {gap['worth']}. "
+            f"Share of Pendle: {gap['share']}.")
 
 
 def seed_eth_p2p_validation(st, log) -> int:

@@ -364,5 +364,8 @@ def test_e_a_stock_from_a_timed_out_tier_is_not_stored():
 
 def test_b9_the_replaced_buyback_columns_are_declared_to_the_guard():
     import measuring_guard as mg
-    assert mg._declared("Pendle", "actual_buyback_tokens") == {"pendle_api:sPendleHistoricalData.buybackAmounts"}
+    # R21 (Jake 2026-11-25): the buyback contract's purchases join as a declared handover point.
+    # Was: {"pendle_api:sPendleHistoricalData.buybackAmounts"}
+    assert mg._declared("Pendle", "actual_buyback_tokens") == {"pendle_api:sPendleHistoricalData.buybackAmounts",
+                                                               "pendle_buyback_chain:ethereum"}
     assert "derived:tokens*price" in mg._declared("Pendle", "actual_buyback_usd")

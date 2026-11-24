@@ -50374,6 +50374,540 @@ def _load_r21_moves() -> int:
 
 
 R21_MOVES_DECLARED = _load_r21_moves()
+# ===== R21 RUNFIX (Jake 2026-11-25, from his 24 Nov store run) =====
+# (1) WORLD CHAIN'S TOKENJAR: A NAMED GAP WITH A CAP. Jake's run: the jar "isn't read past 2026-07-25 because Alchemy's
+# explorer asked for a 3,038s wait" (worldchain-mainnet.explorer.alchemy.com, the chain's only keyless log route; its
+# public RPC serves 100-block eth_getLogs, ~432 calls a day; 480.rpc.thirdweb.com answered HTTP 429 asking for an API
+# key, 2026-11-24). Days are read newest first, so World Chain's days 2026-03-07..2026-07-25 were never read and every
+# all-chain day in that span stayed unstored (day_total waits for every chain).
+# MEASURED 2026-11-24 (scratchpad r21_runfix): every ERC-20 transfer INTO the jar 0xbDb8…4918, Blockscout v2
+# token-transfers (7,103 transfers, 2026-03-08..2026-11-24), valued at each day's price (WLD and ETH: CoinGecko daily;
+# USDC $1; the rest at the explorer's current rate; UNI-V2 LP tokens unpriced, left out): $46,481 on 2026-03-07..07-25 =
+# 0.23% of Uniswap's all-chain revenue in the same days ($20,216,174, DefiLlama's released value on the 2026-11-20
+# export); $71,343 to 2026-11-19 = 0.107% of $66,403,360 since the switch. On chain, World Chain's Firepit
+# 0x455e…18C6 has released 7 times (nonce() 7 x threshold() 2,000 UNI = 14,000 UNI) of 14,672,000 UNI released on all
+# chains read (nonce x threshold per chain, 2026-11-24) = 0.095%. On the stored inflow (11-05..11-08) World Chain is $0
+# of $890,591.
+TOKENJAR_INFLOWS["Uniswap"]["chains"]["worldchain"]["named_gap"] = {
+    "through": "2026-07-25",       # the CAP: days on or before it are NOT ASKED (the reader stops asking World Chain)
+    "max_tries": 3,                # and a later day refused on 3 runs joins the gap (named on its row), never asked again
+    "share": "~0.2%",
+    "label": "World Chain",
+    "measured": "2026-11-24: $46,481 of ERC-20 inflow on 2026-03-07..07-25 = 0.23% of all-chain revenue in those days "
+                "($20.2M, DefiLlama); 7 Firepit releases x 2,000 UNI = 0.095% of the UNI released on all chains",
+    "decided": "Jake 2026-11-25 (R21): small, so a named gap with a cap and a label"}
+
+# (2) coins.llama.fi OUT OF THE PRICE CROSS-CHECK (Jake 2026-11-25: "it asks for 50-minute waits. Use CoinGecko or an
+# on-chain pool price instead"). CoinGecko is the price itself (a re-read would be FRESH-only), so the second source is
+# an ON-CHAIN market price (fetch/price_onchain.py) — or Coinbase where config already declares a product (Ethereum,
+# Chainlink, Near, Aerodrome, Uniswap: in_price, unchanged). Each pool below is the deepest Uniswap pool of the token
+# against WETH / USDC / USDT / USDS on its chain: factory getPool(token, quote, fee) / getPair, ranked by the quote
+# token's balance in the pool, read on chain 2026-11-24 (tenderly gateways). Same tolerance as the row it replaces (2%).
+
+
+def _r21_pool(chain, pool, token, quote, kind="uniswap_v3", token_dec=18, quote_dec=18, depth=""):
+    return {"kind": kind, "chain": chain, "pool": pool, "token": token, "quote": quote, "token_decimals": token_dec,
+            "quote_decimals": quote_dec, "depth": depth}
+
+
+PRICE_ONCHAIN = {
+    "Plume": _r21_pool("ethereum", "0xd845acdeb03fb3295e7735c232c588efc441d903",
+                       "0x4c1746a800d224393fe2470c70a35717ed4ea5f1", "WETH",
+                       depth="PLUME/WETH 1%: ~$10k of WETH (thin: PLUME trades mostly on its own chain)"),
+    "Aethir": _r21_pool("ethereum", "0xd31d41dffa3589bb0c0183e46a1eed983a5e5978",
+                        "0xbe0ed4138121ecfc5c0e56b40517da27e6c5226b", "WETH", depth="ATH/WETH 0.3%: ~$198k of WETH"),
+    "Maple": _r21_pool("ethereum", "0x27941a235804f33d81adabb2d56589c5f6ea6556",
+                       "0x643c4e15d7d62ad0abec4a9bd4b001aa3ef52d66", "WETH", depth="SYRUP/WETH 1%: ~$36k of WETH"),
+    "Morpho": _r21_pool("ethereum", "0xc8219b876753a85025156b22176c2edea17aac53",
+                        "0x58d97b57bb95320f9a05dc918aef65434969c2b2", "WETH", depth="MORPHO/WETH 0.3%: ~$104k of WETH"),
+    "Ether.fi": _r21_pool("ethereum", "0x06f00544c0bc62e6db10f46d370dfccdc23d8189",
+                          "0xfe0c30065b384f05761f15d0cc899d4f9f9cc0eb", "WETH", depth="ETHFI/WETH 0.3%: ~$316k of WETH"),
+    "Fluid": _r21_pool("ethereum", "0xc1cd3d0913f4633b43fcddbcd7342bc9b71c676f",
+                       "0x6f40d4a6237c257fff2db00fa0510deeecd303eb", "WETH", depth="FLUID/WETH 1%: ~$251k of WETH"),
+    "Sky": _r21_pool("ethereum", "0x2621cc0b3f3c079c1db0e80794aa24976f0b9e3c",
+                     "0x56072c95faa701256059aa122697b133aded9279", "USDS", kind="uniswap_v2",
+                     depth="SKY/USDS Uniswap v2: ~$3.4M of USDS (the v3 SKY/WETH pool held ~$22k)"),
+    "Pendle": _r21_pool("ethereum", "0x57af956d3e2cca3b86f3d8c6772c03ddca3eaacb",
+                        "0x808507121b80c02388fad14726482e061b8da827", "WETH", depth="PENDLE/WETH 0.3%: ~$179k of WETH"),
+    "GEODNET": _r21_pool("polygon", "0x39bfc628a34b07c5d65f207e59077dd3c8f10730",
+                         "0xac0f66379a6d7801d7726d5a943356a172549adb", "USDT", quote_dec=6,
+                         depth="GEOD/USDT 0.3% (Polygon): ~$53k of USDT"),
+    # a native coin with no Coinbase product: Hyperliquid's own spot order book (HYPE/USDC, spotMeta universe "@107",
+    # read 2026-11-24) — the candle OPEN at the instant, as Coinbase's is
+    "Hyperliquid": {"kind": "hypercore_spot", "pair": "@107", "depth": "HYPE/USDC spot on HyperCore"},
+}
+# the ETH/USD leg of a WETH-quoted pool, at the same block: Uniswap v3 USDC/WETH 0.05% (token0 USDC, token1 WETH, fee
+# 500 — read 2026-11-24); USDC at $1
+PRICE_ONCHAIN_ETH_USD = {"ethereum": _r21_pool("ethereum", "0x88e6A0c2dDD26FEEb64F039a2c41296FcB3f5640",
+                                               "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2", "USDC", quote_dec=6)}
+# archive state (eth_call at a past block): the keyed <CHAIN>_RPC_URL first (fetch.chain.rpc_endpoints), then these
+PRICE_ONCHAIN_RPC = {"ethereum": ("https://mainnet.gateway.tenderly.co", "https://ethereum-rpc.publicnode.com"),
+                     "polygon": ("https://polygon.gateway.tenderly.co",)}
+METRICS["price_usd_onchain"] = {
+    "label": "Price — an ON-CHAIN market at 00:00 UTC (the token's deepest Uniswap pool at the block of the instant, "
+             "WETH legs at the chain's USDC/WETH pool; HYPE: HyperCore spot candle open), CREDIBILITY reference only "
+             "(R21: replaces DefiLlama's coins API)",
+    "kind": "stock", "unit": "usd", "archetypes": [1, 2, 3, 4], "tiers": [1], "sanity_min": 0, "sanity_max": 1e7,
+    "view_only": True, "only_projects": tuple(PRICE_ONCHAIN)}
+METRICS["price_usd_onchain_at"] = {
+    "label": "Price — the same on-chain market at the instant of our spot price_usd row (the block at or before it; "
+             "HYPE: the 1-minute candle), CREDIBILITY reference only",
+    "kind": "stock", "unit": "usd", "archetypes": [1, 2, 3, 4], "tiers": [1], "sanity_min": 0, "sanity_max": 1e7,
+    "view_only": True, "only_projects": tuple(PRICE_ONCHAIN)}
+# ===== R21 — AETHIR (Jake 2026-11-25; SPEC "Round 21 — Aethir"). Everything below was read 2026-11-24 from a primary
+# source: Arbitrum and Ethereum (keyless public RPC: arb1.arbitrum.io, tenderly, publicnode), Sourcify (verified
+# source), docs.aethir.com (.md pages; unchanged since R20's copies of 2026-11-23 bar the header line). =================
+#
+# ----- 1. THE BURN'S "0 ROWS" ON 24 NOV (fetch/aethir_chain.py). Reproduced live 2026-11-24 16:21 UTC: the read itself
+# works on both endpoints (arb1 and tenderly, ~11 s): 23 Transfers to 0x…dEaD since block 516,000,000 — 22 burns
+# (12,586,244.98 ATH, 2026-11-03..2026-11-24) + the stray 0.015936806889 ATH of 2026-10-21 (0xd4627ecb…, tx 0xb9f6c90f…)
+# — sum to the dead balance 12,586,244.996919807 to the wei, and the frames carry 22 complete days 2026-11-02..11-23.
+# NOT the reconciliation (the stray is inside it: the proof sums every sender), NOT the window (the burn reads every day
+# from the launch whatever the run's window). A CODE FAULT in the run around it: (a) the day's marks were keyed
+# "aethir_chain:burn" / "aethir_chain:ethereum", which name no series, so token_metrics._mark_stored kept them whether
+# or not the rows reached the store — after any run that set the mark without storing the rows, every later run that
+# day logged "Aethir chain read (burn): read today already", 0 rows (reproduced here: a second fetch the same day logs
+# exactly that line, 0 rows); (b) the burn was read AFTER the Ethereum history (14 eth_getLogs of 1,000,000 blocks: 58 s
+# of the tier's 81 s measured alone; R20 measured ~25 s), inside a 180 s tier budget shared with ~45 concurrent tiers — a
+# cut-off there lost the burn with the history. Which of the two hit Jake's run is NOT VERIFIED (no Run Log or export of
+# the 24 Nov run here). Fix: marks keyed aethir_chain:<project>:<metric> (kept only when that series is stored), the
+# burn read FIRST, the budget 300 s; a stray transfer is named on the burn's rows and excluded from it.
+AETHIR_R21_BURN_READ = {
+    "on": "2026-11-24", "arbitrum_block": 527_169_944, "dead_balance": 12_586_244.996919807,
+    "burns": 22, "burned": 11_955_182.09375163 + 631_062.88723137,      # to 11-23, + the burn of 11-24
+    "stray": {"day": "2026-10-21", "from": "0xd4627ecb405b64448ee6b07dcf860bf55590c83d", "tokens": 0.015936806889073004,
+              "tx": "0xb9f6c90fbd7e629ef3a362cde2a17f9a75bfedc989ccbd4bd10f957400a828db"},
+    "complete_days_stored_by_one_run": ("2026-11-02", "2026-11-23")}
+
+# ----- 2. BUY-THEN-BURN OR A DIRECT BURN? A DIRECT BURN OF FEES (read 2026-11-24). The burn contract 0xf8ec8e8e… is
+# Sourcify-verified (exact match, chain 42161) as contracts/periphery/ServiceFeeBurner.sol: "Claims an
+# approver-authorized amount of service fee from AethirCore and sends it to this chain's canonical burn address, in a
+# single transaction"; settle() calls core.claimServiceFee(containers, vdata) and transfers what arrived to 0x…dEaD —
+# no router, no pool, no swap path in the code. Every burn transaction read (11-03 0x1da340b1…, 11-09 0xed3d55cf…, 11-24
+# 0xb107dfc5…) holds exactly four logs: ATH Transfer AethirCore 0x226dc7d2… -> burner, AethirCore's claim event, ATH
+# Transfer burner -> 0x…dEaD, ServiceFeeBurned — no Swap event. The ATH burned is ATH customers paid as service fees
+# (settled in ATH into AethirCore), claimed as the network fee's share and destroyed. The protocol buys nothing.
+# DRAFT FOR JAKE — NOT APPLIED (config.BUYING_PRESSURE_BY_DESIGN["Aethir"] and DECLARED_NA_REASONS stay as R20 set
+# them until he confirms). Proposed wording for the "no buyback programme declared" cell (Config & Sources) and the
+# buyback route:
+#   "n/a — no buyback programme: Aethir buys no ATH on the market. Since 2026-11-02 it BURNS ATH that customers paid
+#    as network fees — the ServiceFeeBurner 0xf8ec8e8e… (Arbitrum, Sourcify-verified) claims the fee share from
+#    AethirCore 0x226dc7d2… and sends it to 0x…dEaD in one transaction, no swap (read 2026-11-24). Counted as the burn
+#    (gross_burn_tokens, A4) and as credited holder value, not as a buyback."
+# (Had the code or the transactions shown a swap, the wording would have been "buy-then-burn: fee revenue buys ATH on
+# <DEX> and the bought ATH is burned" and the burn would have counted as a burned buyback; neither the code nor any
+# transaction read shows one.)
+
+# ----- 3. UNLOCKS ON THE PUBLISHED SCHEDULE (Jake's decision 7). unlock_release_tokens = the published team + investor
+# vesting (EVIDENCE_LADDER["Aethir", "insider_unlock_tokens"]: Team 12.5% of 42bn, 18-month cliff + 36 months linear
+# from 2025-12-12; Investors 11.5%, 12-month cliff + 24 months linear from 2025-06-12 — 11,406,584 ATH a day, 1.027bn a
+# 90-day block, 1.038bn a 91-day quarter, until 2027-06-11). R20's measured leg — the falls of the three MerkleVesters'
+# stock — becomes the memo `unlock_claims_tokens` beside it (CP detail column) and is the ON-CHAIN CHECK: per 90-day block
+# the claims span, CLAIMED <= SCHEDULED x (1 + 0%) (build_workbook.unlock_schedule_check; a claim cannot precede its
+# vesting). Live 2026-11-24 (Ethereum, the vesters' Transfer logs, as of 2026-11-24): Q0 scheduled 1,026,592,591 vs
+# claimed 514,104,186 (gap 512.5M); Q-1 1,026,592,591 vs 512,300,919; Q-2 1,026,592,591 vs 448,824,532; Q-3 969,110,839
+# vs 656,024,648; Q-4 595,479,452 vs 1,451,709,321 — DISAGREES in Q-4: the vesters also pay a category the schedule
+# leaves out (advisors 5%, terms unpublished; the vesters were funded 12.52bn, more than team + investors' 10.08bn).
+# Cumulative to 2026-11-24: scheduled 5,180,299,570; claimed on chain since the first funding 6.43bn (funded 12.52bn
+# less the 6,091,057,153 still held). The brief's "406M" Q0 claims was not reproduced (514.1M here, to 2026-11-24).
+METRICS["unlock_claims_tokens"] = {
+    "label": "MEMO — ATH CLAIMED from the vesting contracts (the fall of the three MerkleVesters' stock; a top-up "
+             "releases 0). Shown beside the unlock, which counts the published schedule (R21); the on-chain check",
+    "kind": "flow", "unit": "tokens", "archetypes": [2], "tiers": [2], "sanity_min": 0, "sanity_max": 42e9,
+    "only_projects": ("Aethir",), "view_only": True}
+UNLOCK_ON_SCHEDULE = {
+    "Aethir": {"schedule": "insider_unlock_tokens", "memo": "unlock_claims_tokens", "tolerance": 0.0,
+               "label": "the published vesting — team 12.5% (18-mo cliff, 36-mo linear) + investors 11.5% (12-mo "
+                        "cliff, 24-mo linear) of 42bn from listing 2024-06-12 (docs.aethir.com token-vesting); advisors "
+                        "and ecosystem not included (PARTIAL)",
+               "check_what": "ATH claimed from the three MerkleVesters (unlock_claims_tokens, Transfer logs)",
+               "decided": "Jake 2026-11-25 (R21, decision 7)"}}
+DETAIL_COLUMNS.append(
+    {"tab": "CP", "after": "Unlocks Q0", "header": "Detail — Claimed from the vesting contracts Q0 (tokens; on chain, a "
+                                                   "MEMO — the unlock counts the published schedule)",
+     "cells": {"Aethir": ("unlock_claims_tokens", "q0")}})
+
+# ----- 4. THE STAKING POOLS — WHO PAYS THE WEEKLY ATH (read 2026-11-24, Ethereum, the last 1,200,000 blocks to block
+# 26,486,222, ~167 days). Each pool's reward contract is a pair of EIP-1167 clones of Sourcify-verified code:
+#   Gaming pool 0x6F5c81fe… rewardDistributor() = RewardDistributor 0x417e1bcf… (impl 0xb68c1a82…, "Distributes any
+#     tokens transferred to the contract among veBPT holders"; getVotingEscrow() = the Gaming pool) <- its
+#     rewardFaucet() = RewardFaucet 0xaba1a7ac… (impl 0xe3a252cf…): 23 transfers of 1,000,000 ATH, one a week.
+#   AI pool 0x784BC33B… -> RewardDistributor 0x4ffac630… <- RewardFaucet 0x3553def4…: 23 x 1,000,000 ATH.
+#   THE FAUCETS' ONLY FUNDER: the Safe 0x3e7e6c3d… (3 x 10,000,000 ATH into each), the VestingWallet's beneficiary —
+#   ATH from the pre-minted allocation's releases. Besides the faucets, the distributors received 1,000,000 ATH each,
+#   once, from that same Safe. Both distributors' admin() is the genesis Safe 0x612407de…. No transfer from AethirCore
+#   (Arbitrum; the fees are settled there) or any fee address reaches a faucet or a distributor.
+# VERDICT: the AI and Gaming pools are EMISSIONS-funded (the docs: "each pool distributes 1,000,000 ATH per week", the
+# Staking Pools Emission Schedule; the chain: the issuer's Safe funds the faucets). The EigenLayer vault — the only pool
+# designed to be fee-funded ("rewards generated by Cloud Hosts who borrow ATH from the Vault", predeposit-rewards;
+# "Until then, eATH holders will not accrue any rewards") — is not active (R20: isStakingEnabled() false, read
+# 2026-11-23). Cloud Host / Edge stakes are slashable deposits. NO POOL IS FEE-FUNDED: A3 stays OFF and the UNIFORMITY
+# series is not wired (CONDITIONAL_ARCHETYPES["Aethir"]["on"] stays False).
+AETHIR_STAKING_POOLS["reward_funding"] = {
+    "read_on": "2026-11-24", "window": "Ethereum blocks 25,286,222..26,486,222 (ATH Transfer logs)",
+    "gaming_pool": {"distributor": "0x417e1bcf39742534ae65988e4eb3eac1a243cbc0",
+                    "faucet": "0xaba1a7ac1da115ac55316bf3a257fca9f9f8ee81", "weekly": 1_000_000.0, "weeks_seen": 23,
+                    "faucet_funded_by": {"0x3e7e6c3d084879837310d26b30e52d4b56a8c2f4": 30_000_000.0}},
+    "ai_pool": {"distributor": "0x4ffac630c56e41135a7b1f892d3af8061df3620d",
+                "faucet": "0x3553def49c3cf67ff206916017cd4013911ae828", "weekly": 1_000_000.0, "weeks_seen": 23,
+                "faucet_funded_by": {"0x3e7e6c3d084879837310d26b30e52d4b56a8c2f4": 30_000_000.0}},
+    "implementations": {"RewardDistributor": "0xb68c1a821d4b2c4dea32264dec0543c04d0fee5d",
+                        "RewardFaucet": "0xe3a252cf744531e96a73d40e71c8ceda6cadc9ca"},
+    "fee_address_seen": False,
+    "verdict": "EMISSIONS — both pools' weekly 1,000,000 ATH comes from the issuer's Safe 0x3e7e6c3d… through a "
+               "RewardFaucet; no fee address funds any pool; A3 stays off"}
+CONDITIONAL_ARCHETYPES["Aethir"]["why_off"] = (
+    "R21 (read 2026-11-24): no pool is fee-funded. The AI and Gaming pools' 1,000,000 ATH a week reaches each pool's "
+    "RewardDistributor (0x4ffac630…, 0x417e1bcf…) through a RewardFaucet (0x3553def4…, 0xaba1a7ac…) funded only by the "
+    "issuer's Safe 0x3e7e6c3d… (emissions; the docs' Staking Pools Emission Schedule); the fee-designed EigenLayer vault "
+    "never activated; Cloud Host / Edge stakes are deposits. Staking yield paid from emissions does not qualify A3")
+for _r in DECLARED_NA_REASONS.get("Aethir", []):
+    if "UNIFORMITY" in (_r.get("cols") or ()) and "RewardFaucet" not in _r.get("text", ""):
+        _r["text"] += (" — on chain (2026-11-24) each pool's weekly ATH comes from the issuer's Safe 0x3e7e6c3d… through "
+                       "a RewardFaucet; no fee address funds a pool (R21)")
+# =====================================================================================================================
+# ROUND 21 — PENDLE (Jake 2026-11-25): item 5 "Pendle stale buying pressure" and "Berachain". Code: fetch/pendle_buyback_chain.py,
+# build_workbook._chain_buyback_views, fetch/logscan.LogScan(cap_s), fetch/chain.ChainReader._logs_with_backoff,
+# token_metrics.seed_pendle_berachain. Tests: tests/test_r21_pendle.py.
+# WHY IT WAS STALE (export pendle-2026-11-18, Jake's runs 11-16..11-18; read live 2026-11-24):
+#   (1) "derived from DefiLlama's holders_revenue_usd, which produced nothing this run" is the Run Log line of a RETIRED
+#       fetch-time restatement (actual_buyback_usd := holders_revenue_usd, from 2026-05-01). Since D4-5 (2026-10-27)
+#       DefiLlama's figure is stored as holders_revenue_usd_defillama and holders_revenue_usd is a read-time view, so the
+#       restatement found nothing every run (its 179 stored rows end 2026-10-26). The buyback cells did not read it:
+#       since G11 B9 they read Pendle's per-epoch buybackAmounts (pendle_distributed_tokens), each epoch spread over ITS
+#       OWN 14 days d..d+13.
+#   (2) Pendle publishes an epoch's amount only when it pays it, 15-20 days after the epoch starts (0 before): the
+#       spread series therefore ends at the last paid epoch's 14th day — at best 2, at worst ~20 days before the as-of.
+#       On the 11-18 export the epoch of 11-03 still read 0 (paid 11-21), so the series ended 11-02 (16 days: STALE); on
+#       Jake's 11-24 run it ended 11-16 (8 days: STALE), and it cannot be current by construction.
+#   (3) pendle_epoch_apr_published stored nothing because spendle/data's sPendleHistoricalData.aprs reads 0 for EVERY
+#       one of the 22 epochs (and lastEpochApr 0) — read 2026-11-24; never above 0 in any run on file. Pendle publishes
+#       no per-epoch APR; the reader correctly refuses a 0 as an APR. Nothing to wire: the cross-check stays unavailable.
+# THE PRIMARY SOURCE NOW: Pendle's buyback contract (named in Pendle's docs, R20 research): every PENDLE Transfer in and
+# out since its deployment (block 24,405,765, 2026-02-07). Each epoch's PENDLE is bought by Pendle's router in ~75 fills
+# over four days (13-17 days after the epoch's start) and paid in one transfer to sPENDLE, where it arrives STAKED.
+# 21 payouts 2026-02-13..2026-11-21, 3,290,528.08 PENDLE; Σ bought = Σ paid to the wei; 19 of 21 equal Pendle's
+# buybackAmounts within 2 PENDLE; the epochs of 2026-01-29 and 2026-02-24 read 4,405.94 and 6,992.00 PENDLE more in the
+# API (3,301,919.67 in all) than the contract bought — NOT VERIFIED where the difference was bought, if anywhere.
+# WHERE THE BOUGHT PENDLE GOES (for the burns lane's float rule F2): held in the buyback contract from its first fill to
+# the payout (3-6 days), then 100% to sPENDLE 0x9999…4144 — a payout that arrives staked (pendle_buyback_paid_tokens,
+# dated the payday). Nothing is burned; nothing stays held after the payout.
+# =====================================================================================================================
+PENDLE_BUYBACK_CHAIN = {
+    "project": "Pendle", "chain": "ethereum",
+    "contract": "0x9e08C5499f953C6297A7755BcBcEd383b606896b",       # Pendle docs (sPENDLE.md), R20 research 2026-11-23
+    "token": "0x808507121B80c02388fAd14726482e061B8da827",          # PENDLE on Ethereum (fetch/pendle_latent.py)
+    # every one of the 1,632 inflows 2026-02-08..2026-11-21 came from Pendle's Router V4 (read 2026-11-24)
+    "routers": ("0x888888888889758F76e7103c6CbF23ABbF58F946",),
+    "payees": ("0x999999999991E178D52Cd95AFd4b00d066664144",),       # sPENDLE (contracts.spendle)
+    "from_block": 24_405_765, "first_day": "2026-02-07",              # the contract's first event (its deployment)
+    "chunk_blocks": 1_000_000,                                        # config.LOG_RPC: tenderly serves 1,000,000 a call
+    "confirmations": 20, "budget_s": 100,
+    "metric": "pendle_buyback_bought_tokens", "paid_metric": "pendle_buyback_paid_tokens",
+    "api_url": "https://api-v2.pendle.finance/core/v1/spendle/data", "epoch_tol_tokens": 2.0,
+    "read_2026_11_24": {"payouts": 21, "paid_tokens": 3_290_528.08, "api_tokens": 3_301_919.67, "api_epochs": 22,
+                        "within_2": 19, "differ": {"2026-01-29": -4_405.94, "2026-02-24": -6_992.00},
+                        "last_payout": ("2026-11-21", 110_966.35)},
+}
+METRICS["pendle_buyback_bought_tokens"] = {
+    "label": "PENDLE bought by Pendle's buyback contract 0x9e08C549… (received from Pendle's router), per UTC day — 0 on "
+             "a day with no purchase (R21)", "kind": "flow", "unit": "tokens", "archetypes": [3], "tiers": [2],
+    "sanity_min": 0, "sanity_max": 1e8, "only_projects": ("Pendle",)}
+METRICS["pendle_buyback_paid_tokens"] = {
+    "label": "PENDLE paid by Pendle's buyback contract to sPENDLE (arrives staked), per UTC day — 0 on a day with no "
+             "payout (R21)", "kind": "flow", "unit": "tokens", "archetypes": [3], "tiers": [2],
+    "sanity_min": 0, "sanity_max": 1e8, "only_projects": ("Pendle",)}
+# THE BUYBACK SERIES: the contract's daily purchases (build_workbook._chain_buyback_views) wherever they are stored; the
+# per-epoch spread (G11 B9) only where they are not. The cross-check: DefiLlama's OWN holders revenue / same-day price
+# (it had become Pendle's epoch view of it after D4-5), from sPENDLE's first epoch (2026-01-29; before it fees went to
+# vePENDLE voters — R20 research), held against Pendle's per-epoch amounts by Credibility in_buyback (tolerance 25%,
+# unchanged).
+MEASURED_BUYBACK["Pendle"].update({
+    "chain_metric": "pendle_buyback_bought_tokens", "chain_paid_metric": "pendle_buyback_paid_tokens",
+    "chain_label": "Pendle's buyback contract 0x9e08C549… on Ethereum",
+    "cross_check_metric": "holders_revenue_usd_defillama", "cross_check_from": "2026-01-29",
+    "decided_r21": "Jake 2026-11-25, item 5"})
+_R21_BB_POINTS = ("pendle_api:sPendleHistoricalData.buybackAmounts", "pendle_buyback_chain:ethereum")
+PROJECT_BY_NAME["Pendle"].setdefault("series_handover", {})["actual_buyback_tokens"] = {
+    "ordered_points": _R21_BB_POINTS,
+    "why": "R21 (Jake 2026-11-25, item 5): Pendle's own per-epoch buyback, first as the API's per-epoch amount spread "
+           "over the epoch's 14 days, then as its buyback contract's purchases, dated the day bought",
+    "composition_change": "the same purchases (per epoch they equal the API's amount within 2 PENDLE in 19 of 21 epochs), "
+                          "dated 13-17 days later: on the day bought, not across the fortnight whose fees paid for them",
+    "declared": "2026-11-25"}
+PROJECT_BY_NAME["Pendle"]["series_handover"]["actual_buyback_usd_derived"] = {
+    "ordered_points": ("derived:=holders_revenue_usd", "derived:=holders_revenue_usd_defillama"),
+    "why": "R21: the cross-check is DefiLlama's own holders revenue (holders_revenue_usd_defillama), not Pendle's epoch "
+           "view of it", "composition_change": "DefiLlama pendle-v2 dailyHoldersRevenue, as before D4-5",
+    "declared": "2026-11-25"}
+# The retired fetch-time derivation (it logged "it IS holders_revenue_usd, which produced nothing this run" every run and
+# described "no buyback contract is published"): withdrawn. Its 179 stored rows (2026-05-01..10-26) stay in the store
+# and are read by nothing the buyback cells show (the views above replace both columns).
+# Kept here as they were (the generic restatement machinery's tests re-instate them).
+_R21_PENDLE_RETIRED = {_k: PROJECT_BY_NAME["Pendle"].pop(_k, None)
+                       for _k in ("metric_restatement", "buyback_tokens_from_usd")}
+PROJECT_BY_NAME["Pendle"]["deployment_registry"].update({
+    "buyback_contract": "0x9e08C5499f953C6297A7755BcBcEd383b606896b",
+    "buyback_contract_status": "NAMED IN PENDLE'S DOCS (sPENDLE.md; R20 research 2026-11-23) and read on chain "
+                               "2026-11-24: buys PENDLE through the router, pays each epoch to sPENDLE (R21)"})
+
+# ----- BERACHAIN: A NAMED GAP WITH A TIME CAP (Jake 2026-11-25: "First measure Berachain's share of Pendle's activity. If
+# it's small, make it a named gap with a time cap"). MEASURED 2026-11-24 — it is small:
+#   TVL      DefiLlama protocol/pendle currentChainTvls: Berachain $728 of $907,741,562 (0.0001%)
+#   fees     DefiLlama dailyFees by chain, 90 days to 2026-11-24: Berachain $170.92 of $1,612,870 (0.01%)
+#   PENDLE emissions (gauge payouts on file, export 2026-11-18): Berachain 0 in Q0, Q-1, Q-2 (none since 2026-01-26); the
+#            unread history is 590.18 PENDLE in Q-3 (0.07% of that quarter's 884,494 + 590) and 18,126.19 in Q-4
+#            (1.47% of 1,215,178 + 18,126) — R20.P1
+# So the seed stops after seed_cap_min and names what it left unread; the daily run's scan keeps its tier budget and its
+# gap row carries the same name. Routes (fetch/chain.dated_logs): the keyed Alchemy endpoint is asked FIRST whenever its
+# plan serves the range (ALCHEMY_GETLOGS_MAX_RANGE in .env: the free plan serves 10 blocks a call, so the repair's
+# 10,000-block ranges go to rpc.berachain.com), and serves the block times and balanceOf reads; a public endpoint's
+# HTTP 429 is waited out (2, 4, 8, 16 s) instead of being asked again at once.
+PENDLE_BERACHAIN_GAP = {
+    "seed_cap_min": 10,     # R20 read the whole gauge history from rpc.berachain.com in 418 s (5,844 calls) unthrottled
+    "measured_on": "2026-11-24",
+    "share": "TVL $728 of $907.7M (0.0001%); fees $170.92 of $1.61M over 90 days (0.01%); PENDLE emissions 0 since "
+             "2026-01-26",
+    "worth": "Q-3 lacks 590.18 and Q-4 18,126.19 PENDLE of gauge emissions (0.07% and 1.47% of those quarters'); Q0..Q-2 "
+             "unaffected",
+}
+NAMED_SCAN_GAPS = {
+    "gauge_pendle_out_berachain": (
+        f"Pendle's Berachain gauge history (R21, measured {PENDLE_BERACHAIN_GAP['measured_on']}): "
+        f"{PENDLE_BERACHAIN_GAP['share']} — {PENDLE_BERACHAIN_GAP['worth']}. Time-capped "
+        f"(--seed pendle_berachain stops after {PENDLE_BERACHAIN_GAP['seed_cap_min']} min)."),
+}
+
+# =====================================================================================================================
+# ===== R21 — BURNS (Jake 2026-11-25; SPEC "Round 21 — burns"). Burns count in net float pressure; the bought-back-token
+# rules F1-F7; paused / off labels and "unranked". Code: free_float.py (buying_views, returned_views, burn_memo,
+# check_burns, check_nets), build_workbook._float_pressure_cols (CP), reader._arch_ranking. Tests: tests/test_r21_burns.py
+# =====================================================================================================================
+# ----- 1. EVERY BURN, A NAMED SUPPLY-REDUCTION LINE OF NET FLOAT PRESSURE ("any burn"). -----
+#   Net float pressure = revenue-funded buying + burns − new supply − bought tokens returned to the float, each in
+#   tokens a year ÷ the one free float. A burn is never buying: a buyback that is burned leaves the buying line and is
+#   counted once, as the burn (on the day it is burned). Burns of tokens that were off the float count too; the memo
+#   says where each burn came from — "float" (out of liquid hands), "staked" (out of a stake / lock), "treasury" (out of
+#   an issuer, treasury or held-buyback wallet) or "not split" (the series does not say) — never guessed.
+#   Per series: metric, from, why; `annualise_as` (a burn of tokens minted earlier on the same float is annualised over
+#   the covered days of the series its mint is in, so the two net exactly — Aerodrome's 10M of 2026-11-19 / 11-20).
+BURN_SOURCES = ("float", "staked", "treasury", "not split")
+BURN_SERIES = {
+    "Ethereum": ({"metric": "gross_burn_tokens", "from": "float",
+                  "why": "EIP-1559 base fee: ETH paid as gas by the sending accounts (liquid ETH; a validator's stake "
+                         "cannot pay gas) — eips.ethereum.org/EIPS/eip-1559"},),
+    "Uniswap": ({"metric": "gross_burn_tokens", "from": "float",
+                 "why": "burn-to-claim: UNI the claimant holds or buys, burned through the Firepit to release the "
+                        "TokenJar (proposal 93); the 100,000,000 one-off of 2025-12-27 left the Timelock (treasury) — "
+                        "split out by its declared one_off_flows row (from_stock)"},),
+    "Sky": ({"metric": "sky_stage2_burn_tokens", "from": "treasury",
+             "why": "SKY the Smart Burn Engine bought sits in the Pause Proxy (a held buyback, off the float) until a "
+                    "spell burns it — every Stage 2 burn is out of that holding"},),
+    "Near": ({"metric": "gross_burn_tokens_bigquery", "from": "float",
+              "why": "the protocol burns 70% of gas (nomicon.io economics): NEAR paid as gas by the sending accounts "
+                     "(liquid balances) — the chain's own record (block headers' total_supply falls)"},),
+    "Aethir": ({"metric": "gross_burn_tokens", "from": "float",
+                "why": "the daily fee burn (live 2026-11-02): ATH customers paid as network fees, taken from the "
+                       "service-fee escrow — not a stake, not an issuer wallet, so out of the float (R20.A3)"},),
+    "GEODNET": ({"metric": "gross_burn_tokens", "from": "float",
+                 "why": "GEOD bought on the market with revenue and burned on purchase — out of liquid hands"},),
+    "Aerodrome": ({"metric": "buyback_burned_tokens", "from": "staked",
+                   "why": "the Foundation's burned buyback: AERO it bought and LOCKED (veAERO) is burned out of the "
+                          "escrow (VotingEscrow.burnFees) — out of a stake"},
+                  {"metric": "foundation_aero_burned_other_tokens", "from": "staked",
+                   "annualise_as": "gross_issuance_accrued_tokens",
+                   "why": "AERO a Foundation wallet destroyed out of the escrow that is not a burned buyback — the "
+                          "10,000,000 minted 2026-11-19 (Gauge Caps surplus, in issuance (b)) and burned 11-20: it nets "
+                          "against that mint on the same float (annualised over the issuance series' covered days)"}),
+    "Hyperliquid": ({"metric": "total_burn_tokens", "from": "float",
+                     "why": "every HYPE burn the supply sees (A1's burn): the Assistance Fund's intake (HYPE bought on "
+                            "the market with fees) + the Core burns outside it (deploy gas, priority fees). The "
+                            "Fund's treatment (burned or held) is the Hyperliquid research lane's question; whatever "
+                            "is declared burned flows in here"},),
+}
+# A project with no burn mechanism says so (the burns line is a declared 0, never a code).
+BURN_NONE = {
+    "Chainlink": "no burn mechanism: the Reserve holds the LINK it buys (nothing is destroyed)",
+    "Fluid": "no burn mechanism: bought FLUID went to the governance treasury (held), never burned",
+    "Ether.fi": "no burn mechanism: bought ETHFI is paid to stakers or card users; nothing burned since 2025-09-19",
+    "Maple": "no burn mechanism: bought SYRUP lives in the Syrup Strategic Fund (held)",
+    "Pendle": "no burn mechanism: bought PENDLE is paid to sPENDLE holders as sPENDLE",
+    "Morpho": "no burn mechanism: fixed supply, the fee switch is off",
+}
+# Every other burn-named series of these projects, and why it is NOT a separate leg of the net (the test fails on a
+# burn series that is in neither list).
+BURN_NOT_IN_NET = {
+    ("Ethereum", "burn_cumulative_tokens"): "a stock (the protocol counter); its daily rise is gross_burn_tokens",
+    ("Uniswap", "one_off_burn_tokens"): "the dated display of the 100M one-off, already inside gross_burn_tokens",
+    ("Uniswap", "burn_address_balance"): "a stock (0x…dEaD); its daily rise is gross_burn_tokens",
+    ("Uniswap", "gross_burn_day_priced_usd"): "$, not tokens (the same burn x each day's price)",
+    ("Sky", "gross_burn_tokens"): "the Pause Proxy's whole burn history differenced (two unrelated events): its Stage 2 "
+                                  "leg is sky_stage2_burn_tokens, the rest other_burn_tokens",
+    ("Sky", "sky_stage2_burn_balance"): "a stock; its daily rise is sky_stage2_burn_tokens",
+    ("Sky", "buyback_burned_tokens"): "the buyback x its burned share on the PURCHASE day — an attribution; the burn "
+                                      "itself is sky_stage2_burn_tokens on the day the spell burns it",
+    ("Sky", "other_burn_balance"): "a stock; its daily rise is other_burn_tokens",
+    ("Sky", "other_burn_tokens"): "SKY destroyed by an UNRECOGNISED sender: declared not applicable as a burn of Sky's "
+                                  "(the five-way split, Jake 2026-09-24 — surfaced, not folded in, until the sender is "
+                                  "identified); 0 on every stored day",
+    ("Sky", "burn_address_balance"): "a stock",
+    ("Sky", "gross_burn_day_priced_usd"): "$, not tokens",
+    ("Near", "gross_burn_tokens"): "another read of the same protocol burn (A1 reads gross_burn_tokens_bigquery)",
+    ("Near", "near_chain_burn_tokens"): "the same burn on its own days (the headers' record, the rule x fees before) — "
+                                        "a second read of gross_burn_tokens_bigquery",
+    ("Near", "buyback_burned_tokens"): "the buyback x its burned share on the purchase day (Near's buyback is held)",
+    ("Aethir", "burn_address_balance"): "a stock; its daily rise is gross_burn_tokens",
+    ("GEODNET", "gross_burn_tokens_dune_monthly"): "the monthly cross-check of gross_burn_tokens, never summed with it",
+    ("GEODNET", "buyback_burned_tokens"): "the buyback x its burned share — the same tokens as gross_burn_tokens",
+    ("GEODNET", "burn_address_balance"): "a stock",
+    ("GEODNET", "gross_burn_day_priced_usd"): "$, not tokens",
+    ("Aerodrome", "foundation_aero_burned_tokens"): "the Foundation's own-stake burns = buyback_burned_tokens (its "
+                                                    "burned buyback, R20.A1); the rest is foundation_aero_burned_other",
+    ("Hyperliquid", "gross_burn_tokens"): "the Assistance Fund leg, inside total_burn_tokens",
+    ("Hyperliquid", "core_burn_tokens"): "the burns outside the Fund, inside total_burn_tokens",
+    ("Hyperliquid", "buyback_burned_tokens"): "the buyback x its burned share — the Fund leg's tokens",
+    ("Hyperliquid", "burn_ex_chain_fee_tokens"): "total_burn_tokens less the HyperEVM gas burn (A4's view), a subset",
+    ("Hyperliquid", "burn_auction_tokens"): "ASXN's history of a leg inside total_burn_tokens (the non-AF burns)",
+    ("Hyperliquid", "burn_hyperevm_tokens"): "ASXN's history of a leg inside total_burn_tokens (the non-AF burns)",
+    ("Hyperliquid", "hyperevm_burn_tokens_asxn"): "the cross-check of the HyperEVM burn leg",
+    ("Hyperliquid", "hyperevm_priority_burn_tokens"): "NOT in the supply the float is formed on (tokenDetails); whether "
+                                                       "it is inside core_burn_tokens is the Hyperliquid research "
+                                                       "lane's question (R21) — not added, never guessed",
+    ("Hyperliquid", "burn_address_balance"): "a stock",
+    ("Hyperliquid", "burn_auction_usd"): "$", ("Hyperliquid", "burn_hyperevm_usd"): "$",
+    ("Hyperliquid", "hyperevm_burn_usd_asxn"): "$", ("Hyperliquid", "gross_burn_day_priced_usd"): "$",
+    ("Hyperliquid", "total_burn_day_priced_usd"): "$",
+    **{(_n, "buyback_burned_tokens"): "the buyback x its burned share (0: nothing burned)"
+       for _n in ("Chainlink", "Fluid", "Ether.fi", "Maple", "Pendle")},
+}
+BURN_PROJECTS_R21 = ("Ethereum", "Uniswap", "Sky", "Near", "Aethir", "GEODNET", "Aerodrome", "Hyperliquid", "Chainlink",
+                     "Fluid", "Ether.fi", "Maple", "Pendle", "Morpho")
+
+
+def burn_series(project_name: str) -> tuple:
+    """The burn series net float pressure counts for this project ({metric, from, why} dicts): the declared list, () where
+    BURN_NONE says it has none, else (a project not reviewed in R21) A1's burn — every burn the supply sees — 'not
+    split'."""
+    if project_name in BURN_SERIES:
+        return BURN_SERIES[project_name]
+    if project_name in BURN_NONE:
+        return ()
+    p = PROJECT_BY_NAME.get(project_name) or {}
+    m = a1_burn_metric(project_name)
+    return ({"metric": m, "from": "not split", "why": "A1's burn (every burn the supply sees); not reviewed in R21"},) \
+        if p and m in metrics_for_project(p) else ()
+
+
+# Off-float burns that move the headline by more than this (net float pressure, % a year as a fraction) are reported.
+BURN_OFF_FLOAT_REPORT = 0.01
+
+# ----- 2. THE DEMAND SIDE: revenue-funded BUYING, whatever the bought tokens' destination except the burn (F2). -----
+#   float_buying_tokens = the buyback HELD + DISTRIBUTED (buyback_held_tokens + buyback_distributed_tokens) on the days
+#   it was revenue-funded (holder_funding) + the purchases paid on to customers (F1, Ether.fi: "buying counts as
+#   buying"). A project that buys nothing on the market reads a declared 0 (was: Ethereum n/a, Uniswap and Aethir
+#   "by design"): its burns are their own line.
+BUYING_ZERO_DECLARED = {
+    "Ethereum": "0 — nothing is bought on the market (no buyback programme); the EIP-1559 burn is on the burns line",
+    "Uniswap": "0 — the protocol buys no UNI on the market; burn-to-claim is on the burns line (Jake R21: a burn is "
+               "never labelled buying or demand)",
+    "Aethir": "0 — the protocol buys no ATH on the market; the daily fee burn is on the burns line (R21)",
+}
+for _n in ("Uniswap", "Aethir"):
+    BUYING_PRESSURE_BY_DESIGN.pop(_n, None)          # R21: a declared 0 (BUYING_ZERO_DECLARED), not a by-design code
+BUYING_CUSTOMERS_F1 = {"Ether.fi": "buyback_to_customers_tokens"}   # F1: purchases paid on to card users are buying
+METRICS["float_buying_tokens"] = dict(METRICS["float_buying_tokens"], label=(
+    "Revenue-funded buying (tokens a day) — the buyback held or distributed (buyback_held_tokens + "
+    "buyback_distributed_tokens) on the days it was revenue-funded (config.holder_funding), + purchases paid on to "
+    "customers (F1); a burned buyback is on the burns line, not here (R21; was R20: retired = burned + held)"))
+
+# ----- 3. BOUGHT TOKENS RETURNED TO THE FLOAT (F1, F2, F3, F7): a supply line of net float pressure. -----
+#   A payout of bought tokens that arrives LIQUID returns to the float on the day it leaves the programme wallet; one that
+#   arrives staked stays off (Pendle: paid as sPENDLE — nothing returns). Declared payout legs: `paid` − `less` (the part
+#   the purchases did not cover is already new supply, outflow (c)). A held buyback stock with no declared payout leg
+#   (F7): its fall returns to the float on the day it leaves the holding wallet (sale, payout or transfer), less what
+#   the wallet burned that day (a burn is a burn).
+FLOAT_RETURNS = {
+    "Ether.fi": {"paid": "cashback_paid_tokens", "less": "cashback_unfunded_tokens",
+                 "why": "F1: the programme's ETHFI paid to card users as cashback (CashbackDistributor 0x38F2fBb2… on OP), "
+                        "the part its purchases covered — the uncovered part is outflow (c). No recipient lock is visible "
+                        "on chain (the cashback lands liquid)"},
+    "Sky": {"paid": "emissions_tokens", "less": "sky_staking_rewards_unfunded_tokens",
+            "why": "F2/F3: SKY paid to stakers (the weekly vest out of the Pause Proxy, claimed liquid), the part the "
+                   "SKY bought for stakers covered — only the uncovered part is emissions, outflow (c)"},
+}
+FLOAT_RETURNS_HELD = {
+    "Maple": {"held": "ssf_holdings_tokens", "why": "F7: SYRUP leaving the Syrup Strategic Fund (sale, payout or "
+                                                    "transfer) returns to the float"},
+    "Near": {"held": "buyback_fund_balance", "why": "F7: NEAR leaving the buyback fund returns to the float"},
+}
+FLOAT_RETURNS_NONE = {
+    "Pendle": "F2: the buyback is paid to sPENDLE holders AS sPENDLE (already staked) — it stays off the float",
+}
+METRICS["float_returned_tokens"] = {
+    "label": "Bought tokens returned to the float (tokens a day): payouts of bought tokens that arrive liquid (F1/F2/F3) "
+             "and falls of a held buyback stock (F7), less what was burned — a supply line of net float pressure (R21)",
+    "kind": "flow", "unit": "tokens", "archetypes": [1, 2, 3, 4], "tiers": [2], "sanity_min": 0, "sanity_max": 1e12,
+    "view_only": True, "only_projects": (*FLOAT_RETURNS, *FLOAT_RETURNS_HELD)}
+
+# ----- 4. F3: A STAKING REWARD PAID FROM BOUGHT-BACK TOKENS IS NOT NEW SUPPLY (only the remainder is emissions). -----
+#   Checked for every project that pays staking rewards (STAKING_REWARDS_F3): only Sky's are paid out of bought tokens
+#   with a measured series (the vest out of the Pause Proxy, refilled by the Smart Burn Engine since Stage 2,
+#   2026-08-17). The same rule as the Ether.fi cashback (CASHBACK_FUNDING): uncovered = the rise in max(0, Σ paid −
+#   Σ bought) since the date — purchases before it are not counted (`bought_from_since`).
+CASHBACK_FUNDING["Sky"] = {
+    "paid": "emissions_tokens", "bought": "buyback_distributed_tokens", "out": "sky_staking_rewards_unfunded_tokens",
+    "since": "2026-08-17", "bought_from_since": True,
+    "source": "Sky Stage 2 (2026-08-17): 22.5% of Net Protocol Surplus buys SKY for SKY stakers; the weekly vest to "
+              "the staking farm is paid out of the Pause Proxy (docs/r20_research_frozen_audit.md section 3, F3)"}
+METRICS["sky_staking_rewards_unfunded_tokens"] = {
+    "label": "SKY staking rewards NOT covered by the SKY bought for stakers (the rise in max(0, Σ vest − Σ bought for "
+             "stakers) since 2026-08-17) — the part that is new supply, outflow (c) (R21 F3)",
+    "kind": "flow", "unit": "tokens", "archetypes": [3], "tiers": [2], "sanity_min": 0, "sanity_max": 1e12,
+    "only_projects": ("Sky",), "view_only": True}
+OUTFLOW_CATEGORIES["Sky"]["c"] = ("sky_staking_rewards_unfunded_tokens",)
+STAKING_REWARDS_F3 = {
+    "Sky": "paid from the Pause Proxy, refilled with SKY bought for stakers since 2026-08-17 — WIRED (CASHBACK_FUNDING)",
+    "Pendle": "the buyback paid as sPENDLE is not counted as emissions; emissions are gauge incentives (b), minted "
+              "against no purchase — nothing to net",
+    "Ether.fi": "sETHFI top-ups come from the Foundation's own stock (e); the old programme's purchases for stakers "
+                "stopped 2026-04-01 — nothing to net in the windows read",
+    "Aerodrome": "the rebase to lockers is minted (c); the Foundation's buyback is treasury-funded and locked — nothing "
+                 "to net",
+    "Hyperliquid": "staking rewards come from the pre-minted Future Emissions pool (a); bought HYPE goes to the "
+                   "Assistance Fund — nothing to net",
+    "Near": "validator rewards are minted each epoch (a); the buyback fund holds — nothing to net",
+    "Ethereum": "issuance is minted (b) — nothing to net",
+    "Chainlink": "staking rewards from issuer stock (a); the Reserve's LINK is not paid out — nothing to net",
+    "Aethir": "AI / Gaming pools paid from the staking emission schedule (a) — nothing to net",
+    "GEODNET": "no staking reward from bought GEOD (bought GEOD is burned)",
+    "Maple": "staking ended November 2025", "Fluid": "no staking rewards", "Morpho": "no staking rewards",
+    "Uniswap": "no staking rewards",
+}
+
+# ----- 5. F4 + decision 5: "paused" / "off" labelled by evidence; such a programme is UNRANKED (not ranked on a 0). ---
+ARCHETYPE_STATUS.update({"Fluid": {3: "paused, no restart condition stated"},
+                         "Ether.fi": {3: "not executing since 1 Apr"}, "Morpho": {3: "off"}})
+ARCHETYPE_STATUS_WHY.update({
+    ("Fluid", 3): "the governance post of 2026-05-11 (gov.fluid.io/t/1774) is headed 'Pause Buybacks' and states no "
+                  "date or condition to resume; the last purchase was 2026-03-20",
+    ("Ether.fi", 3): "the treasury buyback (up to $50M while ETHFI < $3) is still authorised, its condition met, but has "
+                     "bought nothing since 2026-04-01; no pause was announced (the programmatic buys go to card users)",
+    ("Morpho", 3): "the fee switch is off: fee 0 on every listed market, fee recipient the zero address, no proposal",
+})
+
+# ----- 6. F5: one-offs stay in the yearly rate as a NAMED line (they come off the float as fact). -----
+ONE_OFF_NAMED = {
+    "Sky": ({"from": "2026-11-19", "to": "2026-11-25",
+             "what": "the emergency one-off buyback, 750,000 USDS a day for 7 days (5.25M USDS), the SKY bought to be "
+                     "burned (forum.sky.money thread 28439, executed 2026-11-19 tx 0xebb6efef…); Splitter burn 90.81% "
+                     "for the week"},),
+    "Uniswap": ({"from": "2025-12-27", "to": "2025-12-27",
+                 "what": "the 100,000,000 UNI treasury burn of proposal 93 (from the Timelock)"},),
+    "Aerodrome": ({"from": "2026-11-19", "to": "2026-11-20",
+                   "what": "the 10,000,000 AERO minted 11-19 and burned 11-20 (nets against its mint)"},),
+}
+# F6 (Pendle's airdrops of other tokens) and F8 (dropped): see SPEC "Round 21 — burns".
+
 
 
 
@@ -50567,3 +51101,29 @@ def apply_hyperliquid_burn_treatment(true_burn_a4: bool | None = None) -> None:
 
 
 apply_hyperliquid_burn_treatment()
+
+# --- 4. net float pressure (the BURNS lane's lines, R21): the true burns from the float; the Fund's purchases are buying
+# (held) and its stock is a held buyback whose fall would return to the float (F7). The Core burns read the view that
+# also holds the days rebuilt from totalSupply's stored falls (burn_ex_chain_fee_tokens = core_burn_tokens + those days).
+BURN_SERIES["Hyperliquid"] = (
+    {"metric": "burn_ex_chain_fee_tokens", "from": "float",
+     "why": "the Core burns: the fall in tokenDetails.totalSupply (deploy-gas and gossip auctions, order-priority fees, "
+            "HYPE spot-fee and dust burns) — HYPE paid as fees from spot balances (core_burn_tokens, plus the days rebuilt "
+            "from the stored totalSupply's falls)"},
+    {"metric": "hyperevm_priority_burn_tokens", "from": "float",
+     "why": "HyperEVM priority fees credited to the zero address (keyless, never fell in 596 readings): paid as gas from "
+            "liquid HYPE; out of our circulating (it is subtracted from tokenDetails' figure) and not inside totalSupply's "
+            "fall (docs/r21_hyperliquid_burns.md)"})
+for _k in (("Hyperliquid", "burn_ex_chain_fee_tokens"), ("Hyperliquid", "hyperevm_priority_burn_tokens")):
+    BURN_NOT_IN_NET.pop(_k, None)
+BURN_NOT_IN_NET.update({
+    ("Hyperliquid", "total_burn_tokens"): "burn_ex_chain_fee_tokens + hyperevm_priority_burn_tokens (A1's every burn), "
+                                          "both legs in the net on their own",
+    ("Hyperliquid", "gross_burn_tokens"): "the Assistance Fund's purchases (stored name kept): HELD, not burned (R21, "
+                                          "Jake's default) — on the buying line as buyback_held_tokens",
+    ("Hyperliquid", "core_burn_tokens"): "inside burn_ex_chain_fee_tokens (with the days rebuilt from totalSupply)",
+    ("Hyperliquid", "buyback_burned_tokens"): "the buyback x its burned share: 0 (the Fund holds what it buys, R21)",
+})
+FLOAT_RETURNS_HELD["Hyperliquid"] = {"held": _R21_HL_FUND,
+                                     "why": "F7: HYPE leaving the Assistance Fund (none ever has) returns to the float"}
+METRICS["float_returned_tokens"]["only_projects"] = (*FLOAT_RETURNS, *FLOAT_RETURNS_HELD)

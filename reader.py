@@ -638,6 +638,13 @@ def status_label_cells(sh, row: int, key_col, rank_col, name: str, arch: int) ->
         if isinstance(c.value, str) and c.value.startswith("="):
             # one literal after the digits (never two quoted literals side by side)
             c.number_format = {FMT_X: f'0.0"x — {lab}"', FMT_PCT: f'0.0%" — {lab}"'}.get(fmt, f'0" — {lab}"')
+        elif col is rank_col and c.value == "unranked":
+            # R21 (decision 5): the label and "unranked" — never ranked on a key of 0
+            c.comment = _comment(f"Unranked — {lab}: {config.ARCHETYPE_STATUS_WHY.get((name, arch), lab)}. A paused or "
+                                 "off programme is shown with its label and not ranked (Jake 2026-11-25, decision 5); "
+                                 "its key shows 0 only where the data says 0.")
+        elif col is key_col and isinstance(c.value, str) and c.value in ("n/a", "blocked"):
+            c.comment = _comment(f"{lab} — " + (c.comment.text if c.comment else ""))
     return lab
 
 
@@ -1128,8 +1135,11 @@ def _rank_rows(keys: dict, tiebreak: dict | None = None) -> list:
 def _arch_ranking(keys: dict, arch: int, tiebreak: dict | None = None) -> list:
     """P2e-1: THE ranking of archetype `arch` — [(project, rank or None, key or None)] over the projects whose PRIMARY
     archetype it is, parked ones left out, by _rank_rows. Summary and the archetype tab both show it, so a project's
-    rank is the same on both (a tie on the key broken by net holder yield, P3-2b)."""
-    return _rank_rows({n: k[1] for n, k in keys.items() if k[0] == arch and not parked_reason(n)}, tiebreak)
+    rank is the same on both (a tie on the key broken by net holder yield, P3-2b). R21 (Jake 2026-11-25, decision 5):
+    a programme labelled paused / off (config.ARCHETYPE_STATUS) is not ranked on its key — it reads "unranked", last."""
+    import config                                          # noqa: PLC0415
+    return _rank_rows({n: (None if config.archetype_status(n, arch) else k[1]) for n, k in keys.items()
+                       if k[0] == arch and not parked_reason(n)}, tiebreak)
 
 
 def _tie_note(name: str, ranking: list, tiebreak: dict | None = None) -> str:
@@ -1533,11 +1543,11 @@ def _write_summary(sh: Sheet, ctx: Ctx, keys: dict) -> None:
         "nhy": ("Net holder yield", "Holder value yield − dilution, both as % of market cap (the two columns to the "
                 "left): every outflow a year at each day's price ÷ the average market cap over the same days.",
                 FMT_PCT, "Holders", "CP Comparability, NET HOLDER YIELD", 0, 11),
-        "nfp": ("Net float pressure", "Buying pressure on float − total dilution, both as % of the free float a year "
-                "(the two columns to the right): revenue-funded buying that is burned or held, less new supply. Above "
-                "0 the free float shrinks.", FMT_PCT, "Holders", "CP Comparability, NET FLOAT PRESSURE", 0, 11),
-        "buy": ("Buying pressure on float, % a year", "Revenue-funded buying that is burned or held, in tokens a year "
-                "÷ the free float — the demand side of net float pressure.", FMT_PCT, "Holders",
+        "nfp": ("Net float pressure", "Revenue-funded buying + burns − new supply − bought tokens returned to the "
+                "float, all as % of the free float a year (R21; the parts are on CP and Comparison). Above 0 the free "
+                "float shrinks.", FMT_PCT, "Holders", "CP Comparability, NET FLOAT PRESSURE", 0, 11),
+        "buy": ("Buying pressure on float, % a year", "Revenue-funded buying (held, or paid to stakers or customers) in "
+                "tokens a year ÷ the free float; a burned buyback is a burn, not buying (R21).", FMT_PCT, "Holders",
                 "CP Comparability, BUYING PRESSURE ON FLOAT", 0, 11),
         "dil": ("Total dilution, % of float", "Every outflow a year (security emissions, supply- and demand-side "
                 "incentives, grants, unlocks) ÷ the free float — the supply side of net float pressure.", FMT_PCT,
@@ -2933,9 +2943,9 @@ def _src_header(A: Audit, sheet: str, prefix: str) -> str:
 
 # ---------------------------------------------------------------------------------------------- Comparison
 BUYING_PRESSURE_SHORT = "Buying pressure on float, % a year"     # P4-Q5c: the A3 tab and Comparison
-BUYING_PRESSURE_DEF = ("Revenue-funded buying that is burned or held, in tokens a year, ÷ the free float — the demand "
-                       "side of net float pressure. A buyback paid out to stakers, or funded by the treasury or "
-                       "emissions, is not in it. A held buyback is already out of the float while held.")
+BUYING_PRESSURE_DEF = ("Revenue-funded buying, held or paid out to stakers or customers, in tokens a year, ÷ the free "
+                       "float — the demand side of net float pressure (R21). A burned buyback is a burn (its own "
+                       "column), never buying; a buyback funded by the treasury or emissions is not in it.")
 COMPARISON_COLS = (
     # (key, header, source (sheet, prefix) | "@...", format, definition, family)
     ("hvy", "Holder value yield", (CP_TAB, "HOLDER VALUE YIELD"), FMT_PCT,
@@ -2948,8 +2958,15 @@ COMPARISON_COLS = (
      "Holder value yield − dilution, both as % of market cap: every outflow a year at each day's price ÷ the average "
      "market cap over the same days. The sort key of this tab.", ""),
     ("nfp", "Net float pressure", (CP_TAB, "NET FLOAT PRESSURE"), FMT_PCT,
-     "Buying pressure on float − total dilution, both as % of the free float a year: revenue-funded buying that is "
-     "burned or held, less new supply. Above 0 the free float shrinks.", ""),
+     "Revenue-funded buying + burns − new supply − bought tokens returned to the float, all as % of the free float a "
+     "year (R21). Above 0 the free float shrinks.", ""),
+    # R21 (Jake 2026-11-25): the burns, a named supply-reduction line of net float pressure — never buying
+    ("burns", "Burns on float, % a year", (CP_TAB, "BURNS ON FLOAT"), FMT_PCT,
+     "Every burn, whatever its source (from float, staked or treasury — the CP memo gives the split), in tokens a year "
+     "÷ the free float.", ""),
+    ("ret", "Returned to float, % a year", (CP_TAB, "BOUGHT TOKENS RETURNED TO THE FLOAT"), FMT_PCT,
+     "Bought-back tokens paid out liquid, sold or transferred out of the holding wallet, in tokens a year ÷ the free "
+     "float — a supply line of net float pressure.", ""),
     ("buy_press", BUYING_PRESSURE_SHORT, (CP_TAB, "BUYING PRESSURE ON FLOAT"), FMT_PCT, BUYING_PRESSURE_DEF, "buyback"),
     ("dil", "Total dilution, % of float", (CP_TAB, "TOTAL DILUTION = outflows a+b+c+d+e+f (annualised) ÷ free float"),
      FMT_PCT, "Every outflow a year (security emissions, incentives, grants, unlocks) ÷ the free float — the supply "
@@ -3028,7 +3045,8 @@ def _write_comparison(sh: Sheet, ctx: Ctx, keys: dict) -> None:
                 is_text=True)]
     spec = {}
     for k, h, src, fmt, d, fam in COMPARISON_COLS:
-        col = Col(h, d, fmt, "Holders" if k in ("hvy", "dil", "dil_mc", "nhy", "nfp", "payout", "buy_press") else "Subsidy and value"
+        col = Col(h, d, fmt, "Holders" if k in ("hvy", "dil", "dil_mc", "nhy", "nfp", "payout", "buy_press", "burns",
+                                                "ret") else "Subsidy and value"
                   if k in ("subsidy", "leak", "fees_fdv", "rev_mcap") else "Revenue lines" if k.startswith("rl_")
                   else "Holding", (
                       f"{src[0]}, {_src_header(A, src[0], src[1])}" if isinstance(src, tuple) else "computed"), 0, 12,

@@ -32,6 +32,8 @@ VW = SPEC["vesting_wallet"]
 COLS = ["date", "project", "metric", "value", "source", "tier"]
 READ_TS = int(pd.Timestamp("2026-11-23 17:07:35").timestamp())          # the finalized block of the recorded read
 WEI = 10 ** 18
+# R21: the day marks name the project and the series they vouch for (were "aethir_chain:ethereum" / "aethir_chain:burn")
+_K_ETH, _K_BURN = "aethir_chain:Aethir:ath_issuer_held_tokens", "aethir_chain:Aethir:gross_burn_tokens"
 
 
 def _g(metric, rows, source="x", project="Aethir", tier=2):
@@ -224,7 +226,7 @@ def test_one_run_stores_today_and_the_past_days_of_every_series(monkeypatch):
     assert set(got) == {"ath_vesting_unvested_tokens", "ath_vester_balance_tokens", "ath_issuer_held_tokens",
                         "ath_issuer_inferred_held_tokens", "ath_insider_staked_tokens", "ath_issuer_eath_tokens",
                         "gross_burn_tokens", "burn_address_balance"}
-    assert {k for k, _d in daily.marks} == {"aethir_chain:ethereum", "aethir_chain:burn"}
+    assert {k for k, _d in daily.marks} == {_K_ETH, _K_BURN}
     day = pd.Timestamp("2026-11-23")
     assert got["ath_vesting_unvested_tokens"][day] == pytest.approx(11_065_600_000.39, abs=0.01)
     assert got["ath_vester_balance_tokens"][day] == pytest.approx(6_092_058_683.0)
@@ -255,13 +257,13 @@ def test_the_past_days_are_not_read_again_the_day_after_a_completed_run(monkeypa
     monkeypatch.delenv("ETHEREUM_RPC_URL", raising=False)
     world, out, daily = _World(), FetchOutput(), _Daily()
     yday = str((base.today() - pd.Timedelta(days=1)).date())
-    daily.done("aethir_chain:ethereum", yday)                      # yesterday's run completed
+    daily.done(_K_ETH, yday)                      # yesterday's run completed
     ac.AethirChain(session=world, daily=daily).run([ATH], 1, out)
     got = {f["metric"].iloc[0]: f for f in out.frames}
     assert len(got["ath_vester_balance_tokens"]) == 1 and len(got["ath_issuer_held_tokens"]) == 1
     assert ("eth_getLogs", "eth") not in world.calls               # no log scan on Ethereum
     assert len(got["gross_burn_tokens"]) == 21                     # the burn's days are always the scan itself
-    assert ("aethir_chain:ethereum", str(base.today().date())) in daily.marks
+    assert (_K_ETH, str(base.today().date())) in daily.marks
 
 
 def test_live_and_past_rows_share_one_measuring_point(monkeypatch):
@@ -277,27 +279,27 @@ def test_live_and_past_rows_share_one_measuring_point(monkeypatch):
 def test_a_wallet_that_cannot_be_read_stores_no_ethereum_row_and_the_day_is_asked_again(monkeypatch):
     got, out, daily = _run(_World(fail_address=SPEC["wallets"][2]["address"]), monkeypatch)
     assert set(got) == {"gross_burn_tokens", "burn_address_balance"}             # the Arbitrum part is its own read
-    assert {k for k, _d in daily.marks} == {"aethir_chain:burn"}
+    assert {k for k, _d in daily.marks} == {_K_BURN}
     assert [e.status for e in out.log].count("failed") == 1
 
 
 def test_a_changed_schedule_stores_nothing(monkeypatch):
     got, out, daily = _run(_World(schedule_shift=86400 * 30), monkeypatch)
     assert "ath_vesting_unvested_tokens" not in got and "ath_issuer_held_tokens" not in got
-    assert "aethir_chain:ethereum" not in {k for k, _d in daily.marks}
+    assert _K_ETH not in {k for k, _d in daily.marks}
 
 
 def test_logs_that_do_not_account_for_a_balance_store_today_only_and_ask_again(monkeypatch):
     got, out, daily = _run(_World(drop_log_of=SPEC["vesters"][0]["address"]), monkeypatch)
     assert len(got["ath_vester_balance_tokens"]) == 1 and len(got["ath_issuer_held_tokens"]) == 1
-    assert "aethir_chain:ethereum" not in {k for k, _d in daily.marks}           # the past days are owed
+    assert _K_ETH not in {k for k, _d in daily.marks}           # the past days are owed
     assert any(e.status == "failed" and "NO PAST DAY" in e.message for e in out.log)
 
 
 def test_burn_logs_that_do_not_sum_to_the_dead_balance_store_nothing(monkeypatch):
     got, out, daily = _run(_World(dead_extra=1000.0), monkeypatch)
     assert "gross_burn_tokens" not in got and "burn_address_balance" not in got
-    assert "aethir_chain:burn" not in {k for k, _d in daily.marks}
+    assert _K_BURN not in {k for k, _d in daily.marks}
 
 
 def test_the_tier_is_registered_with_a_budget():
@@ -387,7 +389,8 @@ def test_before_the_burn_existed_it_is_a_declared_zero_and_after_it_only_what_wa
     b = bw._daily(groups[("Aethir", "gross_burn_tokens")])
     assert b[pd.Timestamp("2026-11-01")] == 0.0 and b[pd.Timestamp("2026-11-03")] == pytest.approx(512_764.4675)
     assert pd.Timestamp("2026-11-04") not in b.index and b.index.max() == pd.Timestamp("2026-11-05")
-    assert "Aethir" in config.BUYING_PRESSURE_BY_DESIGN
+    # R21 (Jake 2026-11-25): no longer a by-design code — a declared 0; the burn is its own line (BURNS ON FLOAT)
+    assert "Aethir" in config.BUYING_ZERO_DECLARED and "Aethir" not in config.BUYING_PRESSURE_BY_DESIGN
 
 
 # ====================================================================================== 4. unlocks, float, insiders

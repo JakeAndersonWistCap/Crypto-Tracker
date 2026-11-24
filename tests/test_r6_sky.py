@@ -48,7 +48,9 @@ def test_1_the_fetch_stores_the_savings_rate_and_revenue_net_of_it(monkeypatch):
 
 # ===================================================================================== 2: emissions and dilution
 def test_2_every_staker_reward_is_emissions_c_and_none_is_an_unlock():
-    assert config.outflow_metrics("Sky", "c") == ("emissions_tokens",)
+    # R21 F3 (Jake 2026-11-25): (c) is the part of the reward the SKY bought for stakers did not cover (was the whole
+    # reward, emissions_tokens)
+    assert config.outflow_metrics("Sky", "c") == ("sky_staking_rewards_unfunded_tokens",)
     # no staker reward is an unlock: (e) holds only releases from a non-circulating wallet set, if Sky has one
     e = config.outflow_metrics("Sky", "e")
     assert "emissions_tokens" not in e and set(e) <= {"unlock_release_tokens"}
