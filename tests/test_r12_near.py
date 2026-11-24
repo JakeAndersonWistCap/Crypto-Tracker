@@ -125,6 +125,11 @@ def test_1_the_guard_keeps_the_minimum_days_but_not_the_same_span_test_for_an_as
 
 
 def test_1_net_holder_yield_reads_b_and_exempts_it_only_while_it_is_as_published(scope, monkeypatch):
+    import free_float
+    # R21 gate: the formulas as built with no float verdict yet — never the verdict the last build on this worker left
+    # (on the dumps Near's float is not formed, so TOTAL DILUTION ÷ free float reads its n/a text there)
+    monkeypatch.setattr(free_float, "MISSING", type(free_float.MISSING)())
+    monkeypatch.setattr(free_float, "FORMED", type(free_float.FORMED)())
     cols = bw._cp_cols(bw.Refs(10, 10, ["2026-09"]), {})
     nhy = next(c for c in cols if c[0] == bw.CP_NHY_HEAD)
     monkeypatch.setattr(bw, "AS_PUBLISHED", {("Near", "b"): {"ok": True, "last": "2026-11-05", "lag": 12, "days": 78,
