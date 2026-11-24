@@ -6295,6 +6295,34 @@ def _released_staked_views(groups: dict) -> None:
                                           "last": str(idx.max().date()) if len(idx) else None}
 
 
+HELD_BUYBACK_IN_CIRC: dict = {}          # project -> {"days", "dropped", "first", "last"} (R21), last build
+
+
+def _held_buyback_in_circulating_views(groups: dict) -> None:
+    """R21 (Jake 2026-11-25, Hyperliquid's default): A HELD BUYBACK IS CIRCULATING. The first-party circulating series
+    (as _released_staked_views left it) + the held stock (config.CIRC_HELD_BUYBACK_IN: the Assistance Fund's HYPE), per
+    day both hold a row — a day without the held stock's row has no circulating (all or no row; unknown is never 0).
+    The whole series is restated on one basis: each row's source keeps its measuring point and names the added leg in a
+    bracket. The stock comes off the free float as held buybacks (config.HELD_BUYBACK_FLOAT)."""
+    HELD_BUYBACK_IN_CIRC.clear()
+    for name, spec in (getattr(config, "CIRC_HELD_BUYBACK_IN", None) or {}).items():
+        key = (name, spec["metric"])
+        g = dict.get(groups, key)
+        held = _daily(groups.get((name, spec["held"]))).dropna()
+        if g is None or g.empty:
+            continue
+        g = g.assign(date=pd.to_datetime(g["date"]).dt.normalize()).sort_values("date") \
+             .drop_duplicates("date", keep="last").set_index("date")
+        idx = g.index.intersection(held.index)
+        out = g.loc[idx].copy()
+        out["value"] = out["value"].astype(float) + held.reindex(idx).astype(float)
+        out["source"] = out["source"].astype(str) + f"[{spec['point']}]"
+        groups[key] = _as_stored(out.reset_index(), groups[key].columns)
+        HELD_BUYBACK_IN_CIRC[name] = {"days": len(idx), "dropped": int(len(g) - len(idx)),
+                                      "first": str(idx.min().date()) if len(idx) else None,
+                                      "last": str(idx.max().date()) if len(idx) else None}
+
+
 def _near_lockup_views(groups: dict) -> None:
     """NEAR UNDER JAKE'S RULE (final, 2026-11-17/18; R10.B3): of the lockups' LOCKED amount (still unvested +
     vested-but-lockup-locked; NEAR's own 'locked', with the buggy-code lockups recomputed as NEAR's lakehouse does) the
@@ -8754,6 +8782,7 @@ def aggregate(long: pd.DataFrame, fetch_status: pd.DataFrame, asof: pd.Timestamp
     _emissions_model_views(groups)
     _hl_model_views(groups)           # fix round 3 B1: Hyperliquid's MODELLED rewards / stake / reserve history
     _released_staked_views(groups)    # R7.C1: Hyperliquid's Foundation / Grants stake is released — BEFORE the release
+    _held_buyback_in_circulating_views(groups)   # R21: Hyperliquid's Assistance Fund is circulating (a held buyback)
     _onchain_release_views(groups)    # BEFORE the issuance views that read pool_release_tokens
     _release_floor_views(groups)      # a release is never negative, whatever stored it (alignment D2)
     _supply_history_views(groups)     # fix round 2 H1/H3: ETH supply + issuance before Etherscan's first read
@@ -15905,6 +15934,9 @@ def _a4_phase2_cols(R: Refs) -> list[tuple]:
         return p.get("issuance_declared_zero") and p["name"] not in config.A4_RELEASE_ISSUANCE
 
     def cum(r, p):
+        held = (getattr(config, "BURN_ADDRESS_IS_HELD", None) or {}).get(p["name"])     # R21: the stock is no burn
+        if held:
+            return held
         if "burn_address_balance" not in config.metrics_for_project(p):
             return "n/a — no cumulative burn stock (burn_address_balance) on file"
         b, mx = R.D(r, "burn_address_balance", "now"), R.D(r, "max_supply", "now")

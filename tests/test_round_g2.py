@@ -257,8 +257,10 @@ def test_g2_d2_hyperliquid_total_is_gross_less_the_fund_and_the_hyperevm_burn(mo
     bw._total_supply_net_views(g)
     t = g[("Hyperliquid", "total_supply")].assign(date=lambda x: pd.to_datetime(x["date"])).set_index("date")
     v = lambda f: float(f.assign(date=pd.to_datetime(f["date"])).set_index("date")["value"].loc[day])  # noqa: E731
-    assert t["value"].loc[day] == pytest.approx(v(gross) - v(fund) - 308_538.17)
-    assert t["source"].loc[day] == "derived:total_supply_gross-burn_address_balance-hyperevm_zero_address_balance"
+    # R21 (Jake 2026-11-25, the default): the Fund is a HELD buyback, inside the total (was v(gross) − v(fund) − the
+    # zero address = 950,543,605; now 998,553,200)
+    assert v(fund) > 0 and t["value"].loc[day] == pytest.approx(v(gross) - 308_538.17)
+    assert t["source"].loc[day] == "derived:total_supply_gross-hyperevm_zero_address_balance"
     # CoinGecko's figure stays beside it, and only the days before ours fall back to it
     assert len(g[("Hyperliquid", "total_supply_coingecko")]) >= len(cg_before)
     assert (t.index[t["source"].str.startswith("derived")] == day).all()
@@ -328,7 +330,8 @@ def test_g2_d2_circulating_is_written_net_of_the_hyperevm_burn_and_refused_witho
 
 def test_g2_d2_the_release_adds_the_hyperevm_burn_back():
     plus = config.CIRCULATING_ONCHAIN["Hyperliquid"]["release_first_party"]["plus"]
-    assert "hyperevm_priority_burn_tokens" in plus and "actual_buyback_tokens" in plus
+    # R21 (the Fund held, in circulating): its buyback no longer leaves circulating, so it is not added back
+    assert "hyperevm_priority_burn_tokens" in plus and "actual_buyback_tokens" not in plus
 
 
 def test_g2_d2_seed_reads_each_days_first_block_and_derives_the_burn(monkeypatch):

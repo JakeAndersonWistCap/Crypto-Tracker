@@ -3270,3 +3270,13 @@ def root_causes(rows: list[dict], verdicts: list) -> list[dict]:
                     "blocks": sorted({f"{rows[i]['project']}:{rows[i]['id']}" for i in e["headline"]})})
     out.sort(key=lambda d: (-d["headline_rows"], -d["rows"], d["root"]))
     return out
+
+
+def _fall_q0(p, rows, long, asof, metric="total_supply_gross", **_):
+    """R21 (Hyperliquid): the FALL of a stock across Q0 (−_delta_q0) — the Core burns are the fall of tokenDetails.
+    totalSupply, the reference of an A4 scored on them (config.apply_hyperliquid_burn_treatment)."""
+    v, d, how = _delta_q0(p, rows, long, asof, metric=metric)
+    return (None, None, how) if v is None else (round(-v, 2) + 0.0, d, f"−{how}")
+
+
+FORMULAS["fall_q0"] = _fall_q0

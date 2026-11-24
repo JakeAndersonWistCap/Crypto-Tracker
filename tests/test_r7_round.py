@@ -235,8 +235,11 @@ def test_c3_s13_lines_follow_jakes_decisions():
 def test_c4_burns_and_revenue_judge_on_hyperliquids_own_data_and_asxn_is_beside():
     import credibility as cred
     cr = config.CREDIBILITY["Hyperliquid"]
-    assert cr["a4_gross_burn"]["formula"] == "delta_q0" and cr["a4_gross_burn"]["tol"] == 15.0
-    assert cr["a1_gross_burn"]["args"]["metrics"] == ["af_noncirc_listed_tokens", "hyperevm_zero_address_balance"]
+    # R21 (Jake 2026-11-25, the default): the Fund is HELD — the burn checks read the true burns' stocks (was: the Fund's
+    # listing, delta_q0 / sum_of_deltas_q0 of af_noncirc_listed_tokens [+ the zero address]); tolerances unchanged
+    assert cr["a4_gross_burn"]["formula"] == "fall_q0" and cr["a4_gross_burn"]["tol"] == 15.0
+    assert cr["a1_gross_burn"]["formula"] == "delta_diff_q0" and cr["a1_gross_burn"]["tol"] == 15.0
+    assert cr["a1_gross_burn"]["args"] == {"a": "hyperevm_zero_address_balance", "b": "total_supply_gross"}
     assert cr["in_revenue"]["ref"]["args"]["metric"] == "actual_buyback_usd" and cr["in_revenue"]["ref"]["tol"] == 15.0
     for k in ("in_a4_gross_burn_asxn", "in_a1_gross_burn_asxn", "in_revenue_asxn"):
         assert cr[k]["ref"]["force_verdict"] == "N/A (recorded)" and cr[k]["ref"]["tol"] is None
