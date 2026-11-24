@@ -177,8 +177,9 @@ def test_no_new_supply_ranks_first_and_ties_are_broken_by_net_holder_yield(monke
             "X": (3, inf, None, ""), "Y": (3, inf, None, ""), "Aave": (3, None, None, "no key")}
     tb = {"Maple": -0.01, "Fluid": 0.02, "Pendle": -0.03, "Ether.fi": None, "X": -0.5, "Y": 0.1}
     got = reader._arch_ranking(keys, 3, tb)
-    assert [n for n, _r, _v in got] == ["Y", "X", "Hyperliquid", "Sky", "Fluid", "Maple", "Pendle", "Ether.fi", "Aave"]
-    assert [r for _n, r, _v in got] == [1, 2, 3, 4, 5, 6, 7, 8, None]
+    # R21 (decision 5): Fluid and Ether.fi (paused / not executing) are unranked, sorted last by name (were 5 and 8)
+    assert [n for n, _r, _v in got] == ["Y", "X", "Hyperliquid", "Sky", "Maple", "Pendle", "Aave", "Ether.fi", "Fluid"]
+    assert [r for _n, r, _v in got] == [1, 2, 3, 4, 5, 6, None, None, None]
     note = reader._tie_note("X", got, tb)
     assert "Tied on the key (no new supply) with Y" in note and "net holder yield" in note
     import done_check
@@ -255,7 +256,8 @@ def test_buying_pressure_is_every_market_buyback_annualised_over_tradeable_float
     assert not isinstance(evaluate(f, gone, R), float)
     # no buyback mechanism (Morpho: a declared, checked absence) is a measured 0; no buyback measured is a code
     assert bw._buying_pressure_col(FakeRefs({}))[1](5, P["Morpho"]) == "=0"
-    assert bw._buying_pressure_col(FakeRefs({}))[1](5, P["Ethereum"]).startswith("n/a — no market buyback")
+    # R21 (Jake 2026-11-25): Ethereum buys nothing on the market — a declared 0 (was n/a); its burn is its own line
+    assert bw._buying_pressure_col(FakeRefs({}))[1](5, P["Ethereum"]) == "=0"
 
 
 # ============================================================================================== the fixture build
@@ -373,7 +375,9 @@ def test_fixture_keys_and_ranks(built):
     # R20 (the A3 key is revenue to holders ÷ new supply; config.ARCHETYPE_STATUS): the zeros are the paused / off
     # programmes — Fluid, Ether.fi (paused) and Morpho (off, new on A3); Maple's key is BLOCKED on the dumps (its (b) leg
     # in $ is not formed: docs/moves_r20.md), so it is unranked (was: zeros >= {Maple, Fluid}, Ether.fi unranked)
-    assert set(zeros) >= {"Fluid", "Ether.fi", "Morpho"}
+    # R21 (decision 5): the paused / off programmes are UNRANKED with their label (were the ranked zeros)
+    assert all(rank[n] == "unranked" for n in ("Fluid", "Ether.fi", "Morpho"))
+    zeros = [n for n in zeros if not config.archetype_status(n, 3)]
     assert rank["Maple"] == "unranked" and not isinstance(keyv["Maple"], float)
     assert [rank[n] for n in zeros] == [len(keyed) + 1.0 + i for i in range(len(zeros))]
     nhy = [XR.value("Summary", srows[n], sn) for n in zeros]

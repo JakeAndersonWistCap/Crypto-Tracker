@@ -309,7 +309,9 @@ def test_3_every_d_recipient_is_labelled_and_the_budget_safes_are_holders():
     ex = {a.lower() for a in sc["exclude_counterparties"]}
     assert {"0x675671a8756ddb69f7254afb030865388ef699ee", "0xc8d67fcf101d3f89d0e1f3a2857485a84072a63f"} <= ex
     # R6.2 (Jake 2026-11-16): the distributors' rewards are emissions, (c), in every funding period — none is (e)
-    assert config.OUTFLOW_CATEGORIES["Sky"]["c"] == ("emissions_tokens",)
+    # R21 F3 (Jake 2026-11-25): only the part the SKY bought for stakers did not cover is emissions (was the whole vest)
+    assert config.OUTFLOW_CATEGORIES["Sky"]["c"] == ("sky_staking_rewards_unfunded_tokens",)
+    assert config.CASHBACK_FUNDING["Sky"]["paid"] == "emissions_tokens"
     assert set(config.OUTFLOW_CATEGORIES["Sky"]["e"]) <= {"unlock_release_tokens"}      # never a staker reward
     assert "allowance" in config.SKY_TREASURY_VEST["how"] or "transferFrom" in config.SKY_TREASURY_VEST["how"]
 

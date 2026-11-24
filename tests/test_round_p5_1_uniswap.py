@@ -4,7 +4,6 @@
    holder yield without the distributor is TEXT in Project notes only.
 8: buying pressure on float reads a by-design code where the protocol buys nothing on the market."""
 import sys
-from datetime import date
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -15,9 +14,7 @@ sys.path.insert(0, str(ROOT))
 
 import build_workbook as bw  # noqa: E402
 import config  # noqa: E402
-import done_check  # noqa: E402
 import reader  # noqa: E402
-import rule3  # noqa: E402
 
 UNI = config.PROJECT_BY_NAME["Uniswap"]
 
@@ -96,18 +93,15 @@ def _bp_cell(p):
     return build(5, p)
 
 
-def test_uniswap_buying_pressure_is_a_by_design_code():
-    t = _bp_cell(UNI)
-    assert t == config.BUYING_PRESSURE_BY_DESIGN["Uniswap"] and not t.startswith(("=", "n/a"))
-    assert "buys no UNI on the market" in t and "Firepit" in t
-    assert reader.code_of(t) == "by design"
-    assert not rule3.is_suspect(t)
-    assert done_check.classify(reader.code_of(t), t, date(2026, 11, 4)) == (True, "by design", "structural")
+def test_uniswap_buying_pressure_is_a_declared_zero():
+    # R21 (Jake 2026-11-25): "Uniswap and Aethir read 'buying: by design'. Fix" — a declared 0; the burn-to-claim is its
+    # own line of net float pressure (BURNS ON FLOAT), never labelled buying (was: the by-design code)
+    assert _bp_cell(UNI) == "=0"
+    assert "buys no UNI on the market" in config.BUYING_ZERO_DECLARED["Uniswap"]
 
 
-def test_only_uniswap_is_given_the_code():
-    # R20 (Aethir, A3): Aethir's fee burn is a protocol burn — it buys nothing on the market either, so it carries
-    # the code too (was: only Uniswap)
-    assert set(config.BUYING_PRESSURE_BY_DESIGN) == {"Uniswap", "Aethir"}
-    eth = _bp_cell(config.PROJECT_BY_NAME["Ethereum"])
-    assert eth.startswith("n/a — no market buyback is measured"), "every other project's reason is unchanged"
+def test_no_project_is_given_the_code():
+    # R21: the by-design code is retired; Ethereum, Uniswap and Aethir read a declared 0 (was: Uniswap, Aethir the code;
+    # Ethereum n/a)
+    assert set(config.BUYING_PRESSURE_BY_DESIGN) == set()
+    assert _bp_cell(config.PROJECT_BY_NAME["Ethereum"]) == "=0"

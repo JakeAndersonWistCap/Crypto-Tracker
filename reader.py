@@ -638,6 +638,13 @@ def status_label_cells(sh, row: int, key_col, rank_col, name: str, arch: int) ->
         if isinstance(c.value, str) and c.value.startswith("="):
             # one literal after the digits (never two quoted literals side by side)
             c.number_format = {FMT_X: f'0.0"x — {lab}"', FMT_PCT: f'0.0%" — {lab}"'}.get(fmt, f'0" — {lab}"')
+        elif col is rank_col and c.value == "unranked":
+            # R21 (decision 5): the label and "unranked" — never ranked on a key of 0
+            c.comment = _comment(f"Unranked — {lab}: {config.ARCHETYPE_STATUS_WHY.get((name, arch), lab)}. A paused or "
+                                 "off programme is shown with its label and not ranked (Jake 2026-11-25, decision 5); "
+                                 "its key shows 0 only where the data says 0.")
+        elif col is key_col and isinstance(c.value, str) and c.value in ("n/a", "blocked"):
+            c.comment = _comment(f"{lab} — " + (c.comment.text if c.comment else ""))
     return lab
 
 
@@ -1128,8 +1135,11 @@ def _rank_rows(keys: dict, tiebreak: dict | None = None) -> list:
 def _arch_ranking(keys: dict, arch: int, tiebreak: dict | None = None) -> list:
     """P2e-1: THE ranking of archetype `arch` — [(project, rank or None, key or None)] over the projects whose PRIMARY
     archetype it is, parked ones left out, by _rank_rows. Summary and the archetype tab both show it, so a project's
-    rank is the same on both (a tie on the key broken by net holder yield, P3-2b)."""
-    return _rank_rows({n: k[1] for n, k in keys.items() if k[0] == arch and not parked_reason(n)}, tiebreak)
+    rank is the same on both (a tie on the key broken by net holder yield, P3-2b). R21 (Jake 2026-11-25, decision 5):
+    a programme labelled paused / off (config.ARCHETYPE_STATUS) is not ranked on its key — it reads "unranked", last."""
+    import config                                          # noqa: PLC0415
+    return _rank_rows({n: (None if config.archetype_status(n, arch) else k[1]) for n, k in keys.items()
+                       if k[0] == arch and not parked_reason(n)}, tiebreak)
 
 
 def _tie_note(name: str, ranking: list, tiebreak: dict | None = None) -> str:
