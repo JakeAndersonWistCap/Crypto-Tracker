@@ -1357,6 +1357,11 @@ def detect(projects: list[dict], frame: pd.DataFrame, manual_keys: set[tuple[str
         # erc20_total_supply declared" — since G2-D2 it is total_supply_gross net of the Fund and the HyperEVM burn)
         if p["name"] in config.TOTAL_SUPPLY_NET and (p["name"], "total_supply_gross") in have:
             have.add((p["name"], "total_supply"))
+        # R21: a buyback read from the project's own buyback contract (config.MEASURED_BUYBACK chain_metric — Pendle) is
+        # built at read time from that daily series and the price: it covers both buyback columns
+        cm = ((getattr(config, "MEASURED_BUYBACK", {}) or {}).get(p["name"]) or {}).get("chain_metric")
+        if cm and (p["name"], cm) in have:
+            have |= {(p["name"], "actual_buyback_tokens"), (p["name"], "actual_buyback_usd")}
         # And a buyback token count derived from that usd and the price (Pendle, 2026-09-28).
         if (config.buyback_tokens_from_usd(p["name"]) and (p["name"], "actual_buyback_usd") in have
                 and (p["name"], "price_usd") in have):

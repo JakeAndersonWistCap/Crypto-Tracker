@@ -50565,3 +50565,115 @@ for _r in DECLARED_NA_REASONS.get("Aethir", []):
     if "UNIFORMITY" in (_r.get("cols") or ()) and "RewardFaucet" not in _r.get("text", ""):
         _r["text"] += (" — on chain (2026-11-24) each pool's weekly ATH comes from the issuer's Safe 0x3e7e6c3d… through "
                        "a RewardFaucet; no fee address funds a pool (R21)")
+# =====================================================================================================================
+# ROUND 21 — PENDLE (Jake 2026-11-25): item 5 "Pendle stale buying pressure" and "Berachain". Code: fetch/pendle_buyback_chain.py,
+# build_workbook._chain_buyback_views, fetch/logscan.LogScan(cap_s), fetch/chain.ChainReader._logs_with_backoff,
+# token_metrics.seed_pendle_berachain. Tests: tests/test_r21_pendle.py.
+# WHY IT WAS STALE (export pendle-2026-11-18, Jake's runs 11-16..11-18; read live 2026-11-24):
+#   (1) "derived from DefiLlama's holders_revenue_usd, which produced nothing this run" is the Run Log line of a RETIRED
+#       fetch-time restatement (actual_buyback_usd := holders_revenue_usd, from 2026-05-01). Since D4-5 (2026-10-27)
+#       DefiLlama's figure is stored as holders_revenue_usd_defillama and holders_revenue_usd is a read-time view, so the
+#       restatement found nothing every run (its 179 stored rows end 2026-10-26). The buyback cells did not read it:
+#       since G11 B9 they read Pendle's per-epoch buybackAmounts (pendle_distributed_tokens), each epoch spread over ITS
+#       OWN 14 days d..d+13.
+#   (2) Pendle publishes an epoch's amount only when it pays it, 15-20 days after the epoch starts (0 before): the
+#       spread series therefore ends at the last paid epoch's 14th day — at best 2, at worst ~20 days before the as-of.
+#       On the 11-18 export the epoch of 11-03 still read 0 (paid 11-21), so the series ended 11-02 (16 days: STALE); on
+#       Jake's 11-24 run it ended 11-16 (8 days: STALE), and it cannot be current by construction.
+#   (3) pendle_epoch_apr_published stored nothing because spendle/data's sPendleHistoricalData.aprs reads 0 for EVERY
+#       one of the 22 epochs (and lastEpochApr 0) — read 2026-11-24; never above 0 in any run on file. Pendle publishes
+#       no per-epoch APR; the reader correctly refuses a 0 as an APR. Nothing to wire: the cross-check stays unavailable.
+# THE PRIMARY SOURCE NOW: Pendle's buyback contract (named in Pendle's docs, R20 research): every PENDLE Transfer in and
+# out since its deployment (block 24,405,765, 2026-02-07). Each epoch's PENDLE is bought by Pendle's router in ~75 fills
+# over four days (13-17 days after the epoch's start) and paid in one transfer to sPENDLE, where it arrives STAKED.
+# 21 payouts 2026-02-13..2026-11-21, 3,290,528.08 PENDLE; Σ bought = Σ paid to the wei; 19 of 21 equal Pendle's
+# buybackAmounts within 2 PENDLE; the epochs of 2026-01-29 and 2026-02-24 read 4,405.94 and 6,992.00 PENDLE more in the
+# API (3,301,919.67 in all) than the contract bought — NOT VERIFIED where the difference was bought, if anywhere.
+# WHERE THE BOUGHT PENDLE GOES (for the burns lane's float rule F2): held in the buyback contract from its first fill to
+# the payout (3-6 days), then 100% to sPENDLE 0x9999…4144 — a payout that arrives staked (pendle_buyback_paid_tokens,
+# dated the payday). Nothing is burned; nothing stays held after the payout.
+# =====================================================================================================================
+PENDLE_BUYBACK_CHAIN = {
+    "project": "Pendle", "chain": "ethereum",
+    "contract": "0x9e08C5499f953C6297A7755BcBcEd383b606896b",       # Pendle docs (sPENDLE.md), R20 research 2026-11-23
+    "token": "0x808507121B80c02388fAd14726482e061B8da827",          # PENDLE on Ethereum (fetch/pendle_latent.py)
+    # every one of the 1,632 inflows 2026-02-08..2026-11-21 came from Pendle's Router V4 (read 2026-11-24)
+    "routers": ("0x888888888889758F76e7103c6CbF23ABbF58F946",),
+    "payees": ("0x999999999991E178D52Cd95AFd4b00d066664144",),       # sPENDLE (contracts.spendle)
+    "from_block": 24_405_765, "first_day": "2026-02-07",              # the contract's first event (its deployment)
+    "chunk_blocks": 1_000_000,                                        # config.LOG_RPC: tenderly serves 1,000,000 a call
+    "confirmations": 20, "budget_s": 100,
+    "metric": "pendle_buyback_bought_tokens", "paid_metric": "pendle_buyback_paid_tokens",
+    "api_url": "https://api-v2.pendle.finance/core/v1/spendle/data", "epoch_tol_tokens": 2.0,
+    "read_2026_11_24": {"payouts": 21, "paid_tokens": 3_290_528.08, "api_tokens": 3_301_919.67, "api_epochs": 22,
+                        "within_2": 19, "differ": {"2026-01-29": -4_405.94, "2026-02-24": -6_992.00},
+                        "last_payout": ("2026-11-21", 110_966.35)},
+}
+METRICS["pendle_buyback_bought_tokens"] = {
+    "label": "PENDLE bought by Pendle's buyback contract 0x9e08C549… (received from Pendle's router), per UTC day — 0 on "
+             "a day with no purchase (R21)", "kind": "flow", "unit": "tokens", "archetypes": [3], "tiers": [2],
+    "sanity_min": 0, "sanity_max": 1e8, "only_projects": ("Pendle",)}
+METRICS["pendle_buyback_paid_tokens"] = {
+    "label": "PENDLE paid by Pendle's buyback contract to sPENDLE (arrives staked), per UTC day — 0 on a day with no "
+             "payout (R21)", "kind": "flow", "unit": "tokens", "archetypes": [3], "tiers": [2],
+    "sanity_min": 0, "sanity_max": 1e8, "only_projects": ("Pendle",)}
+# THE BUYBACK SERIES: the contract's daily purchases (build_workbook._chain_buyback_views) wherever they are stored; the
+# per-epoch spread (G11 B9) only where they are not. The cross-check: DefiLlama's OWN holders revenue / same-day price
+# (it had become Pendle's epoch view of it after D4-5), from sPENDLE's first epoch (2026-01-29; before it fees went to
+# vePENDLE voters — R20 research), held against Pendle's per-epoch amounts by Credibility in_buyback (tolerance 25%,
+# unchanged).
+MEASURED_BUYBACK["Pendle"].update({
+    "chain_metric": "pendle_buyback_bought_tokens", "chain_paid_metric": "pendle_buyback_paid_tokens",
+    "chain_label": "Pendle's buyback contract 0x9e08C549… on Ethereum",
+    "cross_check_metric": "holders_revenue_usd_defillama", "cross_check_from": "2026-01-29",
+    "decided_r21": "Jake 2026-11-25, item 5"})
+_R21_BB_POINTS = ("pendle_api:sPendleHistoricalData.buybackAmounts", "pendle_buyback_chain:ethereum")
+PROJECT_BY_NAME["Pendle"].setdefault("series_handover", {})["actual_buyback_tokens"] = {
+    "ordered_points": _R21_BB_POINTS,
+    "why": "R21 (Jake 2026-11-25, item 5): Pendle's own per-epoch buyback, first as the API's per-epoch amount spread "
+           "over the epoch's 14 days, then as its buyback contract's purchases, dated the day bought",
+    "composition_change": "the same purchases (per epoch they equal the API's amount within 2 PENDLE in 19 of 21 epochs), "
+                          "dated 13-17 days later: on the day bought, not across the fortnight whose fees paid for them",
+    "declared": "2026-11-25"}
+PROJECT_BY_NAME["Pendle"]["series_handover"]["actual_buyback_usd_derived"] = {
+    "ordered_points": ("derived:=holders_revenue_usd", "derived:=holders_revenue_usd_defillama"),
+    "why": "R21: the cross-check is DefiLlama's own holders revenue (holders_revenue_usd_defillama), not Pendle's epoch "
+           "view of it", "composition_change": "DefiLlama pendle-v2 dailyHoldersRevenue, as before D4-5",
+    "declared": "2026-11-25"}
+# The retired fetch-time derivation (it logged "it IS holders_revenue_usd, which produced nothing this run" every run and
+# described "no buyback contract is published"): withdrawn. Its 179 stored rows (2026-05-01..10-26) stay in the store
+# and are read by nothing the buyback cells show (the views above replace both columns).
+# Kept here as they were (the generic restatement machinery's tests re-instate them).
+_R21_PENDLE_RETIRED = {_k: PROJECT_BY_NAME["Pendle"].pop(_k, None)
+                       for _k in ("metric_restatement", "buyback_tokens_from_usd")}
+PROJECT_BY_NAME["Pendle"]["deployment_registry"].update({
+    "buyback_contract": "0x9e08C5499f953C6297A7755BcBcEd383b606896b",
+    "buyback_contract_status": "NAMED IN PENDLE'S DOCS (sPENDLE.md; R20 research 2026-11-23) and read on chain "
+                               "2026-11-24: buys PENDLE through the router, pays each epoch to sPENDLE (R21)"})
+
+# ----- BERACHAIN: A NAMED GAP WITH A TIME CAP (Jake 2026-11-25: "First measure Berachain's share of Pendle's activity. If
+# it's small, make it a named gap with a time cap"). MEASURED 2026-11-24 — it is small:
+#   TVL      DefiLlama protocol/pendle currentChainTvls: Berachain $728 of $907,741,562 (0.0001%)
+#   fees     DefiLlama dailyFees by chain, 90 days to 2026-11-24: Berachain $170.92 of $1,612,870 (0.01%)
+#   PENDLE emissions (gauge payouts on file, export 2026-11-18): Berachain 0 in Q0, Q-1, Q-2 (none since 2026-01-26); the
+#            unread history is 590.18 PENDLE in Q-3 (0.07% of that quarter's 884,494 + 590) and 18,126.19 in Q-4
+#            (1.47% of 1,215,178 + 18,126) — R20.P1
+# So the seed stops after seed_cap_min and names what it left unread; the daily run's scan keeps its tier budget and its
+# gap row carries the same name. Routes (fetch/chain.dated_logs): the keyed Alchemy endpoint is asked FIRST whenever its
+# plan serves the range (ALCHEMY_GETLOGS_MAX_RANGE in .env: the free plan serves 10 blocks a call, so the repair's
+# 10,000-block ranges go to rpc.berachain.com), and serves the block times and balanceOf reads; a public endpoint's
+# HTTP 429 is waited out (2, 4, 8, 16 s) instead of being asked again at once.
+PENDLE_BERACHAIN_GAP = {
+    "seed_cap_min": 10,     # R20 read the whole gauge history from rpc.berachain.com in 418 s (5,844 calls) unthrottled
+    "measured_on": "2026-11-24",
+    "share": "TVL $728 of $907.7M (0.0001%); fees $170.92 of $1.61M over 90 days (0.01%); PENDLE emissions 0 since "
+             "2026-01-26",
+    "worth": "Q-3 lacks 590.18 and Q-4 18,126.19 PENDLE of gauge emissions (0.07% and 1.47% of those quarters'); Q0..Q-2 "
+             "unaffected",
+}
+NAMED_SCAN_GAPS = {
+    "gauge_pendle_out_berachain": (
+        f"Pendle's Berachain gauge history (R21, measured {PENDLE_BERACHAIN_GAP['measured_on']}): "
+        f"{PENDLE_BERACHAIN_GAP['share']} — {PENDLE_BERACHAIN_GAP['worth']}. Time-capped "
+        f"(--seed pendle_berachain stops after {PENDLE_BERACHAIN_GAP['seed_cap_min']} min)."),
+}

@@ -8724,6 +8724,7 @@ def aggregate(long: pd.DataFrame, fetch_status: pd.DataFrame, asof: pd.Timestamp
     _restatement_views(groups)
     _buyback_tokens_from_usd_views(groups)
     _measured_buyback_views(groups)   # G11 B9: Pendle's buyback = its own per-epoch distribution; derived = cross-check
+    _chain_buyback_views(groups)      # R21: Pendle's buyback contract, dated the day bought; DefiLlama the cross-check
     _buyback_leg_views(groups)    # R14: a declared purchase leg joins the buyback (Ether.fi's programme, to customers)
     _buyback_split_views(groups)  # AFTER every view that builds actual_buyback_* (retirement = burned + held)
     _burned_declared_zero_views(groups)   # R10.A1d: no burn exists (confirmed) -> the burned buyback is a declared 0
@@ -12683,6 +12684,62 @@ def _measured_buyback_views(groups: dict) -> None:
                 groups.pop((name, am), None)
             else:
                 groups[(name, am)] = _as_stored(ag, ag.columns)
+
+
+def _chain_buyback_views(groups: dict) -> None:
+    """R21 (Jake 2026-11-25, item 5 — config.MEASURED_BUYBACK chain_metric; Pendle): THE BUYBACK READ FROM THE PROJECT'S
+    OWN BUYBACK CONTRACT, DATED THE DAY IT WAS BOUGHT. Where the daily on-chain series (fetch/pendle_buyback_chain.py: every
+    complete day since the contract's first block, a measured 0 where nothing was bought) is stored, it IS
+    actual_buyback_tokens — it replaces the per-epoch spread over the whole history (the contract bought every epoch;
+    per epoch its purchases equal the payout to sPENDLE and Pendle's buybackAmounts), so the series is current to
+    yesterday instead of ending at the last published epoch's 14th day. actual_buyback_usd = tokens x the same-day price.
+    Not stored: the per-epoch spread stands (_measured_buyback_views). The CROSS-CHECK is DefiLlama's own holders revenue:
+    actual_buyback_usd_derived = holders_revenue_usd_defillama (else the stored rows of holders_revenue_usd whose
+    measuring point is DefiLlama) from the declared date, actual_buyback_tokens_derived = that $ / same-day price."""
+    for name, spec in (getattr(config, "MEASURED_BUYBACK", {}) or {}).items():
+        if not spec.get("chain_metric") or name not in {p["name"] for p in scoped_projects()}:
+            continue
+        px = groups.get((name, "price_usd"))
+        price_on = None
+        if px is not None and not px.empty:
+            price_on = px.assign(date=pd.to_datetime(px["date"]).dt.normalize()).drop_duplicates("date", keep="last") \
+                .set_index("date")["value"].astype(float)
+            price_on = price_on[price_on > 0]
+        # the cross-check first: DefiLlama's own holders revenue, never Pendle's epoch view of it
+        dl = groups.get((name, spec.get("cross_check_metric") or ""))
+        if dl is None or dl.empty:
+            hr = groups.get((name, "holders_revenue_usd"))
+            dl = None if hr is None or hr.empty else hr[hr["source"].astype(str).map(
+                lambda s: _measuring_point(s) == "defillama")]
+        if dl is not None and not dl.empty:
+            d = dl.assign(date=pd.to_datetime(dl["date"]).dt.normalize())
+            if spec.get("cross_check_from"):
+                d = d[d["date"] >= pd.Timestamp(spec["cross_check_from"])]
+            if not d.empty:
+                usd = d.assign(metric="actual_buyback_usd_derived", source=f"derived:={spec.get('cross_check_metric') or 'holders_revenue_usd'}")
+                groups[(name, "actual_buyback_usd_derived")] = _as_stored(usd, dl.columns)
+                if price_on is not None:
+                    tk = usd[usd["date"].isin(price_on.index)].copy()
+                    tk["value"] = tk["value"].astype(float).values / price_on.loc[tk["date"]].values
+                    tk["metric"], tk["source"] = "actual_buyback_tokens_derived", DERIVED_USD_OVER_PRICE
+                    if not tk.empty:
+                        groups[(name, "actual_buyback_tokens_derived")] = _as_stored(tk, dl.columns)
+        ch = groups.get((name, spec["chain_metric"]))
+        if ch is None or ch.empty:
+            continue
+        c = (ch.assign(date=pd.to_datetime(ch["date"]).dt.normalize()).drop_duplicates("date", keep="last")
+             .sort_values("date"))
+        src = (f"{str(c['source'].iloc[-1])}[{spec.get('chain_label', 'the buyback contract')}: PENDLE bought, dated "
+               f"the day bought; a day with no purchase a measured 0; cross-check actual_buyback_tokens_derived]")[:500]
+        tok = c.assign(metric="actual_buyback_tokens", source=src, tier=2)
+        groups[(name, "actual_buyback_tokens")] = _as_stored(tok, ch.columns)
+        if price_on is None:
+            groups.pop((name, "actual_buyback_usd"), None)
+            continue
+        usd = tok[tok["date"].isin(price_on.index)].copy()
+        usd["value"] = usd["value"].astype(float).values * price_on.loc[usd["date"]].values
+        usd["metric"], usd["source"] = "actual_buyback_usd", "derived:tokens*price"
+        groups[(name, "actual_buyback_usd")] = _as_stored(usd, ch.columns)
 
 
 BUYBACK_LEG_STATE: dict = {}   # project -> what _buyback_leg_views did this build (days joined, days left out)

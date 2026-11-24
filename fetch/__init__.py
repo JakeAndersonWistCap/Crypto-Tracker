@@ -56,6 +56,7 @@ from .etherscan_supply import EtherscanSupply
 from .balance_flow import BalanceFlow
 from .reward_vault import RewardVaultRates
 from .pendle_epochs import PendleEpochs
+from .pendle_buyback_chain import PendleBuybackChain
 from .ultrasound import UltrasoundHistory
 from .artemis import ArtemisCSV
 from .plume_settlement import PlumeSettlement
@@ -248,6 +249,8 @@ TIER_ORDER = [
     ("aethir_page", 3, lambda ctx: AethirPages()),
     # Pendle's per-epoch sPENDLE distributions and its own APR (spendle/data, 2026-09-29).
     ("pendle_api", 3, lambda ctx: PendleEpochs()),
+    # R21: Pendle's buyback contract on Ethereum — PENDLE bought, dated the day bought; the primary buyback.
+    ("pendle_buyback_chain", 2, lambda ctx: PendleBuybackChain()),
     # Ethereum's daily supply and staked-ETH history, one call (ultrasound.money API, 2026-09-30).
     ("ultrasound", 3, lambda ctx: UltrasoundHistory()),
     # Artemis settlement volume, from Jake's CSV exports in the repo root, read at run time (never committed).
@@ -2155,6 +2158,7 @@ TIER_BUDGET_S = {
     # next run from .cache/boros/state.json — the first read of 232 markets takes 4 runs, a day's top-up ~40 exports
     "boros": 480,
     "pendle_maturity": 150,
+    "pendle_buyback_chain": 120,      # R21: ~6 eth_getLogs (1M blocks each) + one balanceOf; stops itself at 100 s
     "ccip_value": 330,
     # R20 (Jake 2026-11-24: "tokenjar timed out again — the work doesn't fit 300s; give it the time it needs"): one day
     # on the twelve chains measured 870 calls / 231 s keyless, so 300 s held barely one day and nothing was stored when

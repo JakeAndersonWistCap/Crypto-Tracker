@@ -191,6 +191,8 @@ class LogScan:
 
     unbounded = False               # defaults for an instance built without __init__ (tests); __init__ sets both
     _scan_deadline = None
+    cap_s = None                    # R21: a seed's hard time cap (seconds), set by __init__
+    _cap_deadline = None
 
     def _share(self, want: float, reserve: float = 0.0) -> float:
         """`want` seconds, capped at what is left of this scan's share of the tier's budget less `reserve` (G4 item 1)."""
@@ -201,7 +203,7 @@ class LogScan:
 
     def __init__(self, explorer: ExplorerLogs | None = None, reader=None,
                  cache: LogCache | None = None, unbounded: bool = False, own_tier: str | None = None,
-                 last_dates: dict | None = None):
+                 last_dates: dict | None = None, cap_s: float | None = None):
         # own_tier: run ONLY the scans declaring that tier (Pendle's gauge scan, Jake's run 2026-10-08 11:27: a long
         # first seed starved the explorer tier into its 300s timeout); without it, those scans are skipped here.
         self.own_tier = own_tier
@@ -212,6 +214,11 @@ class LogScan:
         # unbounded: no per-scan budget — `token_metrics.py --seed geodnet` (2026-09-28) finishes
         # a first read in one sitting instead of 120s a run.
         self.unbounded = unbounded
+        # R21 (Jake 2026-11-25, Pendle's Berachain seed: 48 minutes for 99 rows on a public RPC that answered 1,130 HTTP
+        # 429s): a TIME CAP on an otherwise unbounded seed. Every chain read and explorer page stops at it; the repair's
+        # state is saved after each whole range, so what is unread is named and resumes on the next seed or run.
+        self.cap_s = cap_s
+        self._cap_deadline = None
         self.explorer = explorer or ExplorerLogs()
         self.cache = cache or LogCache()
         if reader is None:
@@ -298,6 +305,9 @@ class LogScan:
 
     def run(self, projects: list[dict], window_days, out):
         own = getattr(self, "own_tier", None)
+        if getattr(self, "cap_s", None):
+            import time as _t
+            self._cap_deadline = _t.monotonic() + float(self.cap_s)
         todo = [(p, spec) for p in projects for spec in p.get("log_scans") or [] if spec.get("own_tier") == own]
         # A DECLARED 0 IS WRITTEN, NOT READ (Pendle Optimism, Jake's run on ab3c7fe 2026-10-11): first, so a timed-out
         # tier cannot gap it, and never planned as a read
@@ -598,8 +608,9 @@ class LogScan:
         # share, the chain reads carry its deadline, and a range cut short is read again next run (state is saved after
         # each whole range).
         first_pass = True                          # at least one range a run while the share allows, so it advances
-        scan_dl = None if self.unbounded else self._scan_deadline
-        while state["next"] <= state["to"] and (self.unbounded or (
+        scan_dl = getattr(self, "_cap_deadline", None) if self.unbounded else self._scan_deadline
+        while state["next"] <= state["to"] and ((self.unbounded and (scan_dl is None or time.monotonic() < scan_dl)) or (
+                not self.unbounded and
                 (first_pass or time.monotonic() - t0 < budget) and (scan_dl is None or time.monotonic() < scan_dl))):
             first_pass = False
             lo = state["next"]
@@ -706,6 +717,9 @@ class LogScan:
         clear, budget = getattr(self.explorer, "clear_budget", None), getattr(self.explorer, "start_budget", None)
         if clear:
             clear()
+        if budget and self.unbounded and getattr(self, "_cap_deadline", None):
+            import time as _t
+            budget(max(1.0, self._cap_deadline - _t.monotonic()))          # R21: the seed's time cap
         if budget and not self.unbounded:
             left = self._share(float(spec.get("window_budget_s") or WINDOW_BUDGET_S))
             if left < WINDOW_FLOOR_S:
@@ -1153,6 +1167,9 @@ class LogScan:
         asked_from: list[int] = []       # the first block each stream asked for (after its cursor; P4-Q3 names it)
         # ONE 120s budget for the whole scan, both providers included (config.EXPLORER_SCAN_BUDGET_S).
         budget = getattr(self.explorer, "start_budget", None)
+        if budget and self.unbounded and getattr(self, "_cap_deadline", None):
+            import time as _t
+            budget(max(1.0, self._cap_deadline - _t.monotonic()))          # R21: the seed's time cap
         if budget and not self.unbounded:
             budget(self._share(float(spec.get("scan_budget_s") or config.EXPLORER_SCAN_BUDGET_S), WINDOW_FLOOR_S
                                if spec.get("window_days") else 0.0))
@@ -1343,7 +1360,11 @@ class LogScan:
                         reason=(f"the {key} scan is INCOMPLETE OR WRONG and was not stored: for "
                                 f"{h}, sum(in) - sum(out) = {net} wei but balanceOf at the same "
                                 f"block ({to_block:,}) = {bal} wei — {bal - net} wei unaccounted "
-                                f"for. Served by {via}."),
+                                f"for. Served by {via}."
+                                # R21: a declared NAMED GAP (config.NAMED_SCAN_GAPS: Pendle's Berachain gauge history —
+                                # small, time-capped) says what stays unread and what it is worth
+                                + (f" NAMED GAP: {config.NAMED_SCAN_GAPS[key]}"
+                                   if key in (getattr(config, "NAMED_SCAN_GAPS", {}) or {}) else "")),
                         tiers_attempted="2",
                         suggestion=("A difference means a page was dropped, the explorer had not "
                                     "indexed to the pinned block, or the token moves balances "

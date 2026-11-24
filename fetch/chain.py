@@ -1061,6 +1061,30 @@ class ChainReader:
             return [], attempts
         raise RuntimeError("block " + f"{block:,} could not be read from the chain: " + "; ".join(attempts))
 
+    # R21 (Jake 2026-11-25: the Berachain seed met 1,130 HTTP 429s from rpc.berachain.com and kept asking): a RATE LIMIT
+    # is waited out — the same endpoint, the same range, after 2, 4, 8, 16 s — before the next endpoint is asked; never
+    # past a caller's deadline. Any other error goes on to the next endpoint at once, as before.
+    LOGS_RATE_LIMITED = ("429", "too many requests", "rate limit", "rate-limit")
+    LOGS_BACKOFF_S = (2, 4, 8, 16)
+
+    def _logs_with_backoff(self, chain: str, url: str, flt: dict, left, deadline):
+        waits = list(self.LOGS_BACKOFF_S)
+        while True:
+            try:
+                return list(self.__dict__.setdefault("_w3_by_url", {}).get(url) or self.make_web3(
+                    chain, url, 60 if left is None else max(5, min(60, int(left)))).eth.get_logs(flt))
+            except Exception as e:  # noqa: BLE001
+                msg = str(self.error_detail(e)).lower()
+                if not waits or not any(x in msg for x in self.LOGS_RATE_LIMITED):
+                    raise
+                wait = waits.pop(0)
+                if deadline is not None and time.monotonic() + wait > deadline - 5:
+                    raise
+                log.info("chain %s: %s rate-limited eth_getLogs — waiting %ds before asking it again", chain,
+                         rpc_host(url), wait)
+                time.sleep(wait)
+                left = None if deadline is None else deadline - time.monotonic()
+
     def dated_logs(self, chain: str, address: str, topics: list, lo: int, hi: int, chunk: int,
                    trace: list, deadline: float | None = None) -> tuple[list, int]:
         """(logs, last block covered): Transfer logs of `address` in [lo, hi] FROM THE CHAIN, each DATED (run review
@@ -1100,9 +1124,7 @@ class ChainReader:
                 if left is not None and left < 5:
                     raise TimeoutError(f"deadline reached before blocks {lo:,}..{upper:,} on {rpc_host(u)}")
                 try:
-                    got = list(self.__dict__.setdefault("_w3_by_url", {}).get(u) or self.make_web3(
-                        chain, u, 60 if left is None else max(5, min(60, int(left))))
-                               .eth.get_logs(flt))
+                    got = self._logs_with_backoff(chain, u, flt, left, deadline)
                 except Exception as e:  # noqa: BLE001
                     msg = redact_urls(self.error_detail(e))[:160]
                     said.append(f"{rpc_host(u)}: {msg}")
