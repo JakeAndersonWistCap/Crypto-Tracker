@@ -16,7 +16,7 @@ def test_fdv_row_is_judged_by_price_and_total_supply_with_coingecko_beside():
     assert config.CREDIBILITY_XREF["coinbase_product"].get("Uniswap")
     other = next(n for n in config.CREDIBILITY_PROJECTS if not config.CREDIBILITY_XREF["coinbase_product"].get(n))
     spec_o = cred.wiring_inputs(other, {f"{other}|fdv_usd_coingecko": {"now": 1.0e9}})["in_fdv_coingecko"]
-    assert spec_o["inputs"] == ("in_price_llama", "in_total_supply_coingecko")
+    assert spec_o["inputs"] == ("in_price_onchain", "in_total_supply_coingecko")   # R21: was in_price_llama
     out = cred.build_rows([], {**rows, "Uniswap|fdv_usd": {"now": 6.73e9, "latest_date": "2026-10-13"}},
                           pd.DataFrame(columns=["date", "project", "metric", "value", "source"]),
                           pd.Timestamp("2026-10-14"), projects={"Uniswap"})

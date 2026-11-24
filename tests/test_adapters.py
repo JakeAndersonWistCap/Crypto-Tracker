@@ -24193,9 +24193,9 @@ def test_xref_coinbase_candles_and_lido_apr(tmp_path):
     assert any("LINK-USD not listed on Coinbase Exchange" in e.message for e in out.log)
     # DefiLlama by the token's verified address; a point far from 00:00 is dropped; a native coin is
     # keyed coingecko: and said to be CoinGecko's own price
-    fl = f[(f.metric == "price_usd_llama") & (f.project == "Fluid")]
-    assert list(fl["value"]) == [2.15] and fl["source"].iloc[0] == \
-        "defillama_coins:ethereum:0x6f40d4a6237c257fff2db00fa0510deeecd303eb"
+    # R21 (Jake 2026-11-25): coins.llama.fi is out of the price cross-check — no price_usd_llama read, no call
+    # (was: Fluid's 2.15 at its verified address); the on-chain tier (fetch/price_onchain.py) is the second source
+    assert f[f.metric == "price_usd_llama"].empty and not any("llama" in u for u in http.calls)
     assert CrossRefs.llama_key(config.PROJECT_BY_NAME["Hyperliquid"]) == ("coingecko:hyperliquid", False)
     out2 = FetchOutput()
     x.run([config.PROJECT_BY_NAME["Chainlink"]], 30, out2)
@@ -27824,10 +27824,11 @@ def test_same_source_rows_carry_their_signoff_label_and_native_coin_prices_say_w
     # Pendle's a3 is independent since Jake's run 2026-10-08 (his epoch reading), so it carries no fresh_label
     assert config.CREDIBILITY["Pendle"]["a3_protocol_yield"]["inputs"] == ("in_epoch_apr", "in_epoch_reproduction", "in_epoch_mean",
                                                              "in_epochs_first_party")
-    hl = cred.price_inputs("Hyperliquid")["in_price_llama"]["ref"]
-    eth = cred.price_inputs("Ethereum")["in_price_llama"]["ref"]
-    assert hl["same_source"] and hl["fresh_label"].startswith("DOCUMENTED LIMITATION")
-    assert eth["fresh_label"].startswith("N/A (relay of CoinGecko")
+    # R21: DefiLlama's relay row is gone; HYPE is checked against HyperCore's own spot book (independent), Ethereum
+    # against Coinbase only (was: the relay as a DOCUMENTED LIMITATION / N/A row)
+    hl = cred.price_inputs("Hyperliquid")["in_price_onchain"]["ref"]
+    assert not hl.get("same_source") and "HyperCore spot" in hl["source"]
+    assert set(cred.price_inputs("Ethereum")) == {"in_price"}
 
 
 def test_hyperliquid_release_is_the_first_party_circulating_change_plus_the_af_buyback():
