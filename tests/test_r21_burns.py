@@ -339,3 +339,13 @@ def test_the_spec_records_the_round():
     spec = (ROOT / "SPEC.md").read_text(encoding="utf-8")
     assert spec.index("### Round 21 — burns") < spec.index("### Round 20")
     assert json.dumps(config.ONE_OFF_NAMED["Sky"][0]["from"]) == '"2026-11-19"'
+
+
+def test_done_check_reads_a_decision_5_unranked_as_decided():
+    import datetime
+
+    import done_check
+    why = ("Unranked — off: the fee switch is off. A paused or off programme is shown with its label and not ranked "
+           "(Jake 2026-11-25, decision 5); its key shows 0 only where the data says 0.")
+    assert done_check.classify("unranked", why, datetime.date(2026, 11, 25))[0] is True
+    assert done_check.classify("unranked", "no measured key", datetime.date(2026, 11, 25))[0] is False
