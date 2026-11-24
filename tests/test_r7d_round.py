@@ -22,7 +22,8 @@ def test_a1_a_later_move_is_appended_and_the_latest_is_judged():
         for k in ("reader|A3 Revenue Buyback|Rank in A3", "reader|Summary|Rank in archetype"):
             d = config.FROZEN_MOVES[p][k]
             assert d["to"] == first and d["date"] == "2026-11-11" and d["why"].startswith("PR3B.")   # as declared then
-            assert [t["to"] for t in d["then"]] == [latest] and d["then"][-1]["date"] == "2026-11-16"
+            # R20: later rounds append their own steps after R7C's (was: the "then" list holds exactly [latest])
+            assert d["then"][0]["to"] == latest and d["then"][0]["date"] == "2026-11-16"
     decl = {"k": {"date": "2026-11-11", "to": 3.0, "why": "first",
                   "then": [{"date": "2026-11-16", "to": 4.0, "why": "later"}]}}
     assert pf.undeclared({"k": 2.0}, {"k": 4.0}, decl) == []                 # the latest declared value

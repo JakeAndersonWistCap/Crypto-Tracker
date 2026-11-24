@@ -27,7 +27,8 @@ from shared_build import plain_build  # noqa: E402
 
 CODES = set(reader.CODES)
 # P4-Q8: the one reader - Highlights first, then the tabs in the look's order (About after Charts), hidden sheets last
-READER_TABS = ["Highlights", "Summary", "A1 Infrastructure", "A2 Coordination", "A3 Revenue Buyback",
+# R17.D: the Leaderboard is the first sheet (was: READER_TABS began with "Highlights")
+READER_TABS = ["Leaderboard", "Highlights", "Summary", "A1 Infrastructure", "A2 Coordination", "A3 Revenue Buyback",
                "A4 Permanent Burn", "Comparison", "Business", "Project notes", "Charts", "About", "Definitions",
                "_data", "_series"]
 
@@ -109,11 +110,13 @@ def test_p1_2_a_value_cell_is_a_number_or_one_short_code(built):
                 continue
             if isinstance(v, (int, float)):
                 continue
-            assert v in CODES, (tab, c.coordinate, h, v)
+            # R20: "history filling - forms on <date>" is the code with its forming day (was: v in CODES)
+            assert v in CODES or v.startswith("history filling - "), (tab, c.coordinate, h, v)
             assert c.comment is not None and c.comment.text, (tab, c.coordinate)
             # P4-Q8: the reader carries the look - a code is grey italic centred (P2g-4), not its P1 colour
             assert c.font.color.rgb.endswith(reader_look.GREY) and c.font.i, (tab, c.coordinate)
-            assert c.alignment.horizontal == "center", (tab, c.coordinate)
+            # R20: "history filling - forms on <date>" is a sentence, not a short code: it keeps its column's alignment
+            assert c.alignment.horizontal == "center" or v.startswith("history filling - "), (tab, c.coordinate)
 
 
 def test_p1_2_codes_and_plain_words():
@@ -236,7 +239,9 @@ def test_p1_6_the_a3_key_is_the_dilution_ratio_on_the_burned_buyback(built):
     X = xlcalc.Workbook(a)
     ws = a["A3 Revenue Buyback"]
     hdr = {ws.cell(4, c).value: c for c in range(1, ws.max_column + 1)}
-    kc, dc, nc = hdr[bw.A3_KEY_HEAD], hdr[bw.RETIRE_VS_DILUTION_HEAD], hdr[bw.RETIRE_VS_DILUTION_NOW_HEAD]
+    # R20: A3's key is revenue to holders ÷ new supply ($); the burned ÷ (emissions + unlocks) figure this test holds
+    # against retirement ÷ dilution is kept as a reference column (bw.A3_BURNED_HEAD; was bw.A3_KEY_HEAD)
+    kc, dc, nc = hdr[bw.A3_BURNED_HEAD], hdr[bw.RETIRE_VS_DILUTION_HEAD], hdr[bw.RETIRE_VS_DILUTION_NOW_HEAD]
     checked = equal = 0
     for rr in range(5, ws.max_row + 1):
         name = ws.cell(rr, 1).value
@@ -527,7 +532,8 @@ def test_p2a_c_about_describes_the_file_as_it_is(built, monkeypatch):
     r = openpyxl.load_workbook(built["reader"])
     text = "\n".join(str(c.value) for c in r["About"]["A"] if c.value)
     assert "Coming next" not in text and "Stage" not in text
-    for k in ("A1 Infrastructure", "A2 Coordination", "A3 Revenue buyback", "A4 Permanent burn", "Summary!B2",
+    # R20: A3's display name is "A3 Revenue to holders" (was "A3 Revenue buyback")
+    for k in ("A1 Infrastructure", "A2 Coordination", reader.ARCHETYPE_NAMES[3], "A4 Permanent burn", "Summary!B2",
               "custom", "parked", "token_metrics_audit.xlsx", "Data as of"):
         assert k in text, k
     # R13: the count is taken ON THE BUILD'S AS-OF DAY. reader.parked_reason caches Aerodrome's park reason for the build
@@ -563,6 +569,11 @@ def test_p2b_3_hyperliquid_a4_key_is_blocked_with_each_legs_covered_days(built):
     # P2b-3 (Jake 2026-10-27): the common-days ratio is NOT built; the cell says blocked and counts the covered days.
     ws = openpyxl.load_workbook(built["reader"])["A4 Permanent Burn"]
     rows, kc = _rows_of(ws), _col_of(ws, "Burn ÷ issuance (x)")
+    if "Hyperliquid" not in rows:
+        # R20 (Jake's tags): Hyperliquid is off A4 (its conditional +A4 tag is OFF), so it has no A4 key cell to judge;
+        # the check below stands for the day the tag is switched on
+        assert 4 not in config.PROJECT_BY_NAME["Hyperliquid"]["archetypes"]
+        return
     cell = ws.cell(rows["Hyperliquid"], kc)
     # R7.C2: with option C in force the issuance leg is option C's, which waits on the unlock release the dumps do not
     # hold — still never a ratio over a common window: blocked, naming the leg(s) short of the window
@@ -590,7 +601,10 @@ def test_p2b_4_a1_interim_fees_over_issuance_beside_the_unchanged_rank_key(built
     ws = r["A1 Infrastructure"]
     hdr = [ws.cell(4, c).value for c in range(1, ws.max_column + 1)]
     i = hdr.index("Fees ÷ issuance, Q0 (interim)")
-    assert hdr[i - 2:i] == ["Settlement per token, 1-yr change", "Rank in A1"]   # the key stays the rank key
+    # the key stays the rank key. R20: the "6 months on 6 (interim)" column sits between the rank and this one (was:
+    # hdr[i - 2:i] == [key, rank]) — the order kept: key, rank, then the interim columns
+    k = hdr.index("Settlement per token, 1-yr change")
+    assert hdr[k + 1] == "Rank in A1" and k + 1 < i
     rows = _rows_of(ws)
     assert rows
     for name, rr in rows.items():
@@ -645,8 +659,8 @@ def test_p2c_8_about_coverage_counts_equal_the_summary(built):
     rk = _col_of(s, "Rank in archetype")
     kk = _col_of(s, "Archetype key")
     sections = reader._summary_sections(s)
-    assert [x[0] for x in sections] == ["A1 Infrastructure", "A2 Coordination", "A3 Revenue Buyback",
-                                        "A4 Permanent Burn"]
+    # R20: the display names ("A3 Revenue to holders", "A4 Permanent burn"; were the sheet titles)
+    assert [x[0] for x in sections] == [reader.ARCHETYPE_NAMES[i] for i in (1, 2, 3, 4)]
     totals = [0] * 4
     for i, (label, lo, hi) in enumerate(sections):
         ranks = [X.value("Summary", rr, rk) for rr in range(lo, hi + 1)]

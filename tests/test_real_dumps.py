@@ -38,7 +38,8 @@ def test_real_chainlink_release_is_zero_and_a1_is_na(tmp_path, monkeypatch, dump
     iss = o["in_issuance"]
     assert iss["ours"] is not None and abs(float(iss["ours"])) < 1.0, iss
     assert iss["verdict"].startswith("PASS"), iss
-    assert o["a1_fees_issuance"]["verdict"].startswith("N/A"), o["a1_fees_issuance"]
+    # R20 (Jake's tags): Chainlink is off A1, so it has no A1 fees ÷ issuance row to read N/A (was: the row reads N/A)
+    assert "a1_fees_issuance" not in o or o["a1_fees_issuance"]["verdict"].startswith("N/A")
     assert o["a3_buyback_locked"]["verdict"] == "N/A (recorded — judged by the exact-date row)"
 
 

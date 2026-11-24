@@ -146,8 +146,9 @@ def test_chainlink_release_is_zero_when_the_only_step_is_wallets_added_to_the_se
     iss = o["in_issuance"]
     assert abs(float(iss["ours"])) < 1e-6 and iss["verdict"].startswith("PASS"), iss
     assert o["in_issuance_coingecko"]["verdict"] == "N/A (recorded, stepwise)"
-    a1 = o["a1_fees_issuance"]
-    assert a1["verdict"] == "N/A" and "LINK minted" in a1["note"], a1
+    # R20 (Jake's tags): Chainlink is off A1, so it has no A1 fees ÷ issuance row (was: the row reads N/A, "LINK minted")
+    a1 = o.get("a1_fees_issuance")
+    assert a1 is None or (a1["verdict"] == "N/A" and "LINK minted" in a1["note"]), a1
     assert o["a3_buyback_locked"]["verdict"] == "N/A (recorded — judged by the exact-date row)"
 
 

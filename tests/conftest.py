@@ -105,6 +105,7 @@ SHARED_PLAIN_BUILD_FILES = (
     "test_pr4c.py",
     "test_r7c_round.py",
     "test_r20_float.py",
+    "test_r20_arch.py",
 )
 SHARED_PLAIN_BUILD_GROUP = "shared_plain_build"
 

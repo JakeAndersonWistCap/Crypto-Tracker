@@ -233,8 +233,9 @@ def test_item5_cp_reads_one_true_reason(built):
     assert uni.value == "n/a — no staker yield exists (no UNI staking)"
     # every other project keeps its own reason (no declaration)
     c = _row_cells(cp, "Chainlink")
-    assert str(next(v for h, v in c.items() if h.startswith("SUBSIDY COVER")).value).startswith(
-        "n/a — no supply-side incentive (b) series on file")
+    # R18/R20: Chainlink has an outflow (b) now (node-operator payments), so its cell is a formula with its own reason
+    # (was: starts "n/a — no supply-side incentive (b) series on file"); what is held: it is not Uniswap's declaration
+    assert decl not in str(next(v for h, v in c.items() if h.startswith("SUBSIDY COVER")).value)
 
 
 def test_item5_flows_and_comparison_say_the_same(built):

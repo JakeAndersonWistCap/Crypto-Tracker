@@ -106,6 +106,8 @@ def test_uniswap_buying_pressure_is_a_by_design_code():
 
 
 def test_only_uniswap_is_given_the_code():
-    assert set(config.BUYING_PRESSURE_BY_DESIGN) == {"Uniswap"}
+    # R20 (Aethir, A3): Aethir's fee burn is a protocol burn — it buys nothing on the market either, so it carries
+    # the code too (was: only Uniswap)
+    assert set(config.BUYING_PRESSURE_BY_DESIGN) == {"Uniswap", "Aethir"}
     eth = _bp_cell(config.PROJECT_BY_NAME["Ethereum"])
     assert eth.startswith("n/a — no market buyback is measured"), "every other project's reason is unchanged"

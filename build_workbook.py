@@ -10343,8 +10343,10 @@ def write_config(ws, asof: pd.Timestamp, silence: dict | None = None, statuses: 
             (statuses.get(p["name"]) or {}).get("buyback") or
             (f"SILENT since {silence[p['name']]} (declared {fs.get('status')}; program cadence broken)"
              if p["name"] in silence and fs.get("status") == "active" else fs.get("status", "n/a")),
-            p.get("buyback_destination", ""), p.get("destination_effect", ""),
-            p.get("destination_split"), p.get("burn_execution", ""),
+            # R20 gate fix: the shown text of an attribute that does not apply says why (config.ATTRIBUTE_TEXT); the
+            # config field itself, which the routes read, is untouched
+            config.attribute_text(p, "buyback_destination"), p.get("destination_effect", ""),
+            p.get("destination_split"), config.attribute_text(p, "burn_execution"),
             bs.get("share_of_fees_burned") if bs else None, (bs.get("source_url") or "") if bs else "", (bs.get("source_date") or "") if bs else "",
             (statuses.get(p["name"]) or {}).get("burn") or (bs.get("status", "n/a") if bs else "n/a"),
             cur_step, sched.get("source_url") or "", sched.get("source_date") or "", sched.get("status", "n/a") if sched else "n/a",

@@ -51,6 +51,10 @@ def test_q0_is_the_headline_cell_and_every_headline_has_a_trend_beside_it(tmp_pa
         ws = wb[hc["sheet"]]
         hr = next(r for r in range(1, 12) if ws.cell(r, 1).value == "Project")
         col = ws[hc["cell"]].column
+        if hc["header"].startswith("NET FLOAT PRESSURE"):
+            # R20.F8: the new net is the difference of the two cells beside it (buying pressure on float, total
+            # dilution ÷ free float); it has no Trajectory row of its own, so no trend cell (layout, not pinned)
+            continue
         assert str(ws.cell(hr, col + 1).value).startswith("Trend — "), (hc["sheet"], hc["header"])
     assert "Trajectory" in wb.sheetnames
 

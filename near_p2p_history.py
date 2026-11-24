@@ -422,6 +422,8 @@ def main(argv=None) -> int:
 
 
 if __name__ == "__main__":
+    import progress                                    # stdout line-buffered when piped (2026-10-11)
+    progress.line_buffered()
     try:
         sys.stdout.reconfigure(encoding="utf-8")
     except (AttributeError, ValueError):

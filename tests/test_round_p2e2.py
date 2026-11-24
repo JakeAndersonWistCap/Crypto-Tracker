@@ -50,6 +50,11 @@ def _value(wb, cell):
     return wb["_data"][f"{m.group(1)}{m.group(2)}"].value if m else v
 
 
+def _is_code(v) -> bool:
+    """R20: "history filling - forms on <date>" is the code 'history filling' with its forming day."""
+    return v in reader.CODES or (isinstance(v, str) and v.startswith("history filling - "))
+
+
 def _heads(ws):
     return {ws.cell(4, c).value: c for c in range(1, ws.max_column + 1) if ws.cell(4, c).value}
 
@@ -99,7 +104,7 @@ def test_the_latest_quarter_is_the_key_cell(built, tab):
             assert isinstance(q, (int, float)), (tab, name, k, q)
             assert q == pytest.approx(k, rel=1e-9, abs=1e-12), (tab, name, k, q)
         else:
-            assert q == k and q in reader.CODES, (tab, name, k, q)
+            assert q == k and _is_code(q), (tab, name, k, q)       # R20: was `q in reader.CODES`
     assert numeric or tab == "A1 Infrastructure", tab       # A1's key needs two years of settlement history
 
 
@@ -112,7 +117,8 @@ def test_each_key_has_its_own_trajectory_row_and_q0_is_the_key_cell(built):
         assert mine, (tab, hid)
         assert all(t["verdict"].startswith("PASS") for t in mine), [(t["key"], t["verdict"]) for t in mine
                                                                    if not t["verdict"].startswith("PASS")]
-        assert all(str(t["header"]).startswith(("Customer revenue ÷ emissions value", "BURNED ÷ (EMISSIONS + UNLOCKS)",
+        # R20: A3's key row is REVENUE TO HOLDERS ÷ NEW SUPPLY (was BURNED ÷ (EMISSIONS + UNLOCKS))
+        assert all(str(t["header"]).startswith(("Customer revenue ÷ emissions value", "REVENUE TO HOLDERS ÷ NEW SUPPLY",
                                                 "BURN ÷ ISSUANCE")) for t in mine)
     a = openpyxl.load_workbook(built["audit"], read_only=True)
     ws = a["A3 Revenue Buyback"]
@@ -136,11 +142,13 @@ def test_quarters_the_key_cannot_form_read_its_code_and_reason_never_zero(built)
                     if t is not None:      # a number only where the key's own formula gives one, never 0 for unknown
                         assert t[("Q0", "Q-1", "Q-2", "Q-3")[i]] == pytest.approx(v), (tab, name, lab)
                     continue
-                assert v in reader.CODES, (tab, name, lab, v)
+                assert _is_code(v), (tab, name, lab, v)                # R20: was `v in reader.CODES`
                 assert cell.comment is not None and len(cell.comment.text) > 40, (tab, name, lab)
     # the fixture's own cases: Near's A3 key two quarters back is BLOCKED by unequal coverage (rule 9), said so
     ws = wb["A3 Revenue Buyback"]
-    c = ws.cell(_rows(ws)["Near"], _heads(ws)[f"{KEY_STEM['A3 Revenue Buyback']}, {reader.TRAJ_LABELS[2]}"])
+    # R20: A3's key is revenue to holders ÷ new supply; the fixture's unequal-coverage case is on the figure beside it,
+    # retired ÷ (emissions + unlocks) (was: the key's own column, burned ÷ (emissions + unlocks))
+    c = ws.cell(_rows(ws)["Near"], _heads(ws)[f"{OTHER_STEM['A3 Revenue Buyback']}, {reader.TRAJ_LABELS[2]}"])
     assert c.value == "blocked" and "unequal coverage" in c.comment.text
     # Plume's A1 key (settlement held from 2026-05-01): the key's own reason in every quarter — two years of history
     # wanting while the quarter's end is held, the quarter's end itself not held before that
@@ -148,8 +156,10 @@ def test_quarters_the_key_cannot_form_read_its_code_and_reason_never_zero(built)
     for i, lab in enumerate(reader.TRAJ_LABELS):
         c = ws.cell(_rows(ws)["Plume"], _heads(ws)[f"{KEY_STEM['A1 Infrastructure']}, {lab}"])
         want = "two years of history" if i < 2 else "the quarter's end"
-        assert c.value == "n/a" and want in c.comment.text and "held from 2026-05-01" in c.comment.text, \
-            (lab, c.comment.text)
+        # R20.A7: the latest quarter waits only on old history, so it reads "history filling - forms on <date>" (was
+        # "n/a" in every quarter); the reason is unchanged
+        assert (c.value == "n/a" or (i == 0 and str(c.value).startswith("history filling - "))) \
+            and want in c.comment.text and "held from 2026-05-01" in c.comment.text, (lab, c.value, c.comment.text)
 
 
 # ---- A1: the key's own function, its end moved back (no build) ----------------------------------------------------

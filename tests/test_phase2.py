@@ -63,10 +63,11 @@ def test_cp_on_the_real_aerodrome_dump(tmp_path, monkeypatch, dumps_20261009):
     # every retirement and dilution rate on both bases: same numerator, two denominators
     # alignment round C1: the veAERO rebase is its own line in (c) (PROPOSED), the gauge emissions (b); no (a)
     assert _get(o, "Dilution (a) security emissions (annualised) ÷ circ") in (None, "")
-    a_c, a_f = _get(o, "Dilution (c) demand-side incentives (annualised) ÷ circ"), _get(o, "Dilution (c) demand-side incentives (annualised) ÷ trad")
+    # R20.F9: the second base is headed "÷ free float" (was "÷ tradeable float")
+    a_c, a_f = _get(o, "Dilution (c) demand-side incentives (annualised) ÷ circ"), _get(o, "Dilution (c) demand-side incentives (annualised) ÷ free")
     assert a_c * circ == pytest.approx(a_f * flt) and a_c > 0
     r_c, r_f = _get(o, "Retirement rate (RETIRED buyback tokens, burned + held, annualised) ÷ circ"), \
-        _get(o, "Retirement rate (RETIRED buyback tokens, burned + held, annualised) ÷ trad")
+        _get(o, "Retirement rate (RETIRED buyback tokens, burned + held, annualised) ÷ free")
     assert r_c * circ == pytest.approx(r_f * flt)
     # LITMUS A: credited = the voter fees; the Foundation's buys are recorded beside it, equal to the flow demand
     assert config.holder_funding("Aerodrome", "2026-09-01")[0] == "treasury"

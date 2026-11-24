@@ -399,6 +399,29 @@ def _tier_note(project: dict, metric: str, scrape_entries: dict) -> tuple[str, s
         return ("the NEAR view_account read of lockup.near + contributors.near (fetch/near.py extra read) stored nothing "
                 "this run — until it does, NEAR's lockup-rule circulating falls back to NEAR's own figure",
                 "Check the Run Log for near_rpc (all-or-nothing: both accounts must answer).")
+    # ===== R20 gate fix: the R18 / R20 series whose reader is not a sources.yaml entry say which reader it is =====
+    if metric.startswith(("aero_leaf_fees_usd_", "aero_leaf_incentives_usd_", "aero_leaf_unpriced_count_")):
+        return ("Aero's staker revenue on a chain other than Base (fetch/aero_leaf.py, R20: one complete epoch per chain "
+                "— fees, incentives, the count of unpriced tokens; all or no row per chain-epoch) stored nothing this "
+                "run",
+                "Check the Run Log for aero_leaf: it names the chain-epochs still owed (the tier stops at its budget "
+                "and continues next run); the epochs since the merger come from `python archive_backfill.py --project "
+                "Aerodrome --run`.")
+    if metric == "gauge_caps_surplus_tokens":
+        return ("the Gauge Caps' unminted surplus (fetch/aero_v3.py, R20: Σ Voter.spendableSurplus over every chain "
+                "the Voter lists, at one block; all pots or no row) stored nothing this run — with no row nothing is "
+                "netted from the accrued issuance",
+                "Check the Run Log for aero_v3; the days since the cutover come from `python archive_backfill.py "
+                "--project Aerodrome --run`.")
+    if any(sp.get("metric") == metric for sp in project.get("defillama_sum_slugs") or ()):
+        sp = next(sp for sp in project["defillama_sum_slugs"] if sp.get("metric") == metric)
+        return (f"a sum of DefiLlama listings ({sp.get('parent')}: {sp.get('data_type')}, fetch/llama.py "
+                f"defillama_sum_slugs; {sp.get('why', '')}) stored nothing this run",
+                "Check the Run Log for defillama: the summed listings of this project.")
+    if metric == "insider_stake_principal_tokens":
+        return ("the issuer-side wallets' stake (fetch/reward_vault.py, R18: getStakerPrincipal on both staking pools "
+                "for every wallet on file, at one block; all or no row) stored nothing this run",
+                "Check the Run Log for reward_vault: it names the wallet or pool that did not answer.")
     if metric == "total_supply_coingecko":
         return ("CoinGecko's supply read (fetch/coingecko.py /coins/markets) stored no total this run — it is kept "
                 "beside the on-chain total (config.TOTAL_SUPPLY_ONCHAIN_FIRST) for the like-for-like circulating row",

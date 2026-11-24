@@ -150,6 +150,11 @@ SEL_TOTAL_SUPPLY = "0x18160ddd"    # keccak("totalSupply()")[:4]
 SEL_BALANCE_OF = "0x70a08231"      # keccak("balanceOf(address)")[:4]
 SEL_DECIMALS = "0x313ce567"        # keccak("decimals()")[:4]
 SEL_THRESHOLD = "0x42cde4e8"       # keccak("threshold()")[:4]
+# R20 gate fix: the selectors fetch/aethir_chain.py (R20) and fetch/ef_wallets.py (R18) wrote by hand live here, where
+# tests/test_adapters.py checks each against keccak (all three were right)
+SEL_LOCKED_ADDRESS = "0xcbf9fe5f"  # keccak("locked(address)")[:4] — (int128 amount, uint256 end), Curve-style escrow
+SEL_GET_DISTRIBUTION = "0x1d850ed6"   # keccak("getDistribution(address)")[:4] — Aethir's VestingWallet
+SEL_SAFE_NONCE = "0xaffed0e0"      # keccak("nonce()")[:4] — a Safe's transaction count
 # veAERO (Aerodrome VotingEscrow) — the three reads the lock-duration proxy depends on.
 # ** permanentLockBalance() WAS WRITTEN FROM MEMORY AS 0xa4d49d90 AND THAT IS WRONG. ** keccak
 # says 0x4d01cb66. The fifth hand-written selector in this file to be wrong, and the first to be

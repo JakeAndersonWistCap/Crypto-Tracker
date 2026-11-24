@@ -59,7 +59,11 @@ def test_1_the_payouts_are_summed_into_dilution_and_only_near_counts_a_category_
     assert not config.DILUTION_LEAVES_OUT
     for p in config.PROJECTS:
         if p["name"] != "Near":
-            assert bw._cp_cats(p) == [c for c in bw.CP_DILUTION_CATS if config.outflow_metrics(p["name"], c)]
+            # R18 (config.RELEASE_PAID_LATER): a category netted out of the release whose scan holds no row in the
+            # LAST build of this process (bw.PAID_LATER_NOT_READ: Chainlink's (b) and (f)) is still inside (e) and is
+            # not summed — a state of the build, not a moved category (the gate ran this test after a build)
+            assert bw._cp_cats(p) == [c for c in bw.CP_DILUTION_CATS if config.outflow_metrics(p["name"], c)
+                                      and (p["name"], c) not in bw.PAID_LATER_NOT_READ]
 
 
 def test_1_the_days_after_the_last_report_are_not_yet_published_never_zero(scope):

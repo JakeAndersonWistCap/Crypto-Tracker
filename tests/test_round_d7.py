@@ -271,6 +271,12 @@ def test_2_hyperliquids_burn_over_issuance_is_blocked_with_both_legs_holes_on_th
     wb, _rows = _built(tmp_path, monkeypatch, "Hyperliquid")
     X = xlcalc.Workbook(wb)
     ws = wb["A4 Permanent Burn"]
+    if 4 not in config.PROJECT_BY_NAME["Hyperliquid"]["archetypes"]:
+        # R20 (Jake's tags): Hyperliquid is 3, 1 — its +A4 tag is conditional and OFF (config.CONDITIONAL_ARCHETYPES), so
+        # it has no burn ÷ issuance cell; the check below stands for the day the tag is switched on
+        assert not config.CONDITIONAL_ARCHETYPES["Hyperliquid"]["on"]
+        assert "Hyperliquid" not in [ws.cell(r, 1).value for r in range(2, ws.max_row + 1)]
+        return
     col = next(c for r in range(1, 8) for c in range(1, ws.max_column + 1)
                if isinstance(ws.cell(r, c).value, str) and ws.cell(r, c).value.startswith("BURN ÷ ISSUANCE"))
     row = next(r for r in range(2, ws.max_row + 1) if "Hyperliquid" in (ws.cell(r, 1).value, ws.cell(r, 2).value))

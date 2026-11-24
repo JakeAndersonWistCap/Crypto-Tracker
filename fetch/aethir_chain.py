@@ -37,6 +37,8 @@ import os
 
 import pandas as pd
 
+import check_offline_items as _coi   # the keccak-checked selectors (tests/test_adapters.py)
+
 from .base import tidy, today
 
 log = logging.getLogger("token_metrics.fetch.aethir_chain")
@@ -51,9 +53,10 @@ POINT_STAKE = "aethir_chain:pools.locked"
 POINT_EATH = "aethir_chain:eATH.balanceOf"
 POINT_BURN = "aethir_chain:burn_logs"
 POINT_DEAD = "aethir_chain:dead.balanceOf"
-BALANCE_OF = "0x70a08231"
-LOCKED = "0xcbf9fe5f"               # locked(address) -> (int128 amount, uint256 end) — Curve-style voting escrow
-GET_DISTRIBUTION = "0x1d850ed6"     # VestingWallet.getDistribution(address)
+# the function selectors live in check_offline_items.py (each checked against keccak by tests/test_adapters.py)
+BALANCE_OF = _coi.SEL_BALANCE_OF
+LOCKED = _coi.SEL_LOCKED_ADDRESS                      # locked(address) -> (int128 amount, uint256 end)
+GET_DISTRIBUTION = _coi.SEL_GET_DISTRIBUTION     # VestingWallet.getDistribution(address)
 TRANSFER = "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef"
 WEI = 10 ** 18
 
@@ -459,5 +462,7 @@ def main() -> int:  # pragma: no cover — a live read for a person
     return 0
 
 
-if __name__ == "__main__":  # pragma: no cover
+if __name__ == "__main__":
+    import progress                                    # stdout line-buffered when piped (2026-10-11)
+    progress.line_buffered()
     raise SystemExit(main())

@@ -173,8 +173,9 @@ def test_1_on_the_dumps_circulating_is_total_less_the_dao_pending_and_the_float_
     assert circ == pytest.approx(1_000_000_000 - 121_200_000, abs=1)
     assert flt == pytest.approx(547_252_376.94 - 121_200_000, abs=1)
     assert _cell(morpho, "Free float ÷ circulating") == pytest.approx(flt / circ, rel=1e-9)
-    assert morpho["reader|A2 Coordination|Free float (tokens)"] == pytest.approx(426_052_377, abs=1)
-    assert morpho["reader|A2 Coordination|Circulating supply"] == pytest.approx(878_800_000, abs=1)
+    # R20 (Jake's tags): Morpho is on the A3 tab, off A2 — the same two figures, read there (was "reader|A2 Coordination|…")
+    assert morpho["reader|A3 Revenue Buyback|Free float (tokens)"] == pytest.approx(426_052_377, abs=1)
+    assert morpho["reader|A3 Revenue Buyback|Circulating supply"] == pytest.approx(878_800_000, abs=1)
     # R13: the note is formed on THIS build's switch state, taken from the build's record (was: the live module's,
     # which holds it only in the process that made the shared build — another worker reads the disk copy)
     monkeypatch.setitem(config.CIRCULATING_ONCHAIN["Morpho"]["subtract_when_complete"], "state",
@@ -214,7 +215,9 @@ def test_3_cp_emissions_reads_the_same_figure_as_a2_and_outflow_b(morpho):
     """MORPHO paid to suppliers from the pre-mint is incentive spend (b): CP 'Emissions Q0' reads emissions_tokens, as A2
     and (b) do (on the dumps all three are BLOCKED: the Base / Arbitrum / Katana claims have no rows)."""
     cp_e = _cell(morpho, "Emissions Q0 (tokens)")
-    a2 = morpho["audit|A2 Coordination|Emissions to suppliers Q0 (tokens)"]
+    # R20 (Jake's tags): Morpho is off A2; its A-tab emissions cell is A3's (was "audit|A2 Coordination|Emissions to
+    # suppliers Q0 (tokens)")
+    a2 = morpho["audit|A3 Revenue Buyback|Emissions Q0 (tokens) — same period"]
     assert cp_e == a2 and "fixed supply" not in str(cp_e)
     assert config.outflow_metrics("Morpho", "b") == ("emissions_tokens",)
     # gross issuance stays the fixed-supply convention (nothing is minted); Pendle's CP emissions cell is unchanged

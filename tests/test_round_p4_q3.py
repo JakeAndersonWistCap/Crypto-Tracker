@@ -57,7 +57,10 @@ def test_q3_the_release_legs_are_the_33_wallets_balance_only():
     assert config.unlock_stock_metrics(CL) == (NC,)
     assert config.CHAINLINK_RELEASE_Q3["wallets"] == 33 == len(config._CL_NC_KEYS_ALL)
     assert POINT33.startswith("chain:sum(") and POINT33.count("ethereum:") == 33
-    assert CL not in config.UNLOCK_RELEASE_SUBSETS and CL not in config.RELEASE_LESS
+    # R20.C3 (Jake 2026-11-24): the exchange leg is dilution category (f), netted out of the release (RELEASE_LESS, as
+    # Ether.fi's) — total dilution unchanged; the release's STOCK is still the one leg (was: CL not in RELEASE_LESS)
+    assert CL not in config.UNLOCK_RELEASE_SUBSETS
+    assert config.RELEASE_LESS[CL] == ("issuer_exchange_outflow_tokens",)
     assert (CL, NC) in config.RELEASE_WHOLE_SET_ONLY
 
 

@@ -17,6 +17,9 @@ import config  # noqa: E402
 from test_trajectory import _built  # noqa: E402
 
 
+A1_YIELD_PROJECT = "Hyperliquid"     # R20: a project still on A1 with a Total Yield (Chainlink left the tab)
+
+
 def _row(wb, X, sheet, project):
     ws = wb[sheet]
     hr = next(r for r in range(1, 12) if ws.cell(r, 1).value == "Project")
@@ -43,6 +46,13 @@ def test_chainlink_total_yield_subtracts_the_reward_vault_payouts_on_the_real_du
     import xlcalc
     wb, _ = _built(tmp_path, monkeypatch, "Chainlink")
     X = xlcalc.Workbook(wb)
+    if 1 not in config.PROJECT_BY_NAME["Chainlink"]["archetypes"]:
+        # R20 (Jake's tags): Chainlink is 2, 3 — off A1, so it has no A1 Total Yield cell; the declared leg stands and
+        # the identity below is checked again the day the tag returns
+        assert config.TOTAL_YIELD_RELEASES["Chainlink"]["add"] == ("emissions_tokens",)
+        ws = wb["A1 Infrastructure"]
+        assert "Chainlink" not in [ws.cell(r, 1).value for r in range(1, ws.max_row + 1)]
+        return
     o = _row(wb, X, "A1 Infrastructure", "Chainlink")
     vy, ty, th = _get(o, "VALIDATOR STAKING YIELD"), _get(o, "TOTAL YIELD — stakers"), _get(o, "Total yield — non-stakers")
     net = _get(o, "NET ISSUANCE AFTER BURN, annualised")
@@ -217,12 +227,14 @@ def _with_tbill(monkeypatch, value=0.0415):
 def test_the_tbill_sits_beside_every_yield_on_the_real_chainlink_dump(tmp_path, monkeypatch):
     import xlcalc
     _with_tbill(monkeypatch)
-    wb, rows = _built(tmp_path, monkeypatch, "Chainlink")
+    # R20 (Jake's tags): Chainlink is off A1 — the A1 yields are read on Hyperliquid's row (3, 1), CP's on the same
+    # project (was: the Chainlink dump for both)
+    wb, rows = _built(tmp_path, monkeypatch, A1_YIELD_PROJECT)
     X = xlcalc.Workbook(wb)
-    a1 = _row(wb, X, "A1 Infrastructure", "Chainlink")
+    a1 = _row(wb, X, "A1 Infrastructure", A1_YIELD_PROJECT)
     assert _get(a1, "3-MONTH T-BILL") == pytest.approx(0.0415)
     assert _get(a1, "Spread over the 3-month T-bill: Total yield — stakers") == pytest.approx(_get(a1, "TOTAL YIELD — stakers") - 0.0415)
-    cp = _row(wb, X, "CP Comparability", "Chainlink")
+    cp = _row(wb, X, "CP Comparability", A1_YIELD_PROJECT)
     assert _get(cp, "Spread over the 3-month T-bill: Holder value yield") == pytest.approx(_get(cp, "HOLDER VALUE YIELD") - 0.0415)
     assert _data(wb, X, "Macro|tbill_3m_yield", "q1") == pytest.approx(0.0415)
     # the trajectory benchmark now has its target
@@ -232,9 +244,9 @@ def test_the_tbill_sits_beside_every_yield_on_the_real_chainlink_dump(tmp_path, 
 
 def test_no_tbill_stored_reads_na_never_zero(tmp_path, monkeypatch):
     import xlcalc
-    wb, _ = _built(tmp_path, monkeypatch, "Chainlink")
+    wb, _ = _built(tmp_path, monkeypatch, A1_YIELD_PROJECT)          # R20: Chainlink is off A1 (was the Chainlink dump)
     X = xlcalc.Workbook(wb)
-    a1 = _row(wb, X, "A1 Infrastructure", "Chainlink")
+    a1 = _row(wb, X, "A1 Infrastructure", A1_YIELD_PROJECT)
     # never a zero, and never a bare n/a (alignment round, SPEC rule 2): the reason names the missing series
     assert str(_get(a1, "3-MONTH T-BILL")).startswith("n/a — Data: no rows stored")
     assert _get(a1, "Spread over the 3-month T-bill: Total yield — stakers") == "n/a — tbill_3m_yield (now): no rows stored"
@@ -295,9 +307,9 @@ def test_ssr_sits_beside_the_tbill(tmp_path, monkeypatch):
                                 "metric": "sky_savings_rate", "value": 0.038, "source": "sky_ssr:test", "tier": 2}))
         st.close()
     monkeypatch.setattr(real_dump, "to_store", to_store)
-    wb, _ = _built(tmp_path, monkeypatch, "Chainlink")
+    wb, _ = _built(tmp_path, monkeypatch, A1_YIELD_PROJECT)          # R20: Chainlink is off A1 (was the Chainlink dump)
     X = xlcalc.Workbook(wb)
-    assert _get(_row(wb, X, "A1 Infrastructure", "Chainlink"), "Sky Savings Rate") == pytest.approx(0.038)
+    assert _get(_row(wb, X, "A1 Infrastructure", A1_YIELD_PROJECT), "Sky Savings Rate") == pytest.approx(0.038)
 
 
 # ------------------------------------------------------------------------------------------- Phase 4 + market share

@@ -35,6 +35,8 @@ from pathlib import Path
 
 import pandas as pd
 
+import check_offline_items as _coi   # the keccak-checked selectors (tests/test_adapters.py)
+
 from .base import tidy, today
 
 log = logging.getLogger("token_metrics.fetch.ef_wallets")
@@ -44,8 +46,9 @@ SOURCE = "ef_wallets"
 TIER = 1
 POINT_HELD = "ef_wallets:eth_getBalance"
 POINT_STAKED = "ef_wallets:validators.balance"
-BALANCE_OF = "0x70a08231"
-SAFE_NONCE = "0xaffed0e0"
+# the function selectors live in check_offline_items.py (each checked against keccak by tests/test_adapters.py)
+BALANCE_OF = _coi.SEL_BALANCE_OF
+SAFE_NONCE = _coi.SEL_SAFE_NONCE
 
 
 def spec_of(p: dict) -> dict | None:
@@ -414,4 +417,6 @@ def main(argv=None) -> int:
 
 
 if __name__ == "__main__":
+    import progress                                    # stdout line-buffered when piped (2026-10-11)
+    progress.line_buffered()
     raise SystemExit(main())

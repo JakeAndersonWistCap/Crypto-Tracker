@@ -44196,7 +44196,7 @@ def frozen_moves_before_r9(project: str) -> dict:
     A cell first moved by the rule in round 9 is not in it — the round-9 record is tests/fixtures/frozen_moves_r9.json."""
     # (a cell first moved by a LATER round — R10 onward, each with its own record file — is not in it either)
     import re as _re
-    return {k: d for k, d in FROZEN_MOVES[project].items() if not _re.match(r"R(9|1\d)\b", str(d["why"]))}
+    return {k: d for k, d in FROZEN_MOVES[project].items() if not _re.match(r"R(9|[1-9]\d)\b", str(d["why"]))}
 FLOW_LEG_LINES["m_rule"] = ("memo: minted straight to issuer-side wallets (insider emission — INSIDE the lines above: "
                             "under the rule those wallets are circulating)")
 # Sky's token-flow statement keeps its lines: the rule un-subtracts no wallet of Sky's (its two legs are ADDED from the
@@ -47666,8 +47666,11 @@ GEODNET_STAKER_BONUS = {
 DECLARED_NA_REASONS.setdefault("GEODNET", []).append(
     {"cols": ("UNIFORMITY",),
      "text": "n/a — no staker yield series is wired: SuperHex stakers receive +20% GEOD at the end of the one-year "
-             "producing period (Phase I: 10%; docs.geodnet.com Staking FAQs, read 2026-11-23), paid once at the end, "
-             "funding wallet not published"})
+             # R20 gate fix: SPEC §1 rule 13 — an untraced reason lists the sources it checked, with their date, inside
+             # the 240 characters the coverage audit keeps (was: "...(Phase I: 10%; docs.geodnet.com Staking FAQs, read
+             # 2026-11-23), paid once at the end, funding wallet not published")
+             "producing period (Phase I: 10%), paid once at the end; funding wallet not published (checked: "
+             "docs.geodnet.com Staking FAQs and SuperHex, 2026-11-23)"})
 # The headline 'Fees Q0 ($)' cells (Master, A3, A4) still read DefiLlama's fees_usd — its burn ÷ 0.8. Under the filing's
 # reading that is the REVENUE line; said on the cell, not repointed (repointing moves the payout ratio and every
 # fee-based cell: Jake's decision, R18 report).
@@ -50251,3 +50254,67 @@ def _load_r20_moves() -> int:
 
 
 R20_MOVES_DECLARED = _load_r20_moves()
+
+
+# ===== R20 (gate fix) — THE ONE FREE FLOAT'S RENAMED HEADLINE HEADERS, DECLARED (R20.F1 / F9) =====
+# The guard keys a headline by its header text, so each renamed header is declared here (and the fixture baseline's keys
+# carry the new text). CP's and A2's are CHANGES of quantity: every tab now reads the one series free_float_tokens
+# (circulating − staked/locked/earning − issuer/foundation/treasury holdings − held buybacks) — A2's own float took off
+# the lock only; CP's took the same three off but was formed in its own cells. A3's "Buyback to LOCKED supply" is the
+# same figure under a new header.
+_R20_FLOAT_KEY = ("FREE FLOAT (tokens) = circulating − staked/locked/earning − issuer/foundation/treasury holdings − "
+                  "held buybacks — the one series every tab reads (free_float_tokens, R20)")
+HEADLINE_RENAMES.extend([
+    {"from": "CP | TRADEABLE FLOAT = circulating − staked/locked − protocol/treasury-held (tokens) — "
+             "protocol/treasury-held is already out of circulating by the convention, so this is A2's free float",
+     "to": f"CP | {_R20_FLOAT_KEY}", "kind": "change", "ref": "R20.F1", "date": "2026-11-24",
+     "why": "the one free float series every tab reads (free_float.views): circulating − staked/locked/earning − "
+            "issuer/foundation/treasury holdings − held buybacks, each token off once; was CP's own computation of the "
+            "tradeable float"},
+    {"from": "A2 | FREE FLOAT = circulating − locked (tokens)",
+     "to": f"A2 | {_R20_FLOAT_KEY}", "kind": "change", "ref": "R20.F1", "date": "2026-11-24",
+     "why": "A2 reads the one free float series: issuer/foundation/treasury holdings and held buybacks now come off "
+            "too (was circulating − locked alone)"},
+    {"from": "A3 | Buyback to LOCKED supply (destination = hold) — reduces effective float",
+     "to": "A3 | Buyback to LOCKED supply (destination = hold) — off the free float while held",
+     "kind": "rename", "ref": "R20.F9", "date": "2026-11-24",
+     "why": "header text only: the held buyback is off the one free float while held (A3's 'effective float' is gone)"},
+])
+
+
+# ===== R20 (gate fix) — A PROJECT THAT JOINED A TAB: ITS ATTRIBUTE CELLS SAY SOMETHING (never a bare "n/a") =====
+# Jake's Round 20 tags put Near, Aethir and Aerodrome on A4 and Morpho on A3. The tab's attribute cells ("Burn
+# execution", "Buyback destination") read the project's config field, which said "n/a" with no reason — the coverage
+# audit's BLANK-UNEXPLAINED (tests/test_alignment.py).
+#   Near    the protocol itself burns 70% of every gas fee (the A4 burn the tab reads)            -> "protocol"
+#   Aethir  the fee-burn contract sends ATH to the dead address daily since 2026-11-02 (R20 A3)  -> "protocol"
+# Where neither value of the field fits, the SHOWN text carries the reason (ATTRIBUTE_TEXT, read by the Config tab
+# only); the field itself — which the buyback routes read — is untouched.
+PROJECT_BY_NAME["Near"]["burn_execution"] = "protocol"
+PROJECT_BY_NAME["Aethir"]["burn_execution"] = "protocol"
+ATTRIBUTE_TEXT = {
+    # the declared reason Morpho's other buyback cells already read (DECLARED_NA_REASONS, Jake 2026-11-12, PR4.2)
+    ("Morpho", "buyback_destination"): "n/a — No buyback; fee switch off",
+    # R20 (the A4 tag's own wiring): what is burned is the Foundation's burned buyback — no protocol burn rule and no
+    # holder election
+    ("Aerodrome", "burn_execution"): "n/a — no protocol burn rule: the Foundation burns its buyback (R20)",
+}
+
+
+def attribute_text(project: dict, field: str) -> str:
+    """The text the Config tab shows for a project attribute: its declared reason where the bare value would be an
+    unexplained "n/a" (ATTRIBUTE_TEXT), else the config field as it is."""
+    return ATTRIBUTE_TEXT.get((project["name"], field), project.get(field, ""))
+
+
+# The four frozen cells this moves on the 15-dump build: the round's table (tests/fixtures/frozen_moves_r20.json,
+# docs/moves_r20.md) declares each as a new cell reading "n/a" — it is not edited; the text it reads now is a LATER
+# declared step of the same cell, appended here beside its cause (declare_later_move: the earlier step stays on record).
+for _p, _tab, _head, _f in (("Aerodrome", "A4 Permanent Burn", "Burn execution", "burn_execution"),
+                            ("Morpho", "A3 Revenue Buyback", "Buyback destination", "buyback_destination")):
+    for _file in ("audit", "reader"):
+        declare_later_move(
+            _p, f"{_file}|{_tab}|{_head}", ATTRIBUTE_TEXT[(_p, _f)],
+            "R20 (gate fix): the project joined this tab by Jake's Round 20 tags and its attribute cell read a bare "
+            "'n/a' with no reason (the coverage audit's BLANK-UNEXPLAINED); it now says why (config.ATTRIBUTE_TEXT). "
+            "Text only: no figure moves", "2026-11-24")

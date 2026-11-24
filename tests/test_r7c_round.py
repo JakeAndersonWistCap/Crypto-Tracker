@@ -87,7 +87,8 @@ def test_a1_only_sky_and_hyperliquid_are_refreshed_all_at_the_common_asof():
 def test_a1_the_rank_moves_are_declared_with_their_cause():
     for p, to in (("Fluid", 4.0), ("Maple", 3.0)):
         for k in ("reader|A3 Revenue Buyback|Rank in A3", "reader|Summary|Rank in archetype"):
-            d = config.FROZEN_MOVES[p][k]["then"][-1]         # R7D.A1: appended; the earlier declaration stays
+            # R7D.A1: appended; the earlier declaration stays. R20: later rounds append after it (was: ["then"][-1])
+            d = next(t for t in config.FROZEN_MOVES[p][k]["then"] if "R7C.A1" in t["why"])
             assert d["to"] == to and "R7C.A1" in d["why"] and "values are unchanged" in d["why"]
 
 
@@ -118,7 +119,9 @@ def _val(built, tab, project, pred):
 
 
 def test_a1_the_two_lost_headlines_hold_values_and_hyperliquid_balances(built):
-    pool = _val(built, A4, "Hyperliquid", lambda h: h.startswith("Pool release Q0 (tokens)"))
+    # R20 (Jake's tags): Hyperliquid is off the A4 tab; the same pool release is A1's "Issuer releases Q0 (tokens)"
+    # (was: A4's "Pool release Q0 (tokens)") — the figure is unchanged
+    pool = _val(built, A1, "Hyperliquid", lambda h: h.startswith("Issuer releases Q0 (tokens)"))
     # R9.2 (the rule): the team wallet is circulating, so its payouts are no release INTO circulation (they stay the
     # unlock leg, R9.3) — what enters is the staking rewards: 214,122 on the dump's stored days (was 3.8166e6)
     assert isinstance(pool, float) and pool == pytest.approx(214_122.0, rel=0.05)

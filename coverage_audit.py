@@ -1088,7 +1088,10 @@ def _latest(metric):
 
 
 OUTPUT_CHECKS = {
-    ("Master", "Fees Q0 ($)"): lambda G, p, w: _window_sum("fees_usd")(G, p, w),
+    # R20 gate fix: the fee series the cell itself reads — a project's declared fee series (config.MASTER_FEES_OVERRIDE:
+    # Ethereum's Blockscout fees, R20.E8; Ether.fi's net of cashback), else fees_usd (was fees_usd for every project)
+    ("Master", "Fees Q0 ($)"): lambda G, p, w: _window_sum(
+        _config().MASTER_FEES_OVERRIDE.get(p, ("fees_usd",))[0])(G, p, w),
     ("Master", "Revenue Q0 ($)"): lambda G, p, w: _window_sum(_config().revenue_headline_metric(p))(G, p, w),
     ("Master", "Market cap ($)"): lambda G, p, w: _latest("market_cap_usd")(G, p, w),
     ("Master", "Price — spot ($)"): lambda G, p, w: _latest("price_usd")(G, p, w),

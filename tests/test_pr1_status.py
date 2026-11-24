@@ -175,7 +175,9 @@ def test_s11_summary_formats_on_the_built_reader(built):
         c = ws.cell(r, kc)
         if isinstance(c.value, str) and c.value.startswith("=") and name in arch_of:
             want = reader.key_format(arch_of[name])
-            assert c.number_format.split(";")[0] == want.split(";")[0], (name, c.number_format)
+            # R20 (config.ARCHETYPE_STATUS): a paused / off programme's key carries its label as a suffix
+            # ('0.0"x — off"'); the number's own format is unchanged (was: an exact match)
+            assert c.number_format.split(";")[0].startswith(want.split(";")[0].rstrip('"')), (name, c.number_format)
             seen.add(arch_of[name])
         p = ws.cell(r, pc)
         if isinstance(p.value, str) and p.value.startswith("="):

@@ -3251,31 +3251,31 @@
    "CP | MARKET SHARE vs its category (now; a shifted quarter: the reading at its end) \u2014 peer set beside": 0.0913998642749294,
    "CP | NET HOLDER YIELD = holder value yield \u2212 dilution (outflows a+b+c+d+e+f at each day's price, annualised) \u00f7 average market cap over the window": -0.01524924464457497,
    "CP | SUBSIDY COVER = revenue \u00f7 $ supply-side incentives (b), per covered day": 1.140854243286161,
-   "CP | TRADEABLE FLOAT = circulating \u2212 staked/locked \u2212 protocol/treasury-held (tokens) \u2014 protocol/treasury-held is already out of circulating by the convention, so this is A2's free float": 903043091.0131285
+   "CP | FREE FLOAT (tokens) = circulating \u2212 staked/locked/earning \u2212 issuer/foundation/treasury holdings \u2212 held buybacks \u2014 the one series every tab reads (free_float_tokens, R20)": 903043091.0131285
   },
   "Aethir": {
    "A2 | CUSTOMER REVENUE PER TOKEN EMITTED ($/token) \u2014 key ratio": 0.04178376847401639,
    "A2 | Customer revenue Q0 ($)": 11925590.09132746,
    "A2 | Customer revenue \u00f7 emissions value (x)": 8.52131138444691,
    "A2 | Emissions to suppliers Q0 (tokens)": 285412027.848649,
-   "A2 | FREE FLOAT = circulating \u2212 locked (tokens)": 22259833682.57,
+   "A2 | FREE FLOAT (tokens) = circulating \u2212 staked/locked/earning \u2212 issuer/foundation/treasury holdings \u2212 held buybacks \u2014 the one series every tab reads (free_float_tokens, R20)": 22259833682.57,
    "A2 | FREE FLOAT \u00f7 ARR (x) = free float market cap \u00f7 ARR (the project's own where published, else customer revenue annualised) \u2014 headline": 2.664517089365033,
    "A2 | SUPPLY TRAJECTORY = emissions (annualised) \u00f7 free float \u2014 annual dilution %": 0.05199968479864788,
    "CP | BUSINESS 1 \u2014 core usage (a stock: now; a flow: Q0 annualised over its covered days)": 48364893.14816137,
    "CP | BUSINESS 2 \u2014 core usage (a stock: now; a flow: Q0 annualised over its covered days)": 1077083211.110272,
    "CP | HOLDER VALUE YIELD = revenue-funded $ retired + $ distributed + liquid bribes to voters (annualised) \u00f7 average market cap over the window \u2014 treasury- or emissions-funded buybacks are NOT credited (LITMUS A); fee-market burns are on A1 net issuance": 0.0,
-   "CP | TRADEABLE FLOAT = circulating \u2212 staked/locked \u2212 protocol/treasury-held (tokens) \u2014 protocol/treasury-held is already out of circulating by the convention, so this is A2's free float": 22259833682.57
+   "CP | FREE FLOAT (tokens) = circulating \u2212 staked/locked/earning \u2212 issuer/foundation/treasury holdings \u2212 held buybacks \u2014 the one series every tab reads (free_float_tokens, R20)": 22259833682.57
   },
   "Chainlink": {
    "A2 | CUSTOMER REVENUE PER TOKEN EMITTED ($/token) \u2014 key ratio": 30.84371647666539,
    "A2 | Customer revenue Q0 ($)": 15229630.05090114,
    "A2 | Customer revenue \u00f7 emissions value (x)": 2.822604670501565,
    "A2 | Emissions to suppliers Q0 (tokens)": 499315.6224,
-   "A2 | FREE FLOAT = circulating \u2212 locked (tokens)": 718120127.2729971,
+   "A2 | FREE FLOAT (tokens) = circulating \u2212 staked/locked/earning \u2212 issuer/foundation/treasury holdings \u2212 held buybacks \u2014 the one series every tab reads (free_float_tokens, R20)": 718120127.2729971,
    "A2 | FREE FLOAT \u00f7 ARR (x) = free float market cap \u00f7 ARR (the project's own where published, else customer revenue annualised) \u2014 headline": 148.5385358175947,
    "A2 | SUPPLY TRAJECTORY = emissions (annualised) \u00f7 free float \u2014 annual dilution %": 0.00281986560394816,
    "A3 | Actual buyback as % of supply (annualised) \u2014 RETIRED (burned + held) only": 0.007478969697521126,
-   "A3 | Buyback to LOCKED supply (destination = hold) \u2014 reduces effective float": 6204681.792609468,
+   "A3 | Buyback to LOCKED supply (destination = hold) \u2014 off the free float while held": 6204681.792609468,
    "A3 | CIRCULATING RETIREMENT RATE (tokens) = RETIRED buyback tokens (burned + held, annualised) \u00f7 circulating \u2014 primary": 0.007478969697521126,
    "A3 | FDV RETIREMENT RATE (tokens) = RETIRED buyback tokens (burned + held, annualised) \u00f7 FDV supply (the total supply FDV uses) \u2014 always read with the rate to its left": 0.005688843284665178,
    "A3 | Net absorption Q0 (tokens) = RETIRED buyback (burned + held) \u2212 emissions": 903412.8587503182,
@@ -3285,7 +3285,7 @@
    "CP | BUSINESS 4 \u2014 core usage (a stock: now; a flow: Q0 annualised over its covered days)": 365.0,
    "CP | HOLDER VALUE YIELD = revenue-funded $ retired + $ distributed + liquid bribes to voters (annualised) \u00f7 average market cap over the window \u2014 treasury- or emissions-funded buybacks are NOT credited (LITMUS A); fee-market burns are on A1 net issuance": 0.005996886350660165,
    "CP | NET HOLDER YIELD = holder value yield \u2212 dilution (outflows a+b+c+d+e+f at each day's price, annualised) \u00f7 average market cap over the window": -0.09531566143858249,
-   "CP | TRADEABLE FLOAT = circulating \u2212 staked/locked \u2212 protocol/treasury-held (tokens) \u2014 protocol/treasury-held is already out of circulating by the convention, so this is A2's free float": 718120127.2729971
+   "CP | FREE FLOAT (tokens) = circulating \u2212 staked/locked/earning \u2212 issuer/foundation/treasury holdings \u2212 held buybacks \u2014 the one series every tab reads (free_float_tokens, R20)": 718120127.2729971
   },
   "Ether.fi": {
    "A3 | Actual buyback as % of supply (annualised) \u2014 RETIRED (burned + held) only": 0.0,
@@ -3298,7 +3298,7 @@
    "CP | BUSINESS 3 \u2014 core usage (a stock: now; a flow: Q0 annualised over its covered days)": 1.0,
    "CP | HOLDER VALUE YIELD = revenue-funded $ retired + $ distributed + liquid bribes to voters (annualised) \u00f7 average market cap over the window \u2014 treasury- or emissions-funded buybacks are NOT credited (LITMUS A); fee-market burns are on A1 net issuance": 0.0,
    "CP | MARKET SHARE vs its category (now; a shifted quarter: the reading at its end) \u2014 peer set beside": 0.1110851748666935,
-   "CP | TRADEABLE FLOAT = circulating \u2212 staked/locked \u2212 protocol/treasury-held (tokens) \u2014 protocol/treasury-held is already out of circulating by the convention, so this is A2's free float": 722641283.712476
+   "CP | FREE FLOAT (tokens) = circulating \u2212 staked/locked/earning \u2212 issuer/foundation/treasury holdings \u2212 held buybacks \u2014 the one series every tab reads (free_float_tokens, R20)": 722641283.712476
   },
   "Ethereum": {
    "A1 | FEES \u00f7 ISSUANCE (x) \u2014 key ratio": 0.06266608541882758,
@@ -3317,7 +3317,7 @@
    "CP | MARKET SHARE vs its category (now; a shifted quarter: the reading at its end) \u2014 peer set beside": 0.5577503875502422,
    "CP | MARKET SHARE, SECOND BASIS \u2014 chain fees vs 13 chains (now; a shifted quarter: the reading at its end)": 0.118895121703392,
    "CP | NET HOLDER YIELD = holder value yield \u2212 dilution (outflows a+b+c+d+e+f at each day's price, annualised) \u00f7 average market cap over the window": -0.00783511440769584,
-   "CP | TRADEABLE FLOAT = circulating \u2212 staked/locked \u2212 protocol/treasury-held (tokens) \u2014 protocol/treasury-held is already out of circulating by the convention, so this is A2's free float": 78452006.7379206
+   "CP | FREE FLOAT (tokens) = circulating \u2212 staked/locked/earning \u2212 issuer/foundation/treasury holdings \u2212 held buybacks \u2014 the one series every tab reads (free_float_tokens, R20)": 78452006.7379206
   },
   "Fluid": {
    "A3 | Actual buyback as % of supply (annualised) \u2014 RETIRED (burned + held) only": 3.640945725905916e-07,
@@ -3331,14 +3331,14 @@
    "CP | HOLDER VALUE YIELD = revenue-funded $ retired + $ distributed + liquid bribes to voters (annualised) \u00f7 average market cap over the window \u2014 treasury- or emissions-funded buybacks are NOT credited (LITMUS A); fee-market burns are on A1 net issuance": 1.622067640075909e-07,
    "CP | MARKET SHARE vs its category (now; a shifted quarter: the reading at its end) \u2014 peer set beside": 0.02772241707597547,
    "CP | NET HOLDER YIELD = holder value yield \u2212 dilution (outflows a+b+c+d+e+f at each day's price, annualised) \u00f7 average market cap over the window": -0.008648668270656114,
-   "CP | TRADEABLE FLOAT = circulating \u2212 staked/locked \u2212 protocol/treasury-held (tokens) \u2014 protocol/treasury-held is already out of circulating by the convention, so this is A2's free float": 77971194.9203125
+   "CP | FREE FLOAT (tokens) = circulating \u2212 staked/locked/earning \u2212 issuer/foundation/treasury holdings \u2212 held buybacks \u2014 the one series every tab reads (free_float_tokens, R20)": 77971194.9203125
   },
   "GEODNET": {
    "A2 | CUSTOMER REVENUE PER TOKEN EMITTED ($/token) \u2014 key ratio": 0.2285625814592024,
    "A2 | Customer revenue Q0 ($)": 2693724.0,
    "A2 | Customer revenue \u00f7 emissions value (x)": 0.998818174711597,
    "A2 | Emissions to suppliers Q0 (tokens)": 11785498.67087855,
-   "A2 | FREE FLOAT = circulating \u2212 locked (tokens)": 513407599.8067304,
+   "A2 | FREE FLOAT (tokens) = circulating \u2212 staked/locked/earning \u2212 issuer/foundation/treasury holdings \u2212 held buybacks \u2014 the one series every tab reads (free_float_tokens, R20)": 513407599.8067304,
    "A2 | FREE FLOAT \u00f7 ARR (x) = free float market cap \u00f7 ARR (the project's own where published, else customer revenue annualised) \u2014 headline": 12.38893181701081,
    "A2 | SUPPLY TRAJECTORY = emissions (annualised) \u00f7 free float \u2014 annual dilution %": 0.09414310715722773,
    "A3 | Actual buyback as % of supply (annualised) \u2014 RETIRED (burned + held) only": 0.07701630986378712,
@@ -3358,7 +3358,7 @@
    "CP | HOLDER VALUE YIELD = revenue-funded $ retired + $ distributed + liquid bribes to voters (annualised) \u00f7 average market cap over the window \u2014 treasury- or emissions-funded buybacks are NOT credited (LITMUS A); fee-market burns are on A1 net issuance": 0.06512146945930751,
    "CP | NET HOLDER YIELD = holder value yield \u2212 dilution (outflows a+b+c+d+e+f at each day's price, annualised) \u00f7 average market cap over the window": -0.04657208772563336,
    "CP | SUBSIDY COVER = revenue \u00f7 $ supply-side incentives (b), per covered day": 0.9978644818058557,
-   "CP | TRADEABLE FLOAT = circulating \u2212 staked/locked \u2212 protocol/treasury-held (tokens) \u2014 protocol/treasury-held is already out of circulating by the convention, so this is A2's free float": 513407599.8067304
+   "CP | FREE FLOAT (tokens) = circulating \u2212 staked/locked/earning \u2212 issuer/foundation/treasury holdings \u2212 held buybacks \u2014 the one series every tab reads (free_float_tokens, R20)": 513407599.8067304
   },
   "Hyperliquid": {
    "A3 | CIRCULATING RETIREMENT RATE (tokens) = RETIRED buyback tokens (burned + held, annualised) \u00f7 circulating \u2014 primary": 0.03199928463836751,
@@ -3374,7 +3374,7 @@
    "A1 | Gross burn Q0 (tokens) \u2014 every burn, fee-market included": 2474408.021542085,
    "A1 | NET ISSUANCE AFTER BURN Q0 (tokens) \u2014 issuance \u2212 every burn, on the basis A4 uses": -2474408.021542085,
    "A1 | NET ISSUANCE AFTER BURN, annualised % of circulating (+ is net inflation; fee-market burns included)": -0.03326478519346679,
-   "CP | TRADEABLE FLOAT = circulating \u2212 staked/locked \u2212 protocol/treasury-held (tokens) \u2014 protocol/treasury-held is already out of circulating by the convention, so this is A2's free float": 99462451.62221035,
+   "CP | FREE FLOAT (tokens) = circulating \u2212 staked/locked/earning \u2212 issuer/foundation/treasury holdings \u2212 held buybacks \u2014 the one series every tab reads (free_float_tokens, R20)": 99462451.62221035,
    "CP | HOLDER VALUE YIELD = revenue-funded $ retired + $ distributed + liquid bribes to voters (annualised) \u00f7 average market cap over the window \u2014 treasury- or emissions-funded buybacks are NOT credited (LITMUS A); fee-market burns are on A1 net issuance": 0.03025829311669939,
    "CP | NET HOLDER YIELD = holder value yield \u2212 dilution (outflows a+b+c+d+e+f at each day's price, annualised) \u00f7 average market cap over the window": -0.06122219742860451,
    "CP | BUSINESS 1 \u2014 core usage (a stock: now; a flow: Q0 annualised over its covered days)": 2867264230817.974,
@@ -3391,7 +3391,7 @@
    "CP | BUSINESS 3 \u2014 core usage (a stock: now; a flow: Q0 annualised over its covered days)": 1.0,
    "CP | HOLDER VALUE YIELD = revenue-funded $ retired + $ distributed + liquid bribes to voters (annualised) \u00f7 average market cap over the window \u2014 treasury- or emissions-funded buybacks are NOT credited (LITMUS A); fee-market burns are on A1 net issuance": 0.004052722989745836,
    "CP | MARKET SHARE vs its category (now; a shifted quarter: the reading at its end) \u2014 peer set beside": 0.06723516914939225,
-   "CP | TRADEABLE FLOAT = circulating \u2212 staked/locked \u2212 protocol/treasury-held (tokens) \u2014 protocol/treasury-held is already out of circulating by the convention, so this is A2's free float": 1099133150.5063858
+   "CP | FREE FLOAT (tokens) = circulating \u2212 staked/locked/earning \u2212 issuer/foundation/treasury holdings \u2212 held buybacks \u2014 the one series every tab reads (free_float_tokens, R20)": 1099133150.5063858
   },
   "Morpho": {
    "CP | BUSINESS 1 \u2014 core usage (a stock: now; a flow: Q0 annualised over its covered days)": 5781889549.0,
@@ -3399,7 +3399,7 @@
    "CP | BUSINESS 3 \u2014 core usage (a stock: now; a flow: Q0 annualised over its covered days)": 1.0,
    "CP | HOLDER VALUE YIELD = revenue-funded $ retired + $ distributed + liquid bribes to voters (annualised) \u00f7 average market cap over the window \u2014 treasury- or emissions-funded buybacks are NOT credited (LITMUS A); fee-market burns are on A1 net issuance": 0.0,
    "CP | MARKET SHARE vs its category (now; a shifted quarter: the reading at its end) \u2014 peer set beside": 0.2111744149034757,
-   "CP | TRADEABLE FLOAT = circulating \u2212 staked/locked \u2212 protocol/treasury-held (tokens) \u2014 protocol/treasury-held is already out of circulating by the convention, so this is A2's free float": 547252376.9371623
+   "CP | FREE FLOAT (tokens) = circulating \u2212 staked/locked/earning \u2212 issuer/foundation/treasury holdings \u2212 held buybacks \u2014 the one series every tab reads (free_float_tokens, R20)": 547252376.9371623
   },
   "Near": {
    "A1 | FEES \u00f7 ISSUANCE (x) \u2014 key ratio": 0.01313073455108866,
@@ -3412,7 +3412,7 @@
    "A1 | TVL \u2014 chain ($) [primary demand metric]": 239376747.0,
    "A1 | VALIDATOR STAKING YIELD (annual) \u2014 securing the chain, NOT a protocol revenue share": 0.04954342985977688,
    "A3 | Actual buyback as % of supply (annualised) \u2014 RETIRED (burned + held) only": 0.004075566388556783,
-   "A3 | Buyback to LOCKED supply (destination = hold) \u2014 reduces effective float": 3854384.390369332,
+   "A3 | Buyback to LOCKED supply (destination = hold) \u2014 off the free float while held": 3854384.390369332,
    "A3 | CIRCULATING RETIREMENT RATE (tokens) = RETIRED buyback tokens (burned + held, annualised) \u00f7 circulating \u2014 primary": 0.004075566388556783,
    "A3 | FDV RETIREMENT RATE (tokens) = RETIRED buyback tokens (burned + held, annualised) \u00f7 FDV supply (the total supply FDV uses) \u2014 always read with the rate to its left": 0.00407503374802458,
    "CP | BUSINESS 1 \u2014 core usage (a stock: now; a flow: Q0 annualised over its covered days)": 42108897562.27273,
@@ -3422,7 +3422,7 @@
    "CP | MARKET SHARE vs its category (now; a shifted quarter: the reading at its end) \u2014 peer set beside": 0.002709601691214772,
    "CP | MARKET SHARE, SECOND BASIS \u2014 chain fees vs 13 chains (now; a shifted quarter: the reading at its end)": 0.01056035766466835,
    "CP | NET HOLDER YIELD = holder value yield \u2212 dilution (outflows a+b+c+d+e+f at each day's price, annualised) \u00f7 average market cap over the window": -0.009868065221892729,
-   "CP | TRADEABLE FLOAT = circulating \u2212 staked/locked \u2212 protocol/treasury-held (tokens) \u2014 protocol/treasury-held is already out of circulating by the convention, so this is A2's free float": 710435121.3758836
+   "CP | FREE FLOAT (tokens) = circulating \u2212 staked/locked/earning \u2212 issuer/foundation/treasury holdings \u2212 held buybacks \u2014 the one series every tab reads (free_float_tokens, R20)": 710435121.3758836
   },
   "Pendle": {
    "A3 | Actual buyback as % of supply (annualised) \u2014 RETIRED (burned + held) only": 0.0,
@@ -3435,7 +3435,7 @@
    "CP | BUSINESS 3 \u2014 core usage (a stock: now; a flow: Q0 annualised over its covered days)": 1.0,
    "CP | HOLDER VALUE YIELD = revenue-funded $ retired + $ distributed + liquid bribes to voters (annualised) \u00f7 average market cap over the window \u2014 treasury- or emissions-funded buybacks are NOT credited (LITMUS A); fee-market burns are on A1 net issuance": 0.01114886645183712,
    "CP | MARKET SHARE vs its category (now; a shifted quarter: the reading at its end) \u2014 peer set beside": 0.9277103208919527,
-   "CP | TRADEABLE FLOAT = circulating \u2212 staked/locked \u2212 protocol/treasury-held (tokens) \u2014 protocol/treasury-held is already out of circulating by the convention, so this is A2's free float": 143108806.85638747
+   "CP | FREE FLOAT (tokens) = circulating \u2212 staked/locked/earning \u2212 issuer/foundation/treasury holdings \u2212 held buybacks \u2014 the one series every tab reads (free_float_tokens, R20)": 143108806.85638747
   },
   "Plume": {
    "A1 | Gross issuance Q0 (tokens)": 0.0,
@@ -3449,7 +3449,7 @@
    "CP | HOLDER VALUE YIELD = revenue-funded $ retired + $ distributed + liquid bribes to voters (annualised) \u00f7 average market cap over the window \u2014 treasury- or emissions-funded buybacks are NOT credited (LITMUS A); fee-market burns are on A1 net issuance": 0.0,
    "CP | MARKET SHARE vs its category (now; a shifted quarter: the reading at its end) \u2014 peer set beside": 1.0,
    "CP | SUBSIDY COVER = revenue \u00f7 $ supply-side incentives (b), per covered day": 52.05459100960822,
-   "CP | TRADEABLE FLOAT = circulating \u2212 staked/locked \u2212 protocol/treasury-held (tokens) \u2014 protocol/treasury-held is already out of circulating by the convention, so this is A2's free float": 6471180752.254872
+   "CP | FREE FLOAT (tokens) = circulating \u2212 staked/locked/earning \u2212 issuer/foundation/treasury holdings \u2212 held buybacks \u2014 the one series every tab reads (free_float_tokens, R20)": 6471180752.254872
   },
   "Sky": {
    "A4 | PERMANENT BURN YIELD = burn as % of supply (annualised, tokens)": 0.002633796749444784,
@@ -3463,7 +3463,7 @@
    "A3 | Actual buyback as % of supply (annualised) \u2014 RETIRED (burned + held) only": 0.005973515284414158,
    "A3 | Net absorption Q0 (tokens) = RETIRED buyback (burned + held) \u2212 emissions": -149159587.3311805,
    "A3 | PROTOCOL STAKING YIELD (tokens) \u2014 primary: tokens paid to stakers per year \u00f7 reward-bearing stake (real + virtual); dollars paid are converted at each PAYMENT DAY's price (Aerodrome, Sky \u2014 Jake's price convention 2026-10-09) over the mean stake in the same window": 0.04945139418523758,
-   "CP | TRADEABLE FLOAT = circulating \u2212 staked/locked \u2212 protocol/treasury-held (tokens) \u2014 protocol/treasury-held is already out of circulating by the convention, so this is A2's free float": 5880380760.326137,
+   "CP | FREE FLOAT (tokens) = circulating \u2212 staked/locked/earning \u2212 issuer/foundation/treasury holdings \u2212 held buybacks \u2014 the one series every tab reads (free_float_tokens, R20)": 5880380760.326137,
    "CP | HOLDER VALUE YIELD = revenue-funded $ retired + $ distributed + liquid bribes to voters (annualised) \u00f7 average market cap over the window \u2014 treasury- or emissions-funded buybacks are NOT credited (LITMUS A); fee-market burns are on A1 net issuance": 0.02447713721663361,
    "CP | NET HOLDER YIELD = holder value yield \u2212 dilution (outflows a+b+c+d+e+f at each day's price, annualised) \u00f7 average market cap over the window": -0.002425069883240493,
    "CP | BUSINESS 1 \u2014 core usage (a stock: now; a flow: Q0 annualised over its covered days)": 7154463754.321026,
@@ -3483,7 +3483,7 @@
    "CP | HOLDER VALUE YIELD = revenue-funded $ retired + $ distributed + liquid bribes to voters (annualised) \u00f7 average market cap over the window \u2014 treasury- or emissions-funded buybacks are NOT credited (LITMUS A); fee-market burns are on A1 net issuance": 0.02810194697732515,
    "CP | MARKET SHARE vs its category (now; a shifted quarter: the reading at its end) \u2014 peer set beside": 0.3003546378795926,
    "CP | NET HOLDER YIELD = holder value yield \u2212 dilution (outflows a+b+c+d+e+f at each day's price, annualised) \u00f7 average market cap over the window": -0.01135816289649963,
-   "CP | TRADEABLE FLOAT = circulating \u2212 staked/locked \u2212 protocol/treasury-held (tokens) \u2014 protocol/treasury-held is already out of circulating by the convention, so this is A2's free float": 612409759.8669318
+   "CP | FREE FLOAT (tokens) = circulating \u2212 staked/locked/earning \u2212 issuer/foundation/treasury holdings \u2212 held buybacks \u2014 the one series every tab reads (free_float_tokens, R20)": 612409759.8669318
   }
  },
  "mpc_headlines": [],

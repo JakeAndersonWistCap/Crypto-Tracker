@@ -951,7 +951,10 @@ def test_d2_subsidy_cover_blocks_are_allowlisted_only_while_the_gap_is_declared(
     monkeypatch.setattr(config, "OUTFLOW_INCOMPLETE", gaps)               # the Pendle scans wired: the allowance lapses
     assert ca.regression_rows([("Pendle", "headline_lost", detail)], on=on)[0]["Status"] == "BROKEN"
     # past the re-check date the allowance lapses by itself (the gap still declared)
-    assert ca.regression_rows([("Aethir", "headline_lost", detail)], on="2026-11-15")[0]["Status"] == "BROKEN"
+    # R18.7: Jake extended Aethir's allowance to 2026-12-31 (config.R18_AETHIR_EXTENDED); it still lapses by itself the
+    # day after (was: on="2026-11-15", the day after its first re-check date)
+    assert ca.regression_rows([("Aethir", "headline_lost", detail)], on="2026-12-31")[0]["Status"] == "N/A BY DESIGN"
+    assert ca.regression_rows([("Aethir", "headline_lost", detail)], on="2027-01-01")[0]["Status"] == "BROKEN"
 
 
 def _arb_gauge_world(drop_every: int):

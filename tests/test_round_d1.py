@@ -132,9 +132,13 @@ def test_3_a_pre_minted_token_reads_n_a_for_issuance_at_every_quarter(tmp_path, 
     for h in ("FEES ÷ ISSUANCE (x) — key ratio", "Fees ÷ issuance at Q1 (−3m window)", "Fees ÷ issuance at Q2 (−6m)",
               "Fees ÷ issuance at Q3 (−9m)"):
         assert str(_get(o, h)).startswith("n/a — no issuance to divide by"), h
-    o = _row(wb, X, "A4 Permanent Burn", "Hyperliquid")
-    assert str(_get(o, "Self-reported − derived (a gap here means one of the two is wrong)")).startswith(
-        "n/a — nothing issued and nothing self-reported")
+    import config
+    if 4 in config.PROJECT_BY_NAME["Hyperliquid"]["archetypes"]:
+        # R20 (Jake's tags): Hyperliquid is 3, 1 — its +A4 tag is conditional and OFF, so it has no A4 row; checked
+        # again the day the tag is switched on
+        o = _row(wb, X, "A4 Permanent Burn", "Hyperliquid")
+        assert str(_get(o, "Self-reported − derived (a gap here means one of the two is wrong)")).startswith(
+            "n/a — nothing issued and nothing self-reported")
 
 
 def _camp(cid, amount, start, end, **kw):

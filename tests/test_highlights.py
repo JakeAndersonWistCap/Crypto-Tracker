@@ -215,14 +215,17 @@ def make_reader(over: dict | None = None, drop: tuple = ()) -> openpyxl.Workbook
 
     # Summary: section rows (the name alone), then project rows
     sh = ["Project", "Token", "Archetypes", "Protocol revenue, annualised", "Revenue growth, selected period",
-          "Archetype key", "Rank in archetype", "Net supply change, % a year"]
+          "Archetype key", "Rank in archetype", "Net supply change, % a year",
+          # R17.D: the Leaderboard (added by reader_layout.apply_layout) quotes these four Summary cells
+          "Holder value yield", "Total dilution, % of float", "Net holder yield", "Confidence (share green)"]
     rows = []
     for sec, label in (("A1", "A1 Infrastructure — ranked by x"), ("A2", "A2 Coordination — ranked by x"),
                        ("A3", "A3 Revenue Buyback — ranked by x"), ("A4", "A4 Permanent Burn — ranked by x")):
         rows.append((label,))
         for n, d in data.items():
             if d["sec"] == sec:
-                rows.append((n, n[:3].upper(), sec, d["rev"], d["gro"], d["key"], d["rank"], d["sup"]))
+                rows.append((n, n[:3].upper(), sec, d["rev"], d["gro"], d["key"], d["rank"], d["sup"],
+                             d["hvy"], d["dil"], d["nhy"], 0.5))
     S = sheet("Summary", sh, rows)
     for r in range(5, S.max_row + 1):
         if S.cell(r, 2).value is None:
@@ -888,13 +891,14 @@ def built(tmp_path_factory):
 def test_b_the_reader_has_highlights_first_and_the_fixture_cards(built):
     wb = openpyxl.load_workbook(built["dir"] / "reader.xlsx")
     assert sorted(p.name for p in built["dir"].glob("*.xlsx")) == ["audit.xlsx", "reader.xlsx"]
-    assert wb.sheetnames[0] == "Highlights"
+    assert wb.sheetnames[:2] == ["Leaderboard", "Highlights"]      # R17.D: the Leaderboard is first (was Highlights)
     assert wb["Highlights"].sheet_properties.tabColor.rgb.endswith("1F8A8A")
     assert len(wb["Charts"]._charts) > 0
     last = built["last"]
     assert last["floor_met"] is True
     assert last["cards"] == ["C5", "C7", "C8", "C9"], last["cards"]        # the fixture holds other numbers than Jake's store
-    why = {o.split(" ")[0] for o in last["omitted"]}
+    # R20: C2's line reads "C2: a cell it quotes is not on the reader" (Morpho is off the A2 tab) — the id without ":"
+    why = {o.split(" ")[0].rstrip(":") for o in last["omitted"]}
     assert why == {"C1", "C2", "C3", "C4", "C6"}, last["omitted"]
 
 
@@ -940,5 +944,7 @@ def test_d_the_production_floor_of_five_is_not_met_on_the_fixture_numbers_and_li
     assert res["floor_met"] is False and res["cards"] == [] and res["rendered"] == ["C5", "C7", "C8", "C9"]
     msg = "\n".join(res["lines"])
     assert "only 4 of 9" in msg and "5 are needed" in msg
-    for cid in ("C1 GEODNET", "C2 Morpho", "C3", "C4 Hyperliquid", "C6 Fluid"):
+    # R20: Morpho is off the A2 tab (Jake's tags), so C2 is omitted for a missing row, not a failed condition
+    # (was "C2 Morpho")
+    for cid in ("C1 GEODNET", "C2: a cell it quotes is not on the reader", "C3", "C4 Hyperliquid", "C6 Fluid"):
         assert cid in msg, msg

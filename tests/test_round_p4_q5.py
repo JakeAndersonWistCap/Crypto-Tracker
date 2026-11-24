@@ -282,8 +282,13 @@ def test_buying_pressure_is_every_market_buyback_annualised_over_tradeable_float
 # beside the Intents buyback, over a market cap on a circulating with lockup.near + contributors.near in — was
 # 0.0022805223703844632 (the buyback alone). The same step on Jake's 11-17 export: 0.50712% -> 0.53733% = (1 + burn $ /
 # buyback $) x (old ÷ new market cap) = 1.05971 x 0.99987.
-BEFORE_HVY = {"Maple": 0.008541006768956963, "Sky": 0.024434984263792533, "Hyperliquid": 0.01691147794146245,
-              "Pendle": 0.009420640711118868, "Chainlink": 0.005996886350660165, "Near": 0.002418363439991883}
+# R17.A3 (Jake 2026-11-23, a declared change of quantity, config.HEADLINE_RENAMES "R17.A3"; docs/moves_r17.md): holder
+# value yield divides by the window's AVERAGE market cap (each day's $ over each day's value), was today's market cap —
+# was Maple 0.008541006768956963, Sky 0.024434984263792533, Hyperliquid 0.01691147794146245, Pendle
+# 0.009420640711118868, Chainlink 0.005996886350660165, Near 0.002418363439991883. Re-pinned in the Round 20 gate fix on
+# the 15 dumps; the same six figures read on the pre-Round-20 build (1894183), so Round 20 moved none of them.
+BEFORE_HVY = {"Maple": 0.010720597913026847, "Sky": 0.023648788113572274, "Hyperliquid": 0.015591883176373859,
+              "Pendle": 0.01071647386102105, "Chainlink": 0.005392940384874894, "Near": 0.004504518825379258}
 
 
 @pytest.fixture(scope="module")
@@ -365,8 +370,11 @@ def test_fixture_keys_and_ranks(built):
     keyed = sorted((n for n in a3 if isinstance(keyv[n], float) and keyv[n] > 0), key=lambda n: -keyv[n])
     assert "Sky" in keyed and [rank[n] for n in keyed] == [1.0 + i for i in range(len(keyed))]
     zeros = sorted((n for n in a3 if keyv[n] == 0.0), key=lambda n: rank[n])
-    assert set(zeros) >= {"Maple", "Fluid"}                   # R14: Ether.fi left the zeros (key BLOCKED on the dump)
-    assert rank["Ether.fi"] == "unranked"                      # was ranked among the zeros before R14
+    # R20 (the A3 key is revenue to holders ÷ new supply; config.ARCHETYPE_STATUS): the zeros are the paused / off
+    # programmes — Fluid, Ether.fi (paused) and Morpho (off, new on A3); Maple's key is BLOCKED on the dumps (its (b) leg
+    # in $ is not formed: docs/moves_r20.md), so it is unranked (was: zeros >= {Maple, Fluid}, Ether.fi unranked)
+    assert set(zeros) >= {"Fluid", "Ether.fi", "Morpho"}
+    assert rank["Maple"] == "unranked" and not isinstance(keyv["Maple"], float)
     assert [rank[n] for n in zeros] == [len(keyed) + 1.0 + i for i in range(len(zeros))]
     nhy = [XR.value("Summary", srows[n], sn) for n in zeros]
     nums = [v for v in nhy if isinstance(v, float)]
@@ -396,7 +404,8 @@ def test_fixture_key_equals_its_trajectory_latest_quarter(built):
     t, XR = built["reader"][reader.A3_TAB], built["XR"]
     trows = _rows(t)
     kc2 = _col(t, lambda h: h == reader.ARCHETYPE_KEYS[3][0])
-    lc = _col(t, lambda h: h == "Burned ÷ (emis + unlocks), latest")
+    # R20: the reader's key trajectory columns are the new key's (was "Burned ÷ (emis + unlocks), latest")
+    lc = _col(t, lambda h: h == f"To holders ÷ new supply, {reader.TRAJ_LABELS[0]}")
     for name in ("Sky", "Maple", "Pendle"):
         assert XR.value(t.title, trows[name], lc) == XR.value(t.title, trows[name], kc2), name
 
@@ -455,7 +464,7 @@ def test_fixture_reader_columns_definitions_and_map(built):
     assert (reader.A3_TAB, reader.BUYING_PRESSURE_SHORT) in defs and (reader.COMPARISON, reader.BUYING_PRESSURE_SHORT) in defs
     assert (reader.A3_TAB, reader.ARCHETYPE_KEYS[3][0]) in defs
     rows = list(csv.DictReader(open(built["dir"] / "reader_column_map.csv", encoding="utf-8")))
-    key = [x for x in rows if x["audit_header"] == bw.A3_BURNED_HEAD]
+    key = [x for x in rows if x["audit_header"] == bw.A3_KEY_HEAD]     # R20: the key column is revenue to holders ÷ new supply (was A3_BURNED_HEAD)
     assert key and key[0]["reader_header"] == reader.ARCHETYPE_KEYS[3][0]
     bp = {(x["reader_tab"], x["audit_tab"]) for x in rows if x["reader_header"] == reader.BUYING_PRESSURE_SHORT}
     assert {(reader.A3_TAB, A3), (reader.COMPARISON, CP)} <= bp

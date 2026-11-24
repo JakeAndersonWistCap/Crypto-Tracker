@@ -215,7 +215,10 @@ def test_4_rebuild_hands_over_from_08_26_unscaled_whatever_the_validation(monkey
     ext = g[g["date"] > "2026-08-25"]
     assert ext["date"].min() == pd.Timestamp("2026-08-26") and (ext["value"] == 3.0e9).all()   # never scaled
     assert "DECLARED HANDOVER from 2026-08-26" in ext["source"].iloc[0]
-    assert "rebuild +6.8% vs Artemis over 2026-05-28..08-25; 11/12 weeks within ±10%" in ext["source"].iloc[0]
+    # R20.E7: the handover's label carries Jake's figure from his store (+6.77% over the 90-day overlap; was "rebuild
+    # +6.8% vs Artemis over 2026-05-28..08-25; 11/12 weeks within ±10%") — the text is not pinned; what is held: never
+    # scaled, and the build's own validation result is said
+    assert "never scaled" in ext["source"].iloc[0] and "validation FAILED" in ext["source"].iloc[0]
     pts = {bw._measuring_point(s) for s in g["source"].astype(str)}
     spans = {p: (g[g["source"].map(bw._measuring_point) == p]["date"].min(),
                  g[g["source"].map(bw._measuring_point) == p]["date"].max()) for p in pts}

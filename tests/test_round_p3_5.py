@@ -366,7 +366,10 @@ def test_integration_fixture_build(built, capsys):
         print("\n" + out)
     lines = out.splitlines()
     assert lines[0].startswith(f"done check as of {built['asof']}")
-    rows = [ln for ln in lines[1:-1]]
+    # R20: the "HISTORY FILLING: n cell(s) shown grey" line follows the DONE CHECK total (was: the total is the last line)
+    end = next(i for i, ln in enumerate(lines) if ln.startswith("DONE CHECK:"))
+    rows = [ln for ln in lines[1:end]]
+    lines = lines[:end + 1]
     assert all(re.match(r"^[^|]+ \| (READY|NOT READY|PARKED) \|", ln) for ln in rows), rows
     status = {ln.split(" | ")[0]: ln.split(" | ")[1] for ln in rows}
     assert status["Aerodrome"] == "PARKED" and status["World Mobile"] == "PARKED"

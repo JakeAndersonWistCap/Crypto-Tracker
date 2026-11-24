@@ -215,7 +215,9 @@ def test_p3_2d_chainlink_primary_a2_ranked_there_secondary_on_a1_and_a3(built):
                      if isinstance(XR.value(a2.title, rr, rc), float)))
     assert [k for _r, k, _n in ranked] == sorted([k for _r, k, _n in ranked], reverse=True)
     assert "Chainlink" in [n for *_x, n in ranked]
-    for tab in (reader.A1_TAB, reader.A3_TAB):
+    # R20 (Jake's tags): Chainlink is 2, 3 — off A1 (was: secondary on A1 and A3)
+    assert "Chainlink" not in _reader_rows(r[reader.A1_TAB])
+    for tab in (reader.A3_TAB,):
         ws = r[tab]
         c = ws.cell(_reader_rows(ws)["Chainlink"], _reader_col(ws, lambda h: h.startswith("Rank in")))
         assert c.value == "secondary", tab

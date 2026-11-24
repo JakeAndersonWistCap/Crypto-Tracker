@@ -8403,7 +8403,11 @@ def test_the_offline_checks_cover_H1_to_H3_and_pin_their_paired_reads_to_one_blo
     for sig, sel in (("list()", coi.CHAINLOG_LIST), ("getAddress(bytes32)", coi.CHAINLOG_GET),
                      ("totalSupply()", coi.SEL_TOTAL_SUPPLY),
                      ("balanceOf(address)", coi.SEL_BALANCE_OF),
-                     ("decimals()", coi.SEL_DECIMALS), ("threshold()", coi.SEL_THRESHOLD)):
+                     ("decimals()", coi.SEL_DECIMALS), ("threshold()", coi.SEL_THRESHOLD),
+                     # R20 gate fix: the selectors of fetch/aethir_chain.py and fetch/ef_wallets.py
+                     ("locked(address)", coi.SEL_LOCKED_ADDRESS),
+                     ("getDistribution(address)", coi.SEL_GET_DISTRIBUTION),
+                     ("nonce()", coi.SEL_SAFE_NONCE)):
         assert sel == "0x" + Web3.keccak(text=sig).hex()[:8], sig
     # THE EVENT TOPIC TOO — 32 bytes, same class of typo, and a wrong one matches nothing and
     # reads as "the parameter never changed".
@@ -9731,7 +9735,10 @@ def test_hyperliquid_holds_archetype_4_on_the_evidence_already_in_config():
     destroys while keeping the effect.
     """
     p = config.PROJECT_BY_NAME["Hyperliquid"]
-    assert {3, 4} <= set(p["archetypes"]), p["archetypes"]
+    # R20 (Jake's tags): Hyperliquid is 3, 1 — the +A4 tag is conditional (only if the Assistance Fund's HYPE can never
+    # be moved) and OFF (config.CONDITIONAL_ARCHETYPES); was: {3, 4} <= archetypes. The config facts below are unchanged.
+    assert 3 in p["archetypes"], p["archetypes"]
+    assert (4 in p["archetypes"]) == config.CONDITIONAL_ARCHETYPES["Hyperliquid"]["on"]
 
     # ARCHETYPE 3's basis: 99% of net protocol fees buy HYPE, from Hyperliquid's own docs.
     assert p["fee_split"]["share_to_buyback"] == 0.99
@@ -17522,10 +17529,14 @@ def test_sky_buyback_counts_every_sky_bought_and_the_burn_relabel_never_overwrit
     assert g[("Sky", "actual_buyback_tokens")]["value"].tolist() == [5_000_000.0]
 
 
-def test_morpho_free_float_is_circulating_and_fluid_a3_reads_zero_since_the_halt():
+def test_morpho_free_float_is_circulating_and_fluid_a3_reads_zero_since_the_halt(monkeypatch):
     """A6/A7: no Morpho staking means locked = 0, so free float = circulating; Fluid's halted
     buyback renders 0 with the halt date rather than 'none available'."""
     import build_workbook as bw
+    import free_float as _ff
+    # R20 gate fix: the cell builder reads the LAST build's free_float.MISSING (a build without Morpho's rows earlier in
+    # the same process left "circulating_supply_used holds no row" there) — this test is about the cell with no build
+    monkeypatch.setattr(_ff, "MISSING", {})
     morpho = config.PROJECT_BY_NAME["Morpho"]
     assert bw._free_float_reason(morpho) is None and morpho["free_float_lock_zero"]
     closed = config.unavailable_for("Fluid", "actual_buyback_usd")
@@ -19336,7 +19347,9 @@ def test_completeness_report_maps_every_recorded_decision_off_the_bug_list():
         assert v == "COMPLETE" and "PROGRAMME HALTED 2026-05-11" in d, (m, v, d)
     # beaconcha.in dropped (2026-10-01): staking_yield_pct no longer applies to Ethereum — its yield
     # is A1's calculation from d(Eth2Staking) + priority fees
-    assert ("Ethereum", "staking_yield_pct") not in got
+    # R20.E1 (Jake 2026-11-24): the staking yield is ETH.STORE again, from beaconcha.in's v2 API (fetch/staked_eth.py):
+    # staking_yield_pct applies to Ethereum (was: ("Ethereum", "staking_yield_pct") not in got)
+    assert ("Ethereum", "staking_yield_pct") in got
     # (a manual quarterly row that is actually MISSING stays NEEDS JAKE; this store is empty)
     jake = {k for k, (v, _) in got.items() if v == "NEEDS JAKE" and not config.is_manual_quarterly(*k)}
     # settlement volume (2026-09-30): Ethereum's Artemis export is in; the other three wait on Jake's
@@ -21216,25 +21229,23 @@ def test_free_float_subtracts_locked_tokens_already_out_of_circulating_only_once
     circulating is in use (a PARTIAL set), circulating − locked is already right."""
     import copy
 
-    import build_workbook as bw
-
-    class R:
-        def D(self, r, m, w):
-            return f"D[{m}:{w}]"
     aero = config.PROJECT_BY_NAME["Aerodrome"]
     # MEASURED since Jake's probes16: the filing wallets' managed-veNFT AERO, not the genesis 95M constant
     assert config.locked_excluded_from_circulating("Aerodrome") == 0.0
     assert config.locked_excluded_metrics("Aerodrome") == ("filing_managed_lock_tokens",)
-    ff = next(c for c in bw._a2_headline(R()) if c[0].startswith("FREE FLOAT ="))[1]
+    # R20 (the one free float): the A2 cell reads the series free_float_tokens; "the lock comes off once" is in what the
+    # series is formed from (free_float.parts) — was: the A2 cell's own formula,
+    # MAX(0, D[ve_locked_supply_tokens] − D[filing_managed_lock_tokens])
+    import free_float
     cg = copy.deepcopy(config.CIRCULATING_ONCHAIN)
     cg["Aerodrome"].pop("ratios_use")                  # CoinGecko's circulating in use: no adjustment
     cg["Aerodrome"]["status"] = "partial"
     monkeypatch.setattr(config, "CIRCULATING_ONCHAIN", cg)
-    assert "MAX(0" not in (ff(5, aero) or ""), "partial set: CoinGecko circulating, no adjustment"
+    assert free_float.parts(aero)["lock"]["less"] == (), "partial set: CoinGecko circulating, no adjustment"
     monkeypatch.undo()                                 # as configured (2026-10-06): on-chain primary
-    cell = ff(5, aero)
+    lock = free_float.parts(aero)["lock"]
     # the lock subtracted is the lock SHOWN: veAERO.supply() for Aerodrome (overnight 2026-10-06)
-    assert "MAX(0,D[ve_locked_supply_tokens:now]-D[filing_managed_lock_tokens:now])" in cell, cell
+    assert "ve_locked_supply_tokens" in lock["add"] and lock["less"] == ("filing_managed_lock_tokens",), lock
     assert config.locked_excluded_from_circulating("Uniswap") == 0.0
 
 
@@ -27333,9 +27344,12 @@ def test_onchain_circulating_is_compared_with_coingecko_like_for_like_and_the_ga
         assert spec["ref"]["metric"] == "circulating_supply" and spec["ref"]["tol"] == 2.0
     # Ether.fi's total is on-chain first since 2026-10-11: the row is put on CoinGecko's own total (2026-10-12 item 2;
     # tests/test_final_round.py has the real-figure case)
-    assert cred.circulating_input("Ether.fi")["ours"] == {"py": "now_combo", "args": {
-        "metrics": ("circulating_supply_onchain", "noncirculating_holding_tokens", "total_supply_coingecko"),
-        "minus": ("total_supply",)}}
+    # R17.A2 (Jake 2026-11-23): on the rule Ether.fi's circulating already counts the filing wallets, and CoinGecko
+    # reports the total — the wallets are not added a second time (that compared 1,180.2M with 998.5M, +18%). The row is
+    # our circulating as it is against CoinGecko's. Was: {"py": "now_combo", "args": {"metrics":
+    # ("circulating_supply_onchain", "noncirculating_holding_tokens", "total_supply_coingecko"), "minus": ("total_supply",)}}
+    assert cred.circulating_input("Ether.fi")["ours"] == {"metric": "circulating_supply_onchain", "window": "now"}
+    assert not config.RULE_IN["Ether.fi"].get("reference_leaves_out", True)
     # PR1.U5: Uniswap's total is ours (net of 0x…dEaD) and CoinGecko's sits beside it, so like-for-like is on CoinGecko's
     # own total, as Ether.fi's; PR1B.4: less the three wallets CoinGecko excludes, from the day it does
     assert cred.circulating_input("Uniswap")["ours"] == {"py": "now_combo", "args": {
@@ -27354,8 +27368,11 @@ def test_onchain_circulating_is_compared_with_coingecko_like_for_like_and_the_ga
     assert none[0] is None
     long = pd.DataFrame(columns=["date", "project", "metric", "value"])
     built = cred.build_rows([], rows, long, pd.Timestamp("2026-10-08"), projects=["Ether.fi"])
-    gap = next(r for r in built if r["id"] == "in_circ_gap")
-    assert gap["verdict"] == "N/A (recorded)" and gap["ours"]["value"] == 168_140_000.0
+    # R17.A2: on the rule the filing wallets are inside Ether.fi's circulating, so there is no gap to record beside it
+    # (was: an in_circ_gap row, "N/A (recorded)", ours 168,140,000); a gap row, where one is built, is never a bare N/A
+    gaps_ = [r for r in built if r["id"] == "in_circ_gap"]
+    assert all(g["verdict"] == "N/A (recorded)" for g in gaps_)
+    assert not [c for c in config.coingecko_counts_holdings("Ether.fi") if c not in config.rule_in_legs("Ether.fi")]
     assert not config.coingecko_counts_holdings("Sky") and not config.coingecko_counts_holdings("Pendle")
 
 def test_balance_history_is_rebuilt_from_a_wallets_own_transfers(monkeypatch):
@@ -27799,7 +27816,8 @@ def test_same_source_rows_carry_their_signoff_label_and_native_coin_prices_say_w
     DefiLlama price relays CoinGecko — N/A where Coinbase is the independent check, a limitation for HYPE."""
     import credibility as cred
     spec = config.CREDIBILITY["Aethir"]["a2_customer_revenue"]
-    assert spec["fresh_label"].startswith("MATURING (until 2026-10-17")
+    # R18.7: Jake's extension to 2026-12-31 (config.R18_AETHIR_EXTENDED; was "MATURING (until 2026-10-17")
+    assert spec["fresh_label"].startswith("MATURING (until 2026-12-31")
     ref = cred.reference("Aethir", spec, {}, pd.DataFrame(columns=["date", "project", "metric", "value"]),
                          pd.Timestamp("2026-10-07"))
     assert ref["mode"] == "same_source" and ref["fresh_label"] == spec["fresh_label"]

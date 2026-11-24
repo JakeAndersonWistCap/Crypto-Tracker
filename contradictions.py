@@ -34,7 +34,11 @@ FAMILIES = {
     "emissions": r"Emissions(,| in force)",
     "unlocks": r"(Unlocks,|UNLOCK DILUTION)",
     # what A4's key divides by, and A1's issuer releases (pool_release_tokens: the release basis of a pre-minted supply)
-    "release": r"(Issuance or release|Issuer releases)",
+    "release": r"Issuance or release",
+    # R20 (Ethereum and Near are on A4 too): A1's "Issuer releases" is the release of a PRE-MINTED supply. A chain that
+    # mints its issuance has none ("by design"), and A4's "Issuance or release" beside it is that minted issuance - not
+    # a contradiction. Its own family: a release proves issuance-or-release non-zero, not the other way round.
+    "issuer_release": r"Issuer releases",
     # the A4 crossover columns are computed over the release the key divides by: they deny it when they say
     # "no issuance"
     "release_derived": r"(Fees needed for crossover|Governance lever)",
@@ -45,15 +49,21 @@ FAMILIES = {
 }
 # a family is non-zero when any of these families holds a non-zero number for the project
 EVIDENCE = {
-    "dilution": ("dilution", "emissions", "unlocks", "release"),
+    "dilution": ("dilution", "emissions", "unlocks", "release", "issuer_release"),
     "emissions": ("emissions",),
     "unlocks": ("unlocks",),
-    "release": ("release", "a4_key"),
-    "release_derived": ("release", "a4_key"),
+    "release": ("release", "a4_key", "issuer_release"),
+    "issuer_release": ("issuer_release",),
+    "release_derived": ("release", "a4_key", "issuer_release"),
     "dilution_derived": ("emissions", "unlocks"),
     "unlock_derived": ("unlocks",),
-    "net_supply": ("net_supply", "dilution", "emissions", "unlocks", "release"),
+    "net_supply": ("net_supply", "dilution", "emissions", "unlocks", "release", "issuer_release"),
 }
+# R20 (Morpho is on A3 with its fee switch off): a buyback-against-dilution cell that says "by design" because the
+# BUYBACK leg does not apply (its reason names the buyback series) denies the buyback, not the dilution. It is
+# contradicted by a buyback number on the row, not by the unlocks.
+BUYBACK_LEG = re.compile(r"(retired_buyback_tokens|actual_buyback_tokens|actual_buyback_usd)[^.;]{0,40}not applicable")
+BUYBACK_HEADS = r"(Actual buyback|Retired: burned|Bought back)"
 # A4's key (burn ÷ the release it divides by): any number there means the release is not 0
 A4_KEY = ("A4 Permanent Burn", r"Burn ÷ issuance \(x\)$")
 # an "n/a" whose reason says the quantity is absent or inapplicable (not merely unknown)
@@ -108,6 +118,8 @@ def find(wb) -> list[dict]:
         fam = "a4_key" if (sh == A4_KEY[0] and re.match(A4_KEY[1], h)) else _family(h)
         if fam and _is_number(v) and v != 0:
             evidence.setdefault((proj, fam), []).append((sh, f"{get_column_letter(c)}{r}", h, v))
+        if re.match(BUYBACK_HEADS, h or "") and _is_number(v) and v != 0:
+            evidence.setdefault((proj, "buyback"), []).append((sh, f"{get_column_letter(c)}{r}", h, v))
     out = []
     for sh, r, c, proj, h, v, cm in rows:
         fam = _family(h)
@@ -126,7 +138,10 @@ def find(wb) -> list[dict]:
             claim = False
         if not claim:
             continue
-        ev = [e for f in EVIDENCE[fam] for e in evidence.get((proj, f), ())
+        fams = EVIDENCE[fam]
+        if fam in ("dilution_derived", "unlock_derived") and BUYBACK_LEG.search(reason):
+            fams = ("buyback",)
+        ev = [e for f in fams for e in evidence.get((proj, f), ())
               if not (e[0] == sh and e[1] == f"{get_column_letter(c)}{r}")]
         if ev:
             out.append({"project": proj, "sheet": sh, "cell": f"{get_column_letter(c)}{r}", "header": h,

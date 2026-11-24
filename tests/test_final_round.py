@@ -651,9 +651,12 @@ def test_etherfi_like_for_like_circulating_is_on_coingeckos_own_total():
                          "value": [965_350_000.0, 965_350_000.0]})
     built = cred.build_rows([], rows, long, pd.Timestamp(day), projects=["Ether.fi"])
     row = next(r for r in built if r["id"] == "in_circ")
-    assert row["ours"]["value"] == pytest.approx(965_350_000.0)
-    assert row["value"] == pytest.approx(965_350_000.0) and row["mode"] == "independent"
-    assert abs(row["ours"]["value"] / row["value"] - 1) * 100 <= row["tol"] == 2.0     # judged in the sheet: PASS
+    # R17.A2 (Jake 2026-11-23): Ether.fi is on the rule — its circulating already counts the filing wallets and
+    # CoinGecko reports the total, so the row is OUR circulating (the Data cell, judged in the sheet) against CoinGecko's
+    # circulating, ±2%; nothing is added back a second time. Was: ours = circulating − our total + CoinGecko's total
+    # (now_combo), 965,350,000 on these figures.
+    assert row["ours"]["metric"] == "circulating_supply_onchain" and row["ours"]["window"] == "now"
+    assert row["value"] == pytest.approx(965_350_000.0) and row["mode"] == "independent" and row["tol"] == 2.0
     # before the fix: our chain total against CoinGecko's circulating — the 3.44% of Jake's run
     assert (830_395_999.0 + 168_140_000.0) / 965_350_000.0 - 1 == pytest.approx(0.0344, abs=5e-5)
 
