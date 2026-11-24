@@ -228,7 +228,7 @@ def built(tmp_path_factory):
                               reader_path=d / "reader.xlsx")
         finally:
             st.close()
-        return pf.cells(d / "audit.xlsx", d / "reader.xlsx", HL)
+        return {**pf.cells(d / "audit.xlsx", d / "reader.xlsx", HL), "__audit__": str(d / "audit.xlsx")}
 
 
 CP = "audit|CP Comparability|"
@@ -258,12 +258,21 @@ def test_on_the_dump_the_buyback_is_held_and_the_burns_are_the_true_burns(built)
     assert _cell(built, "audit|A1 Infrastructure|Gross burn Q0 (tokens)") == pytest.approx(52_260.63, abs=1)
 
 
+def test_on_the_dump_the_burns_and_the_nets_check_clean(built):
+    """The burns lane's checks on this build: every declared burn series is in the net, each net is its two sides."""
+    assert free_float.check_burns(built["__audit__"]) == []
+    assert free_float.check_nets(built["__audit__"]) == []
+
+
 def test_on_the_dump_the_headlines(built):
     s = "reader|Summary|"
     assert _cell(built, s + "Holder value yield") == pytest.approx(0.014323244, abs=1e-8)            # was 0.0155918832
     assert _cell(built, s + "Dilution, % of market cap") == pytest.approx(0.0433037444, abs=1e-8)    # was 0.047139246
     assert _cell(built, s + "Net holder yield") == pytest.approx(-0.0289805003, abs=1e-8)            # was -0.0315473628
-    assert _cell(built, s + "Buying pressure on float") == pytest.approx(0.0970550318, abs=1e-8)     # unchanged
-    assert _cell(built, s + "Net float pressure") == pytest.approx(-0.174401367, abs=1e-8)           # unchanged
+    # net float pressure on the R21 burns lane's lines: buying (the Fund's purchases, held) 0 -> 9.71%, burns on float
+    # 10.09% -> 1.13% (the true burns only), total dilution 27.15% unchanged
+    assert _cell(built, s + "Buying pressure on float") == pytest.approx(0.0970550318, abs=1e-8)     # was 0.0 (burned)
+    assert _cell(built, s + "Net float pressure") == pytest.approx(-0.16312006, abs=1e-8)            # was -0.170563056
+    assert _cell(built, CP + "BURNS ON FLOAT") == pytest.approx(0.0112813068, abs=1e-8)              # was 0.1008933425
     assert _cell(built, s + "Archetype key") == pytest.approx(0.330762253, abs=1e-8)                 # A3 key, unchanged
     assert _cell(built, "audit|Master|Archetypes (primary first)") == "3, 1"                          # A4 off
