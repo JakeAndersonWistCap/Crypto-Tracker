@@ -390,47 +390,49 @@ class PythChain:
                 b[c[0]] = b.get(c[0], 0.0) + c[1]
                 b["n"] = b.get("n", 0) + 1
 
-        # forward: everything newer than the newest seen
-        if d.get("newest"):
-            before = None
-            fresh, listed = [], False
-            while self.clock() < deadline:
-                page = self.rpc("getSignaturesForAddress", [acct, {"limit": 1000, "until": d["newest"],
-                                                                   "commitment": "finalized",
-                                                                   **({"before": before} if before else {})}])
-                fresh += page or []
-                if not page or len(page) < 1000:
-                    listed = True                      # every signature newer than `newest` is listed
-                    break
-                before = page[-1]["signature"]
-            if listed:
-                if fresh:
-                    take(list(reversed(fresh)))
-                    d["newest"] = fresh[0]["signature"]
-                    d["newest_ts"] = fresh[0].get("blockTime")
-                d["scanned_to_ts"] = now_ts
-        # backward: to scan_from
-        while not d.get("complete") and self.clock() < deadline:
-            page = self.rpc("getSignaturesForAddress", [acct, {"limit": 200, "commitment": "finalized",
-                                                               **({"before": d["oldest"]} if d.get("oldest") else {})}])
-            if not d.get("newest") and page:
-                d["newest"], d["newest_ts"] = page[0]["signature"], page[0].get("blockTime")
-                d["scanned_to_ts"] = now_ts
-            if not page:
-                d["complete"] = True
-                break
-            for s in page:
-                if self.clock() >= deadline:
-                    break
-                if int(s.get("blockTime") or 0) < start_ts:
+        try:                                           # progress is kept whatever stops the scan (a 413 / 429)
+            # forward: everything newer than the newest seen
+            if d.get("newest"):
+                before = None
+                fresh, listed = [], False
+                while self.clock() < deadline:
+                    page = self.rpc("getSignaturesForAddress", [acct, {"limit": 1000, "until": d["newest"],
+                                                                       "commitment": "finalized",
+                                                                       **({"before": before} if before else {})}])
+                    fresh += page or []
+                    if not page or len(page) < 1000:
+                        listed = True                      # every signature newer than `newest` is listed
+                        break
+                    before = page[-1]["signature"]
+                if listed:
+                    if fresh:
+                        take(list(reversed(fresh)))
+                        d["newest"] = fresh[0]["signature"]
+                        d["newest_ts"] = fresh[0].get("blockTime")
+                    d["scanned_to_ts"] = now_ts
+            # backward: to scan_from
+            while not d.get("complete") and self.clock() < deadline:
+                page = self.rpc("getSignaturesForAddress", [acct, {"limit": 200, "commitment": "finalized",
+                                                                   **({"before": d["oldest"]} if d.get("oldest") else {})}])
+                if not d.get("newest") and page:
+                    d["newest"], d["newest_ts"] = page[0]["signature"], page[0].get("blockTime")
+                    d["scanned_to_ts"] = now_ts
+                if not page:
                     d["complete"] = True
                     break
-                take([s])
-                d["oldest"], d["oldest_ts"] = s["signature"], s.get("blockTime")
-            if len(page) < 200 and not d.get("complete") and d.get("oldest") == page[-1]["signature"]:
-                d["complete"] = True
-        d["seen"] = sorted(seen)
-        stt.save()
+                for s in page:
+                    if self.clock() >= deadline:
+                        break
+                    if int(s.get("blockTime") or 0) < start_ts:
+                        d["complete"] = True
+                        break
+                    take([s])
+                    d["oldest"], d["oldest_ts"] = s["signature"], s.get("blockTime")
+                if len(page) < 200 and not d.get("complete") and d.get("oldest") == page[-1]["signature"]:
+                    d["complete"] = True
+        finally:
+            d["seen"] = sorted(seen)
+            stt.save()
         return d
 
     @staticmethod

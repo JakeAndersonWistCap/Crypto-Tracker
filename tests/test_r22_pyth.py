@@ -281,3 +281,28 @@ def test_stake_read_once_per_epoch_and_its_staleness(monkeypatch, tmp_path):
         [config.PROJECT_BY_NAME["Pyth"]], 30, out)
     assert "locked_tokens" not in set(out.frame()["metric"]) and ("Pyth", "locked_tokens") in out.current
     assert config.stale_after_days("Pyth", "locked_tokens", 3) == 9
+
+
+def test_outflow_categories():
+    assert config.outflow_metrics("Aave", "a") == ("emissions_tokens",)
+    assert config.outflow_metrics("Pyth", "e") == ("unlock_release_tokens",)
+    assert not config.outflow_metrics("Pyth", "b")             # PPR: no series stored yet (a named gap, never 0)
+
+
+def test_scan_keeps_its_progress_when_the_rpc_cuts_it_off(tmp_path):
+    now = int(pd.Timestamp("2026-11-25 10:00").timestamp())
+    fake = FakeSolana(now)
+    real = fake.post
+
+    def post(url, body):
+        if body["method"] == "getTransaction" and body["params"][0] == "s1":
+            raise RuntimeError("HTTP 413 — You have used your data allowance")
+        return real(url, body)
+    fake.post = post
+    p = pc.PythChain(http=fake, daily=_Daily(), state_dir=str(tmp_path), clock=lambda: now, budget_s=60)
+    with pytest.raises(RuntimeError, match="413"):
+        p.scan(now + 60)
+    import json
+    st = json.loads((tmp_path / "council_scan.json").read_text())
+    assert st["seen"] == ["s2"] and st["days"]["2026-11-24"]["bought"] == pytest.approx(7_000.0)
+    assert st["oldest"] == "s2" and not st.get("complete")

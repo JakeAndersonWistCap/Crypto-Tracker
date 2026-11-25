@@ -51288,7 +51288,8 @@ _R22 = "Round 22 (Jake 2026-11-25, AAVEPYTH)"
 # Addresses: bgd-labs/aave-address-book (AaveV3Ethereum, MiscEthereum, AaveSafetyModule, UmbrellaEthereum), each read
 # on chain 2026-11-25 at Ethereum block 26,492,057 (code present; balances; stake tokens' STAKED_TOKEN / REWARD_TOKEN /
 # REWARDS_VAULT). The brief's second Umbrella address 0x5AC6C5C70934939d7Ad4aAB253aFD760Ad5E5313 has NO code on
-# Ethereum, Base, Arbitrum, Avalanche, Optimism or Gnosis (read 2026-11-25): NOT VERIFIED, not used.
+# Ethereum, Base, Arbitrum, Avalanche, Optimism or Gnosis (read 2026-11-25); the address book lists it only in
+# UmbrellaBaseSepolia (a TESTNET; GitHub code search, aave-dao/aave-address-book) — not a mainnet address, not used.
 AAVE_CHAIN = {
     "rpc": ("https://ethereum-rpc.publicnode.com", "https://mainnet.gateway.tenderly.co"),
     # eth_getLogs over ranges: publicnode refuses archive logs without a token, drpc caps free ranges at 100 blocks;
@@ -51543,3 +51544,13 @@ def stale_after_days(project_name: str, metric: str, default: int) -> int:  # no
     if project_name == "Pyth" and metric == "locked_tokens":
         return 7 + 2                                     # one staking epoch (604,800 s) and two days
     return _stale_after_days_r22(project_name, metric, default)
+# R22 (AAVEPYTH): the outflow categories. Aave: (a) the stkAAVE rewards (the measured schedule, paid from the Ecosystem
+# Reserve), (e) the declared-zero unlock. Pyth: (e) the unvested stock's releases; (b) the publishers' PPR is NOT
+# declared — no PPR series is stored yet (Douro -> GiipfV… -> publishers, docs/r22_pyth.md §6): a named gap, never 0.
+OUTFLOW_CATEGORIES["Aave"] = {"a": ["emissions_tokens"], "e": ["unlock_release_tokens"],
+                              "basis": _R22 + ": (a) stkAAVE rewards, the measured schedule (531 → 150 AAVE/day), paid "
+                                              "from the Ecosystem Reserve; (e) none (no vesting schedule)"}
+OUTFLOW_CATEGORIES["Pyth"] = {"e": ["unlock_release_tokens"],
+                              "basis": _R22 + ": (e) the genesis lockup and the other periodic vesting locks as they "
+                                              "release (pyth_unvested_tokens); (b) PPR to publishers is not yet a stored "
+                                              "series — a named gap; OIS (a) ended 22 Apr 2026 (y = 0)"}
