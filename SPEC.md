@@ -1874,6 +1874,18 @@ to stakers and as emissions; it nets out. That clears UNIFORMITY. A3 still count
   day's price), a SUM of two parts (same_span off for the sum only, as the validator yield's consensus + execution);
   net holder yield = holder value yield − dilution, where the same dollars are outflow (a): it nets out. NOT credited
   holder value: A3's key (revenue_to_holders_usd), payout ratios and the S13 holder revenue line read the fee burn only.
+### Round 22 — Plume back to active (Jake 2026-11-25), old → new
+Jake (item 5): "Plume is active, not on hold … Token utility, fees and burns are unchanged. Bring it back into
+done_check and the freeze with no holder value, per docs/r19_plume_brief.md." Config: the "R22 — PLUME" block at the
+end of config.py. Tests: tests/test_r22_plume.py.
+- Status: "on hold, no change" (ARCHETYPES_NO_CHANGE_R20) → active; tags unchanged (A1). Not frozen yet.
+- Holder value: declared 0 on the 2026-09-14 "being explored" reading → the same measured 0 on the 2026-11-23 re-read
+  (token docs, tokenomics post; brief section a). CP destination: stale fee receiver 0x6CBb… → the live ones.
+- Unlocks (e): insider legs only (Flows Q0 residual +5.00%, FLOWS BLOCK) → plus the Community & Ecosystem and
+  Foundation legs of the same DefiLlama dataset (EVIDENCE_LADDER, AGGREGATOR; fixture residual +0.15%).
+- S13: "not yet split" → fees = gas (on chain), revenue = fees (REVENUE_FROM_FEES), holder revenue = the measured 0.
+- Declared n/a with source (Unlocks Q0 wallet column, buyback destination, no buyback programme); insider share of
+  the stake → "not verified" (R17; no insider wallet published) — Jake to review.
 
 ### Round 21b — lead: NEAR approval, beacon source, route-'none' buybacks (Jake 2026-11-25), old → new
 - NEAR's P2P history: no approval → Jake's dated approval given ahead for ONE named month (`for_month` 2026-12, approved

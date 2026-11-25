@@ -51424,3 +51424,144 @@ STAKER_EMISSION_VALUE = {
                       "issuer Safe through the RewardFaucets) is in holder value yield here AND in dilution (a)"}}
 # UNIFORMITY now forms: the declared n/a (R18 / R21: "no staker yield series is wired") is withdrawn
 DECLARED_NA_REASONS["Aethir"] = [e for e in DECLARED_NA_REASONS["Aethir"] if "UNIFORMITY" not in (e.get("cols") or ())]
+
+
+
+# =====================================================================================================================
+# ===== R22 — PLUME BACK TO ACTIVE (Jake 2026-11-25, Round 22 item 5) — the PLUME lane's block =====
+# "Plume is active, not on hold. Its Q1 2026 update (29 May) changes the product only: an onchain asset manager and the
+# rebuilt Nest. Token utility, fees and burns are unchanged. Bring it back into done_check and the freeze with no holder
+# value, per docs/r19_plume_brief.md." Nothing below changes Plume's circulating basis (the CIRC lane's) or its tags:
+# token utility is unchanged, so Plume stays A1 (ARCHETYPES_BEFORE_R20; not on ARCHETYPES_R20).
+# =====================================================================================================================
+R22_PLUME = {"decided": "Jake 2026-11-25 (Round 22 item 5: Plume active, not on hold)",
+             "brief": "docs/r19_plume_brief.md (read 2026-11-23)",
+             "q1_2026_update": "Plume's Q1 2026 update (29 May 2026): product only — an onchain asset manager and the "
+                               "rebuilt Nest; token utility, fees and burns unchanged (Jake 2026-11-25)"}
+# (1) THE HOLD IS LIFTED. Plume was "on hold, no change" beside World Mobile's park (R20). It was never parked in code
+# (reader.READER_PARKED / CREDIBILITY_PARKED name World Mobile only), so done_check already judged it; the record goes.
+ARCHETYPES_NO_CHANGE_R20.pop("Plume", None)
+
+# (2) NO HOLDER VALUE — A DECLARED, MEASURED 0 (HOLDER_VALUE `none`, P3-1b), re-read 2026-11-23. The 2026-09-14 line
+# ("revenue sharing is being explored") could not be re-read: that docs page no longer serves staking content (brief,
+# "Could not verify"). What the token docs and the tokenomics post say today is the reason now.
+_PLUME_TOKEN_DOCS = "https://docs.plume.org/plume/tokens/plume-usdplume.md"
+_PLUME_NO_HOLDER_VALUE = (
+    "no payout to PLUME holders exists — PLUME is for gas, governance, staking and ecosystem incentives; no fee share, "
+    "buyback, burn or distribution (docs.plume.org/plume/tokens/plume-usdplume.md, plume.org/blog/tokenomics, "
+    "docs.plume.org/plume/llms-full.txt, read 2026-11-23, docs/r19_plume_brief.md section a); the staking yield is "
+    "paid from the pre-minted supply (emissions, outflow (a)); gas goes to the chain owner's fee account "
+    "0x60be7a0c…f7fd and the vault fees to unlabelled vault payout wallets, not to holders. The Q1 2026 update "
+    "(29 May) changed the product only — token utility, fees and burns unchanged (Jake 2026-11-25)")
+HOLDER_VALUE["Plume"]["none"] = _PLUME_NO_HOLDER_VALUE
+PROJECT_BY_NAME["Plume"]["fee_split"].update({
+    "source_url": _PLUME_TOKEN_DOCS, "source_date": "2026-11-23",
+    "note": PROJECT_BY_NAME["Plume"]["fee_split"]["note"] + " R22 (Jake 2026-11-25): re-read 2026-11-23 — the token "
+            "docs and the tokenomics post list gas, governance, staking and ecosystem incentives only; the 'being "
+            "explored' staking page no longer serves (docs/r19_plume_brief.md). Still ZERO."})
+assert holder_value_absent("Plume") == _PLUME_NO_HOLDER_VALUE, "Plume's fee_split no longer agrees: unknown, not 0"
+DECLARED_ZERO[("Plume", "holder_value_revenue_usd")] = {
+    "since": "2000-01-01", "why": "no payout mechanism: " + _PLUME_NO_HOLDER_VALUE}
+# the CP destination attribute: core.json's 0x6CBb… is stale (G9 I4, read on chain 2026-10-20) — the live receivers
+PHASE2_ATTRIBUTES.setdefault("Plume", {})["destination"] = {
+    "value": "n/a",
+    "detail": "nothing reaches PLUME holders — no buyback, burn or distribution; gas goes to the chain owner's fee "
+              "account 0x60be7a0c…f7fd (ArbOS getInfraFeeAccount, read on chain 2026-10-20), the vault fees to "
+              "unlabelled vault payout wallets (docs/r19_plume_brief.md section b, read 2026-11-23)",
+    "source": _PLUME_TOKEN_DOCS}
+
+# (3) THE NON-INSIDER UNLOCKS — the second leg of (e). The Flows tab's Q0 token-flow residual was +5.00% of opening on
+# the fixture (FLOWS BLOCK, PR1.S12): G11 B4 wired only the insider legs (Core Contributors + Early Backers) of
+# DefiLlama's reading of Plume's published chart, and the Community & Ecosystem and Foundation legs of the SAME dataset
+# had no series. They are wired here exactly as the insider leg is (EVIDENCE_LADDER, step AGGREGATOR, tier 3): each
+# linear leg of defillama-datasets.llama.fi/emissions/plume-mainnet (documentedData, read 2026-11-23 for the brief)
+# spread evenly over its days, as the dataset itself steps them (constant daily increments, read off the data):
+#   Community & Ecosystem 2,162,408.76 a day 2025-01-22..2028-01-21, raised to 9,581,763.60 a day 2025-07-21..08-20 and
+#     to 7,001,118.44 a day 2026-01-21..02-20 (the dataset's own steps; its events list the weekly rates);
+#   Foundation 1,049,270.07 a day 2025-01-22..2028-01-21.
+# The listing-day cliffs (2025-01-21: Community & Ecosystem 1,150,000,000, Foundation 150,000,000, the Airdrop 700M) are
+# the opening circulating at TGE, not a flow in any window the tracker reads. CHECK: the dataset's five legs sum to
+# 7,031.0M on 2026-11-21 against Plume's own 7,030,374,396 (supply.plume.org, brief section c), and the legs' daily sum
+# (6.969M) x 30.44 days = Plume's monthly step of 212,116,114.6. These tokens are released from vesting into the
+# Foundation's and the ecosystem's hands: in circulating (they can be moved) and new supply, so unlocks (e), the same
+# category as Aethir's ecosystem share would be (its N1 entry calls their absence PARTIAL).
+_PLUME_DL = "https://defillama-datasets.llama.fi/emissions/plume-mainnet"
+EVIDENCE_LADDER[("Plume", "plume_ecosystem_foundation_unlock_tokens")] = {
+    "step": "AGGREGATOR", "source": "DefiLlama emissions dataset (its reading of Plume's published chart) — the "
+                                    "Community & Ecosystem and Foundation legs",
+    "url": _PLUME_DL, "read_on": "2026-11-23", "tier": 3,
+    "spread": "each linear leg spread evenly at the dataset's own daily rate",
+    "check": {"metric": "scheduled_release_tokens", "relation": "upper_bound", "tolerance": 0.0,
+              "what": "the steps of Plume's published circulating (supply.plume.org)"},
+    "periods": [_linear("2025-01-22", "2025-07-20", 389_233_576.64, "Community & Ecosystem 2,162,408.76/day"),
+                _linear("2025-07-21", "2025-08-20", 297_034_671.53, "Community & Ecosystem 9,581,763.60/day"),
+                _linear("2025-08-21", "2026-01-20", 330_848_540.15, "Community & Ecosystem 2,162,408.76/day"),
+                _linear("2026-01-21", "2026-02-20", 217_034_671.53, "Community & Ecosystem 7,001,118.44/day"),
+                _linear("2026-02-21", "2028-01-21", 1_513_686_131.39, "Community & Ecosystem 2,162,408.76/day"),
+                _linear("2025-01-22", "2028-01-21", 1_148_950_729.93, "Foundation 1,049,270.07/day")]}
+METRICS["plume_ecosystem_foundation_unlock_tokens"] = {
+    "label": "Plume's Community & Ecosystem and Foundation unlocks per day — DefiLlama's reading of Plume's published "
+             "chart (config.EVIDENCE_LADDER, AGGREGATOR; R22)", "kind": "flow", "unit": "tokens", "archetypes": [],
+    "tiers": [3], "sanity_min": 0, "sanity_max": 1e10, "only_projects": ("Plume",), "view_only": True}
+OUTFLOW_CATEGORIES["Plume"]["e"] = ("insider_unlock_tokens", "plume_ecosystem_foundation_unlock_tokens")
+FLOW_RELEASE_LEGS["Plume"] = FLOW_RELEASE_LEGS["Plume"] + (
+    ("+ ecosystem / foundation unlocks (e) — AGGREGATOR: DefiLlama's reading of Plume's chart (community & ecosystem "
+     "+ foundation)", "plume_ecosystem_foundation_unlock_tokens"),)
+# the Flows tab no longer names the non-insider unlocks as unmeasured (build_workbook.flow_statements reads this)
+PLUME_TOKEN_FLOW_NOTE = ""
+
+# (4) DECLARED n/a REASONS — each structurally absent on Plume, with its source and read date (PR1B.5).
+DECLARED_NA_REASONS.setdefault("Plume", []).extend([
+    {"cols": ("Unlocks Q0",), "match": "no non-circulating wallet set on this project",
+     "text": "n/a — Plume publishes no non-circulating wallet: its unlocks are counted from the published schedule as "
+             "outflow (e) (insider + ecosystem / foundation legs), not from wallet falls",
+     "source": "https://docs.plume.org/plume/developers/contract-addresses and https://assets.plume.org/mainnet/core.json "
+               "(no allocation wallet; config Plume staking_contract_not_published / INSIDER_SHARE_ROUTES) ; "
+               "https://plume.org/blog/tokenomics (the schedule as a chart) ; " + _PLUME_DL,
+     "read_on": "2026-11-23", "decided": R22_PLUME["decided"],
+     "why": "the column reads releases from a declared wallet set; Plume names none, and every unlock is on (e) from "
+            "the schedule (EVIDENCE_LADDER insider_unlock_tokens + plume_ecosystem_foundation_unlock_tokens)"},
+    {"cols": (), "match": "nothing reaches PLUME holders",
+     "source": _PLUME_TOKEN_DOCS + " ; https://plume.org/blog/tokenomics ; docs/r19_plume_brief.md sections a and b",
+     "read_on": "2026-11-23", "decided": R22_PLUME["decided"],
+     "why": "no buyback, burn or distribution exists, so a buyback destination does not exist"},
+    {"cols": (), "match": "no buyback programme declared",
+     "source": _PLUME_TOKEN_DOCS + " ; config Plume fee_split (share_to_buyback 0.0) ; docs/r19_plume_brief.md section a",
+     "read_on": "2026-11-23", "decided": R22_PLUME["decided"],
+     "why": "nothing is bought: PLUME has no buyback programme (token utility gas, governance, staking, ecosystem "
+            "incentives); holder value is the declared measured 0 (HOLDER_VALUE none)"},
+])
+
+# (5) THE THREE REVENUE LINES (PR1.S13) — Plume's "not yet split" closed with what config already measures.
+REVENUE_TIER["Plume"] = (
+    "revenue",
+    "the chain's gas (explorer txnsFee x that day's price), received in full by the RewardDistributor 0x60be7a0c… "
+    "(REVENUE_FROM_FEES; G9 N, read on chain 2026-10-20) — DefiLlama lists no Plume revenue")
+REVENUE_SPLIT["Plume"] = {
+    "round": "R22 (Jake 2026-11-25, item 5)",
+    "fees": {"metric": "fees_usd", "primary": True,
+             "route": "ON CHAIN: the gas users pay, explorer.plume.org stats txnsFee (PLUME) x that day's price; "
+                      "CROSS-CHECK growthepie fees_paid_usd"},
+    "revenue": {"metric": "revenue_usd", "primary": True,
+                "route": "= FEES: the whole L2 base fee is the infra fee to the RewardDistributor 0x60be7a0c… (ArbOS "
+                         "getInfraFeeAccount; getMinimumGasPrice = eth_gasPrice, read on chain 2026-10-20) — no "
+                         "supplier share (REVENUE_FROM_FEES). Nest vault fees (~$86k in 30 days to 2026-11-22) go to "
+                         "unlabelled payout wallets and are NOT counted (docs/r19_plume_brief.md decision 1, option A)"},
+    "holder_revenue": {"metric": "holder_value_revenue_usd", "primary": True,
+                       "route": "the credited holder value (HOLDER_VALUE: none) — a MEASURED 0: " + _PLUME_NO_HOLDER_VALUE},
+    "holder_share": {"route": "holder revenue ÷ revenue = 0 ÷ the gas revenue: 0% (a measured 0 over a positive "
+                              "revenue)"},
+    "other_recipients": "of the RewardDistributor's receipts 87.5% to the unlabelled EOA 0x07DC8589… (retained, "
+                        "recipient not identified) and 12.5% bridged to Ethereum (Orbit revenue sharing, unlabelled)",
+    "crosscheck": "FEES beside growthepie fees_paid_usd (fees_usd_growthepie)",
+}
+
+# (6) NOT VERIFIED (R17): Plume's insider share of the stake. Nothing can evidence it: Plume publishes no allocation,
+# team, backer or foundation wallet, so the insiders cannot be found among the stakers.
+NOT_VERIFIED.setdefault("Plume", []).append(
+    {"cols": ("Insider share of stake",),
+     "searched": "docs.plume.org contract-addresses page, assets.plume.org/mainnet/core.json (2026-09-23); "
+                 "supply.plume.org (a figure, no wallets), plume.org/blog/tokenomics (a chart), "
+                 "docs.plume.org/plume/llms-full.txt, plume.org/blog/q3report, explorer.plume.org labels "
+                 "(docs/r19_plume_brief.md 'Could not verify': no published wallets) — no insider wallet named",
+     "read_on": "2026-11-23", "decided": R22_PLUME["decided"] + " — Jake to review (R17: every entry is his)"})
