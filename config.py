@@ -51157,3 +51157,30 @@ for _m, _src in (
          "derived:actual_buyback_usd x burn+hold share (from start: burn 0% / hold 100% / distribute 0%)")):
     DECLARED_COMPONENTS.setdefault(("Hyperliquid", _m), []).append({"metric": _m, "from": None, "source": _src,
                                                                     "why": _R21_HL_HELD_WHY})
+# ===== ROUND 21b (lead, item 4): JAKE'S DATED APPROVAL OF NEAR'S DECEMBER P2P HISTORY (Jake 2026-11-25) =====
+# "Near: add Jake's dated approval for the December P2P history chunks, within the free-tier budget in
+# docs/r19_bigquery_plan.md." The combined schedule (BIGQUERY_SCHEDULE, R20) gives 2026-12 ONE NEAR chunk,
+# 2025-11-01..2025-11-30 (30 days, ~226.2 GB at 7.54 GB a day — its own free dry run replaces the estimate), and leaves
+# 337.0 GB of the 1,000 GB monthly budget (inside the 1,099.5 GB free tier) after Ethereum's 31 scheduled weeks
+# (293.7 GB) and the top-up reserve: max_gb is that room, so the month cannot leave the budget. Given ahead, for
+# 2026-12 only (for_month); it still starts only from `python near_p2p_history.py run`, never automatically.
+NEAR_P2P_HISTORY_APPROVAL.update({"approved": True, "approved_by": "Jake (Round 21b, item 4)",
+                                  "approved_on": "2026-11-25", "for_month": "2026-12", "max_gb": 337.0,
+                                  "chunks": None})
+# ===== ROUND 21b (lead, item 5): THE KEYLESS PUBLIC BEACON NODE IS ETHEREUM'S STANDING STAKED-ETH SOURCE =====
+# Jake 2026-11-25: "keep the keyless public beacon node as the standing source, and remove the beaconcha.in trial step."
+# beaconcha.in's v2 reader (fetch.staked_eth.BeaconchainEth) is not asked, key or no key; the node's daily row
+# (beacon_node:validator_balances.sum, Σ actual balances at its finalized state) is the series. The node serves today's
+# state only, so the days between validatorqueue's last row (2026-10-25) and the node's first stored day stay a NAMED
+# hole — no source fills them now. The staking yield is our own consensus + execution rewards over staked ETH
+# (VALIDATOR_YIELD, ETH.STORE is a beaconcha.in figure and is not read); the validator count is not stored.
+_R21B_BEACON = ("R21b (Jake 2026-11-25): the keyless public beacon node is the standing staked-ETH source; "
+                "beaconcha.in's v2 API (a 30-day trial or a paid plan) is not used")
+PROJECT_BY_NAME["Ethereum"]["staked_eth_beaconchain"]["not_standing"] = _R21B_BEACON
+HANDOVER_CONTINUATION[("Ethereum", "beacon_chain_eth")]["fallback"]["hole_why"] = (
+    "the public beacon node serves today's state only and beaconcha.in is not used (R21b, Jake 2026-11-25): the days "
+    "from 2026-10-26 to the node's first stored day stay a named hole")
+ENV_KEYS = tuple((k, "nothing: " + _R21B_BEACON, tiers) if k == "BEACONCHAIN_API_KEY" else (k, what, tiers)
+                 for k, what, tiers in ENV_KEYS)
+SOURCE_REGISTER["beaconcha.in"] = dict(SOURCE_REGISTER["beaconcha.in"], status="NOT USED (R21b)",
+                                       used_for=_R21B_BEACON + "; the R20 wiring stays on record, not asked")

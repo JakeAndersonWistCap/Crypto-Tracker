@@ -155,8 +155,13 @@ def refusal(explicit_command: bool, today, approval: dict, chunk, gb: float, don
         return f"the approval is not complete (approved_by and approved_on, a YYYY-MM-DD date) — the chunk {what}; {ask}"
     if on > now:
         return f"the approval is dated {on}, after today ({now})"
-    if (on.year, on.month) != (now.year, now.month):
-        return (f"the approval is dated {on}: it covers {on:%Y-%m} only, and today is {now} — the chunk {what} needs a "
+    # R21b (Jake 2026-11-25): an approval may be given ahead for ONE named month (`for_month`, 'YYYY-MM', not before
+    # the month it is dated in); without it, the approval covers the month it is dated in
+    month = str(a.get("for_month") or f"{on:%Y-%m}")
+    if month < f"{on:%Y-%m}":
+        return f"the approval is dated {on} but names {month}, a month before it — not an approval for {now:%Y-%m}"
+    if month != f"{now:%Y-%m}":
+        return (f"the approval (dated {on}) covers {month} only, and today is {now} — the chunk {what} needs a "
                 f"new dated approval; {ask}")
     cap = a.get("max_gb")
     if not isinstance(cap, (int, float)) or isinstance(cap, bool) or cap <= 0:

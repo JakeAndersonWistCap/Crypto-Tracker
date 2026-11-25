@@ -132,8 +132,9 @@ def _r(explicit=True, today="2026-12-01", approval=OK, chunk=NOV, gb=226.2, done
 
 
 def test_the_shipped_approval_is_not_approved_and_the_refusal_says_what_to_approve_and_the_gb():
-    a = config.NEAR_P2P_HISTORY_APPROVAL
-    assert a["approved"] is False and a["approved_by"] is None and a["approved_on"] is None and a["max_gb"] is None
+    # R21b (Jake 2026-11-25): the shipped approval is now Jake's, for 2026-12 (tests/test_r21b_lead.py); the refusal
+    # without one is read on an empty approval (was: the shipped one, approved False)
+    a = {"approved": False, "approved_by": None, "approved_on": None, "max_gb": None, "chunks": 1}
     why = _r(approval=a)
     assert why is not None and "NOT APPROVED" in why
     assert "2025-11-01..2025-11-30" in why and "30 days" in why and "226.2 GB" in why
@@ -312,6 +313,9 @@ def test_the_command_without_an_approval_bills_nothing_and_calls_nothing(tmp_pat
     held = [str(d.date()) for d in pd.date_range("2025-12-01", "2026-11-30")]
     lc = _state(tmp_path, monkeypatch, held)
     monkeypatch.setattr(nh, "_today", lambda: D("2026-12-01"))
+    # R21b: Jake's approval for 2026-12 now ships — this reads the command WITHOUT one
+    monkeypatch.setattr(config, "NEAR_P2P_HISTORY_APPROVAL", {"approved": False, "approved_by": None,
+                                                              "approved_on": None, "max_gb": None, "chunks": 1})
     before = (lc / "near-bq.json").read_text()
     assert nh.main(["run", "--db", str(tmp_path / "none.db")]) == 0
     said = capsys.readouterr().out

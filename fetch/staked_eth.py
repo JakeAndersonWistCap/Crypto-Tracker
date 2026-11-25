@@ -686,6 +686,10 @@ class BeaconchainEth:
     def blocked(self, spec: dict) -> tuple[str, str] | None:
         """("unconfigured" | "cooldown", why) when beaconcha.in is not asked this run, else None."""
         import urllib.parse
+        if spec.get("not_standing"):
+            # R21b (Jake 2026-11-25): the keyless public beacon node is the standing source — beaconcha.in is not asked
+            # even with a key in .env (a change of source would be a declared handover, never a key's side effect)
+            return "skipped", spec["not_standing"]
         if not self.key(spec):
             return "unconfigured", (f"no {spec['key_env']} in .env — beaconcha.in's v2 API answers 401 without a key; "
                                     f"NOTHING STORED from it")

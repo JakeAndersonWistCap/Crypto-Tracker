@@ -39,6 +39,15 @@ TODAY = pd.Timestamp("2026-12-02")                   # the first day after beaco
 COLS = ["date", "project", "metric", "value", "source", "tier"]
 
 
+@pytest.fixture(autouse=True)
+def _beaconchain_reader_as_wired_in_r20(monkeypatch):
+    """R21b (Jake 2026-11-25): beaconcha.in is not the standing source (config not_standing; tests/test_r21b_lead.py).
+    These tests read the R20 reader's own logic, which stays on record: they run it without that switch."""
+    spec = config.PROJECT_BY_NAME["Ethereum"]["staked_eth_beaconchain"]
+    if "not_standing" in spec:
+        monkeypatch.delitem(spec, "not_standing")
+
+
 # ================================================================================== 1. beaconcha.in: the stub API
 def _epoch_body(epoch: int, eth: float, count: int = 1_050_000, finality: str = "finalized") -> dict:
     """POST /api/v2/ethereum/epoch, the fields the OpenAPI marks required (docs.beaconcha.in, read 2026-11-23)."""
@@ -588,8 +597,10 @@ def test_the_combined_schedule_is_the_plans():
 
 def test_a_months_approval_covers_the_schedules_chunks():
     cfg = config.NEAR_P2P_HISTORY
-    assert config.NEAR_P2P_HISTORY_APPROVAL == {"approved": False, "approved_by": None, "approved_on": None,
-                                               "max_gb": None, "chunks": None}          # still Jake's to give
+    # R21b (Jake 2026-11-25): given, for 2026-12 only, the schedule's count (was: not yet given)
+    assert config.NEAR_P2P_HISTORY_APPROVAL == {"approved": True, "approved_by": "Jake (Round 21b, item 4)",
+                                               "approved_on": "2026-11-25", "for_month": "2026-12", "max_gb": 337.0,
+                                               "chunks": None}
     ok = {"approved": True, "approved_by": "Jake", "approved_on": "2027-01-02", "max_gb": 240, "chunks": None}
     chunk = (dt.date(2025, 10, 1), dt.date(2025, 10, 31))
     assert nh.scheduled_chunks("2027-01", cfg) == 2 and nh.scheduled_chunks("2027-03", cfg) == 3
