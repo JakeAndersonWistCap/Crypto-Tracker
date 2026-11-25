@@ -1,0 +1,1448 @@
+{
+"Ether.fi": {
+"audit|A3 Revenue Buyback|Circulating supply": [
+{
+"date": "2026-11-25",
+"from": 998535999.0,
+"to": 962752666.0,
+"why": "R22 item 1(a) (Jake 2026-11-25): Ether.fi's core-contributor tokens not yet vested (MODELLED from the docs' schedule) are OUT of circulating until they vest; the vesting steps enter as net supply"
+}
+],
+"audit|A3 Revenue Buyback|Lock rate = locked inside circulating ÷ circulating (stake held by wallets outside circulating excluded)": [
+{
+"date": "2026-11-25",
+"from": 0.0881838571,
+"to": 0.0914614511,
+"why": "R22 item 1(a) (Jake 2026-11-25): Ether.fi's core-contributor tokens not yet vested (MODELLED from the docs' schedule) are OUT of circulating until they vest; the vesting steps enter as net supply"
+}
+],
+"audit|A3 Revenue Buyback|Market cap ($)": [
+{
+"date": "2026-11-25",
+"from": 687369310.0,
+"to": 662736883.0,
+"why": "R22 item 1(a) (Jake 2026-11-25): Ether.fi's core-contributor tokens not yet vested (MODELLED from the docs' schedule) are OUT of circulating until they vest; the vesting steps enter as net supply"
+}
+],
+"audit|A3 Revenue Buyback|Trend — a3_actual_buyback_pct (arrow · QoQ · 4Q growth/yr · quarters improved; Trajectory tab)": [
+{
+"date": "2026-11-25",
+"from": "– · 4Q n/a · 1/4 improved · QoQ n/a",
+"to": "MODELLED Q0, Q-1, Q-2, Q-3, Q-4 · – · 4Q n/a · 1/4 improved · QoQ n/a",
+"why": "R22 item 1(a) (Jake 2026-11-25): Ether.fi's core-contributor tokens not yet vested (MODELLED from the docs' schedule) are OUT of circulating until they vest; the vesting steps enter as net supply"
+}
+],
+"audit|A3 Revenue Buyback|Trend — a3_circ_retirement (arrow · QoQ · 4Q growth/yr · quarters improved; Trajectory tab)": [
+{
+"date": "2026-11-25",
+"from": "– · 4Q n/a · 1/4 improved · QoQ n/a",
+"to": "MODELLED Q0, Q-1, Q-2, Q-3, Q-4 · – · 4Q n/a · 1/4 improved · QoQ n/a",
+"why": "R22 item 1(a) (Jake 2026-11-25): Ether.fi's core-contributor tokens not yet vested (MODELLED from the docs' schedule) are OUT of circulating until they vest; the vesting steps enter as net supply"
+}
+],
+"audit|A3 Revenue Buyback|Trend — a3_implied_buyback_pct (arrow · QoQ · 4Q growth/yr · quarters improved; Trajectory tab)": [
+{
+"date": "2026-11-25",
+"from": "– · 4Q n/a · QoQ n/a",
+"to": "MODELLED Q0, Q-1, Q-2, Q-3, Q-4 · – · 4Q n/a · QoQ n/a",
+"why": "R22 item 1(a) (Jake 2026-11-25): Ether.fi's core-contributor tokens not yet vested (MODELLED from the docs' schedule) are OUT of circulating until they vest; the vesting steps enter as net supply"
+}
+],
+"audit|CP Comparability|Circulating supply (tokens) — our convention, the figure in use": [
+{
+"date": "2026-11-25",
+"from": 998535999.0,
+"to": 962752666.0,
+"why": "R22 item 1(a) (Jake 2026-11-25): Ether.fi's core-contributor tokens not yet vested (MODELLED from the docs' schedule) are OUT of circulating until they vest; the vesting steps enter as net supply"
+}
+],
+"audit|CP Comparability|Dilution (e) unlocks (annualised) ÷ circulating": [
+{
+"date": "2026-11-25",
+"from": 0.0831746626,
+"to": 0.0862660762,
+"why": "R22 item 1(a) (Jake 2026-11-25): Ether.fi's core-contributor tokens not yet vested (MODELLED from the docs' schedule) are OUT of circulating until they vest; the vesting steps enter as net supply"
+}
+],
+"audit|CP Comparability|Flow demand — buyback $ (every funding source, annualised) ÷ market cap": [
+{
+"date": "2026-11-25",
+"from": 0.00163735672,
+"to": 0.00169821356,
+"why": "R22 item 1(a) (Jake 2026-11-25): Ether.fi's core-contributor tokens not yet vested (MODELLED from the docs' schedule) are OUT of circulating until they vest; the vesting steps enter as net supply"
+}
+],
+"audit|CP Comparability|Free float ÷ circulating": [
+{
+"date": "2026-11-25",
+"from": 0.687864985,
+"to": 0.713431367,
+"why": "R22 item 1(a) (Jake 2026-11-25): Ether.fi's core-contributor tokens not yet vested (MODELLED from the docs' schedule) are OUT of circulating until they vest; the vesting steps enter as net supply"
+}
+],
+"audit|CP Comparability|Holder value RECORDED, NOT CREDITED (treasury / emissions-funded) ÷ average market cap over the window": [
+{
+"date": "2026-11-25",
+"from": 0.00203312581,
+"to": 0.00212079033,
+"why": "R22 item 1(a) (Jake 2026-11-25): Ether.fi's core-contributor tokens not yet vested (MODELLED from the docs' schedule) are OUT of circulating until they vest; the vesting steps enter as net supply"
+}
+],
+"audit|CP Comparability|Holding demand — lock rate = locked ÷ circulating": [
+{
+"date": "2026-11-25",
+"from": 0.0881838571,
+"to": 0.0914614511,
+"why": "R22 item 1(a) (Jake 2026-11-25): Ether.fi's core-contributor tokens not yet vested (MODELLED from the docs' schedule) are OUT of circulating until they vest; the vesting steps enter as net supply"
+}
+],
+"audit|CP Comparability|Issuer, foundation and treasury holdings inside circulating (tokens) — off the free float (R20)": [
+{
+"date": "2026-11-25",
+"from": 223623293.0,
+"to": 187839959.0,
+"why": "R22 item 1(a) (Jake 2026-11-25): Ether.fi's core-contributor tokens not yet vested (MODELLED from the docs' schedule) are OUT of circulating until they vest; the vesting steps enter as net supply"
+}
+],
+"audit|CP Comparability|Market cap ($)": [
+{
+"date": "2026-11-25",
+"from": 687369310.0,
+"to": 662736883.0,
+"why": "R22 item 1(a) (Jake 2026-11-25): Ether.fi's core-contributor tokens not yet vested (MODELLED from the docs' schedule) are OUT of circulating until they vest; the vesting steps enter as net supply"
+}
+],
+"audit|CP Comparability|UNIFORMITY = whole-token yield ÷ staker yield (1 = every holder alike) (PROPOSED)": [
+{
+"date": "2026-11-25",
+"from": 0.110111222,
+"to": 0.114203807,
+"why": "R22 item 1(a) (Jake 2026-11-25): Ether.fi's core-contributor tokens not yet vested (MODELLED from the docs' schedule) are OUT of circulating until they vest; the vesting steps enter as net supply"
+}
+],
+"audit|CP Comparability|Whole-token yield — protocol = staker yield × reward-bearing stake ÷ circulating (now)": [
+{
+"date": "2026-11-25",
+"from": 0.00867732507,
+"to": 0.00899984156,
+"why": "R22 item 1(a) (Jake 2026-11-25): Ether.fi's core-contributor tokens not yet vested (MODELLED from the docs' schedule) are OUT of circulating until they vest; the vesting steps enter as net supply"
+}
+],
+"audit|Master|Circulating supply (used)": [
+{
+"date": "2026-11-25",
+"from": 998535999.0,
+"to": 962752666.0,
+"why": "R22 item 1(a) (Jake 2026-11-25): Ether.fi's core-contributor tokens not yet vested (MODELLED from the docs' schedule) are OUT of circulating until they vest; the vesting steps enter as net supply"
+}
+],
+"audit|Master|Market cap ($)": [
+{
+"date": "2026-11-25",
+"from": 687369310.0,
+"to": 662736883.0,
+"why": "R22 item 1(a) (Jake 2026-11-25): Ether.fi's core-contributor tokens not yet vested (MODELLED from the docs' schedule) are OUT of circulating until they vest; the vesting steps enter as net supply"
+}
+],
+"audit|Master|NET SUPPLY CHANGE Q0 (tokens) = closing − opening circulating supply": [
+{
+"date": "2026-11-25",
+"from": 0.0,
+"to": 17891666.7,
+"why": "R22 item 1(a) (Jake 2026-11-25): Ether.fi's core-contributor tokens not yet vested (MODELLED from the docs' schedule) are OUT of circulating until they vest; the vesting steps enter as net supply"
+}
+],
+"audit|Master|Net supply change, annualised % of circulating": [
+{
+"date": "2026-11-25",
+"from": 0.0,
+"to": 0.0753679016,
+"why": "R22 item 1(a) (Jake 2026-11-25): Ether.fi's core-contributor tokens not yet vested (MODELLED from the docs' schedule) are OUT of circulating until they vest; the vesting steps enter as net supply"
+}
+],
+"audit|Master|Trend — master_buyback_of_supply_annualised_implied_split_as_at_this_window (arrow · QoQ · 4Q growth/yr · quarters improved; Trajectory tab)": [
+{
+"date": "2026-11-25",
+"from": "– · 4Q n/a · QoQ n/a",
+"to": "MODELLED Q0, Q-1, Q-2, Q-3, Q-4 · – · 4Q n/a · QoQ n/a",
+"why": "R22 item 1(a) (Jake 2026-11-25): Ether.fi's core-contributor tokens not yet vested (MODELLED from the docs' schedule) are OUT of circulating until they vest; the vesting steps enter as net supply"
+}
+],
+"audit|Master|Trend — master_circulating_supply_used (arrow · QoQ · 4Q growth/yr · quarters improved; Trajectory tab)": [
+{
+"date": "2026-11-25",
+"from": "→ · +0%/yr (4Q) · QoQ +0.0%",
+"to": "MODELLED Q0, Q-1, Q-2, Q-3, Q-4 · ↑ · +8%/yr (4Q) · QoQ +1.9%",
+"why": "R22 item 1(a) (Jake 2026-11-25): Ether.fi's core-contributor tokens not yet vested (MODELLED from the docs' schedule) are OUT of circulating until they vest; the vesting steps enter as net supply"
+}
+],
+"audit|Master|Trend — master_market_cap (arrow · QoQ · 4Q growth/yr · quarters improved; Trajectory tab)": [
+{
+"date": "2026-11-25",
+"from": "▼ · -25%/yr (4Q) · 1/4 improved · QoQ +74.9%",
+"to": "▼ · -19%/yr (4Q) · 1/4 improved · QoQ +78.2%",
+"why": "R22 item 1(a) (Jake 2026-11-25): Ether.fi's core-contributor tokens not yet vested (MODELLED from the docs' schedule) are OUT of circulating until they vest; the vesting steps enter as net supply"
+}
+],
+"audit|Master|Trend — master_net_supply_change_annualised_of_circulating (arrow · QoQ · 4Q growth/yr · quarters improved; Trajectory tab)": [
+{
+"date": "2026-11-25",
+"from": "– · 4Q n/a · 0/3 improved · QoQ +0.0 pp",
+"to": "MODELLED Q0, Q-1, Q-2, Q-3, Q-4 · ▼ · +51%/yr (4Q) · 2/3 improved · QoQ -0.1 pp",
+"why": "R22 item 1(a) (Jake 2026-11-25): Ether.fi's core-contributor tokens not yet vested (MODELLED from the docs' schedule) are OUT of circulating until they vest; the vesting steps enter as net supply"
+}
+],
+"audit|Master|Trend — master_net_supply_change_q0_tokens_closing_opening_circulating_supp (arrow · QoQ · 4Q growth/yr · quarters improved; Trajectory tab)": [
+{
+"date": "2026-11-25",
+"from": "– · 4Q n/a · 0/3 improved · QoQ n/a",
+"to": "▼ · +63%/yr (4Q) · 1/3 improved · QoQ +0.0%",
+"why": "R22 item 1(a) (Jake 2026-11-25): Ether.fi's core-contributor tokens not yet vested (MODELLED from the docs' schedule) are OUT of circulating until they vest; the vesting steps enter as net supply"
+}
+],
+"audit|Master|Turnover = 30d volume ÷ market cap (x)": [
+{
+"date": "2026-11-25",
+"from": 2.25995822,
+"to": 2.34395574,
+"why": "R22 item 1(a) (Jake 2026-11-25): Ether.fi's core-contributor tokens not yet vested (MODELLED from the docs' schedule) are OUT of circulating until they vest; the vesting steps enter as net supply"
+}
+],
+"reader|A3 Revenue Buyback|Circulating supply": [
+{
+"date": "2026-11-25",
+"from": 998535999.0,
+"to": 962752666.0,
+"why": "R22 item 1(a) (Jake 2026-11-25): Ether.fi's core-contributor tokens not yet vested (MODELLED from the docs' schedule) are OUT of circulating until they vest; the vesting steps enter as net supply"
+}
+],
+"reader|A3 Revenue Buyback|Lock rate, % of circulating": [
+{
+"date": "2026-11-25",
+"from": 0.0881838571,
+"to": 0.0914614511,
+"why": "R22 item 1(a) (Jake 2026-11-25): Ether.fi's core-contributor tokens not yet vested (MODELLED from the docs' schedule) are OUT of circulating until they vest; the vesting steps enter as net supply"
+}
+],
+"reader|A3 Revenue Buyback|Market cap": [
+{
+"date": "2026-11-25",
+"from": 687369310.0,
+"to": 662736883.0,
+"why": "R22 item 1(a) (Jake 2026-11-25): Ether.fi's core-contributor tokens not yet vested (MODELLED from the docs' schedule) are OUT of circulating until they vest; the vesting steps enter as net supply"
+}
+],
+"reader|Comparison|Lock rate, % of circulating": [
+{
+"date": "2026-11-25",
+"from": 0.0881838571,
+"to": 0.0914614511,
+"why": "R22 item 1(a) (Jake 2026-11-25): Ether.fi's core-contributor tokens not yet vested (MODELLED from the docs' schedule) are OUT of circulating until they vest; the vesting steps enter as net supply"
+}
+],
+"reader|Comparison|Revenue ÷ market cap, a year": [
+{
+"date": "2026-11-25",
+"from": 0.0604763947,
+"to": 0.0627241652,
+"why": "R22 item 1(a) (Jake 2026-11-25): Ether.fi's core-contributor tokens not yet vested (MODELLED from the docs' schedule) are OUT of circulating until they vest; the vesting steps enter as net supply"
+}
+],
+"reader|Summary|Confidence (share green)": [
+{
+"date": "2026-11-25",
+"from": 0.75,
+"to": 0.5,
+"why": "R22: the share of green cells is recounted"
+}
+],
+"reader|Summary|Market cap": [
+{
+"date": "2026-11-25",
+"from": 687369310.0,
+"to": 662736883.0,
+"why": "R22 item 1(a) (Jake 2026-11-25): Ether.fi's core-contributor tokens not yet vested (MODELLED from the docs' schedule) are OUT of circulating until they vest; the vesting steps enter as net supply"
+}
+],
+"reader|Summary|Net supply change, % a year": [
+{
+"date": "2026-11-25",
+"from": 0.0,
+"to": 0.0753679016,
+"why": "R22 item 1(a) (Jake 2026-11-25): Ether.fi's core-contributor tokens not yet vested (MODELLED from the docs' schedule) are OUT of circulating until they vest; the vesting steps enter as net supply"
+}
+],
+"reader|Summary|Net supply change, 90 days": [
+{
+"date": "2026-11-25",
+"from": 0.0,
+"to": 17891666.7,
+"why": "R22 item 1(a) (Jake 2026-11-25): Ether.fi's core-contributor tokens not yet vested (MODELLED from the docs' schedule) are OUT of circulating until they vest; the vesting steps enter as net supply"
+}
+],
+"reader|Summary|What changed": [
+{
+"date": "2026-11-25",
+"from": "over 90D: Price +75% · Market cap +75% · TVL +68% · ",
+"to": "over 90D: Price +75% · Market cap +78% · TVL +68% · ",
+"why": "R22 item 1(a) (Jake 2026-11-25): Ether.fi's core-contributor tokens not yet vested (MODELLED from the docs' schedule) are OUT of circulating until they vest; the vesting steps enter as net supply"
+}
+]
+},
+"Hyperliquid": {
+"audit|A1 Infrastructure|Issuance as % of supply (annualised)": [
+{
+"date": "2026-11-25",
+"from": 0.0390380275,
+"to": 0.699406541,
+"why": "R22 item 1(a) (Jake 2026-11-25): Hyperliquid's core-contributor HYPE (the team wallet 0x43e9abea…, 238.36M, all staked) is OUT of circulating until it vests — each payout out of the wallet enters as it vests; the Foundation and Grants stay in, off the float; the futureEmissions pot (409.6M) was already out; the Fund stays burned"
+}
+],
+"audit|A1 Infrastructure|Issuer releases Q0 (tokens) — pre-minted supply released into circulation, NOT issuance": [
+{
+"date": "2026-11-25",
+"from": 214122.129,
+"to": 3836218.87,
+"why": "R22 item 1(a) (Jake 2026-11-25): Hyperliquid's core-contributor HYPE (the team wallet 0x43e9abea…, 238.36M, all staked) is OUT of circulating until it vests — each payout out of the wallet enters as it vests; the Foundation and Grants stay in, off the float; the futureEmissions pot (409.6M) was already out; the Fund stays burned"
+}
+],
+"audit|A1 Infrastructure|NET ISSUANCE AFTER BURN, annualised % of circulating (+ is net inflation; fee-market burns included)": [
+{
+"date": "2026-11-25",
+"from": -0.0185918181,
+"to": -0.0332476473,
+"why": "R22 item 1(a) (Jake 2026-11-25): Hyperliquid's core-contributor HYPE (the team wallet 0x43e9abea…, 238.36M, all staked) is OUT of circulating until it vests — each payout out of the wallet enters as it vests; the Foundation and Grants stay in, off the float; the futureEmissions pot (409.6M) was already out; the Fund stays burned"
+}
+],
+"audit|A1 Infrastructure|NRR HEADROOM (trading throughput) = M2/GDP ÷ NRR — valuation headroom, not a target": [
+{
+"date": "2026-11-25",
+"from": 45.5346796,
+"to": 81.4294202,
+"why": "R22 item 1(a) (Jake 2026-11-25): Hyperliquid's core-contributor HYPE (the team wallet 0x43e9abea…, 238.36M, all staked) is OUT of circulating until it vests — each payout out of the wallet enters as it vests; the Foundation and Grants stay in, off the float; the futureEmissions pot (409.6M) was already out; the Fund stays burned"
+}
+],
+"audit|A1 Infrastructure|NRR ON TRADING THROUGHPUT — market cap ÷ trailing-365d DEX + perps volume (DefiLlama)": [
+{
+"date": "2026-11-25",
+"from": 0.0155925112,
+"to": 0.00871920736,
+"why": "R22 item 1(a) (Jake 2026-11-25): Hyperliquid's core-contributor HYPE (the team wallet 0x43e9abea…, 238.36M, all staked) is OUT of circulating until it vests — each payout out of the wallet enters as it vests; the Foundation and Grants stay in, off the float; the futureEmissions pot (409.6M) was already out; the Fund stays burned"
+}
+],
+"audit|A1 Infrastructure|Staking rate = staked inside circulating ÷ circulating": [
+{
+"date": "2026-11-25",
+"from": 0.374631896,
+"to": 0.669952186,
+"why": "R22 item 1(a) (Jake 2026-11-25): Hyperliquid's core-contributor HYPE (the team wallet 0x43e9abea…, 238.36M, all staked) is OUT of circulating until it vests — each payout out of the wallet enters as it vests; the Foundation and Grants stay in, off the float; the futureEmissions pot (409.6M) was already out; the Fund stays burned"
+}
+],
+"audit|A3 Revenue Buyback|Actual buyback as % of supply (annualised) — RETIRED (burned + held) only": [
+{
+"date": "2026-11-25",
+"from": 0.0178845249,
+"to": 0.0319827987,
+"why": "R22 item 1(a) (Jake 2026-11-25): Hyperliquid's core-contributor HYPE (the team wallet 0x43e9abea…, 238.36M, all staked) is OUT of circulating until it vests — each payout out of the wallet enters as it vests; the Foundation and Grants stay in, off the float; the futureEmissions pot (409.6M) was already out; the Fund stays burned"
+}
+],
+"audit|A3 Revenue Buyback|BUYBACK AS % OF SUPPLY (annualised, implied)": [
+{
+"date": "2026-11-25",
+"from": 0.0181198683,
+"to": 0.032403662,
+"why": "R22 item 1(a) (Jake 2026-11-25): Hyperliquid's core-contributor HYPE (the team wallet 0x43e9abea…, 238.36M, all staked) is OUT of circulating until it vests — each payout out of the wallet enters as it vests; the Foundation and Grants stay in, off the float; the futureEmissions pot (409.6M) was already out; the Fund stays burned"
+}
+],
+"audit|A3 Revenue Buyback|Buyback % supply at Q1 (−3m window, split as at Q1)": [
+{
+"date": "2026-11-25",
+"from": 0.0192118917,
+"to": 0.0343565216,
+"why": "R22 item 1(a) (Jake 2026-11-25): Hyperliquid's core-contributor HYPE (the team wallet 0x43e9abea…, 238.36M, all staked) is OUT of circulating until it vests — each payout out of the wallet enters as it vests; the Foundation and Grants stay in, off the float; the futureEmissions pot (409.6M) was already out; the Fund stays burned"
+}
+],
+"audit|A3 Revenue Buyback|Buyback % supply at Q2 (−6m, split as at Q2)": [
+{
+"date": "2026-11-25",
+"from": 0.0359936238,
+"to": 0.064367202,
+"why": "R22 item 1(a) (Jake 2026-11-25): Hyperliquid's core-contributor HYPE (the team wallet 0x43e9abea…, 238.36M, all staked) is OUT of circulating until it vests — each payout out of the wallet enters as it vests; the Foundation and Grants stay in, off the float; the futureEmissions pot (409.6M) was already out; the Fund stays burned"
+}
+],
+"audit|A3 Revenue Buyback|CIRCULATING RETIREMENT RATE (tokens) = RETIRED buyback tokens (burned + held, annualised) ÷ circulating — primary": [
+{
+"date": "2026-11-25",
+"from": 0.0178845249,
+"to": 0.0319827987,
+"why": "R22 item 1(a) (Jake 2026-11-25): Hyperliquid's core-contributor HYPE (the team wallet 0x43e9abea…, 238.36M, all staked) is OUT of circulating until it vests — each payout out of the wallet enters as it vests; the Foundation and Grants stay in, off the float; the futureEmissions pot (409.6M) was already out; the Fund stays burned"
+}
+],
+"audit|A3 Revenue Buyback|Circulating retirement rate ($) = RETIRED buyback $ (burned + held, annualised) ÷ market cap — alongside": [
+{
+"date": "2026-11-25",
+"from": 0.0169114779,
+"to": 0.0302427042,
+"why": "R22 item 1(a) (Jake 2026-11-25): Hyperliquid's core-contributor HYPE (the team wallet 0x43e9abea…, 238.36M, all staked) is OUT of circulating until it vests — each payout out of the wallet enters as it vests; the Foundation and Grants stay in, off the float; the futureEmissions pot (409.6M) was already out; the Fund stays burned"
+}
+],
+"audit|A3 Revenue Buyback|Circulating supply": [
+{
+"date": "2026-11-25",
+"from": 539758896.0,
+"to": 301828851.0,
+"why": "R22 item 1(a) (Jake 2026-11-25): Hyperliquid's core-contributor HYPE (the team wallet 0x43e9abea…, 238.36M, all staked) is OUT of circulating until it vests — each payout out of the wallet enters as it vests; the Foundation and Grants stay in, off the float; the futureEmissions pot (409.6M) was already out; the Fund stays burned"
+}
+],
+"audit|A3 Revenue Buyback|Lock rate = locked inside circulating ÷ circulating (stake held by wallets outside circulating excluded)": [
+{
+"date": "2026-11-25",
+"from": 0.374631896,
+"to": 0.669952186,
+"why": "R22 item 1(a) (Jake 2026-11-25): Hyperliquid's core-contributor HYPE (the team wallet 0x43e9abea…, 238.36M, all staked) is OUT of circulating until it vests — each payout out of the wallet enters as it vests; the Foundation and Grants stay in, off the float; the futureEmissions pot (409.6M) was already out; the Fund stays burned"
+}
+],
+"audit|A3 Revenue Buyback|Market cap ($)": [
+{
+"date": "2026-11-25",
+"from": 43702446000.0,
+"to": 24438057800.0,
+"why": "R22 item 1(a) (Jake 2026-11-25): Hyperliquid's core-contributor HYPE (the team wallet 0x43e9abea…, 238.36M, all staked) is OUT of circulating until it vests — each payout out of the wallet enters as it vests; the Foundation and Grants stay in, off the float; the futureEmissions pot (409.6M) was already out; the Fund stays burned"
+}
+],
+"audit|A4 Permanent Burn|BURN ÷ ISSUANCE (x) — crossover, on the basis to the left": [
+{
+"date": "2026-11-25",
+"from": 0.305018289,
+"to": 0.308786847,
+"why": "R22 item 2 (Jake 2026-11-25): Hyperliquid's A4 is scored on every burn (total_burn_tokens: the Fund, the Core burns and the HyperEVM zero address; the base fee stays inferred and unsubtracted), and its ratios move with circulating (item 1(a))"
+}
+],
+"audit|A4 Permanent Burn|Burn as share of fees (measured)": [
+{
+"date": "2026-11-25",
+"from": 0.818846548,
+"to": 0.828840724,
+"why": "R22 item 2 (Jake 2026-11-25): Hyperliquid's A4 is scored on every burn (total_burn_tokens: the Fund, the Core burns and the HyperEVM zero address; the base fee stays inferred and unsubtracted), and its ratios move with circulating (item 1(a))"
+}
+],
+"audit|A4 Permanent Burn|Burn split Q0 (tokens): every burn − the A4 burn": [
+{
+"date": "2026-11-25",
+"from": 30198.6663,
+"to": "<absent>",
+"why": "R22 item 2 (Jake 2026-11-25): Hyperliquid's A4 is scored on every burn (total_burn_tokens: the Fund, the Core burns and the HyperEVM zero address; the base fee stays inferred and unsubtracted), and its ratios move with circulating (item 1(a))"
+}
+],
+"audit|A4 Permanent Burn|Burn split — by source": [
+{
+"date": "2026-11-25",
+"from": "A4 burn = burn_ex_chain_fee_tokens; every burn (A1) = total_burn_tokens; the difference is the burn outside the A4 mechanism (fee-market / other)",
+"to": "A4 burn = total_burn_tokens; every burn (A1) = total_burn_tokens",
+"why": "R22 item 2 (Jake 2026-11-25): Hyperliquid's A4 is scored on every burn (total_burn_tokens: the Fund, the Core burns and the HyperEVM zero address; the base fee stays inferred and unsubtracted), and its ratios move with circulating (item 1(a))"
+}
+],
+"audit|A4 Permanent Burn|Burn Δ30d": [
+{
+"date": "2026-11-25",
+"from": "n/a — SERIES BREAK 2026-09-25: burn_ex_chain_fee_tokens: THE BASIS CHANGES at the stitch: before the first live Assistance Fund read the burn is DefiLl (inside this comparison)",
+"to": "n/a — SERIES BREAK 2026-09-25: total_burn_tokens: THE BASIS CHANGES at the stitch: before the first live Assistance Fund read the burn is DefiLlama hol (inside this comparison)",
+"why": "R22 item 2 (Jake 2026-11-25): Hyperliquid's A4 is scored on every burn (total_burn_tokens: the Fund, the Core burns and the HyperEVM zero address; the base fee stays inferred and unsubtracted), and its ratios move with circulating (item 1(a))"
+}
+],
+"audit|A4 Permanent Burn|Burn Δ3m": [
+{
+"date": "2026-11-25",
+"from": "n/a — SERIES BREAK 2026-09-25: burn_ex_chain_fee_tokens: THE BASIS CHANGES at the stitch: before the first live Assistance Fund read the burn is DefiLl (inside this comparison)",
+"to": "n/a — SERIES BREAK 2026-09-25: total_burn_tokens: THE BASIS CHANGES at the stitch: before the first live Assistance Fund read the burn is DefiLlama hol (inside this comparison)",
+"why": "R22 item 2 (Jake 2026-11-25): Hyperliquid's A4 is scored on every burn (total_burn_tokens: the Fund, the Core burns and the HyperEVM zero address; the base fee stays inferred and unsubtracted), and its ratios move with circulating (item 1(a))"
+}
+],
+"audit|A4 Permanent Burn|Burn Δ6m": [
+{
+"date": "2026-11-25",
+"from": "n/a — SERIES BREAK 2026-09-25: burn_ex_chain_fee_tokens: THE BASIS CHANGES at the stitch: before the first live Assistance Fund read the burn is DefiLl (inside this comparison)",
+"to": "n/a — SERIES BREAK 2026-09-25: total_burn_tokens: THE BASIS CHANGES at the stitch: before the first live Assistance Fund read the burn is DefiLlama hol (inside this comparison)",
+"why": "R22 item 2 (Jake 2026-11-25): Hyperliquid's A4 is scored on every burn (total_burn_tokens: the Fund, the Core burns and the HyperEVM zero address; the base fee stays inferred and unsubtracted), and its ratios move with circulating (item 1(a))"
+}
+],
+"audit|A4 Permanent Burn|Burn Δ9m": [
+{
+"date": "2026-11-25",
+"from": "n/a — SERIES BREAK 2026-09-25: burn_ex_chain_fee_tokens: THE BASIS CHANGES at the stitch: before the first live Assistance Fund read the burn is DefiLl (inside this comparison)",
+"to": "n/a — SERIES BREAK 2026-09-25: total_burn_tokens: THE BASIS CHANGES at the stitch: before the first live Assistance Fund read the burn is DefiLlama hol (inside this comparison)",
+"why": "R22 item 2 (Jake 2026-11-25): Hyperliquid's A4 is scored on every burn (total_burn_tokens: the Fund, the Core burns and the HyperEVM zero address; the base fee stays inferred and unsubtracted), and its ratios move with circulating (item 1(a))"
+}
+],
+"audit|A4 Permanent Burn|Circulating supply (used, tokens)": [
+{
+"date": "2026-11-25",
+"from": 539758896.0,
+"to": 301828851.0,
+"why": "R22 item 2 (Jake 2026-11-25): Hyperliquid's A4 is scored on every burn (total_burn_tokens: the Fund, the Core burns and the HyperEVM zero address; the base fee stays inferred and unsubtracted), and its ratios move with circulating (item 1(a))"
+}
+],
+"audit|A4 Permanent Burn|Fees required for crossover ($ a year) = fees × issuance ÷ burn, per covered day — at the measured burn share": [
+{
+"date": "2026-11-25",
+"from": 3045645030.0,
+"to": 3008474760.0,
+"why": "R22 item 2 (Jake 2026-11-25): Hyperliquid's A4 is scored on every burn (total_burn_tokens: the Fund, the Core burns and the HyperEVM zero address; the base fee stays inferred and unsubtracted), and its ratios move with circulating (item 1(a))"
+}
+],
+"audit|A4 Permanent Burn|GROSS BURN Q0 (tokens)": [
+{
+"date": "2026-11-25",
+"from": 2444209.36,
+"to": 2474408.02,
+"why": "R22 item 2 (Jake 2026-11-25): Hyperliquid's A4 is scored on every burn (total_burn_tokens: the Fund, the Core burns and the HyperEVM zero address; the base fee stays inferred and unsubtracted), and its ratios move with circulating (item 1(a))"
+}
+],
+"audit|A4 Permanent Burn|Gross burn Q0 ($, each day's burn × that day's price)": [
+{
+"date": "2026-11-25",
+"from": 187567389.0,
+"to": 189856684.0,
+"why": "R22 item 2 (Jake 2026-11-25): Hyperliquid's A4 is scored on every burn (total_burn_tokens: the Fund, the Core burns and the HyperEVM zero address; the base fee stays inferred and unsubtracted), and its ratios move with circulating (item 1(a))"
+}
+],
+"audit|A4 Permanent Burn|ISSUANCE − BURN Q0 (tokens) — self-reported net mint where published, else issuance − burn, on the basis to the left (the cell says 'burn only' where nothing is minted)": [
+{
+"date": "2026-11-25",
+"from": -2444209.36,
+"to": -2474408.02,
+"why": "R22 item 2 (Jake 2026-11-25): Hyperliquid's A4 is scored on every burn (total_burn_tokens: the Fund, the Core burns and the HyperEVM zero address; the base fee stays inferred and unsubtracted), and its ratios move with circulating (item 1(a))"
+}
+],
+"audit|A4 Permanent Burn|ISSUANCE − BURN, annualised % of circulating (signed; + is net inflation; the cell says 'burn only' where nothing is minted)": [
+{
+"date": "2026-11-25",
+"from": -0.0183649161,
+"to": -0.0332476473,
+"why": "R22 item 2 (Jake 2026-11-25): Hyperliquid's A4 is scored on every burn (total_burn_tokens: the Fund, the Core burns and the HyperEVM zero address; the base fee stays inferred and unsubtracted), and its ratios move with circulating (item 1(a))"
+}
+],
+"audit|A4 Permanent Burn|Issuance as % of supply (annualised)": [
+{
+"date": "2026-11-25",
+"from": 0.0390380275,
+"to": 0.699406541,
+"why": "R22 item 2 (Jake 2026-11-25): Hyperliquid's A4 is scored on every burn (total_burn_tokens: the Fund, the Core burns and the HyperEVM zero address; the base fee stays inferred and unsubtracted), and its ratios move with circulating (item 1(a))"
+}
+],
+"audit|A4 Permanent Burn|Market cap ($)": [
+{
+"date": "2026-11-25",
+"from": 43702446000.0,
+"to": 24438057800.0,
+"why": "R22 item 2 (Jake 2026-11-25): Hyperliquid's A4 is scored on every burn (total_burn_tokens: the Fund, the Core burns and the HyperEVM zero address; the base fee stays inferred and unsubtracted), and its ratios move with circulating (item 1(a))"
+}
+],
+"audit|A4 Permanent Burn|PERMANENT BURN YIELD = burn as % of supply (annualised, tokens)": [
+{
+"date": "2026-11-25",
+"from": 0.0183649161,
+"to": 0.0332476473,
+"why": "R22 item 2 (Jake 2026-11-25): Hyperliquid's A4 is scored on every burn (total_burn_tokens: the Fund, the Core burns and the HyperEVM zero address; the base fee stays inferred and unsubtracted), and its ratios move with circulating (item 1(a))"
+}
+],
+"audit|A4 Permanent Burn|Pool release Q0 (tokens) — measured, premint distribution (where issuance is n/a)": [
+{
+"date": "2026-11-25",
+"from": 214122.129,
+"to": 3836218.87,
+"why": "R22 item 2 (Jake 2026-11-25): Hyperliquid's A4 is scored on every burn (total_burn_tokens: the Fund, the Core burns and the HyperEVM zero address; the base fee stays inferred and unsubtracted), and its ratios move with circulating (item 1(a))"
+}
+],
+"audit|A4 Permanent Burn|Release ÷ burn (x) — premint projects, in place of burn ÷ issuance": [
+{
+"date": "2026-11-25",
+"from": "BLOCKED — unequal coverage: release (pool_release_tokens, q0) covers 9 days of a 90-day window — holes: 2026-10-02..10-05; burn (burn_ex_chain_fee_tokens, q0) covers 90 days of a 90-day window",
+"to": "BLOCKED — unequal coverage: release (pool_release_tokens, q0) covers 9 days of a 90-day window — holes: 2026-10-02..10-05; burn (total_burn_tokens, q0) covers 90 days of a 90-day window",
+"why": "R22 item 2 (Jake 2026-11-25): Hyperliquid's A4 is scored on every burn (total_burn_tokens: the Fund, the Core burns and the HyperEVM zero address; the base fee stays inferred and unsubtracted), and its ratios move with circulating (item 1(a))"
+}
+],
+"audit|CP Comparability|Burn rate (every burn, fee-market included — A1's basis, annualised) ÷ circulating": [
+{
+"date": "2026-11-25",
+"from": 0.0185918181,
+"to": 0.0332476473,
+"why": "R22 item 1(a) (Jake 2026-11-25): Hyperliquid's core-contributor HYPE (the team wallet 0x43e9abea…, 238.36M, all staked) is OUT of circulating until it vests — each payout out of the wallet enters as it vests; the Foundation and Grants stay in, off the float; the futureEmissions pot (409.6M) was already out; the Fund stays burned"
+}
+],
+"audit|CP Comparability|Circulating supply (tokens) — our convention, the figure in use": [
+{
+"date": "2026-11-25",
+"from": 539758896.0,
+"to": 301828851.0,
+"why": "R22 item 1(a) (Jake 2026-11-25): Hyperliquid's core-contributor HYPE (the team wallet 0x43e9abea…, 238.36M, all staked) is OUT of circulating until it vests — each payout out of the wallet enters as it vests; the Foundation and Grants stay in, off the float; the futureEmissions pot (409.6M) was already out; the Fund stays burned"
+}
+],
+"audit|CP Comparability|DILUTION, % OF MARKET CAP = outflows a+b+c+d+e+f at each day's price (annualised) ÷ average market cap over the window — what net holder yield subtracts (R20)": [
+{
+"date": "2026-11-25",
+"from": 0.047139246,
+"to": 0.0848054608,
+"why": "R22 item 1(a) (Jake 2026-11-25): Hyperliquid's core-contributor HYPE (the team wallet 0x43e9abea…, 238.36M, all staked) is OUT of circulating until it vests — each payout out of the wallet enters as it vests; the Foundation and Grants stay in, off the float; the futureEmissions pot (409.6M) was already out; the Fund stays burned"
+}
+],
+"audit|CP Comparability|Dilution (a) security emissions (annualised) ÷ circulating": [
+{
+"date": "2026-11-25",
+"from": 0.00841334785,
+"to": 0.0150455443,
+"why": "R22 item 1(a) (Jake 2026-11-25): Hyperliquid's core-contributor HYPE (the team wallet 0x43e9abea…, 238.36M, all staked) is OUT of circulating until it vests — each payout out of the wallet enters as it vests; the Foundation and Grants stay in, off the float; the futureEmissions pot (409.6M) was already out; the Fund stays burned"
+}
+],
+"audit|CP Comparability|Dilution (e) unlocks (annualised) ÷ circulating": [
+{
+"date": "2026-11-25",
+"from": 0.0416084658,
+"to": 0.0744081934,
+"why": "R22 item 1(a) (Jake 2026-11-25): Hyperliquid's core-contributor HYPE (the team wallet 0x43e9abea…, 238.36M, all staked) is OUT of circulating until it vests — each payout out of the wallet enters as it vests; the Foundation and Grants stay in, off the float; the futureEmissions pot (409.6M) was already out; the Fund stays burned"
+}
+],
+"audit|CP Comparability|Discretionary supply ÷ circulating": [
+{
+"date": "2026-11-25",
+"from": 0.000288093451,
+"to": 0.000515195955,
+"why": "R22 item 1(a) (Jake 2026-11-25): Hyperliquid's core-contributor HYPE (the team wallet 0x43e9abea…, 238.36M, all staked) is OUT of circulating until it vests — each payout out of the wallet enters as it vests; the Foundation and Grants stay in, off the float; the futureEmissions pot (409.6M) was already out; the Fund stays burned"
+}
+],
+"audit|CP Comparability|ETF / ETP holdings ÷ circulating": [
+{
+"date": "2026-11-25",
+"from": 0.010240303,
+"to": 0.0183126783,
+"why": "R22 item 1(a) (Jake 2026-11-25): Hyperliquid's core-contributor HYPE (the team wallet 0x43e9abea…, 238.36M, all staked) is OUT of circulating until it vests — each payout out of the wallet enters as it vests; the Foundation and Grants stay in, off the float; the futureEmissions pot (409.6M) was already out; the Fund stays burned"
+}
+],
+"audit|CP Comparability|Flow demand — buyback $ (every funding source, annualised) ÷ market cap": [
+{
+"date": "2026-11-25",
+"from": 0.0169114779,
+"to": 0.0302427042,
+"why": "R22 item 1(a) (Jake 2026-11-25): Hyperliquid's core-contributor HYPE (the team wallet 0x43e9abea…, 238.36M, all staked) is OUT of circulating until it vests — each payout out of the wallet enters as it vests; the Foundation and Grants stay in, off the float; the futureEmissions pot (409.6M) was already out; the Fund stays burned"
+}
+],
+"audit|CP Comparability|Free float ÷ circulating": [
+{
+"date": "2026-11-25",
+"from": 0.184272001,
+"to": 0.329532618,
+"why": "R22 item 1(a) (Jake 2026-11-25): Hyperliquid's core-contributor HYPE (the team wallet 0x43e9abea…, 238.36M, all staked) is OUT of circulating until it vests — each payout out of the wallet enters as it vests; the Foundation and Grants stay in, off the float; the futureEmissions pot (409.6M) was already out; the Fund stays burned"
+}
+],
+"audit|CP Comparability|HOLDER VALUE YIELD = revenue-funded $ retired + $ distributed + liquid bribes to voters (annualised) ÷ average market cap over the window — treasury- or emissions-funded buybacks are NOT credited (LITMUS A); fee-market burns are on A1 net issuance": [
+{
+"date": "2026-11-25",
+"from": 0.0155918832,
+"to": 0.0280504452,
+"why": "R22 item 1(a) (Jake 2026-11-25): Hyperliquid's core-contributor HYPE (the team wallet 0x43e9abea…, 238.36M, all staked) is OUT of circulating until it vests — each payout out of the wallet enters as it vests; the Foundation and Grants stay in, off the float; the futureEmissions pot (409.6M) was already out; the Fund stays burned"
+}
+],
+"audit|CP Comparability|Holding demand — lock rate = locked ÷ circulating": [
+{
+"date": "2026-11-25",
+"from": 0.374631896,
+"to": 0.669952186,
+"why": "R22 item 1(a) (Jake 2026-11-25): Hyperliquid's core-contributor HYPE (the team wallet 0x43e9abea…, 238.36M, all staked) is OUT of circulating until it vests — each payout out of the wallet enters as it vests; the Foundation and Grants stay in, off the float; the futureEmissions pot (409.6M) was already out; the Fund stays burned"
+}
+],
+"audit|CP Comparability|Insider share of circulating = insider-held tokens counted inside circulating ÷ circulating": [
+{
+"date": "2026-11-25",
+"from": 0.558514731,
+"to": 0.210494292,
+"why": "R22 item 1(a) (Jake 2026-11-25): Hyperliquid's core-contributor HYPE (the team wallet 0x43e9abea…, 238.36M, all staked) is OUT of circulating until it vests — each payout out of the wallet enters as it vests; the Foundation and Grants stay in, off the float; the futureEmissions pot (409.6M) was already out; the Fund stays burned"
+}
+],
+"audit|CP Comparability|Issuer, foundation and treasury holdings inside circulating (tokens) — off the free float (R20)": [
+{
+"date": "2026-11-25",
+"from": 238085545.0,
+"to": 155501.003,
+"why": "R22 item 1(a) (Jake 2026-11-25): Hyperliquid's core-contributor HYPE (the team wallet 0x43e9abea…, 238.36M, all staked) is OUT of circulating until it vests — each payout out of the wallet enters as it vests; the Foundation and Grants stay in, off the float; the futureEmissions pot (409.6M) was already out; the Fund stays burned"
+}
+],
+"audit|CP Comparability|Market cap ($)": [
+{
+"date": "2026-11-25",
+"from": 43702446000.0,
+"to": 24438057800.0,
+"why": "R22 item 1(a) (Jake 2026-11-25): Hyperliquid's core-contributor HYPE (the team wallet 0x43e9abea…, 238.36M, all staked) is OUT of circulating until it vests — each payout out of the wallet enters as it vests; the Foundation and Grants stay in, off the float; the futureEmissions pot (409.6M) was already out; the Fund stays burned"
+}
+],
+"audit|CP Comparability|NET HOLDER YIELD = holder value yield − dilution (outflows a+b+c+d+e+f at each day's price, annualised) ÷ average market cap over the window": [
+{
+"date": "2026-11-25",
+"from": -0.0315473628,
+"to": -0.0567550156,
+"why": "R22 item 1(a) (Jake 2026-11-25): Hyperliquid's core-contributor HYPE (the team wallet 0x43e9abea…, 238.36M, all staked) is OUT of circulating until it vests — each payout out of the wallet enters as it vests; the Foundation and Grants stay in, off the float; the futureEmissions pot (409.6M) was already out; the Fund stays burned"
+}
+],
+"audit|CP Comparability|Retirement rate (RETIRED buyback tokens, burned + held, annualised) ÷ circulating": [
+{
+"date": "2026-11-25",
+"from": 0.0178845249,
+"to": 0.0319827987,
+"why": "R22 item 1(a) (Jake 2026-11-25): Hyperliquid's core-contributor HYPE (the team wallet 0x43e9abea…, 238.36M, all staked) is OUT of circulating until it vests — each payout out of the wallet enters as it vests; the Foundation and Grants stay in, off the float; the futureEmissions pot (409.6M) was already out; the Fund stays burned"
+}
+],
+"audit|CP Comparability|TOTAL DILUTION = outflows a+b+c+d+e+f (annualised) ÷ circulating": [
+{
+"date": "2026-11-25",
+"from": 0.0500218136,
+"to": 0.0894537377,
+"why": "R22 item 1(a) (Jake 2026-11-25): Hyperliquid's core-contributor HYPE (the team wallet 0x43e9abea…, 238.36M, all staked) is OUT of circulating until it vests — each payout out of the wallet enters as it vests; the Foundation and Grants stay in, off the float; the futureEmissions pot (409.6M) was already out; the Fund stays burned"
+}
+],
+"audit|CP Comparability|Treasury-company (DAT) holdings ÷ circulating": [
+{
+"date": "2026-11-25",
+"from": 0.0755761513,
+"to": 0.135152421,
+"why": "R22 item 1(a) (Jake 2026-11-25): Hyperliquid's core-contributor HYPE (the team wallet 0x43e9abea…, 238.36M, all staked) is OUT of circulating until it vests — each payout out of the wallet enters as it vests; the Foundation and Grants stay in, off the float; the futureEmissions pot (409.6M) was already out; the Fund stays burned"
+}
+],
+"audit|CP Comparability|UNIFORMITY = whole-token yield ÷ staker yield (1 = every holder alike) (PROPOSED)": [
+{
+"date": "2026-11-25",
+"from": 0.374631896,
+"to": 0.669952186,
+"why": "R22 item 1(a) (Jake 2026-11-25): Hyperliquid's core-contributor HYPE (the team wallet 0x43e9abea…, 238.36M, all staked) is OUT of circulating until it vests — each payout out of the wallet enters as it vests; the Foundation and Grants stay in, off the float; the futureEmissions pot (409.6M) was already out; the Fund stays burned"
+}
+],
+"audit|CP Comparability|Whole-token yield — validator = staker yield × staked share (locked ÷ circulating, now)": [
+{
+"date": "2026-11-25",
+"from": 0.00858738527,
+"to": 0.0153567744,
+"why": "R22 item 1(a) (Jake 2026-11-25): Hyperliquid's core-contributor HYPE (the team wallet 0x43e9abea…, 238.36M, all staked) is OUT of circulating until it vests — each payout out of the wallet enters as it vests; the Foundation and Grants stay in, off the float; the futureEmissions pot (409.6M) was already out; the Fund stays burned"
+}
+],
+"audit|Master|Buyback % of supply (annualised, implied, split as at this window)": [
+{
+"date": "2026-11-25",
+"from": 0.0181198683,
+"to": 0.032403662,
+"why": "R22 item 1(a) (Jake 2026-11-25): Hyperliquid's core-contributor HYPE (the team wallet 0x43e9abea…, 238.36M, all staked) is OUT of circulating until it vests — each payout out of the wallet enters as it vests; the Foundation and Grants stay in, off the float; the futureEmissions pot (409.6M) was already out; the Fund stays burned"
+}
+],
+"audit|Master|Circulating supply (used)": [
+{
+"date": "2026-11-25",
+"from": 539758896.0,
+"to": 301828851.0,
+"why": "R22 item 1(a) (Jake 2026-11-25): Hyperliquid's core-contributor HYPE (the team wallet 0x43e9abea…, 238.36M, all staked) is OUT of circulating until it vests — each payout out of the wallet enters as it vests; the Foundation and Grants stay in, off the float; the futureEmissions pot (409.6M) was already out; the Fund stays burned"
+}
+],
+"audit|Master|Issuance − burn, annualised % of circulating — a component, NOT the net supply change": [
+{
+"date": "2026-11-25",
+"from": -0.0185918181,
+"to": -0.0332476473,
+"why": "R22 item 1(a) (Jake 2026-11-25): Hyperliquid's core-contributor HYPE (the team wallet 0x43e9abea…, 238.36M, all staked) is OUT of circulating until it vests — each payout out of the wallet enters as it vests; the Foundation and Grants stay in, off the float; the futureEmissions pot (409.6M) was already out; the Fund stays burned"
+}
+],
+"audit|Master|Issuer releases Q0 (tokens) — pre-minted supply released into circulation, NOT issuance": [
+{
+"date": "2026-11-25",
+"from": 214122.129,
+"to": 3836218.87,
+"why": "R22 item 1(a) (Jake 2026-11-25): Hyperliquid's core-contributor HYPE (the team wallet 0x43e9abea…, 238.36M, all staked) is OUT of circulating until it vests — each payout out of the wallet enters as it vests; the Foundation and Grants stay in, off the float; the futureEmissions pot (409.6M) was already out; the Fund stays burned"
+}
+],
+"audit|Master|Market cap ($)": [
+{
+"date": "2026-11-25",
+"from": 43702446000.0,
+"to": 24438057800.0,
+"why": "R22 item 1(a) (Jake 2026-11-25): Hyperliquid's core-contributor HYPE (the team wallet 0x43e9abea…, 238.36M, all staked) is OUT of circulating until it vests — each payout out of the wallet enters as it vests; the Foundation and Grants stay in, off the float; the futureEmissions pot (409.6M) was already out; the Fund stays burned"
+}
+],
+"audit|Master|Turnover = 30d volume ÷ market cap (x)": [
+{
+"date": "2026-11-25",
+"from": 0.629963507,
+"to": 1.12656032,
+"why": "R22 item 1(a) (Jake 2026-11-25): Hyperliquid's core-contributor HYPE (the team wallet 0x43e9abea…, 238.36M, all staked) is OUT of circulating until it vests — each payout out of the wallet enters as it vests; the Foundation and Grants stay in, off the float; the futureEmissions pot (409.6M) was already out; the Fund stays burned"
+}
+],
+"reader|A1 Infrastructure|Circulating supply": [
+{
+"date": "2026-11-25",
+"from": 539758896.0,
+"to": 301828851.0,
+"why": "R22 item 1(a) (Jake 2026-11-25): Hyperliquid's core-contributor HYPE (the team wallet 0x43e9abea…, 238.36M, all staked) is OUT of circulating until it vests — each payout out of the wallet enters as it vests; the Foundation and Grants stay in, off the float; the futureEmissions pot (409.6M) was already out; the Fund stays burned"
+}
+],
+"reader|A1 Infrastructure|Issuance, % of supply a year": [
+{
+"date": "2026-11-25",
+"from": 0.0390380275,
+"to": 0.699406541,
+"why": "R22 item 1(a) (Jake 2026-11-25): Hyperliquid's core-contributor HYPE (the team wallet 0x43e9abea…, 238.36M, all staked) is OUT of circulating until it vests — each payout out of the wallet enters as it vests; the Foundation and Grants stay in, off the float; the futureEmissions pot (409.6M) was already out; the Fund stays burned"
+}
+],
+"reader|A1 Infrastructure|Issuer releases, 90 days (tokens)": [
+{
+"date": "2026-11-25",
+"from": 214122.129,
+"to": 3836218.87,
+"why": "R22 item 1(a) (Jake 2026-11-25): Hyperliquid's core-contributor HYPE (the team wallet 0x43e9abea…, 238.36M, all staked) is OUT of circulating until it vests — each payout out of the wallet enters as it vests; the Foundation and Grants stay in, off the float; the futureEmissions pot (409.6M) was already out; the Fund stays burned"
+}
+],
+"reader|A1 Infrastructure|Market cap": [
+{
+"date": "2026-11-25",
+"from": 43702446000.0,
+"to": 24438057800.0,
+"why": "R22 item 1(a) (Jake 2026-11-25): Hyperliquid's core-contributor HYPE (the team wallet 0x43e9abea…, 238.36M, all staked) is OUT of circulating until it vests — each payout out of the wallet enters as it vests; the Foundation and Grants stay in, off the float; the futureEmissions pot (409.6M) was already out; the Fund stays burned"
+}
+],
+"reader|A1 Infrastructure|NRR headroom (throughput)": [
+{
+"date": "2026-11-25",
+"from": 45.5346796,
+"to": 81.4294202,
+"why": "R22 item 1(a) (Jake 2026-11-25): Hyperliquid's core-contributor HYPE (the team wallet 0x43e9abea…, 238.36M, all staked) is OUT of circulating until it vests — each payout out of the wallet enters as it vests; the Foundation and Grants stay in, off the float; the futureEmissions pot (409.6M) was already out; the Fund stays burned"
+}
+],
+"reader|A1 Infrastructure|NRR on trading throughput": [
+{
+"date": "2026-11-25",
+"from": 0.0155925112,
+"to": 0.00871920736,
+"why": "R22 item 1(a) (Jake 2026-11-25): Hyperliquid's core-contributor HYPE (the team wallet 0x43e9abea…, 238.36M, all staked) is OUT of circulating until it vests — each payout out of the wallet enters as it vests; the Foundation and Grants stay in, off the float; the futureEmissions pot (409.6M) was already out; the Fund stays burned"
+}
+],
+"reader|A1 Infrastructure|Net issuance after burn, % a year": [
+{
+"date": "2026-11-25",
+"from": -0.0185918181,
+"to": -0.0332476473,
+"why": "R22 item 1(a) (Jake 2026-11-25): Hyperliquid's core-contributor HYPE (the team wallet 0x43e9abea…, 238.36M, all staked) is OUT of circulating until it vests — each payout out of the wallet enters as it vests; the Foundation and Grants stay in, off the float; the futureEmissions pot (409.6M) was already out; the Fund stays burned"
+}
+],
+"reader|A1 Infrastructure|Staking rate": [
+{
+"date": "2026-11-25",
+"from": 0.374631896,
+"to": 0.669952186,
+"why": "R22 item 1(a) (Jake 2026-11-25): Hyperliquid's core-contributor HYPE (the team wallet 0x43e9abea…, 238.36M, all staked) is OUT of circulating until it vests — each payout out of the wallet enters as it vests; the Foundation and Grants stay in, off the float; the futureEmissions pot (409.6M) was already out; the Fund stays burned"
+}
+],
+"reader|A1 Infrastructure|Total yield, non-stakers": [
+{
+"date": "2026-11-25",
+"from": -0.0314299956,
+"to": -0.0562060904,
+"why": "R22 item 1(a) (Jake 2026-11-25): Hyperliquid's core-contributor HYPE (the team wallet 0x43e9abea…, 238.36M, all staked) is OUT of circulating until it vests — each payout out of the wallet enters as it vests; the Foundation and Grants stay in, off the float; the futureEmissions pot (409.6M) was already out; the Fund stays burned"
+}
+],
+"reader|A1 Infrastructure|Total yield, stakers": [
+{
+"date": "2026-11-25",
+"from": -0.00850780088,
+"to": -0.0332838957,
+"why": "R22 item 1(a) (Jake 2026-11-25): Hyperliquid's core-contributor HYPE (the team wallet 0x43e9abea…, 238.36M, all staked) is OUT of circulating until it vests — each payout out of the wallet enters as it vests; the Foundation and Grants stay in, off the float; the futureEmissions pot (409.6M) was already out; the Fund stays burned"
+}
+],
+"reader|A3 Revenue Buyback|Circulating supply": [
+{
+"date": "2026-11-25",
+"from": 539758896.0,
+"to": 301828851.0,
+"why": "R22 item 1(a) (Jake 2026-11-25): Hyperliquid's core-contributor HYPE (the team wallet 0x43e9abea…, 238.36M, all staked) is OUT of circulating until it vests — each payout out of the wallet enters as it vests; the Foundation and Grants stay in, off the float; the futureEmissions pot (409.6M) was already out; the Fund stays burned"
+}
+],
+"reader|A3 Revenue Buyback|Holder value yield": [
+{
+"date": "2026-11-25",
+"from": 0.0155918832,
+"to": 0.0280504452,
+"why": "R22 item 1(a) (Jake 2026-11-25): Hyperliquid's core-contributor HYPE (the team wallet 0x43e9abea…, 238.36M, all staked) is OUT of circulating until it vests — each payout out of the wallet enters as it vests; the Foundation and Grants stay in, off the float; the futureEmissions pot (409.6M) was already out; the Fund stays burned"
+}
+],
+"reader|A3 Revenue Buyback|Implied buyback %, 3 months ago": [
+{
+"date": "2026-11-25",
+"from": 0.0192118917,
+"to": 0.0343565216,
+"why": "R22 item 1(a) (Jake 2026-11-25): Hyperliquid's core-contributor HYPE (the team wallet 0x43e9abea…, 238.36M, all staked) is OUT of circulating until it vests — each payout out of the wallet enters as it vests; the Foundation and Grants stay in, off the float; the futureEmissions pot (409.6M) was already out; the Fund stays burned"
+}
+],
+"reader|A3 Revenue Buyback|Implied buyback %, 6 months ago": [
+{
+"date": "2026-11-25",
+"from": 0.0359936238,
+"to": 0.064367202,
+"why": "R22 item 1(a) (Jake 2026-11-25): Hyperliquid's core-contributor HYPE (the team wallet 0x43e9abea…, 238.36M, all staked) is OUT of circulating until it vests — each payout out of the wallet enters as it vests; the Foundation and Grants stay in, off the float; the futureEmissions pot (409.6M) was already out; the Fund stays burned"
+}
+],
+"reader|A3 Revenue Buyback|Implied buyback, % of supply a year": [
+{
+"date": "2026-11-25",
+"from": 0.0181198683,
+"to": 0.032403662,
+"why": "R22 item 1(a) (Jake 2026-11-25): Hyperliquid's core-contributor HYPE (the team wallet 0x43e9abea…, 238.36M, all staked) is OUT of circulating until it vests — each payout out of the wallet enters as it vests; the Foundation and Grants stay in, off the float; the futureEmissions pot (409.6M) was already out; the Fund stays burned"
+}
+],
+"reader|A3 Revenue Buyback|Lock rate, % of circulating": [
+{
+"date": "2026-11-25",
+"from": 0.374631896,
+"to": 0.669952186,
+"why": "R22 item 1(a) (Jake 2026-11-25): Hyperliquid's core-contributor HYPE (the team wallet 0x43e9abea…, 238.36M, all staked) is OUT of circulating until it vests — each payout out of the wallet enters as it vests; the Foundation and Grants stay in, off the float; the futureEmissions pot (409.6M) was already out; the Fund stays burned"
+}
+],
+"reader|A3 Revenue Buyback|Market cap": [
+{
+"date": "2026-11-25",
+"from": 43702446000.0,
+"to": 24438057800.0,
+"why": "R22 item 1(a) (Jake 2026-11-25): Hyperliquid's core-contributor HYPE (the team wallet 0x43e9abea…, 238.36M, all staked) is OUT of circulating until it vests — each payout out of the wallet enters as it vests; the Foundation and Grants stay in, off the float; the futureEmissions pot (409.6M) was already out; the Fund stays burned"
+}
+],
+"reader|A3 Revenue Buyback|Retired, % of supply a year": [
+{
+"date": "2026-11-25",
+"from": 0.0178845249,
+"to": 0.0319827987,
+"why": "R22 item 1(a) (Jake 2026-11-25): Hyperliquid's core-contributor HYPE (the team wallet 0x43e9abea…, 238.36M, all staked) is OUT of circulating until it vests — each payout out of the wallet enters as it vests; the Foundation and Grants stay in, off the float; the futureEmissions pot (409.6M) was already out; the Fund stays burned"
+}
+],
+"reader|A3 Revenue Buyback|Retirement rate ($), % of mkt cap": [
+{
+"date": "2026-11-25",
+"from": 0.0169114779,
+"to": 0.0302427042,
+"why": "R22 item 1(a) (Jake 2026-11-25): Hyperliquid's core-contributor HYPE (the team wallet 0x43e9abea…, 238.36M, all staked) is OUT of circulating until it vests — each payout out of the wallet enters as it vests; the Foundation and Grants stay in, off the float; the futureEmissions pot (409.6M) was already out; the Fund stays burned"
+}
+],
+"reader|A3 Revenue Buyback|Retirement rate, % of circulating": [
+{
+"date": "2026-11-25",
+"from": 0.0178845249,
+"to": 0.0319827987,
+"why": "R22 item 1(a) (Jake 2026-11-25): Hyperliquid's core-contributor HYPE (the team wallet 0x43e9abea…, 238.36M, all staked) is OUT of circulating until it vests — each payout out of the wallet enters as it vests; the Foundation and Grants stay in, off the float; the futureEmissions pot (409.6M) was already out; the Fund stays burned"
+}
+],
+"reader|A4 Permanent Burn|Burn share of fees": [
+{
+"date": "2026-11-25",
+"from": 0.818846548,
+"to": 0.828840724,
+"why": "R22 item 2 (Jake 2026-11-25): Hyperliquid's A4 is scored on every burn (total_burn_tokens: the Fund, the Core burns and the HyperEVM zero address; the base fee stays inferred and unsubtracted), and its ratios move with circulating (item 1(a))"
+}
+],
+"reader|A4 Permanent Burn|Burn split (tokens)": [
+{
+"date": "2026-11-25",
+"from": 30198.6663,
+"to": "by design",
+"why": "R22 item 2 (Jake 2026-11-25): Hyperliquid's A4 is scored on every burn (total_burn_tokens: the Fund, the Core burns and the HyperEVM zero address; the base fee stays inferred and unsubtracted), and its ratios move with circulating (item 1(a))"
+}
+],
+"reader|A4 Permanent Burn|Burn split by source": [
+{
+"date": "2026-11-25",
+"from": "A4 burn = burn_ex_chain_fee_tokens; every burn (A1) = total_burn_tokens; the difference is the burn outside the A4 mecha",
+"to": "A4 burn = total_burn_tokens; every burn (A1) = total_burn_tokens",
+"why": "R22 item 2 (Jake 2026-11-25): Hyperliquid's A4 is scored on every burn (total_burn_tokens: the Fund, the Core burns and the HyperEVM zero address; the base fee stays inferred and unsubtracted), and its ratios move with circulating (item 1(a))"
+}
+],
+"reader|A4 Permanent Burn|Burn ÷ issuance (x)": [
+{
+"date": "2026-11-25",
+"from": 0.305018289,
+"to": 0.308786847,
+"why": "R22 item 2 (Jake 2026-11-25): Hyperliquid's A4 is scored on every burn (total_burn_tokens: the Fund, the Core burns and the HyperEVM zero address; the base fee stays inferred and unsubtracted), and its ratios move with circulating (item 1(a))"
+}
+],
+"reader|A4 Permanent Burn|Burn ÷ issuance (x), latest": [
+{
+"date": "2026-11-25",
+"from": 0.305018289,
+"to": 0.308786847,
+"why": "R22 item 2 (Jake 2026-11-25): Hyperliquid's A4 is scored on every burn (total_burn_tokens: the Fund, the Core burns and the HyperEVM zero address; the base fee stays inferred and unsubtracted), and its ratios move with circulating (item 1(a))"
+}
+],
+"reader|A4 Permanent Burn|Burn ÷ issuance (x), −1 qtr": [
+{
+"date": "2026-11-25",
+"from": 0.46067085,
+"to": 0.466301991,
+"why": "R22 item 2 (Jake 2026-11-25): Hyperliquid's A4 is scored on every burn (total_burn_tokens: the Fund, the Core burns and the HyperEVM zero address; the base fee stays inferred and unsubtracted), and its ratios move with circulating (item 1(a))"
+}
+],
+"reader|A4 Permanent Burn|Burn ÷ issuance (x), −2 qtrs": [
+{
+"date": "2026-11-25",
+"from": 0.980089855,
+"to": 0.989430371,
+"why": "R22 item 2 (Jake 2026-11-25): Hyperliquid's A4 is scored on every burn (total_burn_tokens: the Fund, the Core burns and the HyperEVM zero address; the base fee stays inferred and unsubtracted), and its ratios move with circulating (item 1(a))"
+}
+],
+"reader|A4 Permanent Burn|Burn ÷ issuance (x), −3 qtrs": [
+{
+"date": "2026-11-25",
+"from": 0.859098092,
+"to": 0.869046988,
+"why": "R22 item 2 (Jake 2026-11-25): Hyperliquid's A4 is scored on every burn (total_burn_tokens: the Fund, the Core burns and the HyperEVM zero address; the base fee stays inferred and unsubtracted), and its ratios move with circulating (item 1(a))"
+}
+],
+"reader|A4 Permanent Burn|Circulating supply": [
+{
+"date": "2026-11-25",
+"from": 539758896.0,
+"to": 301828851.0,
+"why": "R22 item 2 (Jake 2026-11-25): Hyperliquid's A4 is scored on every burn (total_burn_tokens: the Fund, the Core burns and the HyperEVM zero address; the base fee stays inferred and unsubtracted), and its ratios move with circulating (item 1(a))"
+}
+],
+"reader|A4 Permanent Burn|Fees needed for crossover": [
+{
+"date": "2026-11-25",
+"from": 3045645030.0,
+"to": 3008474760.0,
+"why": "R22 item 2 (Jake 2026-11-25): Hyperliquid's A4 is scored on every burn (total_burn_tokens: the Fund, the Core burns and the HyperEVM zero address; the base fee stays inferred and unsubtracted), and its ratios move with circulating (item 1(a))"
+}
+],
+"reader|A4 Permanent Burn|Gross burn, 90 days ($)": [
+{
+"date": "2026-11-25",
+"from": 187567389.0,
+"to": 189856684.0,
+"why": "R22 item 2 (Jake 2026-11-25): Hyperliquid's A4 is scored on every burn (total_burn_tokens: the Fund, the Core burns and the HyperEVM zero address; the base fee stays inferred and unsubtracted), and its ratios move with circulating (item 1(a))"
+}
+],
+"reader|A4 Permanent Burn|Gross burn, 90 days (tokens)": [
+{
+"date": "2026-11-25",
+"from": 2444209.36,
+"to": 2474408.02,
+"why": "R22 item 2 (Jake 2026-11-25): Hyperliquid's A4 is scored on every burn (total_burn_tokens: the Fund, the Core burns and the HyperEVM zero address; the base fee stays inferred and unsubtracted), and its ratios move with circulating (item 1(a))"
+}
+],
+"reader|A4 Permanent Burn|Issuance − burn (tokens), latest": [
+{
+"date": "2026-11-25",
+"from": -2444209.36,
+"to": -2474408.02,
+"why": "R22 item 2 (Jake 2026-11-25): Hyperliquid's A4 is scored on every burn (total_burn_tokens: the Fund, the Core burns and the HyperEVM zero address; the base fee stays inferred and unsubtracted), and its ratios move with circulating (item 1(a))"
+}
+],
+"reader|A4 Permanent Burn|Issuance − burn (tokens), −1 qtr": [
+{
+"date": "2026-11-25",
+"from": -2647990.09,
+"to": -2680358.55,
+"why": "R22 item 2 (Jake 2026-11-25): Hyperliquid's A4 is scored on every burn (total_burn_tokens: the Fund, the Core burns and the HyperEVM zero address; the base fee stays inferred and unsubtracted), and its ratios move with circulating (item 1(a))"
+}
+],
+"reader|A4 Permanent Burn|Issuance − burn (tokens), −2 qtrs": [
+{
+"date": "2026-11-25",
+"from": -5022483.8,
+"to": -5070349.4,
+"why": "R22 item 2 (Jake 2026-11-25): Hyperliquid's A4 is scored on every burn (total_burn_tokens: the Fund, the Core burns and the HyperEVM zero address; the base fee stays inferred and unsubtracted), and its ratios move with circulating (item 1(a))"
+}
+],
+"reader|A4 Permanent Burn|Issuance − burn (tokens), −3 qtrs": [
+{
+"date": "2026-11-25",
+"from": -5829888.7,
+"to": -5897402.48,
+"why": "R22 item 2 (Jake 2026-11-25): Hyperliquid's A4 is scored on every burn (total_burn_tokens: the Fund, the Core burns and the HyperEVM zero address; the base fee stays inferred and unsubtracted), and its ratios move with circulating (item 1(a))"
+}
+],
+"reader|A4 Permanent Burn|Issuance − burn, % a year": [
+{
+"date": "2026-11-25",
+"from": -0.0183649161,
+"to": -0.0332476473,
+"why": "R22 item 2 (Jake 2026-11-25): Hyperliquid's A4 is scored on every burn (total_burn_tokens: the Fund, the Core burns and the HyperEVM zero address; the base fee stays inferred and unsubtracted), and its ratios move with circulating (item 1(a))"
+}
+],
+"reader|A4 Permanent Burn|Issuance − burn, 90 days": [
+{
+"date": "2026-11-25",
+"from": -2444209.36,
+"to": -2474408.02,
+"why": "R22 item 2 (Jake 2026-11-25): Hyperliquid's A4 is scored on every burn (total_burn_tokens: the Fund, the Core burns and the HyperEVM zero address; the base fee stays inferred and unsubtracted), and its ratios move with circulating (item 1(a))"
+}
+],
+"reader|A4 Permanent Burn|Issuance, % of supply a year": [
+{
+"date": "2026-11-25",
+"from": 0.0390380275,
+"to": 0.699406541,
+"why": "R22 item 2 (Jake 2026-11-25): Hyperliquid's A4 is scored on every burn (total_burn_tokens: the Fund, the Core burns and the HyperEVM zero address; the base fee stays inferred and unsubtracted), and its ratios move with circulating (item 1(a))"
+}
+],
+"reader|A4 Permanent Burn|Market cap": [
+{
+"date": "2026-11-25",
+"from": 43702446000.0,
+"to": 24438057800.0,
+"why": "R22 item 2 (Jake 2026-11-25): Hyperliquid's A4 is scored on every burn (total_burn_tokens: the Fund, the Core burns and the HyperEVM zero address; the base fee stays inferred and unsubtracted), and its ratios move with circulating (item 1(a))"
+}
+],
+"reader|A4 Permanent Burn|Permanent burn yield": [
+{
+"date": "2026-11-25",
+"from": 0.0183649161,
+"to": 0.0332476473,
+"why": "R22 item 2 (Jake 2026-11-25): Hyperliquid's A4 is scored on every burn (total_burn_tokens: the Fund, the Core burns and the HyperEVM zero address; the base fee stays inferred and unsubtracted), and its ratios move with circulating (item 1(a))"
+}
+],
+"reader|Comparison|Dilution, % of market cap": [
+{
+"date": "2026-11-25",
+"from": 0.047139246,
+"to": 0.0848054608,
+"why": "R22 item 1(a) (Jake 2026-11-25): Hyperliquid's core-contributor HYPE (the team wallet 0x43e9abea…, 238.36M, all staked) is OUT of circulating until it vests — each payout out of the wallet enters as it vests; the Foundation and Grants stay in, off the float; the futureEmissions pot (409.6M) was already out; the Fund stays burned"
+}
+],
+"reader|Comparison|Holder value yield": [
+{
+"date": "2026-11-25",
+"from": 0.0155918832,
+"to": 0.0280504452,
+"why": "R22 item 1(a) (Jake 2026-11-25): Hyperliquid's core-contributor HYPE (the team wallet 0x43e9abea…, 238.36M, all staked) is OUT of circulating until it vests — each payout out of the wallet enters as it vests; the Foundation and Grants stay in, off the float; the futureEmissions pot (409.6M) was already out; the Fund stays burned"
+}
+],
+"reader|Comparison|Lock rate, % of circulating": [
+{
+"date": "2026-11-25",
+"from": 0.374631896,
+"to": 0.669952186,
+"why": "R22 item 1(a) (Jake 2026-11-25): Hyperliquid's core-contributor HYPE (the team wallet 0x43e9abea…, 238.36M, all staked) is OUT of circulating until it vests — each payout out of the wallet enters as it vests; the Foundation and Grants stay in, off the float; the futureEmissions pot (409.6M) was already out; the Fund stays burned"
+}
+],
+"reader|Comparison|Net holder yield": [
+{
+"date": "2026-11-25",
+"from": -0.0315473628,
+"to": -0.0567550156,
+"why": "R22 item 1(a) (Jake 2026-11-25): Hyperliquid's core-contributor HYPE (the team wallet 0x43e9abea…, 238.36M, all staked) is OUT of circulating until it vests — each payout out of the wallet enters as it vests; the Foundation and Grants stay in, off the float; the futureEmissions pot (409.6M) was already out; the Fund stays burned"
+}
+],
+"reader|Comparison|Revenue ÷ market cap, a year": [
+{
+"date": "2026-11-25",
+"from": 0.0167815547,
+"to": 0.0300103631,
+"why": "R22 item 1(a) (Jake 2026-11-25): Hyperliquid's core-contributor HYPE (the team wallet 0x43e9abea…, 238.36M, all staked) is OUT of circulating until it vests — each payout out of the wallet enters as it vests; the Foundation and Grants stay in, off the float; the futureEmissions pot (409.6M) was already out; the Fund stays burned"
+}
+],
+"reader|Summary|Dilution, % of market cap": [
+{
+"date": "2026-11-25",
+"from": 0.047139246,
+"to": 0.0848054608,
+"why": "R22 item 1(a) (Jake 2026-11-25): Hyperliquid's core-contributor HYPE (the team wallet 0x43e9abea…, 238.36M, all staked) is OUT of circulating until it vests — each payout out of the wallet enters as it vests; the Foundation and Grants stay in, off the float; the futureEmissions pot (409.6M) was already out; the Fund stays burned"
+}
+],
+"reader|Summary|Holder value yield": [
+{
+"date": "2026-11-25",
+"from": 0.0155918832,
+"to": 0.0280504452,
+"why": "R22 item 1(a) (Jake 2026-11-25): Hyperliquid's core-contributor HYPE (the team wallet 0x43e9abea…, 238.36M, all staked) is OUT of circulating until it vests — each payout out of the wallet enters as it vests; the Foundation and Grants stay in, off the float; the futureEmissions pot (409.6M) was already out; the Fund stays burned"
+}
+],
+"reader|Summary|Market cap": [
+{
+"date": "2026-11-25",
+"from": 43702446000.0,
+"to": 24438057800.0,
+"why": "R22 item 1(a) (Jake 2026-11-25): Hyperliquid's core-contributor HYPE (the team wallet 0x43e9abea…, 238.36M, all staked) is OUT of circulating until it vests — each payout out of the wallet enters as it vests; the Foundation and Grants stay in, off the float; the futureEmissions pot (409.6M) was already out; the Fund stays burned"
+}
+],
+"reader|Summary|Net holder yield": [
+{
+"date": "2026-11-25",
+"from": -0.0315473628,
+"to": -0.0567550156,
+"why": "R22 item 1(a) (Jake 2026-11-25): Hyperliquid's core-contributor HYPE (the team wallet 0x43e9abea…, 238.36M, all staked) is OUT of circulating until it vests — each payout out of the wallet enters as it vests; the Foundation and Grants stay in, off the float; the futureEmissions pot (409.6M) was already out; the Fund stays burned"
+}
+]
+},
+"Morpho": {
+"audit|A3 Revenue Buyback|Circulating supply": [
+{
+"date": "2026-11-25",
+"from": 878800000.0,
+"to": 962920548.0,
+"why": "R22 item 3 (Jake 2026-11-25): every Morpho vesting contract — a claim of vested tokens is not new supply; vesting counts on its schedule (the Labs vester's); the founders' modelled relock tranche is out of the model (their MIP1 awards vested on chain 2025-06-11 and circulate, R21b); Cohort 3's relock stays modelled"
+}
+],
+"audit|A3 Revenue Buyback|FREE FLOAT (tokens) = circulating − staked/locked/earning − issuer/foundation/treasury holdings − held buybacks — the one series every tab reads (free_float_tokens, R20)": [
+{
+"date": "2026-11-25",
+"from": 426052377.0,
+"to": 510172925.0,
+"why": "R22 item 3 (Jake 2026-11-25): every Morpho vesting contract — a claim of vested tokens is not new supply; vesting counts on its schedule (the Labs vester's); the founders' modelled relock tranche is out of the model (their MIP1 awards vested on chain 2025-06-11 and circulate, R21b); Cohort 3's relock stays modelled"
+}
+],
+"audit|A3 Revenue Buyback|Market cap ($)": [
+{
+"date": "2026-11-25",
+"from": 2098335320.0,
+"to": 2299192310.0,
+"why": "R22 item 3 (Jake 2026-11-25): every Morpho vesting contract — a claim of vested tokens is not new supply; vesting counts on its schedule (the Labs vester's); the founders' modelled relock tranche is out of the model (their MIP1 awards vested on chain 2025-06-11 and circulate, R21b); Cohort 3's relock stays modelled"
+}
+],
+"audit|A3 Revenue Buyback|UNLOCK DILUTION Q0 (tokens) — released from the non-circulating wallets, NOT emissions": [
+{
+"date": "2026-11-25",
+"from": 27000000.0,
+"to": 8877201.91,
+"why": "R22 item 3 (Jake 2026-11-25): every Morpho vesting contract — a claim of vested tokens is not new supply; vesting counts on its schedule (the Labs vester's); the founders' modelled relock tranche is out of the model (their MIP1 awards vested on chain 2025-06-11 and circulate, R21b); Cohort 3's relock stays modelled"
+}
+],
+"audit|A3 Revenue Buyback|Unlock dilution, annualised % of free float": [
+{
+"date": "2026-11-25",
+"from": 0.257010654,
+"to": 0.0705682011,
+"why": "R22 item 3 (Jake 2026-11-25): every Morpho vesting contract — a claim of vested tokens is not new supply; vesting counts on its schedule (the Labs vester's); the founders' modelled relock tranche is out of the model (their MIP1 awards vested on chain 2025-06-11 and circulate, R21b); Cohort 3's relock stays modelled"
+}
+],
+"audit|CP Comparability|Circulating supply (tokens) — our convention, the figure in use": [
+{
+"date": "2026-11-25",
+"from": 878800000.0,
+"to": 962920548.0,
+"why": "R22 item 3 (Jake 2026-11-25): every Morpho vesting contract — a claim of vested tokens is not new supply; vesting counts on its schedule (the Labs vester's); the founders' modelled relock tranche is out of the model (their MIP1 awards vested on chain 2025-06-11 and circulate, R21b); Cohort 3's relock stays modelled"
+}
+],
+"audit|CP Comparability|Dilution (e) unlocks (annualised) ÷ circulating": [
+{
+"date": "2026-11-25",
+"from": 0.12460173,
+"to": 0.0373883241,
+"why": "R22 item 3 (Jake 2026-11-25): every Morpho vesting contract — a claim of vested tokens is not new supply; vesting counts on its schedule (the Labs vester's); the founders' modelled relock tranche is out of the model (their MIP1 awards vested on chain 2025-06-11 and circulate, R21b); Cohort 3's relock stays modelled"
+}
+],
+"audit|CP Comparability|Dilution (e) unlocks (annualised) ÷ free float": [
+{
+"date": "2026-11-25",
+"from": 0.257010654,
+"to": 0.0705682011,
+"why": "R22 item 3 (Jake 2026-11-25): every Morpho vesting contract — a claim of vested tokens is not new supply; vesting counts on its schedule (the Labs vester's); the founders' modelled relock tranche is out of the model (their MIP1 awards vested on chain 2025-06-11 and circulate, R21b); Cohort 3's relock stays modelled"
+}
+],
+"audit|CP Comparability|Discretionary supply ÷ circulating": [
+{
+"date": "2026-11-25",
+"from": 0.515188465,
+"to": 0.470181703,
+"why": "R22 item 3 (Jake 2026-11-25): every Morpho vesting contract — a claim of vested tokens is not new supply; vesting counts on its schedule (the Labs vester's); the founders' modelled relock tranche is out of the model (their MIP1 awards vested on chain 2025-06-11 and circulate, R21b); Cohort 3's relock stays modelled"
+}
+],
+"audit|CP Comparability|ETF / ETP holdings ÷ circulating": [
+{
+"date": "2026-11-25",
+"from": 0.000608955055,
+"to": 0.000555756862,
+"why": "R22 item 3 (Jake 2026-11-25): every Morpho vesting contract — a claim of vested tokens is not new supply; vesting counts on its schedule (the Labs vester's); the founders' modelled relock tranche is out of the model (their MIP1 awards vested on chain 2025-06-11 and circulate, R21b); Cohort 3's relock stays modelled"
+}
+],
+"audit|CP Comparability|FREE FLOAT (tokens) = circulating − staked/locked/earning − issuer/foundation/treasury holdings − held buybacks — the one series every tab reads (free_float_tokens, R20)": [
+{
+"date": "2026-11-25",
+"from": 426052377.0,
+"to": 510172925.0,
+"why": "R22 item 3 (Jake 2026-11-25): every Morpho vesting contract — a claim of vested tokens is not new supply; vesting counts on its schedule (the Labs vester's); the founders' modelled relock tranche is out of the model (their MIP1 awards vested on chain 2025-06-11 and circulate, R21b); Cohort 3's relock stays modelled"
+}
+],
+"audit|CP Comparability|Free float ÷ circulating": [
+{
+"date": "2026-11-25",
+"from": 0.484811535,
+"to": 0.529818297,
+"why": "R22 item 3 (Jake 2026-11-25): every Morpho vesting contract — a claim of vested tokens is not new supply; vesting counts on its schedule (the Labs vester's); the founders' modelled relock tranche is out of the model (their MIP1 awards vested on chain 2025-06-11 and circulate, R21b); Cohort 3's relock stays modelled"
+}
+],
+"audit|CP Comparability|Insider share of circulating = insider-held tokens counted inside circulating ÷ circulating": [
+{
+"date": "2026-11-25",
+"from": 0.515188465,
+"to": 0.470181703,
+"why": "R22 item 3 (Jake 2026-11-25): every Morpho vesting contract — a claim of vested tokens is not new supply; vesting counts on its schedule (the Labs vester's); the founders' modelled relock tranche is out of the model (their MIP1 awards vested on chain 2025-06-11 and circulate, R21b); Cohort 3's relock stays modelled"
+}
+],
+"audit|CP Comparability|Market cap ($)": [
+{
+"date": "2026-11-25",
+"from": 2098335320.0,
+"to": 2299192310.0,
+"why": "R22 item 3 (Jake 2026-11-25): every Morpho vesting contract — a claim of vested tokens is not new supply; vesting counts on its schedule (the Labs vester's); the founders' modelled relock tranche is out of the model (their MIP1 awards vested on chain 2025-06-11 and circulate, R21b); Cohort 3's relock stays modelled"
+}
+],
+"audit|CP Comparability|Outflow (e) unlocks — $ a year (each day's tokens x that day's price, annualised)": [
+{
+"date": "2026-11-25",
+"from": 250281194.0,
+"to": 82285574.4,
+"why": "R22 item 3 (Jake 2026-11-25): every Morpho vesting contract — a claim of vested tokens is not new supply; vesting counts on its schedule (the Labs vester's); the founders' modelled relock tranche is out of the model (their MIP1 awards vested on chain 2025-06-11 and circulate, R21b); Cohort 3's relock stays modelled"
+}
+],
+"audit|CP Comparability|Trend — cp_float (arrow · QoQ · 4Q growth/yr · quarters improved; Trajectory tab)": [
+{
+"date": "2026-11-25",
+"from": "MODELLED Q0, Q-1, Q-2, Q-3, Q-4 · ↑ · +199%/yr (4Q) · QoQ +12.0%",
+"to": "MODELLED Q0, Q-1, Q-2, Q-3, Q-4 · ↑ · +82%/yr (4Q) · QoQ +5.6%",
+"why": "R22 item 3 (Jake 2026-11-25): every Morpho vesting contract — a claim of vested tokens is not new supply; vesting counts on its schedule (the Labs vester's); the founders' modelled relock tranche is out of the model (their MIP1 awards vested on chain 2025-06-11 and circulate, R21b); Cohort 3's relock stays modelled"
+}
+],
+"audit|CP Comparability|Unlocks Q0 (tokens) — releases from the non-circulating wallets": [
+{
+"date": "2026-11-25",
+"from": 27000000.0,
+"to": 8877201.91,
+"why": "R22 item 3 (Jake 2026-11-25): every Morpho vesting contract — a claim of vested tokens is not new supply; vesting counts on its schedule (the Labs vester's); the founders' modelled relock tranche is out of the model (their MIP1 awards vested on chain 2025-06-11 and circulate, R21b); Cohort 3's relock stays modelled"
+}
+],
+"audit|Master|Circulating supply (used)": [
+{
+"date": "2026-11-25",
+"from": 878800000.0,
+"to": 962920548.0,
+"why": "R22 item 3 (Jake 2026-11-25): every Morpho vesting contract — a claim of vested tokens is not new supply; vesting counts on its schedule (the Labs vester's); the founders' modelled relock tranche is out of the model (their MIP1 awards vested on chain 2025-06-11 and circulate, R21b); Cohort 3's relock stays modelled"
+}
+],
+"audit|Master|Market cap ($)": [
+{
+"date": "2026-11-25",
+"from": 2098335320.0,
+"to": 2299192310.0,
+"why": "R22 item 3 (Jake 2026-11-25): every Morpho vesting contract — a claim of vested tokens is not new supply; vesting counts on its schedule (the Labs vester's); the founders' modelled relock tranche is out of the model (their MIP1 awards vested on chain 2025-06-11 and circulate, R21b); Cohort 3's relock stays modelled"
+}
+],
+"audit|Master|NET SUPPLY CHANGE Q0 (tokens) = closing − opening circulating supply": [
+{
+"date": "2026-11-25",
+"from": 27000000.0,
+"to": 8260273.97,
+"why": "R22 item 3 (Jake 2026-11-25): every Morpho vesting contract — a claim of vested tokens is not new supply; vesting counts on its schedule (the Labs vester's); the founders' modelled relock tranche is out of the model (their MIP1 awards vested on chain 2025-06-11 and circulate, R21b); Cohort 3's relock stays modelled"
+}
+],
+"audit|Master|Net supply change, annualised % of circulating": [
+{
+"date": "2026-11-25",
+"from": 0.12460173,
+"to": 0.0347899939,
+"why": "R22 item 3 (Jake 2026-11-25): every Morpho vesting contract — a claim of vested tokens is not new supply; vesting counts on its schedule (the Labs vester's); the founders' modelled relock tranche is out of the model (their MIP1 awards vested on chain 2025-06-11 and circulate, R21b); Cohort 3's relock stays modelled"
+}
+],
+"audit|Master|Trend — master_circulating_supply_used (arrow · QoQ · 4Q growth/yr · quarters improved; Trajectory tab)": [
+{
+"date": "2026-11-25",
+"from": "MODELLED Q0, Q-1, Q-2, Q-3, Q-4 · ↑ · +14%/yr (4Q) · QoQ +3.2%",
+"to": "MODELLED Q0, Q-1, Q-2, Q-3, Q-4 · ↑ · +4%/yr (4Q) · QoQ +0.9%",
+"why": "R22 item 3 (Jake 2026-11-25): every Morpho vesting contract — a claim of vested tokens is not new supply; vesting counts on its schedule (the Labs vester's); the founders' modelled relock tranche is out of the model (their MIP1 awards vested on chain 2025-06-11 and circulate, R21b); Cohort 3's relock stays modelled"
+}
+],
+"audit|Master|Trend — master_market_cap (arrow · QoQ · 4Q growth/yr · quarters improved; Trajectory tab)": [
+{
+"date": "2026-11-25",
+"from": "▲ · +115%/yr (4Q) · 3/4 improved · QoQ +19.5%",
+"to": "▲ · +96%/yr (4Q) · 3/4 improved · QoQ +16.8%",
+"why": "R22 item 3 (Jake 2026-11-25): every Morpho vesting contract — a claim of vested tokens is not new supply; vesting counts on its schedule (the Labs vester's); the founders' modelled relock tranche is out of the model (their MIP1 awards vested on chain 2025-06-11 and circulate, R21b); Cohort 3's relock stays modelled"
+}
+],
+"audit|Master|Trend — master_net_supply_change_annualised_of_circulating (arrow · QoQ · 4Q growth/yr · quarters improved; Trajectory tab)": [
+{
+"date": "2026-11-25",
+"from": "MODELLED Q0, Q-1, Q-2, Q-3, Q-4 · ▼ · +55%/yr (4Q) · 2/3 improved · QoQ -0.4 pp",
+"to": "MODELLED Q0, Q-1, Q-2, Q-3, Q-4 · ▼ · +71%/yr (4Q) · 2/3 improved · QoQ -0.0 pp",
+"why": "R22 item 3 (Jake 2026-11-25): every Morpho vesting contract — a claim of vested tokens is not new supply; vesting counts on its schedule (the Labs vester's); the founders' modelled relock tranche is out of the model (their MIP1 awards vested on chain 2025-06-11 and circulate, R21b); Cohort 3's relock stays modelled"
+}
+],
+"audit|Master|Turnover = 30d volume ÷ market cap (x)": [
+{
+"date": "2026-11-25",
+"from": 0.428890297,
+"to": 0.391422526,
+"why": "R22 item 3 (Jake 2026-11-25): every Morpho vesting contract — a claim of vested tokens is not new supply; vesting counts on its schedule (the Labs vester's); the founders' modelled relock tranche is out of the model (their MIP1 awards vested on chain 2025-06-11 and circulate, R21b); Cohort 3's relock stays modelled"
+}
+],
+"reader|A3 Revenue Buyback|Circulating supply": [
+{
+"date": "2026-11-25",
+"from": 878800000.0,
+"to": 962920548.0,
+"why": "R22 item 3 (Jake 2026-11-25): every Morpho vesting contract — a claim of vested tokens is not new supply; vesting counts on its schedule (the Labs vester's); the founders' modelled relock tranche is out of the model (their MIP1 awards vested on chain 2025-06-11 and circulate, R21b); Cohort 3's relock stays modelled"
+}
+],
+"reader|A3 Revenue Buyback|Free float (tokens)": [
+{
+"date": "2026-11-25",
+"from": 426052377.0,
+"to": 510172925.0,
+"why": "R22 item 3 (Jake 2026-11-25): every Morpho vesting contract — a claim of vested tokens is not new supply; vesting counts on its schedule (the Labs vester's); the founders' modelled relock tranche is out of the model (their MIP1 awards vested on chain 2025-06-11 and circulate, R21b); Cohort 3's relock stays modelled"
+}
+],
+"reader|A3 Revenue Buyback|Market cap": [
+{
+"date": "2026-11-25",
+"from": 2098335320.0,
+"to": 2299192310.0,
+"why": "R22 item 3 (Jake 2026-11-25): every Morpho vesting contract — a claim of vested tokens is not new supply; vesting counts on its schedule (the Labs vester's); the founders' modelled relock tranche is out of the model (their MIP1 awards vested on chain 2025-06-11 and circulate, R21b); Cohort 3's relock stays modelled"
+}
+],
+"reader|A3 Revenue Buyback|Unlocks, % of free float a year": [
+{
+"date": "2026-11-25",
+"from": 0.257010654,
+"to": 0.0705682011,
+"why": "R22 item 3 (Jake 2026-11-25): every Morpho vesting contract — a claim of vested tokens is not new supply; vesting counts on its schedule (the Labs vester's); the founders' modelled relock tranche is out of the model (their MIP1 awards vested on chain 2025-06-11 and circulate, R21b); Cohort 3's relock stays modelled"
+}
+],
+"reader|A3 Revenue Buyback|Unlocks, last 90 days (tokens)": [
+{
+"date": "2026-11-25",
+"from": 27000000.0,
+"to": 8877201.91,
+"why": "R22 item 3 (Jake 2026-11-25): every Morpho vesting contract — a claim of vested tokens is not new supply; vesting counts on its schedule (the Labs vester's); the founders' modelled relock tranche is out of the model (their MIP1 awards vested on chain 2025-06-11 and circulate, R21b); Cohort 3's relock stays modelled"
+}
+],
+"reader|Summary|Market cap": [
+{
+"date": "2026-11-25",
+"from": 2098335320.0,
+"to": 2299192310.0,
+"why": "R22 item 3 (Jake 2026-11-25): every Morpho vesting contract — a claim of vested tokens is not new supply; vesting counts on its schedule (the Labs vester's); the founders' modelled relock tranche is out of the model (their MIP1 awards vested on chain 2025-06-11 and circulate, R21b); Cohort 3's relock stays modelled"
+}
+],
+"reader|Summary|Net supply change, % a year": [
+{
+"date": "2026-11-25",
+"from": 0.12460173,
+"to": 0.0347899939,
+"why": "R22 item 3 (Jake 2026-11-25): every Morpho vesting contract — a claim of vested tokens is not new supply; vesting counts on its schedule (the Labs vester's); the founders' modelled relock tranche is out of the model (their MIP1 awards vested on chain 2025-06-11 and circulate, R21b); Cohort 3's relock stays modelled"
+}
+],
+"reader|Summary|Net supply change, 90 days": [
+{
+"date": "2026-11-25",
+"from": 27000000.0,
+"to": 8260273.97,
+"why": "R22 item 3 (Jake 2026-11-25): every Morpho vesting contract — a claim of vested tokens is not new supply; vesting counts on its schedule (the Labs vester's); the founders' modelled relock tranche is out of the model (their MIP1 awards vested on chain 2025-06-11 and circulate, R21b); Cohort 3's relock stays modelled"
+}
+],
+"reader|Summary|What changed": [
+{
+"date": "2026-11-25",
+"from": "over 90D: Price +16% · Market cap +20% · Fees +14% · TVL +55% · ",
+"to": "over 90D: Price +16% · Market cap +17% · Fees +14% · TVL +55% · ",
+"why": "R22 item 3 (Jake 2026-11-25): every Morpho vesting contract — a claim of vested tokens is not new supply; vesting counts on its schedule (the Labs vester's); the founders' modelled relock tranche is out of the model (their MIP1 awards vested on chain 2025-06-11 and circulate, R21b); Cohort 3's relock stays modelled"
+}
+]
+}
+}

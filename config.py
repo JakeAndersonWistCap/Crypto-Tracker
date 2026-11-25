@@ -52228,3 +52228,21 @@ def morpho_vest_claims_by_leg(spec: dict | None = None, legs: tuple | None = Non
             out.setdefault(leg, {})
             out[leg][day] = out[leg].get(day, 0.0) + float(tok)
     return out
+# ===== ROUND 22 (lead): THE ROUND'S FROZEN MOVES, each declared with its reason (tests/fixtures/frozen_moves_r22.json,
+# docs/moves_r22.md) — a later step of each cell, the earlier steps kept on record =====
+def _load_r22_moves() -> int:
+    import json as _json
+    from pathlib import Path as _Path
+    p = _Path(__file__).resolve().parent / "tests" / "fixtures" / "frozen_moves_r22.json"
+    if not p.exists():
+        return 0
+    n = 0
+    for proj, cells in _json.loads(p.read_text(encoding="utf-8")).items():
+        for key, steps in cells.items():
+            for st in steps:
+                declare_later_move(proj, key, st["to"], st["why"], st["date"])
+                n += 1
+    return n
+
+
+R22_MOVES_DECLARED = _load_r22_moves()
