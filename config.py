@@ -51324,3 +51324,103 @@ BIGQUERY_ONESHOT = {
                  "store_needs": ("price_usd",)},
     "never_automatic": "not in windows/daily_run.ps1, token_metrics.py or check_offline_items.py: only its own command",
 }
+
+
+# =====================================================================================================================
+# ROUND 22 — AETHIR: THE STAKING YIELD WIRED (Jake 2026-11-25, item 4). Code: build_workbook._staker_reward_views,
+# CP hvy / nhy / dil_mc (STAKER_EMISSION_VALUE), VALIDATOR_YIELD["Aethir"]. Tests: tests/test_r22_aethir.py.
+# "Aethir uniformity: wire the staking yield. Aethir's docs give 1,000,000 ATH a week for each of the two pools (Gaming
+# and AI), so 2M a week, about 104M a year, paid from the issuer Safe. Count it as value to stakers and as emissions; it
+# nets out. That clears UNIFORMITY. A3 still counts only the fee burn."
+# 1. THE REWARD SERIES (staker_rewards_tokens, ATH a day): MEASURED where stored — every ATH Transfer out of the two
+#    RewardFaucets into their pools' RewardDistributors (log scan staker_faucet_out, reconciled to balanceOf to the wei;
+#    R21 read 23 x 1,000,000 ATH per faucet in ~167 days to 2026-11-24, AETHIR_STAKING_POOLS["reward_funding"]); on days
+#    before the scan's first stored day, Aethir's published Staking Rewards Emission Schedule's weekly rise
+#    (staker_rewards_paid_tokens, +2,000,000 a week — the docs' 1,000,000 a week per pool). A declared handover. The
+#    docs' 2,000,000 a week is the cross-check on the measured leg (STAKER_REWARD_VIEWS declared_weekly). NOT in the
+#    scan: the one 1,000,000 ATH the issuer Safe sent straight to each distributor once (R21), not through a faucet.
+# 2. EMISSIONS: (a) security emissions = staker_rewards_tokens (was the schedule rise alone) — in total dilution and in
+#    A3's key denominator, as before.
+# 3. VALUE TO STAKERS: the same tokens x the same day's price (holder_value_staking_usd) is ADDED to HOLDER VALUE YIELD
+#    (CP) — so NET HOLDER YIELD = holder value yield − dilution sees both sides and the staking emission nets out. It is
+#    NOT credited holder value (holder_value_revenue_usd stays the fee burn): A3's numerator (revenue_to_holders_usd),
+#    the payout ratios and the S13 holder revenue line read the fee burn only (R21b).
+# 4. STAKER YIELD (CP "Staker yield — validator (A1)" column, the nearest fit — as Chainlink's staking, which secures
+#    no chain): Q0 reward tokens annualised ÷ the ATH staked in the two pools NOW, read on chain (veAethir.balanceOf of
+#    each pool, locked_tokens_ai_onchain + locked_tokens_gaming_onchain). WHOLE-TOKEN YIELD = staker yield x that stake ÷
+#    circulating; UNIFORMITY = whole ÷ staker = the staked share.
+# =====================================================================================================================
+_R22A = "2026-11-25"
+_ATH_RF = AETHIR_STAKING_POOLS["reward_funding"]
+_ATH_ETH = "0xbe0Ed4138121EcFC5c0E56B40517da27E6c5226B"
+PROJECT_BY_NAME["Aethir"].setdefault("log_scans", []).append({
+    "key": "staker_faucet_out", "metric": "staker_rewards_faucet_tokens", "chain": "ethereum", "token": _ATH_ETH,
+    "holders": [_ATH_RF["ai_pool"]["faucet"], _ATH_RF["gaming_pool"]["faucet"]], "direction": "out", "store": True,
+    "attribution": "dedicated_wallet",
+    "count_to": [_ATH_RF["ai_pool"]["distributor"], _ATH_RF["gaming_pool"]["distributor"]],
+    "attribution_sources": [
+        "each pool's rewardDistributor() and the distributor's rewardFaucet() (EIP-1167 clones of Sourcify-verified "
+        "RewardDistributor 0xb68c1a82… / RewardFaucet 0xe3a252cf…), eth_call 2026-11-24 (R21)",
+        "https://docs.aethir.com/aethir-staking/staking-pools-emission-schedule-for-ath ('each pool distributes "
+        "1,000,000 ATH per week')"],
+    "wired_on": _R22A})
+METRICS["staker_rewards_faucet_tokens"] = {
+    "label": "ATH paid to the AI and Gaming pools' stakers per day, MEASURED — Transfer events out of the two "
+             "RewardFaucets (0x3553def4…, 0xaba1a7ac…) into their RewardDistributors (log scan staker_faucet_out, "
+             "reconciled to balanceOf); funded only by the issuer Safe 0x3e7e6c3d… (emissions)",
+    "kind": "flow", "unit": "tokens", "archetypes": [2, 3, 4], "tiers": [2], "sanity_min": 0, "sanity_max": 1e9,
+    "only_projects": ("Aethir",)}
+METRICS["staker_rewards_tokens"] = {
+    "label": "ATH paid to STAKERS per day (AI + Gaming pools) — the measured faucet payouts "
+             "(staker_rewards_faucet_tokens) from their first stored day; before it the published emission schedule's "
+             "weekly rise (staker_rewards_paid_tokens). Security emissions (a) and value to stakers (R22)",
+    "kind": "flow", "unit": "tokens", "archetypes": [], "tiers": [2], "sanity_min": 0, "sanity_max": 42e9,
+    "view_only": True, "only_projects": ("Aethir",)}
+STAKER_REWARD_VIEWS = {
+    ("Aethir", "staker_rewards_tokens"): {
+        "measured": "staker_rewards_faucet_tokens", "declared": "staker_rewards_paid_tokens",
+        "declared_weekly": 2_000_000.0,
+        "declared_source": "docs.aethir.com/aethir-staking/staking-pools-emission-schedule-for-ath: 'each pool "
+                           "distributes 1,000,000 ATH per week' x 2 pools (AI, Gaming); read 2026-11-23 (R20), "
+                           "Jake 2026-11-25"}}
+PROJECT_BY_NAME["Aethir"].setdefault("series_handover", {})["staker_rewards_tokens"] = {
+    "ordered_points": ["derived:stock_rise", "explorer:staker_faucet_out"],
+    "why": "R22: the published emission schedule's weekly rise until the faucet log scan is stored, then the measured "
+           "faucet payouts alone (STAKER_REWARD_VIEWS)",
+    "declared_on": _R22A}
+OUTFLOW_CATEGORIES["Aethir"]["a"] = ("staker_rewards_tokens",)
+OUTFLOW_CATEGORIES["Aethir"]["basis"] = (
+    OUTFLOW_CATEGORIES["Aethir"].get("basis", "") + "; (a) = ATH paid to the AI and Gaming pools' stakers (security "
+    "emissions from the issuer Safe; the measured faucet payouts, the published schedule's rise before them — R22)")
+# THE STAKE THE REWARD IS PAID ON: the two pools, read on chain every day (veAethir.balanceOf(pool))
+METRICS["aethir_reward_pools_staked_tokens"] = {
+    "label": "ATH staked in the AI and Gaming pools, ON CHAIN (locked_tokens_ai_onchain + locked_tokens_gaming_onchain) "
+             "— the stake the weekly 2,000,000 ATH is paid on (R22)",
+    "kind": "stock", "unit": "tokens", "archetypes": [2], "tiers": [2], "sanity_min": 0, "sanity_max": 42e9,
+    "view_only": True, "only_projects": ("Aethir",)}
+SET_SUM_VIEWS[("Aethir", "aethir_reward_pools_staked_tokens")] = {
+    "parts": ("locked_tokens_ai_onchain", "locked_tokens_gaming_onchain"), "whole": (),
+    "point": "derived:aethir_reward_pools[veAethir.balanceOf(AI pool) + veAethir.balanceOf(Gaming pool)]"}
+VALIDATOR_YIELD["Aethir"] = {
+    "method": "issuance_share", "issuance_metric": "staker_rewards_tokens",
+    "stake_metric": "aethir_reward_pools_staked_tokens", "share": 1.0,
+    "note": "BASIS: ATH paid to the AI and Gaming pools' stakers in Q0 (measured faucet payouts; the published schedule "
+            "before them), annualised, ÷ the ATH staked in the two pools now (on chain). Emissions-funded (the issuer "
+            "Safe) — secures / coordinates the compute network, not a chain: the validator column is the nearest fit",
+    "maturing": "DECLARED CROSS-CHECK: 2,000,000 ATH a week (docs: 1,000,000 per pool) = 104,357,143 a year; ÷ the "
+                "two pools' 795,969,549 ATH on 2026-11-23 = 13.1%, beside Aethir's own APR 12.40% (AI) / 13.81% "
+                "(Gaming) that day (staking_apr_ai / staking_apr_gaming). Partner tokens (CARV) are not counted"}
+# VALUE TO STAKERS: counted beside holder value (HOLDER VALUE YIELD), never credited holder value (A3, payout, S13)
+METRICS["holder_value_staking_usd"] = {
+    "label": "Value to stakers paid from EMISSIONS ($ per day) = staker_rewards_tokens x that day's price — in HOLDER "
+             "VALUE YIELD (and so NET HOLDER YIELD) beside its outflow (a), so it nets out; NOT credited holder value: "
+             "A3's key counts the fee burn only (R22, Jake 2026-11-25)",
+    "kind": "flow", "unit": "usd", "archetypes": [2, 3, 4], "tiers": [2], "sanity_min": 0, "sanity_max": 1e11,
+    "view_only": True, "only_projects": ("Aethir",)}
+STAKER_EMISSION_VALUE = {
+    "Aethir": {"tokens": "staker_rewards_tokens", "metric": "holder_value_staking_usd",
+               "why": "Jake 2026-11-25 (R22 item 4): 'Count it as value to stakers and as emissions; it nets out. ... "
+                      "A3 still counts only the fee burn.' The AI and Gaming pools' ATH (2,000,000 a week, from the "
+                      "issuer Safe through the RewardFaucets) is in holder value yield here AND in dilution (a)"}}
+# UNIFORMITY now forms: the declared n/a (R18 / R21: "no staker yield series is wired") is withdrawn
+DECLARED_NA_REASONS["Aethir"] = [e for e in DECLARED_NA_REASONS["Aethir"] if "UNIFORMITY" not in (e.get("cols") or ())]

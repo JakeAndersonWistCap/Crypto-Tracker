@@ -471,5 +471,6 @@ def test_no_pool_is_fee_funded_today_and_the_uniformity_text_no_longer_says_noth
     # the four pools of Aethir's totalStaked, as read: 1,799,648,101.23
     assert sum(pools[k]["staked"] for k in ("ai_pool", "gaming_pool", "cloud_host_idc", "edge")) == pytest.approx(
         1_799_648_101.23)
-    txt = config.declared_na_text("Aethir", "UNIFORMITY = whole-token yield ÷ staker yield")
-    assert txt and "nothing is paid to stakers" not in txt
+    # R22 (Jake 2026-11-25): the staker yield is wired, so UNIFORMITY forms — its declared n/a is withdrawn
+    assert config.declared_na_text("Aethir", "UNIFORMITY = whole-token yield ÷ staker yield") is None
+    assert config.VALIDATOR_YIELD["Aethir"]["issuance_metric"] == "staker_rewards_tokens"

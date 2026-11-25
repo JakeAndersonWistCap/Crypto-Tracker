@@ -7759,6 +7759,78 @@ def _stock_rise_views(groups: dict) -> None:
              "source": f"derived:stock_rise[{spec['stock']}]"}), g.columns)
 
 
+STAKER_REWARD_CHECK: dict = {}    # project -> the measured leg against the docs' declared weekly reward (R22), or ''
+
+
+def staker_reward_series(measured: pd.Series, declared: pd.Series) -> tuple[pd.Series, str]:
+    """R22 (pure): the staker reward series = the MEASURED rows (a log scan: every day of its span, zeros measured) from
+    the measured series' first day; the DECLARED rows (a published schedule's rise) only on days before it. Returns
+    (series, which) — which = 'measured', 'declared', 'declared then measured' or ''."""
+    measured, declared = measured.dropna().sort_index(), declared.dropna().sort_index()
+    if measured.empty:
+        return declared, ("declared" if not declared.empty else "")
+    if declared.empty:
+        return measured, "measured"
+    before = declared[declared.index < measured.index.min()]
+    out = pd.concat([before, measured]).sort_index()
+    return out, ("declared then measured" if not before.empty else "measured")
+
+
+def staker_reward_crosscheck(measured: pd.Series, declared_weekly: float, asof=None) -> str:
+    """R22 (pure): the measured payouts over the last 91 days of the measured span (13 weeks) against the declared
+    weekly reward x 13 — a ratio, said in words. '' when the measured span is shorter than 91 days."""
+    s = measured.dropna().sort_index()
+    if s.empty:
+        return ""
+    end = pd.Timestamp(asof).normalize() if asof is not None else s.index.max()
+    end = min(end, s.index.max())
+    lo = end - pd.Timedelta(days=90)
+    if s.index.min() > lo:
+        return ""
+    got = float(s[(s.index > lo - pd.Timedelta(days=1)) & (s.index <= end)].sum())
+    want = 13 * float(declared_weekly)
+    return (f"measured {got:,.0f} ATH paid by the faucets in the 13 weeks to {end.date()} = {got / want:.3f}x the "
+            f"declared {declared_weekly:,.0f} a week ({want:,.0f})")
+
+
+def _staker_reward_views(groups: dict) -> None:
+    """R22 (Jake 2026-11-25, item 4; config.STAKER_REWARD_VIEWS / STAKER_EMISSION_VALUE): the ATH paid to stakers per day
+    — the measured faucet payouts from the log scan's first stored day, the published schedule's rise before it (a
+    declared handover; each row keeps its own leg's source) — and the same tokens x that day's price as VALUE TO
+    STAKERS (holder_value_staking_usd), which CP's holder value yield adds beside the (a) outflow it nets out against."""
+    STAKER_REWARD_CHECK.clear()
+    for (name, metric), spec in getattr(config, "STAKER_REWARD_VIEWS", {}).items():
+        gm, gd = groups.get((name, spec["measured"])), groups.get((name, spec["declared"]))
+        frames = [g for g in (gm, gd) if g is not None and not g.empty]
+        if not frames:
+            continue
+        ms, ds = _daily(gm), _daily(gd)
+        s, _which = staker_reward_series(ms, ds)
+        if s.empty:
+            continue
+        STAKER_REWARD_CHECK[name] = staker_reward_crosscheck(ms, spec["declared_weekly"])
+        def _src(g):
+            if g is None or g.empty:
+                return {}
+            gg = g.assign(date=pd.to_datetime(g["date"]).dt.normalize()).drop_duplicates("date", keep="last")
+            return dict(zip(gg["date"], gg["source"].astype(str)))
+        s_m, s_d = _src(gm), _src(gd)
+        first_m = ms.index.min() if not ms.empty else None
+        src = {d: (s_m.get(d) if first_m is not None and d >= first_m else s_d.get(d)) for d in s.index}
+        groups[(name, metric)] = _as_stored(pd.DataFrame(
+            {"date": s.index, "project": name, "metric": metric, "value": s.values, "tier": 2,
+             "source": [src.get(d) or "derived:staker_rewards" for d in s.index]}), frames[0].columns)
+    for name, spec in getattr(config, "STAKER_EMISSION_VALUE", {}).items():
+        tok, px = _daily(groups.get((name, spec["tokens"]))), _daily(groups.get((name, "price_usd")))
+        usd = (tok * px.reindex(tok.index)).dropna()
+        g = groups.get((name, spec["tokens"]))
+        if usd.empty or g is None:
+            continue
+        groups[(name, spec["metric"])] = _as_stored(pd.DataFrame(
+            {"date": usd.index, "project": name, "metric": spec["metric"], "value": usd.values, "tier": 2,
+             "source": f"derived:staker_value[{spec['tokens']}*price]"}), g.columns)
+
+
 def _unlock_views(groups: dict) -> None:
     """UNLOCK DILUTION (Jake 2026-10-11, decision A2 on 5b87610): tokens RELEASED from the project's non-circulating
     wallets, per day = the fall in their summed stock (config.unlock_stock_metrics) since the previous stored day; a
@@ -8857,6 +8929,7 @@ def aggregate(long: pd.DataFrame, fetch_status: pd.DataFrame, asof: pd.Timestamp
     _evidence_views(groups, usd=False)  # G9 N: published / aggregator / mechanism figures in tokens (config.EVIDENCE_LADDER)
     _unlock_on_schedule_views(groups)   # R21: Aethir's unlock on the published schedule; its claims a memo + the check
     _stock_rise_views(groups)     # G9 D2: a declared flow read as the rises of a published cumulative (config.STOCK_RISE_VIEWS)
+    _staker_reward_views(groups)  # R22: Aethir's staker reward (measured faucets, the schedule before) + value to stakers
     _supplier_b_views(groups)     # G9 I3: Aethir's (b) = checker schedule + weekly compute rewards before the measured sum
     _outflow_views(groups)        # Phase 2: the five outflow categories, tokens and $ (after unlocks and emissions)
     _evidence_views(groups, usd=True)   # G9 N: ... in $ — after the outflow views, so a $ outflow line can be filled
@@ -14745,7 +14818,32 @@ def _lock_zero_note(p: dict) -> str:
 
 def _holder_value_note(p: dict) -> str:
     """P3-1b / P3-1c: the comment on the holder value cells where the credited value is a declared mechanism — a
-    MEASURED 0 (no payout mechanism exists, its source named) or the fee burn credited (Ethereum); '' elsewhere."""
+    MEASURED 0 (no payout mechanism exists, its source named) or the fee burn credited (Ethereum); '' elsewhere.
+    R22: where value to stakers paid from emissions is counted (config.STAKER_EMISSION_VALUE: Aethir), the note says so."""
+    base = _holder_value_note_base(p)
+    sv = getattr(config, "STAKER_EMISSION_VALUE", {}).get(p["name"])
+    if not sv:
+        return base
+    return "\n\n".join(x for x in (base, (
+        f"VALUE TO STAKERS (R22): holder value yield and net holder yield also count {sv['metric']} = {sv['tokens']} x "
+        f"that day's price — staking yield paid from EMISSIONS, so the same tokens are outflow (a) in dilution and it "
+        f"nets out in net holder yield. Not credited holder value: A3's key, the payout ratios and the holder revenue "
+        f"line read the fee burn only. {sv['why']}.")) if x)
+
+
+def _staker_yield_note(p: dict) -> str:
+    """R22: the staker yield cell's comment where the reward is an emission series with a declared cross-check (Aethir):
+    its basis, the declared figure, and the measured leg against it once 13 weeks of it are stored."""
+    if (p["name"], "staker_rewards_tokens") not in getattr(config, "STAKER_REWARD_VIEWS", {}):
+        return ""
+    vy = config.VALIDATOR_YIELD.get(p["name"]) or {}
+    chk = STAKER_REWARD_CHECK.get(p["name"]) or ("no measured faucet payouts over 13 weeks stored yet — the reward is "
+                                                 "the published schedule's rise (the docs' figure)")
+    return f"STAKER YIELD (R22, Jake 2026-11-25): {vy.get('note', '')}.\n\n{vy.get('maturing', '')}.\n\nMEASURED vs " \
+           f"DECLARED: {chk}."
+
+
+def _holder_value_note_base(p: dict) -> str:
     name = p["name"]
     if config.holder_value_absent(name):
         return (f"Holder value = 0 — a measured zero (SPEC rule 3), not a missing figure: {config.holder_value_absent(name)}"
@@ -15248,10 +15346,29 @@ def _cp_cols(R: Refs, data_by_key: dict) -> list[tuple]:
     # ÷ today's market cap (mc)
     mca = lambda r: R.D(r, "market_cap_usd", "q0")  # noqa: E731
 
-    def hvy_expr(r, p):
+    def sv_of(p):
+        """R22 (config.STAKER_EMISSION_VALUE): the value-to-stakers series paid from emissions (Aethir), counted in
+        holder value yield beside the (a) outflow it nets out against — never credited holder value; None elsewhere."""
+        return (getattr(config, "STAKER_EMISSION_VALUE", {}).get(p["name"]) or {}).get("metric")
+
+    def sv_legs(p):
+        sv = sv_of(p)
+        return [("value to stakers (emissions)", sv, "q0")] if sv else []
+
+    def hv_ann(r, p):
+        """Holder value annualised ($ a year) — the credited figure, plus R22's value to stakers where declared."""
         v = R.D(r, "holder_value_revenue_usd", "q0")
-        return (f"IF(AND(ISNUMBER({v}),ISNUMBER({mca(r)})),"
-                f"{_annualise(R, r, p, 'holder_value_revenue_usd', v)}/{mca(r)},{NA})")
+        a = _annualise(R, r, p, "holder_value_revenue_usd", v)
+        sv = sv_of(p)
+        if not sv:
+            return [v], a
+        w = R.D(r, sv, "q0")
+        return [v, w], f"({a})+({_annualise(R, r, p, sv, w)})"
+
+    def hvy_expr(r, p):
+        cells, a = hv_ann(r, p)
+        return (f"IF(AND({','.join(f'ISNUMBER({c})' for c in cells)},ISNUMBER({mca(r)})),"
+                f"{a}/{mca(r)},{NA})")
 
     def no_hv(p):
         """Why there is no holder value figure. P3-1a: a project whose route was set to 'none' because a real mechanism
@@ -15263,7 +15380,11 @@ def _cp_cols(R: Refs, data_by_key: dict) -> list[tuple]:
     def hvy(r, p):
         if not hv_has(p):
             return no_hv(p)
-        return _coverage_guard(R, r, [("holder value", "holder_value_revenue_usd", "q0")], hvy_expr(r, p))
+        # R22: with value to stakers beside the credited figure the yield is a SUM of two parts, each annualised over its
+        # own covered days — D7-2's same-span rule is for a net or a ratio (as the validator yield's consensus +
+        # execution, same_span=False); each part still needs RATE_MIN_DAYS. Net holder yield (a net) keeps the rule.
+        return _coverage_guard(R, r, [("holder value", "holder_value_revenue_usd", "q0")] + sv_legs(p), hvy_expr(r, p),
+                               same_span=False if sv_legs(p) else None)
 
     def hv_fees_only(r, p):
         if "holder_value_fees_only_usd" not in config.metrics_for_project(p):
@@ -15286,14 +15407,15 @@ def _cp_cols(R: Refs, data_by_key: dict) -> list[tuple]:
         cats = _cp_cats(p)
         om = lambda c: lag_matched(p, f"outflow_{c}_usd")  # noqa: E731 — R5.3: a declared publish lag is matched
         dil = "+".join(ann(r, p, om(c)) for c in cats) or "0"
-        legs = [("holder value", "holder_value_revenue_usd", "q0")] + \
+        legs = [("holder value", "holder_value_revenue_usd", "q0")] + sv_legs(p) + \
             [(f"outflow {c}", om(c), "q0") for c in cats]
         # R16 (Jake 2026-11-20): holder value and dilution are each day's $ (each day's price), so the yield divides
         # by the AVERAGE market cap over the same window (market_cap_usd's Q0 mean), not today's. Was: ÷ today's
-        hv = R.D(r, "holder_value_revenue_usd", "q0")
+        # R22: holder value = the credited figure + the value to stakers paid from emissions where declared (Aethir)
+        hv_cells, hv_a = hv_ann(r, p)
         mca = R.D(r, "market_cap_usd", "q0")
-        nhy_expr = (f"IF(AND(ISNUMBER({hv}),ISNUMBER({mca})),"
-                    f"(({_annualise(R, r, p, 'holder_value_revenue_usd', hv)})-({dil}))/{mca},{NA})")
+        nhy_expr = (f"IF(AND({','.join(f'ISNUMBER({c})' for c in hv_cells)},ISNUMBER({mca})),"
+                    f"(({hv_a})-({dil}))/{mca},{NA})")
         out = _coverage_guard(R, r, legs, nhy_expr,
                               as_published=tuple(om(c) for c in as_published_cats(p) if c in cats))[1:]
         # NAME THE STARVED LEG (item 24, Jake's run on 3500042): an outflow with no value in the window says which
@@ -15319,7 +15441,7 @@ def _cp_cols(R: Refs, data_by_key: dict) -> list[tuple]:
         # THE SAME LEGS AS NET HOLDER YIELD'S GUARD (holder value beside the outflows), so the outflows are read over
         # the windows net holder yield reads them over (a monthly leg anchors the others, P3-A1) and the two cells
         # block together: holder value yield − this = net holder yield
-        legs = ([("holder value", "holder_value_revenue_usd", "q0")] if hv_has(p) else []) + \
+        legs = ([("holder value", "holder_value_revenue_usd", "q0")] + sv_legs(p) if hv_has(p) else []) + \
             [(f"outflow {c}", om(c), "q0") for c in cats]
         return _coverage_guard(R, r, legs, f"IF(ISNUMBER({m_}),({dil})/{m_},{NA})",
                                same_span=None if hv_has(p) else False,
@@ -15695,7 +15817,8 @@ def _cp_cols(R: Refs, data_by_key: dict) -> list[tuple]:
                          ("Staker yield — validator", lambda r, p: vyield(r, p)),
                          ("Staker yield — protocol, tokens", lambda r, p: tyield(r, p))]),
         # ---- STAKER YIELD vs WHOLE-TOKEN YIELD (item 3) ----
-        ("Staker yield — validator (A1)", lambda r, p: vyield(r, p), FMT_PCT, "calc"),
+        ("Staker yield — validator (A1)", lambda r, p: vyield(r, p), FMT_PCT, "calc", False,
+         {"note_fn": _staker_yield_note}),
         ("Whole-token yield — validator = staker yield × staked share (locked ÷ circulating, now)",
          whole(vyield, v_lock), FMT_PCT, "calc"),
         ("Staker yield — protocol, tokens (A3)", lambda r, p: tyield(r, p), FMT_PCT, "calc"),

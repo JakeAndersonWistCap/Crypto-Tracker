@@ -1857,6 +1857,23 @@ staking and vote-locks by holders ARE circulating (off free float only); undistr
   billed query is recorded pending → done / failed / not_run (a pending one found later counts at its cap). The
   one-shot's bytes go to ledger_billed, not the free-tier ledger. Held under storelock + RunLock; writes no
   metrics.db row (the next token_metrics run per project values and stores). With billing off nothing changes.
+### Round 22 — Aethir staking yield (Jake 2026-11-25), old → new
+Jake: "Aethir uniformity: wire the staking yield. … 1,000,000 ATH a week for each of the two pools … Count it as value
+to stakers and as emissions; it nets out. That clears UNIFORMITY. A3 still counts only the fee burn." Config: the
+"ROUND 22 — AETHIR" block at the end of config.py. Code: `build_workbook._staker_reward_views` (+ `staker_reward_series`,
+`staker_reward_crosscheck`), CP hvy / nhy / dil_mc (`sv_of`). Tests: tests/test_r22_aethir.py.
+- Reward series: the published schedule's weekly rise alone (staker_rewards_paid_tokens) → `staker_rewards_tokens` = the
+  MEASURED faucet payouts (log scan staker_faucet_out: ATH out of the two RewardFaucets into their RewardDistributors,
+  reconciled to the wei) from their first stored day, the schedule's rise before (declared handover); the docs' 2,000,000
+  a week is the cross-check (the staker yield's comment). Outflow (a) reads it.
+- Staker yield / whole-token yield / UNIFORMITY: n/a ("no staker yield series is wired") → VALIDATOR_YIELD["Aethir"]
+  (issuance_share): Q0 reward tokens annualised ÷ the two pools' stake on chain now (`aethir_reward_pools_staked_tokens`
+  = locked_tokens_ai_onchain + locked_tokens_gaming_onchain); whole = that × stake ÷ circulating; UNIFORMITY = the
+  staked share. Fixture (10-13): 13.60%, 0.448%, 0.0329.
+- Holder value yield: the fee burn only → + value to stakers (`holder_value_staking_usd` = the same tokens × the same
+  day's price), a SUM of two parts (same_span off for the sum only, as the validator yield's consensus + execution);
+  net holder yield = holder value yield − dilution, where the same dollars are outflow (a): it nets out. NOT credited
+  holder value: A3's key (revenue_to_holders_usd), payout ratios and the S13 holder revenue line read the fee burn only.
 
 ### Round 21b — lead: NEAR approval, beacon source, route-'none' buybacks (Jake 2026-11-25), old → new
 - NEAR's P2P history: no approval → Jake's dated approval given ahead for ONE named month (`for_month` 2026-12, approved
