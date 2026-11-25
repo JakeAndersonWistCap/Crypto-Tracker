@@ -433,6 +433,10 @@ def movements(p: dict, groups: dict, ff: pd.Series, comps: dict, circ: pd.Series
     out["pct"] = out["residual"] / out["open"].where(out["open"] != 0)
     ex = config.FLOAT_EXCHANGE_SENDS.get(name)
     out["exchange"] = per_step(d(ex)) if ex and (name, ex) in groups else float("nan")
+    # R21b (config.FLOAT_NAMED_MOVES): a named movement inside one of the lines above (Morpho's founder Vester claims,
+    # inside the issuer line) — shown with its amount, never added to the identity a second time
+    nm = config.FLOAT_NAMED_MOVES.get(name)
+    out["named"] = per_step(d(nm["series"])) if nm and (name, nm["series"]) in groups else float("nan")
     out["staked_locked"], out["issuer_treasury"], out["held_buybacks"] = comps[C_LOCK], comps[C_ISSUER], comps[C_HELD]
     out["circulating"] = circ
     out["gap_days"] = pd.Series(idx, index=idx).diff().dt.days.fillna(1).astype(int) - 1
@@ -487,6 +491,7 @@ def _sum_rows(mv: pd.DataFrame, ff_all: pd.Series, start, end) -> dict | None:
     row.update({"open": opening, "close": float(w["close"].iloc[-1]), "days": int(len(w)),
                 "flagged": int(w["flag"].sum()), "first": w.index[0], "last": w.index[-1],
                 "exchange": (float(w["exchange"].sum()) if w["exchange"].notna().any() else None),
+                "named": (float(w["named"].sum()) if "named" in w and w["named"].notna().any() else None),
                 "causes": [f"{d.date()}: {r['pct']:+.2%} — {r['cause']}" for d, r in w[w["flag"]].iterrows()],
                 "staked_locked": float(w["staked_locked"].iloc[-1]), "issuer_treasury": float(w["issuer_treasury"].iloc[-1]),
                 "held_buybacks": float(w["held_buybacks"].iloc[-1]), "circulating": float(w["circulating"].iloc[-1])})
@@ -545,6 +550,9 @@ def statements(groups: dict, asof) -> list[dict]:
                  "daily identity: yesterday's float + the day's movements = today's float"),
                 (EXCHANGE_LINE, g("exchange"), "tokens", ex or "— (no series on this project)",
                  "" if ex else "no exchange-tagged outflow series is stored for this project"),
+                *([(nm["label"], g("named"), "tokens", nm["series"],
+                    " | ".join(n for k in range(5) for n in nm["names"](*bw._flow_window(asof, k)))[:1500])]
+                  if (nm := config.FLOAT_NAMED_MOVES.get(name)) else []),
                 ("component at close: staked / locked / earning", g("staked_locked"), "tokens", C_LOCK,
                  pt.get("staked_locked", "")),
                 ("component at close: issuer, foundation and treasury holdings", g("issuer_treasury"), "tokens",
@@ -559,7 +567,8 @@ def statements(groups: dict, asof) -> list[dict]:
 
 BLOCK_HEAD = ["Project", "Statement", "Period (to)", "Opening free float", *[lab for _k, lab in LINES],
               "Closing free float", "Residual", "Residual ÷ opening", "Flag / cause", "Staked / locked",
-              "Issuer / treasury", "Held buybacks", "Sent to exchange-tagged addresses (named line)"]
+              "Issuer / treasury", "Held buybacks", "Sent to exchange-tagged addresses (named line)",
+              "Named insider float movement (tokens, inside the lines above)", "Named insider float movement — what"]
 
 
 def period_table(name: str, groups: dict, asof, days: int, n: int) -> list[list]:
@@ -583,7 +592,10 @@ def period_table(name: str, groups: dict, asof, days: int, n: int) -> list[list]
         out.append([name, what, str(end.date()), row["open"], *[row[k] for k in LINE_KEYS], row["close"],
                     row["residual"], row["pct"],
                     ("FLAG — " + " | ".join(row["causes"][:2])) if row["flagged"] else "ok",
-                    row["staked_locked"], row["issuer_treasury"], row["held_buybacks"], row["exchange"]])
+                    row["staked_locked"], row["issuer_treasury"], row["held_buybacks"], row["exchange"],
+                    row.get("named"),
+                    "; ".join(nm["names"](end - pd.Timedelta(days=days), end)) if (nm := config.FLOAT_NAMED_MOVES.get(
+                        name)) else None])
     return out
 
 
