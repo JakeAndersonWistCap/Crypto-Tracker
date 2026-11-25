@@ -25,7 +25,8 @@ import done_check  # noqa: E402
 import reader  # noqa: E402
 
 JAKE_TAGS = {   # Jake's list, primary first
-    "Ethereum": [1, 4], "Near": [1, 3, 4], "Chainlink": [2, 3], "Aethir": [2, 4], "GEODNET": [2, 3, 4],
+    # R21b (Jake 2026-11-25, fee burns in A3): Ethereum [1, 4] -> [1, 3, 4]; Aethir [2, 4] -> [2, 3, 4]
+    "Ethereum": [1, 3, 4], "Near": [1, 3, 4], "Chainlink": [2, 3], "Aethir": [2, 3, 4], "GEODNET": [2, 3, 4],
     "Hyperliquid": [3, 1], "Sky": [3, 4], "Aerodrome": [3, 4], "Pendle": [3], "Maple": [3], "Fluid": [3],
     "Ether.fi": [3], "Uniswap": [4, 3], "Morpho": [3],
 }
@@ -86,24 +87,19 @@ def test_projects_not_on_the_list_keep_their_tags():
 def test_the_two_conditional_tags_are_off_and_one_switch_each_turns_them_on():
     c = config.CONDITIONAL_ARCHETYPES
     assert set(c) == {"Aethir", "Hyperliquid"} and (c["Aethir"]["tag"], c["Hyperliquid"]["tag"]) == (3, 4)
-    # R21b (Jake 2026-11-25): Hyperliquid's A4 is ON — the Assistance Fund's buybacks are buy-and-burn (was off)
-    assert not c["Aethir"]["on"] and c["Hyperliquid"]["on"]
-    assert c["Aethir"]["needs"] and c["Hyperliquid"]["needs"]
-    assert config.archetypes_r20("Aethir") == [2, 4] and config.archetypes_r20("Hyperliquid") == [3, 1, 4]
-    # the override the function takes; then the switch itself, applied and restored
-    assert config.archetypes_r20("Aethir", {"Aethir": True}) == [2, 4, 3]
+    # R21b (Jake 2026-11-25): both ON — Aethir's A3 (the revenue-funded fee burn), Hyperliquid's A4 (the Assistance
+    # Fund's buy-and-burn)
+    assert c["Aethir"]["on"] and c["Hyperliquid"]["on"] and c["Aethir"]["needs"] and c["Hyperliquid"]["needs"]
+    assert config.archetypes_r20("Aethir") == [2, 3, 4] and config.archetypes_r20("Hyperliquid") == [3, 1, 4]
     assert config.archetypes_r20("Hyperliquid", {"Hyperliquid": False}) == [3, 1]
     try:
-        c["Aethir"]["on"] = True
         c["Hyperliquid"]["on"] = False
         config.apply_archetypes_r20()
-        assert config.PROJECT_BY_NAME["Aethir"]["archetypes"] == [2, 4, 3]
         assert config.PROJECT_BY_NAME["Hyperliquid"]["archetypes"] == [3, 1]
     finally:
-        c["Aethir"]["on"] = False
         c["Hyperliquid"]["on"] = True
         config.apply_archetypes_r20()
-    assert config.PROJECT_BY_NAME["Aethir"]["archetypes"] == [2, 4]
+    assert config.PROJECT_BY_NAME["Aethir"]["archetypes"] == [2, 3, 4]
     assert config.PROJECT_BY_NAME["Hyperliquid"]["archetypes"] == [3, 1, 4]
     assert reader._primary(config.PROJECT_BY_NAME["Hyperliquid"]) == 3       # the primary does not move
 
@@ -163,9 +159,9 @@ def test_the_a3_key_is_declared_and_the_burned_figure_is_an_ordinary_column():
     assert a4.key == ("audit", "BURN ÷ ISSUANCE (x)")                                       # unchanged
 
 
-def test_the_numerator_is_the_credited_holder_value_less_the_protocol_fee_burn(monkeypatch):
+def test_the_numerator_is_the_credited_holder_value_with_the_fee_burn(monkeypatch):
     """Maple: revenue to holders = the credited holder value, day for day. Near: the gas burn credited inside holder
-    value (HOLDER_VALUE burn_credited) is A4's — taken out at that day's price, on the days it was credited."""
+    value (HOLDER_VALUE burn_credited) is revenue sent to holders too (R21b, Jake 2026-11-25; was R20: taken out)."""
     days = pd.date_range("2026-08-01", "2026-08-10")
     hv_m = pd.Series([100.0, 0.0, 250.0, 0.0, 0.0, 40.0, 0.0, 0.0, 0.0, 10.0], index=days)
     burn = pd.Series(2.0, index=days)                                   # NEAR burned a day
@@ -188,7 +184,9 @@ def test_the_numerator_is_the_credited_holder_value_less_the_protocol_fee_burn(m
     m = hv_m
     n = bw._daily(groups[("Near", "revenue_to_holders_usd")])
     assert list(n.index) == list(days[:8])
-    assert n.sum() == pytest.approx(8 * 30.0)                           # 320 credited − 8 × $10 of gas burn = 240
+    # R21b: 320 = 8 x ($30 buyback + $10 gas burn), the credited holder value itself (was R20: 240, the burn taken out)
+    assert n.sum() == pytest.approx(8 * 40.0)
+    assert (n == bw._daily(groups[("Near", "holder_value_revenue_usd")])).all()
     assert ("Fluid", "revenue_to_holders_usd") not in groups            # no holder value rows: unknown, never 0
     # the key on these: $ to holders ÷ $ of new supply, per covered day
     assert m.sum() / len(m) / (2_000.0 / 10) == pytest.approx(0.2)      # 400 over 10 days ÷ 2,000 of outflows over 10
@@ -207,14 +205,14 @@ def test_the_key_reads_zero_for_a_paused_or_off_programme_and_names_its_legs():
     assert "revenue sent to holders ($) ÷ value of new supply ($)" in note
     assert "treasury- or emissions-funded buyback is recorded, not counted" in note
     assert "outflow_" in note and "NET HOLDER YIELD subtracts" in note
-    assert "less the protocol-rule fee burn" in bw.a3_key_note(config.PROJECT_BY_NAME["Near"])
+    assert "+ the fee burn" in bw.a3_key_note(config.PROJECT_BY_NAME["Near"])                  # R21b
     # the denominator is the set NET HOLDER YIELD subtracts
     for name in ("Maple", "Aerodrome", "Sky", "Hyperliquid", "Pendle"):
         p = config.PROJECT_BY_NAME[name]
         assert bw.a3_key_cats(p) == bw._cp_cats(p)
     assert "revenue_to_holders_usd" not in config.metrics_for_project(config.PROJECT_BY_NAME["Maple"])
     assert "revenue_to_holders_usd" in config.metrics_for_project(config.PROJECT_BY_NAME["Near"])
-    assert set(config.METRICS["revenue_to_holders_usd"]["only_projects"]) == {"Near", "Ethereum"}
+    assert set(config.METRICS["revenue_to_holders_usd"]["only_projects"]) == {"Near", "Ethereum", "Aethir"}   # R21b
 
 
 # ------------------------------------------------------------------------------------------------ 3b. the key's numbers
@@ -262,7 +260,7 @@ def test_the_key_is_dollars_to_holders_over_dollars_of_new_supply(monkeypatch):
     assert "buyback_burned_tokens" not in R_f and "retired_buyback_tokens" not in R_f
     assert '|holder_value_revenue_usd"' in R_f and '|outflow_b_usd"' in R_f and '|outflow_c_usd"' in R_f
     near = bw._a3_key_col(bw.Refs(100, 10, ["2026-09"]), {})[1](5, config.PROJECT_BY_NAME["Near"])
-    assert '|revenue_to_holders_usd"' in near and '|holder_value_revenue_usd"' not in near   # the gas burn is A4's
+    assert '|revenue_to_holders_usd"' in near and '|holder_value_revenue_usd"' not in near   # (= holder value, R21b)
 
 
 def test_no_new_supply_ranks_first_and_unknown_is_never_zero(monkeypatch):

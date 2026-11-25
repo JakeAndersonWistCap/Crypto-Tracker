@@ -1864,6 +1864,13 @@ Jake: "the Assistance Fund at 0xfefe…fe is burned, not held … Treat it like 
 | Burns | total = Core + zero address; A4 view = Core. | total_burn_tokens = the Fund + Core (fall of totalSupply) + HyperEVM zero address (A1, net float pressure); burn_ex_chain_fee_tokens = the Fund + Core. HyperEVM base fee: not read, not subtracted (~96k lifetime, INFERRED). |
 | Tags / A4 | A3, A1; A4 off (one switch). | A3, A1, A4 (`CONDITIONAL_ARCHETYPES` on, reason cites the vote). A4 burn and net change = burn_ex_chain_fee_tokens (G7 0c keeps the EVM gas burn on A1). A4 "Cumulative burn ÷ max supply" = (Fund + zero address + (max − totalSupply)) ÷ max (`BURN_CUMULATIVE_EXTRA`). |
 | Checks | A1: Δzero − ΔtotalSupply; A4: fall of totalSupply. | A1: ΔFund listing + Δzero − ΔtotalSupply (`sum_deltas_less_q0`); A4: ΔFund listing − ΔtotalSupply; tol 15% unchanged. |
+### Round 21b — fee burns in A3 (Jake 2026-11-25), old → new
+
+| Item | What | Old | New |
+|---|---|---|---|
+| 3 | A3 key's numerator | revenue_to_holders_usd = credited holder value LESS the fee burn credited in it (R20: "a protocol-rule burn is A4's") | = the credited holder value WITH the fee burn (HOLDER_VALUE burn_credited x that day's price): Ethereum's EIP-1559 burn, Near's gas burn (beside the Intents buyback), Aethir's fee burn. One machinery: the key and net holder yield count the same dollars; the burn is counted once. A4 and net float pressure unchanged (BURN_SERIES). |
+| 3 | Tags | Ethereum A1, A4; Aethir A2, A4 (conditional A3 off: no fee-funded pool) | Ethereum A1, A3, A4; Aethir A2, A3, A4 (A3 on for the fee burn; the pool finding kept on record); Near A1, A3, A4. Primaries unchanged: none ranks on A3 (primary-A3 projects only). |
+| 3 | Aethir's buyback reason | "n/a — no buyback programme declared (config fee_split)"; the section 9 wording a draft | Declared (config.AETHIR_DECLARED_NO_BUYBACK): "Aethir has no buy-then-burn programme. The ServiceFeeBurner (0xf8ec…) claims a share of service fees from AethirCore in ATH and sends it to 0x…dEaD: a direct fee burn, not a buyback — no swap." — the buyback status, BUYING_ZERO_DECLARED, DECLARED_NA_REASONS, fee_split. Ethereum's A3 cells carry its two decided reasons (no unlock wallets, R20; no lock contract, P4-Q4). |
 
 ### Round 21 — hyperliquid (Jake 2026-11-25), old → new
 

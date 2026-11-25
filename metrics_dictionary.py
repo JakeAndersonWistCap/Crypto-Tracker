@@ -501,10 +501,11 @@ ENTRIES = {
     "REVENUE TO HOLDERS ÷ NEW SUPPLY (x)": dict(
         what="A3's rank key (R20): revenue sent to holders ($) against the $ value of new supply over the same "
              "window; 1.0 is the crossover. Revenue-funded market buybacks however the tokens end up (burned, held or "
-             "distributed) plus revenue paid directly to stakers, in any token. A treasury- or emissions-funded "
-             "buyback and a protocol-rule fee burn (A4) are not in it.",
-        formula="holder_value_revenue_usd (the credited holder value; where a protocol-rule fee burn is credited "
-                "inside it — Near, Ethereum — revenue_to_holders_usd, the same less that burn) per covered day ÷ "
+             "distributed) plus revenue paid directly to stakers, in any token, plus a revenue-funded fee burn at the "
+             "day's price (R21b: Ethereum's EIP-1559 burn, Near's gas burn, Aethir's fee burn). A treasury- or "
+             "emissions-funded buyback is not in it.",
+        formula="holder_value_revenue_usd (the credited holder value; where a fee burn is credited inside it — Near, "
+                "Ethereum, Aethir — revenue_to_holders_usd, the same figure with the burn in it, R21b) per covered day ÷ "
                 "(outflow_a_usd + … + outflow_f_usd, the categories the "
                 "project declares, each per covered day — tokens x that day's price, the series NET HOLDER YIELD "
                 "subtracts); new supply a measured 0 with revenue to holders above 0 reads 'no new supply' and ranks "

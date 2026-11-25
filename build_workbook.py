@@ -8864,7 +8864,7 @@ def aggregate(long: pd.DataFrame, fetch_status: pd.DataFrame, asof: pd.Timestamp
     _pendle_rate_check(groups)          # G9 N: each Pendle gauge chain's log scan against its sampled rates
     _revenue_from_fees_views(groups)    # G9 N: Plume's revenue = the fees its RewardDistributor receives
     _holder_value_views(groups)   # Phase 2: revenue-funded holder value, credited vs recorded (LITMUS A)
-    _revenue_to_holders_views(groups)   # R20: A3's numerator — credited holder value less the protocol-rule fee burn
+    _revenue_to_holders_views(groups)   # A3's numerator — credited holder value, the fee burn included (R21b)
     _gross_burn_day_priced_usd_views(groups, asof)    # PR1B.3: $ burn = each day's burn x that day's price, the holder-value basis
     free_float.buying_views(groups)   # R20/R21: revenue-funded buying (held or distributed) — net float pressure's demand side
     free_float.returned_views(groups)  # R21: bought tokens returned to the float (F1/F2/F3/F7) — a supply line
@@ -10347,7 +10347,9 @@ def derived_statuses(data: pd.DataFrame | None, silence: dict | None = None) -> 
         elif fs.get("share_to_buyback") == 0 and fs_st != "n/a":
             bb = "none (declared: 0% of revenue to buyback)"
         else:
-            bb = ("n/a — no buyback programme declared (config fee_split)" if fs_st == "n/a"
+            bb = ("n/a — " + config.DECLARED_NO_BUYBACK_REASON[name]           # R21b: the declared reason
+                  if fs_st == "n/a" and name in config.DECLARED_NO_BUYBACK_REASON
+                  else "n/a — no buyback programme declared (config fee_split)" if fs_st == "n/a"
                   else f"{fs_st} (declared; no buyback series measured)")
         bvals = [v for v in (_q0(data, name, config.a4_burn_metric(name)), _q0(data, name, "gross_burn_tokens"))
                  if v is not None]
@@ -12024,14 +12026,17 @@ A3_KEY_METRIC = "revenue_to_holders_usd"
 
 
 def _revenue_to_holders_views(groups: dict) -> None:
-    """R20 (Jake 2026-11-24) — A3's numerator, $ per day: revenue_to_holders_usd = the CREDITED holder value
-    (holder_value_revenue_usd: each day's market buyback $ where its programme was revenue-funded that day, however
-    the tokens end up — burned, held or distributed — plus the declared payouts of revenue to stakers, in any token)
-    LESS the protocol-rule fee burn credited inside it (config.HOLDER_VALUE burn_credited: Near's gas burn, Ethereum's
-    base-fee burn). A burn built into the protocol is A4's, not a programme turning revenue into token demand. The fee
-    burn is taken out exactly as _holder_value_views put it in (the same tokens x the same day's price x the same
-    share, on the same days). Treasury- or emissions-funded buybacks were never credited (holder_value_other_usd).
-    A day holder value does not hold is not in the series: unknown is never 0."""
+    """A3's numerator, $ per day, where a fee burn is credited inside holder value (config.HOLDER_VALUE burn_credited:
+    Ethereum's EIP-1559 burn, Near's gas burn, Aethir's fee burn): revenue_to_holders_usd = the CREDITED holder value
+    (holder_value_revenue_usd: each day's market buyback $ where its programme was revenue-funded that day, however the
+    tokens end up — burned, held or distributed — plus the declared payouts of revenue to stakers, in any token, plus
+    the fee burn x that day's price, credited by _holder_value_views on the days it credits it).
+    R21b (Jake 2026-11-25, item 3): "A3 includes revenue-funded fee burns ... Fee burns go in the A3 key's numerator as
+    'revenue sent to holders', valued at the day's price" — the fee burn is no longer taken out (was R20: holder value
+    LESS the fee burn, "A4's"). The key and NET HOLDER YIELD now count the same dollars, from the one machinery
+    (HOLDER_VALUE burn_credited): the burn is counted once, never beside a second read of it. Treasury- or
+    emissions-funded buybacks were never credited (holder_value_other_usd). A day holder value does not hold is not
+    in the series: unknown is never 0."""
     for p in scoped_projects():
         name = p["name"]
         g = groups.get((name, "holder_value_revenue_usd"))
@@ -12042,18 +12047,8 @@ def _revenue_to_holders_views(groups: dict) -> None:
         if g is None or g.empty or not bc:
             continue
         hv = _daily(g)
-        src = "derived:revenue_to_holders[= holder_value_revenue_usd]"
-        if bc:
-            tok, px = _daily(groups.get((name, bc["metric"]))), _daily(groups.get((name, "price_usd")))
-            burn = (tok * px.reindex(tok.index)).dropna() * float(bc.get("share_of_revenue", 1.0))
-            if bc.get("with_buyback"):
-                act = (pd.Series(dtype=float) if config.buyback_route(name)["route"] == "none" else _daily(groups.get(
-                    (name, "actual_buyback_usd_wallet" if (name, "actual_buyback_usd_wallet") in groups
-                     else "actual_buyback_usd"))))
-                if not act.empty:
-                    burn = burn[burn.index <= act.index.max()]
-            hv = (hv - burn.reindex(hv.index).fillna(0.0)).clip(lower=0.0)
-            src = f"derived:revenue_to_holders[holder_value_revenue_usd - fee burn ({bc['metric']} x price)]"
+        src = (f"derived:revenue_to_holders[= holder_value_revenue_usd, the fee burn ({bc['metric']} x price) included "
+               f"(R21b)]")
         groups[(name, A3_KEY_METRIC)] = _as_stored(pd.DataFrame(
             {"date": hv.index, "project": name, "metric": A3_KEY_METRIC, "value": hv.values, "tier": 2,
              "source": src}), g.columns)
@@ -12062,8 +12057,8 @@ def _revenue_to_holders_views(groups: dict) -> None:
 def a3_key_numerator(name: str) -> str:
     """The series A3's key reads as REVENUE SENT TO HOLDERS: the credited holder value (holder_value_revenue_usd —
     revenue-funded market buybacks burned, held or distributed + revenue paid to stakers in any token), or, where a
-    protocol-rule fee burn is credited inside it (HOLDER_VALUE burn_credited: Near, Ethereum), that figure less the
-    burn (revenue_to_holders_usd, _revenue_to_holders_views)."""
+    fee burn is credited inside it (HOLDER_VALUE burn_credited: Near, Ethereum, Aethir), the same figure with the fee
+    burn in it (revenue_to_holders_usd, _revenue_to_holders_views; R21b — was R20: less the burn)."""
     return A3_KEY_METRIC if (config.HOLDER_VALUE.get(name) or {}).get("burn_credited") else "holder_value_revenue_usd"
 
 
@@ -12088,7 +12083,8 @@ def a3_key_note(p: dict) -> str:
     return lab + ("A3 KEY (R20, Jake 2026-11-24): revenue sent to holders ($) ÷ value of new supply ($), the same window, "
             f"each per covered day. Numerator {a3_key_numerator(name)} = revenue-funded market buybacks however the tokens "
             "end up (burned, held or distributed) + revenue paid directly to stakers, in any token"
-            + (f", less the protocol-rule fee burn ({bc['metric']} x price — A4's)" if bc else "")
+            + (f", + the fee burn ({bc['metric']} x that day's price — revenue sent to holders, R21b, Jake "
+               f"2026-11-25; it is on A4 and in net float pressure as a burn too)" if bc else "")
             + "; a treasury- or emissions-funded buyback is recorded, not counted. Denominator = the total-dilution "
             "outflows at each day's price: " + (" + ".join(f"({c}) outflow_{c}_usd" for c in cats) or "none declared")
             + f" — the series NET HOLDER YIELD subtracts. New supply a measured 0 with revenue to holders above 0 reads "
@@ -12098,8 +12094,8 @@ def a3_key_note(p: dict) -> str:
 
 def _a3_key_col(R: Refs, data_by_key: dict | None = None) -> tuple:
     """A3'S RANK KEY (R20, Jake 2026-11-24): revenue sent to holders ($) ÷ value of new supply ($), the same window
-    (Q0), each per covered day, for every A3 project. Numerator: a3_key_numerator — the credited holder value, less
-    the protocol-rule fee burn where one is credited inside it (revenue_to_holders_usd, _revenue_to_holders_views).
+    (Q0), each per covered day, for every A3 project. Numerator: a3_key_numerator — the credited holder value, the fee
+    burn credited inside it included (R21b; revenue_to_holders_usd, _revenue_to_holders_views).
     Denominator: the $ outflows (a..f) NET HOLDER YIELD subtracts (outflow_<c>_usd: tokens x that day's price;
     _cp_cats — a declared publish lag matched, R5.3). A leg not measured over the window is unknown, never 0: the
     coverage guard blocks it. New supply a MEASURED 0 with revenue to holders above 0 reads 'no new supply' (ranked

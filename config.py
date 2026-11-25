@@ -51162,3 +51162,73 @@ DECLARED_COMPONENTS.setdefault(("Hyperliquid", "gross_burn_day_priced_usd"), [])
     "metric": "gross_burn_day_priced_usd", "from": None, "source": "derived:burn_ex_chain_fee_tokens*price_usd",
     "why": "R21b (" + R21B_HL_DECIDED + "): A4 is scored on the Fund + the Core burns, so its $ burn is that series x "
            "the day's price"})
+
+
+# =====================================================================================================================
+# ROUND 21b — FEE BURNS IN A3 (Jake 2026-11-25, item 3; the FEEBURN lane). Jake, verbatim: "Aethir: apply the section 9
+# wording as the declared reason. It's a direct fee burn, counted as a burn in A4 and in net float pressure. A3 includes
+# revenue-funded fee burns (Jake): Aethir's fee burn counts in its A3 key, so tag it A2, A3, A4. Apply the same to
+# Ethereum's EIP-1559 burn (A1, A3, A4) and NEAR's fee burn (alongside its Intents buybacks). Fee burns go in the A3
+# key's numerator as "revenue sent to holders", valued at the day's price."
+#   1. The A3 key's numerator (build_workbook._revenue_to_holders_views) is the credited holder value WITH the fee burn
+#      credited in it (HOLDER_VALUE burn_credited x that day's price) — was R20: holder value LESS that burn. One
+#      machinery: the key and NET HOLDER YIELD count the same dollars and the burn is counted once (Near:
+#      near_chain_burn_tokens — the block headers' burn, gross_burn_tokens_bigquery, on every stored day; the protocol
+#      rule x fees before — beside the Intents buyback). A4 and net float pressure read BURN_SERIES as before.
+#   2. Tags: Ethereum A1, A3, A4 (was A1, A4); Near A1, A3, A4 (unchanged); Aethir A2, A3, A4 (its conditional A3 ON,
+#      with Jake's reason). Primaries do not move (Ethereum A1, Near A1, Aethir A2): none of the three enters the rank
+#      of the A3 tab, which ranks primary-A3 projects only.
+#   3. Aethir's declared reason where the build said "no buyback programme declared" (the R21 draft, now applied).
+_R21B_FEEBURN = "Jake 2026-11-25 (R21b item 3: fee burns in A3)"
+AETHIR_DECLARED_NO_BUYBACK = (
+    "Aethir has no buy-then-burn programme. The ServiceFeeBurner (0xf8ec…) claims a share of service fees from "
+    "AethirCore in ATH and sends it to 0x…dEaD: a direct fee burn, not a buyback — no swap.")
+# the reason the buyback status cell reads in place of "no buyback programme declared (config fee_split)"
+DECLARED_NO_BUYBACK_REASON = {"Aethir": AETHIR_DECLARED_NO_BUYBACK}
+BUYING_ZERO_DECLARED["Aethir"] = ("0 — " + AETHIR_DECLARED_NO_BUYBACK + " The fee burn is on the burns line (A4, net "
+                                  "float pressure) and in revenue sent to holders (A3), never buying")
+DECLARED_NA_REASONS.setdefault("Aethir", []).append(
+    {"cols": (), "match": "Aethir has no buy-then-burn programme",
+     "text": "n/a — " + AETHIR_DECLARED_NO_BUYBACK,
+     "source": "Sourcify (exact match, chain 42161): contracts/periphery/ServiceFeeBurner.sol at "
+               "0xf8Ec8E8ECdBfbBA4D073090152dfC6559C7eF531 (settle(): core.claimServiceFee(...), then a transfer to "
+               "0x…dEaD; no router, pool or swap path) ; Arbitrum burn transactions of 2026-11-03, 11-09 and 11-24 (four "
+               "logs each, no Swap event) ; https://docs.aethir.com/aethir-tokenomics/ath-burn-mechanism",
+     "read_on": "2026-11-24", "decided": _R21B_FEEBURN + " — the docs/HANDOVER_LOCAL.md section 9 wording, applied",
+     "why": "nothing is bought: the network fee's share is claimed in ATH and destroyed — a burn (A4, net float "
+            "pressure; revenue sent to holders in A3), not a buyback"})
+PROJECT_BY_NAME["Aethir"]["fee_split"]["note"] += " R21b (" + _R21B_FEEBURN + "): DECLARED — " + AETHIR_DECLARED_NO_BUYBACK
+PROJECT_BY_NAME["Aethir"]["fee_split"]["declared_reason"] = AETHIR_DECLARED_NO_BUYBACK
+# THE TAGS. The R21 pool finding (no staking pool is fee-funded) stays on record: it was about the pools; the reason
+# for A3 now is the revenue-funded fee burn.
+ARCHETYPES_R20["Ethereum"] = [1, 3, 4]
+ARCHETYPES_R20["Aethir"] = [2, 3, 4]                # Jake's order; the conditional A3 below is ON
+_c_ath = CONDITIONAL_ARCHETYPES["Aethir"]
+_c_ath["pool_finding"] = _c_ath.get("why_off", "")
+_c_ath["on"] = True
+_c_ath["why_on"] = ("R21b (" + _R21B_FEEBURN + "): \"A3 includes revenue-funded fee burns: Aethir's fee burn counts in "
+                    "its A3 key, so tag it A2, A3, A4\" — the daily fee burn (gross_burn_tokens x that day's price) is "
+                    "revenue sent to holders. The pools are still emissions-funded (pool_finding, R21)")
+apply_archetypes_r20()
+# the key's numerator series is formed wherever a fee burn is credited inside holder value — Aethir included (its
+# HOLDER_VALUE entry came after the R20 metric's project list was taken)
+METRICS["revenue_to_holders_usd"] = dict(
+    METRICS["revenue_to_holders_usd"],
+    label="Revenue sent to holders ($ per day) — revenue-funded market buybacks (burned, held or distributed) + revenue "
+          "paid directly to stakers, in any token + a revenue-funded fee burn x that day's price (R21b, Jake "
+          "2026-11-25: Ethereum's EIP-1559 burn, Near's gas burn, Aethir's fee burn); A3's numerator. Not in it: "
+          "treasury- or emissions-funded buybacks",
+    only_projects=tuple(n for n, h in HOLDER_VALUE.items() if h.get("burn_credited")))
+# ETHEREUM ON THE A3 TAB (new this round): the tab's standing columns read two n/a reasons Ethereum already carries on
+# its other tabs, both decided — no non-circulating unlock wallets (R20, Jake 2026-11-24) and no lock contract (staked
+# ETH is a consensus-layer deposit; P4-Q4, Jake 2026-11-03, counts it as locked from beacon_chain_eth, and locked_tokens
+# stays not applicable). The same declarations cover the A3 cells, as R20 did for the A4 tab's dilution cell.
+DECLARED_NA_REASONS["Ethereum"] = (*DECLARED_NA_REASONS["Ethereum"], {
+    **{k: v for k, v in DECLARED_NA_REASONS["Ethereum"][0].items() if k not in ("cols", "match", "text")},
+    "cols": (), "match": "no unlock leg: no non-circulating wallet set is declared for this project"}, {
+    "cols": (), "match": "ETHEREUM HAS NO LOCK CONTRACT",
+    "source": "config PROJECTS['Ethereum'] not_applicable['locked_tokens'] (no veETH, no protocol escrow) ; "
+              "config.STAKE_COUNTS_AS_LOCKED / CP_STAKE_METRIC (staked ETH = beacon_chain_eth, its own metric)",
+    "read_on": "2026-11-03", "decided": "Jake 2026-11-03 (P4-Q4: the lock rate counts staked ETH from its own metric; "
+                                        "locked_tokens stays not applicable) — on the A3 tab from R21b",
+    "why": "Ethereum has no vote-escrow or lock contract; staked ETH is read as its own metric, not as a lock balance"})
