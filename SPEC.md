@@ -1843,6 +1843,22 @@ staking and vote-locks by holders ARE circulating (off free float only); undistr
 | PR4C.5 | Morpho frozen | Not frozen. | FROZEN_PROJECTS['Morpho'] (tests/fixtures/frozen_morpho.json, 285 cells; the switch PENDING on the dumps); the 48 cells that differ from the pre-round-4 build declared (41 first moved by PR4, 1 by PR4B, 6 by PR4C alone). |
 | PR4C.GATE | Test pins PR4C moves | tests/test_pr4_morpho.py pinned Morpho's dump circulating 696.0M / float 547.25M and a pin without Mantle. | 574.8M / 426.05M (the relocked 121.2M on 2026-10-13 out); the probe test uses Sonic as the chain beyond the pin. Also moved: test_pr4_morpho / test_pr4b (the relock is a circulating and unlock leg; the limitation text is now the modelled relock), test_round_p3_4 (a switch leg is owed from the window's start). tests/test_pr1_freeze.py: the floor "baseline > 300 cells" became "> 250 and every cell on one side only is declared" — Morpho, an A2 project, writes 285 cells; the cell-set check is stronger than the count it replaces. Gate: tests/test_final_round.py's Morpho pin states the relock leg; tests/test_adapters.py's gap-text test starts from no build state (a build earlier on the same worker left GEODNET's series current, and write_gap_report dropped the test's row as answered by the store — an order dependence, fixed in the test, nothing skipped). |
 
+### Round 22 — circulating on Jake's rule, lined up with the industry (Jake 2026-11-25), old → new
+- The reading: (a) unvested tokens under a published schedule are OUT until they vest, staked or not (a staked unvested
+  balance is reported, never counted); (b) an unreleased reserve (a pre-minted pot that pays emissions, or that the issuer
+  releases on a published schedule) is OUT like unminted supply, its payouts new supply the day paid; (c) issuer holdings
+  stay IN, off the float — reported, not changed. Table and wallets: docs/r22_circulating.md; config `R22 — CIRC` block.
+- Hyperliquid (a): the team wallet 0x43e9abea… IN (R9.2) → OUT (238.36M, all staked on 23 validators; the API has no
+  vesting split). Dump 539,758,896 → 301,828,851; float unchanged. 2026-11-25: 301.05M vs CoinGecko 237.66M (+26.7% =
+  Foundation 60.66M + Grants 2.98M, (c)) and CMC 252.06M (+19.4% = CMC takes the burned Assistance Fund out twice).
+  The pot (futureEmissions 409.6M = 388.88M allocation + 39.18M genesis rest − 18.43M paid) was and stays out. Flows: the
+  team's rewards stay outside; its payouts are unlock_release_outside_tokens.
+- Ether.fi (a): the MODELLED unvested team leg in circulating, off the float (R14) → out: 998,535,999 → 962,752,666.
+- Chainlink (b): the 33 wallets (7%-a-year release schedule) IN (R18) → OUT: 1,000,000,000 → 766,850,000 (= Chainlink's
+  API, CoinGecko, CMC).
+- GEODNET (b): the Mining Safe + Mining distribution wallet IN (R17) → OUT (treasury − ecosystem): 930.41M → 834.98M.
+- Near (a): LOCKED staked by its lockup IN (R10.B3b) → OUT, staked or not: −1,084,482.68 from Jake's 2026-11-19 read.
+
 ### Round 21b — lead: NEAR approval, beacon source, route-'none' buybacks (Jake 2026-11-25), old → new
 - NEAR's P2P history: no approval → Jake's dated approval given ahead for ONE named month (`for_month` 2026-12, approved
   2026-11-25, max_gb 337 = the month's room in the 1,000 GB budget); near_p2p_history.refusal reads `for_month`.

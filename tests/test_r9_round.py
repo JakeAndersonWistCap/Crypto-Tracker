@@ -101,14 +101,15 @@ def test_2_hyperliquid_team_and_spot_are_counted_in_and_the_float_does_not_move(
          ("Hyperliquid", "team_wallet_tokens"): mk("team_wallet_tokens", 238.2e6)}
     bw._released_staked_views(g)
     circ = g[("Hyperliquid", "circulating_supply_first_party")]["value"].iloc[-1]
-    # stored net of Foundation + Grants: + their stake 63.5 + their spot 0.1 + the team 238.2
-    assert circ == pytest.approx(237.7e6 + 63.6e6 + 238.2e6, rel=1e-9)
-    assert "the rule" in g[("Hyperliquid", "circulating_supply_first_party")]["source"].iloc[-1]
+    # stored net of Foundation + Grants: + their stake 63.5 + their spot 0.1; R22 (Jake 2026-11-25, item 1a): the team's
+    # unvested 238.2 is OUT (was R9.2: 237.7e6 + 63.6e6 + 238.2e6)
+    assert circ == pytest.approx(237.7e6 + 63.6e6, rel=1e-9)
+    assert "R22" in g[("Hyperliquid", "circulating_supply_first_party")]["source"].iloc[-1]
     bw._rule_in_views(g)
     off = g[("Hyperliquid", "rule_in_off_float_tokens")]["value"].iloc[-1]
-    assert off == pytest.approx(238.2e6 + 0.1e6, rel=1e-6)           # the team stake and the spot leave the float
+    assert off == pytest.approx(0.1e6, rel=1e-6)            # the spot leaves the float (was R9.2: 238.2e6 + 0.1e6)
     spec = config.RULE_IN["Hyperliquid"]
-    assert spec["legs"] == ("team_wallet_tokens", "excluded_wallets_spot_tokens") and "earned" in spec["evidence"]
+    assert spec["legs"] == ("excluded_wallets_spot_tokens",) and "staked" in spec["evidence"]   # R22 (was + the team)
     assert config.UNLOCK_STOCKS["Hyperliquid"] == ("excluded_wallets_spot_tokens", "team_wallet_tokens")   # R9.3
 
 
@@ -182,7 +183,8 @@ def test_2_a_release_from_a_rule_wallet_is_not_a_circulating_change():
 
 
 def test_2_hyperliquid_and_morpho_flow_legs_are_declared():
-    assert config.RULE_IN["Hyperliquid"]["flow_in"][0][1] == "emissions_tokens"
+    # R22: the rewards to stake inside circulating (the team wallet's stay in it, outside); was emissions_tokens (R9.2)
+    assert config.RULE_IN["Hyperliquid"]["flow_in"][0][1] == "emissions_circulating_stake_tokens"
     lab, m = config.RULE_IN["Morpho"]["flow_outside"][0]
     assert m == "unlock_release_outside_tokens" and "relock" in lab
     assert config.UNLOCK_RELEASE_SUBSETS["Morpho"][m] == ("morpho_relocked_tokens",)

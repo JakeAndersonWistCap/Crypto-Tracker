@@ -54,19 +54,21 @@ def _dump_series(metric):
 # ===================================================================== decisions 1-3: circulating under the rule
 def test_1_circulating_is_the_total_supply():
     from fetch import circulating as circ
-    assert config.rule_in_legs(CL) == ("buyback_fund_balance", "noncirculating_holding_tokens")
+    # R22 (Jake 2026-11-25, item 1b): the 33 wallets are the unreleased reserve — OUT (was R18: both legs in)
+    assert config.rule_in_legs(CL) == ("buyback_fund_balance",)
     days = ["2026-11-22", "2026-11-23"]
     h = pd.concat([_frame("total_supply", [(d, 1e9) for d in days]),
                    _frame("buyback_fund_balance", [(d, RESERVE) for d in days]),
                    _frame("noncirculating_holding_tokens", [(d, NC33) for d in days])])
-    assert list(circ.series(h, CL).values) == [1e9, 1e9]                     # nothing subtracted
+    assert list(circ.series(h, CL).values) == pytest.approx([1e9 - NC33] * 2)   # R22: the 33 out (was [1e9, 1e9])
     # the figure before the rule (what the build showed): total − Reserve − the 33
     assert circ.series(h, CL, rule=False).iloc[-1] == pytest.approx(1e9 - RESERVE - NC33)
     spec = config.RULE_IN[CL]
-    assert spec["circulating"] == (760_645_318, 1_000_000_000)
+    assert spec["circulating"] == (1_000_000_000, 766_849_999.90)          # R22 (was (760_645_318, 1_000_000_000))
     for who in ("chainlink_api", "coingecko", "coinmarketcap"):
         ref, legs = spec["references"][who]
-        assert ref + sum(legs.values()) == pytest.approx(1e9, abs=0.01), who  # each gap named to the token
+        # R22: every reference = ours (was: + the 33 wallets = 1e9), to the token on the 2026-11-25 read
+        assert ref + sum(legs.values()) == pytest.approx(1e9 - NC33, abs=0.01), who
     assert config.CIRCULATING_ONCHAIN[CL]["handover"]["on"] == "2026-11-24"
 
 
@@ -77,32 +79,33 @@ def test_1_on_the_dump_circulating_goes_from_760_6m_to_the_total():
                       for r in m if r["metric"] in ("total_supply", "buyback_fund_balance",
                                                     "noncirculating_holding_tokens")])
     day = pd.Timestamp("2026-10-13")
-    assert circ.series(h, CL).loc[day] == 1_000_000_000.0
+    assert circ.series(h, CL).loc[day] == pytest.approx(766_849_999.90, abs=0.01)   # R22 (was 1_000_000_000.0)
     assert circ.series(h, CL, rule=False).loc[day] == pytest.approx(760_645_318, abs=1)   # the figure it replaces
 
 
 def test_2_3_the_float_loses_the_issuer_stock_and_the_new_legs_join_at_their_first_row(scoped):
     spec = config.RULE_IN[CL]
-    assert spec["off_float"] == ("buyback_fund_balance", "noncirculating_holding_tokens",
-                                 "reward_vault_balance_tokens", "issuer_path_holding_tokens")
+    # R22: the 33 wallets are out of circulating, so no longer off the float on their own (was R18: + the 33)
+    assert spec["off_float"] == ("buyback_fund_balance", "reward_vault_balance_tokens", "issuer_path_holding_tokens")
     assert set(spec["off_float_from"]) == {"reward_vault_balance_tokens", "issuer_path_holding_tokens"}
     days = pd.date_range("2026-11-20", "2026-11-23")
     g = {(CL, "buyback_fund_balance"): _frame("buyback_fund_balance", [(d, RESERVE) for d in days]),
          (CL, "noncirculating_holding_tokens"): _frame("noncirculating_holding_tokens", [(d, NC33) for d in days])}
     bw._rule_in_views(g)
     # the store before the first run with the new reads (the fixture's case): the float is what it was
-    assert list(g[(CL, "rule_in_off_float_tokens")]["value"]) == pytest.approx([RESERVE + NC33] * 4)
+    assert list(g[(CL, "rule_in_off_float_tokens")]["value"]) == pytest.approx([RESERVE] * 4)   # R22 (was + NC33)
     late = days[2:]
     g[(CL, "reward_vault_balance_tokens")] = _frame("reward_vault_balance_tokens", [(d, VAULT) for d in late])
     g[(CL, "issuer_path_holding_tokens")] = _frame("issuer_path_holding_tokens", [(d, PATH) for d in late])
     g.pop((CL, "rule_in_off_float_tokens"))
     bw._rule_in_views(g)
     off = g[(CL, "rule_in_off_float_tokens")].set_index("date")["value"]
-    assert off.loc[days[0]] == pytest.approx(RESERVE + NC33)                 # before the seam: the two legs
-    assert off.loc[days[-1]] == pytest.approx(253_803_330.43, abs=0.01)      # from it: + the vault + the path wallets
-    assert off.loc[days[-1]] == pytest.approx(config.CHAINLINK_RULE_READ["off_float"], abs=0.01)
-    # free float = total − staked principal − the off-float stock: 703.6M, 70.4% of supply (read 2026-11-23)
-    flt = 1e9 - PRINCIPAL - off.loc[days[-1]]
+    assert off.loc[days[0]] == pytest.approx(RESERVE)                        # R22: the Reserve (was + the 33)
+    # from the seam: + the vault + the path wallets; R22: less the 33 (was 253,803,330.43)
+    assert off.loc[days[-1]] == pytest.approx(253_803_330.43 - NC33, abs=0.01)
+    assert off.loc[days[-1]] == pytest.approx(config.CHAINLINK_RULE_READ["off_float"] - NC33, abs=0.01)
+    # free float = circulating (total − the 33, R22) − staked principal − the off-float stock: 703.6M, unchanged
+    flt = (1e9 - NC33) - PRINCIPAL - off.loc[days[-1]]
     assert flt == pytest.approx(703_627_408.08, abs=0.01) == pytest.approx(config.CHAINLINK_RULE_READ["float"], abs=0.01)
     assert round(flt / 1e9, 3) == 0.704
 
@@ -123,16 +126,15 @@ def test_3_the_path_wallets_are_tagged_inferred_and_the_vault_published():
 
 def test_1_the_references_are_compared_with_ours_less_the_33_wallets_only():
     # Chainlink's own API and CoinGecko leave out the 33 wallets and count the Reserve, the vault and the path wallets
-    assert credibility._rule_minus(CL) == ("noncirculating_holding_tokens",)
-    ci = credibility.circulating_input(CL)
-    assert ci["ours"] == {"py": "now_combo", "args": {"metrics": ("circulating_supply_onchain",),
-                                                      "minus": ("noncirculating_holding_tokens",)}}
+    # R22: ours leaves the 33 out itself — compared as it stands (was R18: ours − noncirculating_holding_tokens)
+    assert credibility._rule_minus(CL) == ()
+    assert "reference_minus" not in config.RULE_IN[CL] and config.RULE_IN[CL]["reference_leaves_out"] is False
     api = config.CHAINLINK_RULE_READ["chainlink_api"]["circulating"]
     assert 1e9 - NC33 == pytest.approx(api, abs=0.01) == pytest.approx(766_849_970.42, abs=0.01)
     assert config.CHAINLINK_RULE_READ["coingecko"] == api                   # 0.0% apart, to the token
     # every other project on the rule keeps the whole off-float sum (or nothing): the knob is read only where declared
     for n, s in config.RULE_IN.items():
-        if n != CL:
+        if True:                                    # R22: no project declares a partial reference_minus now
             assert "reference_minus" not in s, n
             assert credibility._rule_minus(n) in ((), ("rule_in_off_float_tokens",)), n
 
