@@ -63,3 +63,15 @@ def test_a_buyback_input_of_a_project_that_buys_nothing_is_na_not_missing_histor
     row2 = dict(row, Project="Pendle")
     cls2, _ = ca.missing_class(row2, None, {("Pendle", "actual_buyback_tokens"): g}, pd.Timestamp("2026-10-13"))
     assert cls2 != "N/A"
+
+
+def test_honest_statuses_keep_a_route_none_buyback_cell_na_by_design():
+    import pandas as pd
+    import coverage_audit as ca
+    g = pd.DataFrame({"date": pd.date_range("2026-08-25", "2026-09-27"), "value": 1.0})
+    why = ("BLOCKED — unequal coverage: retired buyback (actual_buyback_tokens, q0) covers 34 days of a 90-day window; "
+           "emissions (emissions_tokens, q0) covers 90 days of a 90-day window")
+    rows = [{"Project": "Ethereum", "Tab": "A3 Revenue Buyback", "Column": "Net absorption Q0 (tokens)",
+             "Status": "N/A BY DESIGN", "Reason / route / error": why, "Formula as built": ""}]
+    ca.honest_statuses(rows, [], {("Ethereum", "actual_buyback_tokens"): g}, pd.Timestamp("2026-10-13"))
+    assert rows[0]["Status"] == "N/A BY DESIGN" and "NOTHING IS BOUGHT" in rows[0]["Reason / route / error"]

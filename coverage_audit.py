@@ -713,6 +713,17 @@ def _valid_from(named: list[str], proj: str, groups: dict | None, asof, span: in
     return str((max(firsts) + pd.Timedelta(days=span - 1)).date())
 
 
+def route_none_buyback(proj: str, named: list[str]) -> str | None:
+    """R21b (lead): a buyback input of a project whose buyback route is 'none' (nothing is bought — Ethereum's EIP-1559
+    burn, decided 2026-09-28) is N/A by that decision: its Data rows already read n/a, and stored copies from before
+    the decision (':as-buyback') are never history the calendar brings. The reason, or None."""
+    cfg = _config()
+    bb = [m for m in named if m in tuple(cfg.BUYBACK_METRICS) + tuple(cfg.BUYBACK_SPLIT_METRICS)]
+    if bb and proj in cfg.PROJECT_BY_NAME and cfg.buyback_route(proj)["route"] == "none":
+        return f"{', '.join(bb)}: {cfg.buyback_route(proj)['reason'][:200]}"
+    return None
+
+
 def honest_statuses(rows: list[dict], gap_rows: list | None = None, groups: dict | None = None, asof=None) -> int:
     """N/A BY DESIGN whose text is not a declared reason -> the status the text describes (G9 B1): measuring point
     changed -> BROKEN; stale -> CHECK; BLOCKED for unequal coverage -> MISSING [C] naming the short input and the date it
@@ -730,6 +741,10 @@ def honest_statuses(rows: list[dict], gap_rows: list | None = None, groups: dict
             n += 1
             continue
         named = _metrics_named(why, r.get("Formula as built"))
+        nb = route_none_buyback(str(r["Project"]), named)
+        if nb:
+            r["Reason / route / error"] = f"{why} — N/A BY DESIGN (R21b): {nb}"
+            continue                                       # stays N/A BY DESIGN, with the route's decided reason
         g = next((gaps.get((str(r["Project"]), m)) for m in named if gaps.get((str(r["Project"]), m))), None)
         if rule == "MISSING C":
             short = _short_legs(why, str(r["Project"]), groups, asof)
@@ -917,12 +932,9 @@ def missing_class(row: dict, gap: dict | None = None, groups: dict | None = None
     na = declared_not_applicable(proj, named)
     if na:
         return "N/A", na
-    # R21b (lead): a buyback input of a project whose buyback route is 'none' (nothing is bought — Ethereum's EIP-1559
-    # burn, decided 2026-09-28) is N/A by that decision: the Data rows already read n/a, and stored copies from before
-    # the decision (':as-buyback') are never history the calendar brings
-    bb = [m for m in named if m in tuple(cfg.BUYBACK_METRICS) + tuple(cfg.BUYBACK_SPLIT_METRICS)]
-    if bb and proj in cfg.PROJECT_BY_NAME and cfg.buyback_route(proj)["route"] == "none":
-        return "N/A", f"{', '.join(bb)}: {cfg.buyback_route(proj)['reason'][:200]}"
+    nb = route_none_buyback(proj, named)
+    if nb:
+        return "N/A", nb
     text = " ".join(str(x or "") for x in (why, (gap or {}).get("reason"), (gap or {}).get("suggestion"))).lower()
     # an input the cell says has NO ROWS at all is not history the calendar brings: that one decides (D / E below)
     unstored = [m for m, _w in re.findall(r"\b([a-z][a-z0-9_]+) \((now|m1|q[0-4])\): no rows stored", why)
