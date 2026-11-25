@@ -2780,3 +2780,11 @@ ROUND 3:
   - Pendle: distributor tokens awaiting claim are non-circulating. Add the treasury and P-4/P-5.
   - Ether.fi: custodian recipients' tokens are circulating where released. They go on the insider list as "issuer filing plus first on-chain hop (inferred)".
   - Aethir: no ask to Aethir; same method.
+
+### Round 23 - NEAR P2P holes: the `gaps` command and the daily top-up (Jake 2026-11-25)
+
+| Item | Old | New |
+|---|---|---|
+| `python near_p2p_history.py gaps [--db metrics.db] [--dry-run]` | no way to list the P2P days the store lacks or to price filling them | READ-ONLY (no network without --dry-run). Prints (a) every day of NEAR p2p_transfer_volume_usd missing from `NEAR_P2P_HISTORY.gap_from` (2025-12-29) to the newest stored day, split into days before the series starts and holes inside it, and which of them the BigQuery state never read; (b) the cost of just those days at 7.54 GB a day (ESTIMATE, Jake 2026-11-17) with `bq query --dry_run` command lines per range; (c) MIN, MAX, COUNT of settlement_volume_usd stored for Ethereum (and whether it already reaches back 729 days, so no Ethereum fill is needed) and for NEAR, plus where NEAR derived settlement (DEX + P2P) is unbroken from and why the day before is missing. |
+| NEAR daily top-up (fetch/near_bigquery.NearBigQuery._p2p) | Newest days first, then the missing days of the trailing 365 days as ONE backfill chunk (<= 31 contiguous days) a run. | After the top-up, the holes inside [gap_from, newest held day] are read as "hole" chunks, newest first, up to `hole_chunks_per_run` (3) a run, each cut to the days the month room (budget - ledger - top-up reserve) holds at the estimate. Same `_run`: the 400 GB per-query cap, the monthly ledger budget (1,000 GB) and the reserve all hold, so nothing leaves the free allowance. The billed one-shot (bigquery_backfill.py) stays off. |
+| Query shapes and paths | - | docs/r23_near_history_paths.md: S1 (current) to S4 sized, the dry runs for Jake, a one-day validation recipe, and the four paths (daily run only, holes only, cheaper shape on the free tier, billed one-shot) with dates. |

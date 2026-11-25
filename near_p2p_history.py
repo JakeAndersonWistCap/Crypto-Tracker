@@ -4,6 +4,8 @@
     python near_p2p_history.py plan     [--chunks-per-month 1]   the plan table from the state and config. No network.
     python near_p2p_history.py dry-run                           the NEXT chunk's BigQuery dry run: bytes only, free
     python near_p2p_history.py run                               the NEXT chunk - only under this month's dated approval
+    python near_p2p_history.py gaps [--db metrics.db] [--dry-run]  R23, READ-ONLY: the missing P2P days since 2025-12-29,
+                                                                 what they cost, the dry-run commands, settlement ranges
 
 JAKE, 2026-11-24: "the archetype key and rank must not wait until late 2027 ... a backfill that runs in monthly chunks
 from 2026-12-01 within the 900 GB budget (stage 2 never automatic)". A1's key is the 1-year change of the trailing-365-day
@@ -414,12 +416,192 @@ def cmd_run(db: Path, explicit: bool = True) -> int:
     return 0
 
 
+# ----- gaps (R23, read-only) ------------------------------------------------------------------------------------------
+def _store_days(con, project: str, metric: str) -> dict:
+    """{day: (value, source)} of the store's rows for project/metric, value not null. Read-only."""
+    return {r[0]: (r[1], r[2]) for r in con.execute(
+        "SELECT substr(date,1,10), value, source FROM metrics WHERE project=? AND metric=? AND value IS NOT NULL",
+        (project, metric))}
+
+
+def _ranges(days: list, max_len: int = 31) -> list:
+    """Contiguous runs of `days` (sorted dates), split at max_len days: [(d0, d1)]."""
+    out = []
+    for d in sorted(days):
+        if out and (d - out[-1][1]).days == 1 and (out[-1][1] - out[-1][0]).days + 1 < max_len:
+            out[-1] = (out[-1][0], d)
+        else:
+            out.append((d, d))
+    return out
+
+
+def bq_dry_run_line(project: str, d0, d1, tokens) -> str:
+    """The `bq` command that dry-runs the daily P2P query over d0..d1 (free: --dry_run bills nothing). Run from the repo
+    root; the SQL file is read on stdin. The project is the BigQuery project that runs the job, never a secret."""
+    toks = ",".join(tokens)
+    return (f"bq query --project_id={project} --use_legacy_sql=false --dry_run --parameter=d0:DATE:{d0} "
+            f"--parameter=d1:DATE:{d1} --parameter='tokens:ARRAY<STRING>:{toks}' < sql/near/bigquery_p2p_daily.sql")
+
+
+def gaps_report(db: Path, cfg: dict, spec: dict, state: dict | None, today: dt.date, project: str,
+                gap_from: str | None = None) -> dict:
+    """Everything `gaps` prints, as data (pure given the store and the state; no network). Keys: holes, ranges,
+    not_in_state, in_state, gb, p2p, dex, settle_stored, derived, r0, before_r0, eth."""
+    f0 = _day(gap_from or cfg.get("gap_from") or "2025-12-29")
+    con = sqlite3.connect(f"file:{db}?mode=ro", uri=True)
+    try:
+        p2p = _store_days(con, "Near", "p2p_transfer_volume_usd")
+        dex = _store_days(con, "Near", "dex_volume_usd")
+        px = _store_days(con, "Near", "price_usd")
+        nset = _store_days(con, "Near", "settlement_volume_usd")
+        eth = _store_days(con, "Ethereum", "settlement_volume_usd")
+    finally:
+        con.close()
+    P = {_day(k) for k in p2p} - {None}
+    D = {_day(k) for k in dex} - {None}
+    newest = max(P) if P else None
+    holes = [d for d in _days(f0, newest) if d not in P] if newest and newest >= f0 else []
+    held_state = {_day(k) for k in ((state or {}).get("days") or {})} - {None}
+    not_in_state = [d for d in holes if d not in held_state] if state is not None else list(holes)
+    in_state = [d for d in holes if d in held_state]
+    derived = sorted(P & D)
+    r0 = run_start(derived)
+    before = None
+    if r0 is not None:
+        b = r0 - dt.timedelta(days=1)
+        before = {"day": b, "p2p": b in P, "dex": b in D, "price_usd": str(b) in px}
+    first = min(P) if P else None
+    return {"from": f0, "newest": newest, "holes": holes,
+            "lead": [d for d in holes if first and d < first], "inside": [d for d in holes if first and d > first],
+            "first": first, "ranges": _ranges(not_in_state), "not_in_state": not_in_state,
+            "in_state": in_state, "gb": len(not_in_state) * float(cfg["est_gb_per_day"]),
+            "p2p": (min(P), max(P), len(P)) if P else None, "dex": (min(D), max(D), len(D)) if D else None,
+            "settle_stored": (_day(min(nset)), _day(max(nset)), len(nset)) if nset else None,
+            "derived": (derived[0], derived[-1], len(derived)) if derived else None, "r0": r0, "before_r0": before,
+            "eth": (_day(min(eth)), _day(max(eth)), len(eth), eth[min(eth)][1]) if eth else None,
+            "have_state": state is not None}
+
+
+def cmd_gaps(db: Path, dry: bool = False) -> int:
+    """R23: READ-ONLY. NEAR's missing P2P days since gap_from, what filling them costs, the exact dry-run commands,
+    Ethereum's and NEAR's stored settlement ranges, and where NEAR's unbroken settlement run starts and why. No network
+    unless --dry-run (then BigQuery DRY RUNS only: free, nothing billed)."""
+    config, nb, p, spec = _near()
+    cfg = config.NEAR_P2P_HISTORY
+    today = _today()
+    try:
+        st = nb._load()
+        st = st if (st.get("days") or st.get("ledger")) else None
+    except Exception:                                          # noqa: BLE001 - the state is optional here
+        st = None
+    try:
+        g = gaps_report(db, cfg, spec, st, today, spec["project"])
+    except sqlite3.Error as e:
+        print(f"NEAR GAPS NOT READ - the store {db} could not be opened read-only ({e}). Nothing changed.")
+        return 2
+    gb_day = float(cfg["est_gb_per_day"])
+    print(f"NEAR P2P GAPS - read-only (store {db}; BigQuery not called{'' if not dry else ' except free dry runs'})")
+    print(f"  (a) MISSING DAYS of Near p2p_transfer_volume_usd, {g['from']} .. newest stored day {g['newest']}:")
+    if g["p2p"] is None:
+        print("      the store holds no p2p_transfer_volume_usd for Near at all")
+    elif not g["holes"]:
+        print("      none - every day from " + str(g["from"]) + " to " + str(g["newest"]) + " is stored")
+    else:
+        print(f"      {len(g['holes'])} day(s): " + ", ".join(str(d) for d in g["holes"][:60])
+              + (f" ... (+{len(g['holes']) - 60} more)" if len(g["holes"]) > 60 else ""))
+        lead = (f"{len(g['lead'])} of these day(s) lie BEFORE it ({g['lead'][0]}..{g['lead'][-1]}: the series simply "
+                f"starts later than {g['from']} - the newest-first backfill's frontier, not a hole inside a run) and "
+                if g["lead"] else "none lies before it; ")
+        print(f"      SEEN: the stored series' first day is {g['first']}; {lead}{len(g['inside'])} are holes INSIDE the run.")
+        if g["have_state"]:
+            print(f"      of them {len(g['not_in_state'])} were never read from BigQuery (cost GB) and "
+                  f"{len(g['in_state'])} are held in the BigQuery state but not valued/stored (waiting on NEAR's "
+                  f"price_usd: cost 0 GB, `python token_metrics.py --project Near` stores them)")
+        else:
+            print("      (no BigQuery state file here: every missing day is counted as unread)")
+    budget = int(spec["monthly_budget_bytes"]) / 1e9
+    print(f"  (b) COST TO FILL JUST THESE DAYS: {len(g['not_in_state'])} unread day(s) x {gb_day} GB = {g['gb']:,.1f} GB "
+          f"(ESTIMATE, Jake's dry run of 2026-11-17: 233.7 GB / 31 days; the ledger budget is {budget:,.0f} GB a month, one top-up day "
+          f"{cfg['topup_gb_per_day']} GB). Billed equivalent at ${config.BIGQUERY_ONESHOT['price_usd_per_tib']}/TiB, "
+          f"for comparison only: ${g['gb'] * 1e9 / 1024 ** 4 * float(config.BIGQUERY_ONESHOT['price_usd_per_tib']):,.2f} "
+          f"(the free tier covers it).")
+    print(f"      The daily run reads them itself (`python token_metrics.py --project Near`: up to "
+          f"{cfg.get('hole_chunks_per_run', 3)} hole chunk(s) of <= {spec['chunk_days']} days a run, newest first, under "
+          f"the 400 GB per-query cap, the month's budget and the top-up reserve).")
+    if g["ranges"]:
+        toks = list(((st or {}).get("tokens") or {}).get("list") or spec["seed_tokens"])
+        print("      DRY-RUN COMMANDS (free; one per range the daily run would read; tokens = "
+              + ("the census list in the state" if (st or {}).get("tokens") else "the seed tokens - the census list is not in this state") + "):")
+        for d0, d1 in g["ranges"]:
+            print(f"        # {d0}..{d1}: {(d1 - d0).days + 1} day(s), ~{((d1 - d0).days + 1) * gb_day:,.1f} GB (estimate)")
+            print("        " + bq_dry_run_line(spec["project"], d0, d1, toks))
+        print("      or with the repo's own adapter (same SQL, same guard): python near_p2p_history.py gaps --dry-run")
+    if dry and g["ranges"]:
+        client, why = nb._client(spec)
+        if client is None:
+            print(f"      --dry-run NOT RUN - {why}")
+        else:
+            from fetch.near_bigquery import _sql
+            toks = list(((st or {}).get("tokens") or {}).get("list") or spec["seed_tokens"])
+            tot = 0
+            for d0, d1 in g["ranges"]:
+                n = nb._dry(client, _sql(cfg["sql"]), {"d0": d0, "d1": d1, "tokens": toks}, spec)
+                tot += n
+                print(f"      DRY RUN {d0}..{d1}: {n / 1e9:,.2f} GB")
+            print(f"      DRY RUN TOTAL {tot / 1e9:,.2f} GB (estimate was {g['gb']:,.1f} GB)")
+    # (c) settlement ranges
+    print("  (c) STORED SETTLEMENT RANGES (MIN, MAX, COUNT of settlement_volume_usd):")
+    e = g["eth"]
+    if e is None:
+        print("      Ethereum: none stored")
+    else:
+        need = e[1] - dt.timedelta(days=int(cfg["key_days"]))
+        ok = e[0] <= need
+        print(f"      Ethereum: {e[0]} .. {e[1]}, {e[2]} day(s) (first day's source: {e[3]})")
+        print(f"        A1's key needs 730 days to the newest day: first day needed {need}. "
+              + ("The store already reaches back that far -> NO Ethereum fill is needed."
+                 if ok else f"The store starts {(e[0] - need).days} day(s) later -> Ethereum would need a fill back to {need}."))
+        print(f"        The repo records only that the Artemis CSV (config.ARTEMIS_SETTLEMENT) reaches back to 2025-08-26 "
+              f"at least (check: 365-day sum to 2026-08-25) and that the fixture dump holds it from 2025-09-08 (a 400-day "
+              f"cut); its first day is NOT recorded. Whether it covers 2024-11-25 is settled by the MIN above.")
+    n = g["settle_stored"]
+    print("      NEAR stored settlement_volume_usd: " + (f"{n[0]} .. {n[1]}, {n[2]} day(s)" if n else
+                                                       "none stored (NEAR's settlement is derived at read time, DEX + P2P)"))
+    for lab, k in (("NEAR p2p_transfer_volume_usd", "p2p"), ("NEAR dex_volume_usd", "dex"),
+                   ("NEAR derived settlement (days with BOTH legs)", "derived")):
+        v = g[k]
+        print(f"      {lab}: " + (f"{v[0]} .. {v[1]}, {v[2]} day(s)" if v else "none"))
+    r0, b = g["r0"], g["before_r0"]
+    if r0 is not None:
+        print(f"  THE BREAK: the unbroken run of NEAR's derived settlement starts {r0} (r0): 365-day sum forms "
+              f"{r0 + dt.timedelta(days=364)}, key forms {r0 + dt.timedelta(days=int(cfg['key_days']))} (reader._settlement_forms_on).")
+        print(f"      The day before ({b['day']}) holds: p2p {'yes' if b['p2p'] else 'NO'}, DEX {'yes' if b['dex'] else 'NO'}, "
+              f"NEAR price_usd {'yes' if b['price_usd'] else 'NO'}  [SEEN on this store].")
+        why = [m for m, k in (("p2p_transfer_volume_usd", "p2p"), ("dex_volume_usd", "dex")) if not b[k]]
+        starts = g["first"] == r0 and "p2p_transfer_volume_usd" in why
+        print("      -> " + (("the P2P series STARTS on r0 (nothing stored before it): the break is the backfill's "
+                              "frontier. The daily backfill reads newest first, one <=31-day chunk a run, and holds a "
+                              "chunk the month's room after the top-up reserve cannot take (INFERRED as the cause; "
+                              "SEEN: the series' first stored day).") if starts else
+                             ("the leg(s) missing on that day: " + ", ".join(why) + ". A hole in a leg, not a rule.")
+                             if why else "both legs are held that day, so the run is not broken there: the break is "
+                                          "elsewhere (see the derived range above)."))
+    print("  RULES (from the code): settlement = DEX leg (DefiLlama, from 2024-12-10) + P2P leg (BigQuery), a day only where "
+          "BOTH hold (build_workbook._rebuilt_settlement_view); a P2P day is stored only with NEAR's same-day price_usd "
+          "(NearBigQuery._value); no break rule in reader._settlement_forms_on beyond a missing day.")
+    return 0
+
+
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("mode", choices=("plan", "dry-run", "run"))
+    ap.add_argument("mode", choices=("plan", "dry-run", "run", "gaps"))
     ap.add_argument("--chunks-per-month", type=int, default=None, help="plan: show this schedule only")
     ap.add_argument("--db", default=str(ROOT / "metrics.db"))
+    ap.add_argument("--dry-run", action="store_true", dest="gaps_dry",
+                    help="gaps: also BigQuery-dry-run each missing range (free; needs Jake's login)")
     a = ap.parse_args(argv)
+    if a.mode == "gaps":
+        return cmd_gaps(Path(a.db), a.gaps_dry)
     if a.mode == "plan":
         return cmd_plan(a.chunks_per_month)
     if a.mode == "dry-run":
