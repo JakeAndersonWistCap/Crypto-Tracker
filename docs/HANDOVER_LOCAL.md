@@ -143,7 +143,26 @@ Freeze order once a project reads READY on the store and the gate is green: one 
   `python token_metrics.py --project Ethereum --project Near`, then
   `python done_check.py --verbose | Select-String "^(Ethereum|Near)" -Context 0,16`.
 
-## 8. After Round 22 (2026-11-25): THE ONE STORE RUN BEFORE THE FREEZE, IN ORDER
+## 8. After Round 23 (2026-11-25): THE ONE STORE RUN BEFORE THE FREEZE, IN ORDER
+
+**FIRST, read-only, on Jake's store (R23, docs/r23_near_history_paths.md):**
+```
+python near_p2p_history.py gaps --db metrics.db          # NEAR's missing P2P days from 2025-12-29, the cost of filling just
+                                                         # them (7.54 GB a day, ESTIMATE), the dry-run command lines, Ethereum's
+                                                         # and NEAR's stored settlement MIN / MAX / COUNT
+python near_p2p_history.py gaps --db metrics.db --dry-run   # also dry-runs each range (free; needs bq signed in)
+```
+It tells a hole from a series that simply starts 2026-02-19 (the likeliest: the newest-first backfill never reached
+earlier). From now the daily run reads those holes through the normal top-up path (at most 3 chunks a run, inside the
+existing monthly ledger). If Ethereum's MIN is on or before 2024-11-25 no Ethereum fill is needed. The billed one-shot
+(`bigquery_backfill.py`) stays built, dry-run-ready and OFF.
+
+Round 23 added to what follows: unvested-and-staked stays out of circulating (the rule's wording); Aethir's holder value
+yield and burn ÷ issuance are read since the burn began (2026-11-02, labelled "since 2026-11-02"); Plume's "Insider share
+of stake" reads n/a "issuer publishes no insider wallet list" (allowed label) and Plume is OUT of the freeze commands;
+Hyperliquid's issuance % is labelled "13-day window, annualised".
+
+(Round 22 text, still in force:)
 
 Rounds 21, 21b and 22 are on this branch; Jake has not run the store since 4e1231d (24 Nov). This is the single run.
 What changed since that run (details: SPEC "Round 22" / "Round 21b" / "Round 21", docs/moves_r22.md, docs/moves_r21.md):
@@ -225,7 +244,7 @@ the store.
 | GEODNET | READY | READY on 24 Nov. Circulating about 836M (the Mining reserve out). |
 | Ethereum | READY | READY on 24 Nov. New A3 tab (secondary): the EIP-1559 burn in the key; its buyback cells N/A by the route "nothing is bought". |
 | Aethir | READY expected | UNIFORMITY forms (staking yield wired). Holder value yield keeps the same-span rule: if the faucet scan's first stored day leaves Q0 part-covered, it reads BLOCKED (unequal coverage) until both legs cover 90 days — the schedule rows from 2026-08-06 should cover Q0. R22 addition: BURN ÷ ISSUANCE and release ÷ burn read over the days since the burn began, formatted "x since 2026-11-02" (no longer MISSING). |
-| Plume | READY expected | 12 fixture lines, each filled by the run: outflow (a) emissions_claimed_tokens (6 lines), (b) merkl_campaigns_plume_tokens (Subsidy cover, Leakage), tbill_3m_yield, market_share_pct (may need ~3 runs; if DefiLlama's RWA move empties it, Jake declares it). "Insider share of stake" is NOT VERIFIED (no insider wallets published): done_check lists it, and freezing Plume needs that resolved first (tests/test_r17_round). |
+| Plume | READY expected | 12 fixture lines, each filled by the run: outflow (a) emissions_claimed_tokens (6 lines), (b) merkl_campaigns_plume_tokens (Subsidy cover, Leakage), tbill_3m_yield, market_share_pct (may need ~3 runs; if DefiLlama's RWA move empties it, Jake declares it). "Insider share of stake" is n/a, "issuer publishes no insider wallet list" (allowed, R23). Plume is not frozen now. What can remain after the run: only a line the run could not fill (an emissions window older than the event log reaches, or a DefiLlama RWA series that stays empty): list from done_check --verbose. |
 | World Mobile | parked | No change. |
 
 ### OPTIONAL — only if billing is enabled on near-data-510309: both P2P histories in one go
@@ -277,14 +296,13 @@ foreach ($p in 'Aerodrome','Ether.fi','Fluid','Hyperliquid','Maple','Morpho','Pe
 #       "why": "done_check READY on Jake's store at this code (export <its store_export file>); the full gate green"}
 # baseline names: frozen_chainlink.json, frozen_geodnet.json, frozen_ethereum.json, frozen_near.json,
 #                 frozen_aethir.json, frozen_plume.json
-foreach ($p in 'Chainlink','GEODNET','Ethereum','Near','Aethir','Plume') {
+foreach ($p in 'Chainlink','GEODNET','Ethereum','Near','Aethir') {      # Plume is NOT frozen now (R23)
   # (only if $p reads READY; add its FROZEN_PROJECTS entry to config.py, then:)
   python project_freeze.py --write $p
   git add config.py tests/fixtures
   git commit -m "freeze: $p (done_check READY on the store, gate green)"
 }
-#   Plume: resolve its NOT_VERIFIED "Insider share of stake" first (Jake's review, or a published wallet list) —
-#   tests/test_r17_round forbids a frozen project in NOT_VERIFIED
+#   Plume: not frozen now (Jake, R23); its insider share is n/a "issuer publishes no insider wallet list" (allowed label)
 python project_freeze.py --compare all
 #    expect: one line per frozen project, each "0 undeclared move(s)"
 git push -u origin claude/crypto-metrics-supply-demand-ovkg8g
@@ -302,9 +320,9 @@ git push -u origin claude/crypto-metrics-supply-demand-ovkg8g
   MORPHO sits in the Contributor Grants Safe, counted in circulating and off the float: taking it out under item 1(a)
   needs the float's issuer leg split (else it leaves the float twice) — circulating is 0.3% high meanwhile; the float is
   right either way. (4) The DAO re-approved 150M to the Vester on 23 Nov (tx 0x9ab069b3…).
-- Aethir: holder value yield is a SUM (fee burn + value to stakers); the same-span rule is kept, so it blocks while
-  the two legs cover different days. Exempting a sum (as the validator yield's consensus + execution is) is Jake's call.
-- Plume: "Insider share of stake" NOT VERIFIED (no insider wallets published) — resolve before freezing Plume.
+- Aethir: holder value yield is read since the burn began (2026-11-02), both legs over the same days, labelled (R23, Jake).
+- Plume: not frozen now; "Insider share of stake" n/a (allowed). Chainlink: the 33 wallets stay out until Jake confirms;
+  the alternative classification is docs/r23_chainlink_wallets.md (NOT applied).
 - Hyperliquid: an "Issuance % of supply" cell returns to its pre-R9.2 value (69.9%, a 13-day annualisation of the
   October team tranche) — the figure is right on its definition but reads high; a longer window is a rule change.
 - Aave / Pyth (branch claude/aave-pyth, not merged until after the freeze): docs/r22_aave.md, docs/r22_pyth.md —
