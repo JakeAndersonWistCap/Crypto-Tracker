@@ -3272,11 +3272,19 @@ def root_causes(rows: list[dict], verdicts: list) -> list[dict]:
     return out
 
 
-def _fall_q0(p, rows, long, asof, metric="total_supply_gross", **_):
-    """R21 (Hyperliquid): the FALL of a stock across Q0 (−_delta_q0) — the Core burns are the fall of tokenDetails.
-    totalSupply, the reference of an A4 scored on them (config.apply_hyperliquid_burn_treatment)."""
-    v, d, how = _delta_q0(p, rows, long, asof, metric=metric)
-    return (None, None, how) if v is None else (round(-v, 2) + 0.0, d, f"−{how}")
+def _sum_deltas_less_q0(p, rows, long, asof, metrics=(), less=(), **_):
+    """R21b (Hyperliquid): Σ d(metrics) − Σ d(less) across Q0 — every burn as the stocks it moves: the Assistance Fund's
+    listing and the HyperEVM zero address rise, tokenDetails.totalSupply falls (the Core burns). Every leg held, or
+    nothing."""
+    v1, d1, h1 = _sum_of_deltas_q0(p, rows, long, asof, metrics=metrics)
+    if v1 is None:
+        return None, None, h1
+    if not less:
+        return v1, d1, h1
+    v2, d2, h2 = _sum_of_deltas_q0(p, rows, long, asof, metrics=less)
+    if v2 is None:
+        return None, None, h2
+    return round(v1 - v2, 2) + 0.0, max(d1, d2), f"{h1} − ({h2})"
 
 
-FORMULAS["fall_q0"] = _fall_q0
+FORMULAS["sum_deltas_less_q0"] = _sum_deltas_less_q0

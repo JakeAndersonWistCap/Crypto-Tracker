@@ -266,13 +266,13 @@ def test_hyperliquid_fdv_excludes_the_assistance_fund():
     px = g[("Hyperliquid", "price_usd")]
     p = float(px[pd.to_datetime(px["date"]) == last["d"]]["value"].iloc[-1])
     day = str(last["d"].date())
-    # R21 (item 6, Jake's default): the Assistance Fund is a HELD buyback — inside total supply, so inside FDV; only
-    # the HyperEVM burn (destroyed) comes off the gross
-    net = held[("total_supply_gross", day)] - held[("hyperevm_zero_address_balance", day)]
-    assert 9.9e8 < net < 1.0e9                                # gross ~998.9M less the EVM burn ~0.3M
+    # R21b (Jake 2026-11-25): the Assistance Fund is burned — out of total supply and FDV again (R21's held default kept
+    # it in: 9.9e8 < net < 1.0e9)
+    net = (held[("total_supply_gross", day)] - held[("burn_address_balance", day)]
+           - held[("hyperevm_zero_address_balance", day)])
+    assert 9.4e8 < net < 9.6e8                                # gross ~998.9M less the Fund ~48.0M less the EVM burn
     assert float(last["value"]) == pytest.approx(p * net, rel=1e-6)
-    assert "total_supply_gross-hyperevm_zero_address_balance" in str(last["source"])
-    assert "burn_address_balance" not in str(last["source"])
+    assert "total_supply_gross-burn_address_balance-hyperevm_zero_address_balance" in str(last["source"])
     # without the burn leg there is no total — and no FDV on CoinGecko's gross figure in its place
     # (the leg is taken out of the build: the refreshed dump holds it; CoinGecko's total, stored under either name,
     # never stands in for ours)

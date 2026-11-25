@@ -312,10 +312,8 @@ def test_7_a_zero_is_saved_as_zero_and_no_credibility_gap_is_an_empty_string(tmp
 
 # ================================================================================================== 8 Hyperliquid's burn
 def test_8_hyperliquid_burn_trends_break_at_the_buyback_stitch(monkeypatch):
-    # R21 (the Fund held): only the Fund's purchase series keeps its stitch; the burn totals are one basis now (Core)
-    assert "SERIES BREAK" in config.declared_handover("Hyperliquid", "gross_burn_tokens")["composition_change"]
-    for m in ("total_burn_tokens", "burn_ex_chain_fee_tokens"):
-        assert config.declared_handover("Hyperliquid", m) is None
+    for m in ("gross_burn_tokens", "total_burn_tokens", "burn_ex_chain_fee_tokens"):
+        assert "SERIES BREAK" in config.declared_handover("Hyperliquid", m)["composition_change"]
     days_h, days_l = pd.date_range("2026-06-01", "2026-09-11"), pd.date_range("2026-09-12", "2026-10-13")
     g = pd.concat([_g("Hyperliquid", "gross_burn_tokens", days_h, [1.0] * len(days_h),
                       "defillama:holders_revenue_usd/price"),
