@@ -160,6 +160,17 @@ def built(tmp_path_factory):
         mp.setattr(sm, "DB_PATH", str(db))
         mp.setitem(sys.modules, "recalc", None)
         mp.setitem(os.environ, "TOKEN_METRICS_STORE_VALUES", "1")
+        # the pin wires the probed L2 scans into Pendle's / Fluid's / Morpho's lists: restored after the build, as
+        # shared_build does (else a later test on this worker sees them already wired — test_g2_7, R22 gate)
+        mp.setitem(config.OUTFLOW_CATEGORIES["Fluid"], "b", config.OUTFLOW_CATEGORIES["Fluid"]["b"])
+        for _proj in sorted({row[1] for row in config.EXPLORER_PROBED_SCANS}):
+            _p = config.PROJECT_BY_NAME[_proj]
+            mp.setitem(_p, "log_scans", list(_p.get("log_scans") or []))
+            if "emissions_from_metric" in _p:
+                mp.setitem(_p, "emissions_from_metric", _p["emissions_from_metric"])
+        mp.setattr(config, "EXPLORER_LOG_ROUTES", {k: list(v) for k, v in config.EXPLORER_LOG_ROUTES.items()})
+        mp.setattr(config, "EXPLORER_TRANSFER_ROUTES",
+                   {k: list(v) for k, v in config.EXPLORER_TRANSFER_ROUTES.items()})
         config.pin_frozen_probe()
         st = sm.Store(str(db))
         try:
