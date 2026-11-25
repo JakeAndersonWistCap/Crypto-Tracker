@@ -1843,6 +1843,21 @@ staking and vote-locks by holders ARE circulating (off free float only); undistr
 | PR4C.5 | Morpho frozen | Not frozen. | FROZEN_PROJECTS['Morpho'] (tests/fixtures/frozen_morpho.json, 285 cells; the switch PENDING on the dumps); the 48 cells that differ from the pre-round-4 build declared (41 first moved by PR4, 1 by PR4B, 6 by PR4C alone). |
 | PR4C.GATE | Test pins PR4C moves | tests/test_pr4_morpho.py pinned Morpho's dump circulating 696.0M / float 547.25M and a pin without Mantle. | 574.8M / 426.05M (the relocked 121.2M on 2026-10-13 out); the probe test uses Sonic as the chain beyond the pin. Also moved: test_pr4_morpho / test_pr4b (the relock is a circulating and unlock leg; the limitation text is now the modelled relock), test_round_p3_4 (a switch leg is owed from the window's start). tests/test_pr1_freeze.py: the floor "baseline > 300 cells" became "> 250 and every cell on one side only is declared" — Morpho, an A2 project, writes 285 cells; the cell-set check is stronger than the count it replaces. Gate: tests/test_final_round.py's Morpho pin states the relock leg; tests/test_adapters.py's gap-text test starts from no build state (a build earlier on the same worker left GEODNET's series current, and write_gap_report dropped the test's row as answered by the store — an order dependence, fixed in the test, nothing skipped). |
 
+### Round 22 — BigQuery one-shot billed history (Jake 2026-11-25), old → new
+- NEAR and Ethereum P2P history: only the free-tier schedule (BIGQUERY_SCHEDULE; NEAR by monthly dated approval to
+  2027-05, Ethereum by weekly pieces) → OPTIONAL one-shot `python bigquery_backfill.py plan | dry-run | run`, only if
+  billing is on: NEAR back to the 2024-12-10 floor (NEAR_P2P_HISTORY's month chunks), Ethereum 2024-11-04..2026-05-31
+  (calendar months of unheld days, halved to fit the 60 GB per-query cap); ranges in config.BIGQUERY_ONESHOT.
+- `run` refuses unless config.BIGQUERY_BILLING (Jake's dated flag) AND the Cloud Billing API's getBillingInfo
+  billingEnabled both say on; a check that cannot be made refuses. Every chunk is dry-run first (free; GB and $ printed);
+  each query's maximum_bytes_billed = dry run x 1.05 + 10 MB, at most the per-query cap and what the total has left;
+  refused when billed-so-far + every planned maximum_bytes_billed > 4,000 GB ($22.74 at $6.25/TiB, read 2026-11-25).
+  Estimate 2,684 + 772 = 3,456 GB, $19.65 before the free TiB.
+- Resumable in the readers' state file (near-bq.json, now written by rename): held days are never read again; each
+  billed query is recorded pending → done / failed / not_run (a pending one found later counts at its cap). The
+  one-shot's bytes go to ledger_billed, not the free-tier ledger. Held under storelock + RunLock; writes no
+  metrics.db row (the next token_metrics run per project values and stores). With billing off nothing changes.
+
 ### Round 21b — lead: NEAR approval, beacon source, route-'none' buybacks (Jake 2026-11-25), old → new
 - NEAR's P2P history: no approval → Jake's dated approval given ahead for ONE named month (`for_month` 2026-12, approved
   2026-11-25, max_gb 337 = the month's room in the 1,000 GB budget); near_p2p_history.refusal reads `for_month`.
