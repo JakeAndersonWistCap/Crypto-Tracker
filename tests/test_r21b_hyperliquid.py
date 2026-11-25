@@ -68,7 +68,8 @@ def test_hyperliquid_is_a3_and_a4_and_a4_scores_the_fund_and_the_core_burns():
     c = config.CONDITIONAL_ARCHETYPES[HL]
     assert c["on"] is True and "85% of stake" in c["decided"]
     assert config.a1_burn_metric(HL) == "total_burn_tokens"
-    assert config.a4_burn_metric(HL) == config.a4_net_burn_metric(HL) == "burn_ex_chain_fee_tokens"
+    # R22 item 2 (Jake 2026-11-25): A4 reads every burn, as A1 (was "burn_ex_chain_fee_tokens", the Fund + Core)
+    assert config.a4_burn_metric(HL) == config.a4_net_burn_metric(HL) == "total_burn_tokens"
     assert HL in config.METRICS["gross_burn_day_priced_usd"]["only_projects"]
     # net float pressure: the buy-and-burn on the burns line once, every burn in it
     assert [s["metric"] for s in config.burn_series(HL)] == ["total_burn_tokens"]
@@ -137,7 +138,8 @@ def test_the_burn_checks_read_hyperliquids_own_stocks():
     assert v == 3_000_000.0 + 18_000.0 + 238_000.0 and a1["tol"] == 15.0
     a4 = config.CREDIBILITY[HL]["a4_gross_burn"]
     v, d, how = cr.FORMULAS[a4["formula"]](HL, None, long, asof, **a4["args"])
-    assert v == 3_000_000.0 + 238_000.0 and a4["tol"] == 15.0
+    # R22 item 2: every burn, the zero address included (was 3,000,000 + 238,000: the Fund + Core)
+    assert v == 3_000_000.0 + 18_000.0 + 238_000.0 and a4["tol"] == 15.0
     # a leg not held: nothing (unknown is never 0)
     v, _d, _h = cr.FORMULAS[a1["formula"]](HL, None, long[long.metric != "total_supply_gross"], asof, **a1["args"])
     assert v is None

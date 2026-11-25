@@ -51242,3 +51242,47 @@ DECLARED_COMPONENTS.setdefault(("Morpho", "unlock_release_tokens"), []).append({
     "source": "derived:unlock_release-morpho_founder_vest_claims_tokens",
     "why": "R21b item 2 (Jake 2026-11-25): the founders' vest() claims of already-vested tokens from the Vester "
            "0x229A…0bfc are not new supply — taken out of the release (e), shown as a named insider float movement"})
+# ===== ROUND 22 (lead, item 2): HYPERLIQUID'S A4 IS SCORED ON EVERY BURN (Jake 2026-11-25) =====
+# "Hyperliquid A4: score it on every burn, including the zero-address priority fees and the HyperEVM gas burn, the
+# same as Ethereum's EIP-1559. The HyperEVM figure stays inferred and unsubtracted until it's read on chain."
+# A4 (burn ÷ issuance, its net) reads total_burn_tokens — the Assistance Fund's buy-and-burn + the Core burns (the fall
+# of tokenDetails.totalSupply) + the HyperEVM zero-address priority fees — as A1 and net float pressure already do.
+# This rewrites G7 0c (2026-10-19: the HyperEVM gas burn A1 only). The HyperEVM BASE-FEE burn (~96k HYPE lifetime,
+# INFERRED, docs/r21_hyperliquid_burns.md) is not read and not subtracted: a named, accepted gap (R22 item 6).
+R22_HL_A4_METRIC = "total_burn_tokens"
+PROJECT_BY_NAME["Hyperliquid"]["a4_burn_metric"] = R22_HL_A4_METRIC
+PROJECT_BY_NAME["Hyperliquid"]["a4_net_burn_metric"] = R22_HL_A4_METRIC
+CREDIBILITY["Hyperliquid"]["a4_gross_burn"] = dict(
+    CREDIBILITY["Hyperliquid"]["a1_gross_burn"],
+    source="Hyperliquid's own stocks across Q0: the Assistance Fund as tokenDetails lists it (burned, R21b) + the "
+           "HyperEVM zero address + the fall of tokenDetails.totalSupply — A4 reads every burn (R22), as A1 does")
+DECLARED_COMPONENTS.setdefault(("Hyperliquid", "gross_burn_day_priced_usd"), []).append({
+    "metric": "gross_burn_day_priced_usd", "from": None, "source": "derived:total_burn_tokens*price_usd",
+    "why": "R22 item 2 (Jake 2026-11-25): A4's priced burn reads every burn (total_burn_tokens), not the Fund + Core only"})
+# ===== ROUND 22 (lead, item 6): NAMED GAPS ACCEPTED (Jake 2026-11-25) — each shows labelled, never blocks READY =====
+# A done_check line whose reason names one of these is "accepted" (done_check.classify / judge_audit / judge_suspects):
+# the gap stays labelled where it shows; it is never counted against READY.
+ACCEPTED_NAMED_GAPS = {
+    "worldchain_tokenjar": {
+        "project": "Uniswap", "label": "World Chain TokenJar (~0.23% of Uniswap inflow)",
+        "match": ("World Chain not read since",),
+        "where": "the TokenJar day rows (fetch.tokenjar.gap_label) and the Run Log"},
+    "pendle_berachain": {
+        "project": "Pendle", "label": "Pendle on Berachain (0.0001% of TVL; Q-3 and Q-4 short about 18.7k PENDLE)",
+        "match": ("gauge_pendle_out_berachain", "emissions_tokens_gauge_berachain"),
+        "where": "the Berachain gauge scan's row (config.NAMED_SCAN_GAPS) and the Run Log"},
+    "hyperevm_base_fee": {
+        "project": "Hyperliquid", "label": "the HyperEVM base fee (inferred, ~96k HYPE lifetime; not read, not subtracted)",
+        "match": ("HyperEVM base fee", "HyperEVM base-fee", "HyperEVM BASE-FEE"),
+        "where": "the burn series' declared reason (config.BURN_SERIES['Hyperliquid']) and docs/r21_hyperliquid_burns.md"},
+}
+ACCEPTED_NAMED_GAPS_DECIDED = "Jake 2026-11-25 (Round 22, item 6)"
+
+
+def accepted_named_gap(project: str, text: str) -> str | None:
+    """The label of the accepted named gap a done_check reason names for this project, or None."""
+    t = str(text or "")
+    for g in ACCEPTED_NAMED_GAPS.values():
+        if g["project"] == project and any(m in t for m in g["match"]):
+            return g["label"]
+    return None

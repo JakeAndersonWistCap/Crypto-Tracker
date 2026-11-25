@@ -155,6 +155,12 @@ def classify(code: str, reason: str, asof: date, accepted: bool = False) -> tupl
     code = str(code or "").strip().lower()
     if accepted:
         return True, "accepted", "on the allowlist"
+    import config                                                         # noqa: PLC0415
+    gap = next((config.accepted_named_gap(g["project"], reason) for g in config.ACCEPTED_NAMED_GAPS.values()
+                if config.accepted_named_gap(g["project"], reason)), None)
+    if gap:
+        # R22 item 6 (Jake 2026-11-25): an accepted named gap — labelled where it shows, never a blocker
+        return True, "accepted", f"named gap accepted: {gap}"
     if code == "unranked" and "not ranked (Jake 2026-11-25, decision 5)" in (reason or ""):
         # R21 (decision 5): a paused / off programme reads its label and "unranked" by Jake's decision — not a gap
         return True, "by design", "unranked by decision 5 (paused / off programme, labelled)"
@@ -386,12 +392,15 @@ def headline_cells(awb) -> dict:
 def judge_audit(book: Book, project: str, cov: list, heads: dict) -> list:
     """BROKEN rows, MISSING headline rows (Coverage tab) and STALE headline notes (the headline cell's comment) on the
     audit file for one project."""
+    import config                                                         # noqa: PLC0415
     out = []
     for r in cov:
         if str(r.get("Project") or "") != project:
             continue
         st, tab, col = str(r.get("Status") or ""), str(r.get("Tab") or ""), str(r.get("Column") or "")
         why = str(r.get("Reason / route / error") or "")
+        if config.accepted_named_gap(project, why):
+            continue                   # R22 item 6: an accepted named gap (labelled where it shows), never a blocker
         if st == "BROKEN":
             out.append(Blocker(f"audit {tab}", col, "BROKEN", short(why) or "BROKEN", "BROKEN"))
         elif st == "MISSING" and (tab, project, col) in heads:
@@ -434,6 +443,8 @@ def judge_suspects(hits: list, project: str, already: list) -> list:
             continue
         if config.declared_na_reason(project, h["reason"]):
             continue                   # PR1B.5: a declared reason (config.DECLARED_NA_REASONS), decided with its source
+        if config.accepted_named_gap(project, h["reason"]):
+            continue                   # R22 item 6: an accepted named gap
         if (str(h["code"]).strip().lower() == "unranked"
                 and "not ranked (Jake 2026-11-25, decision 5)" in str(h["reason"] or "")):
             continue                   # R21 (decision 5): a labelled paused / off programme, unranked by decision
