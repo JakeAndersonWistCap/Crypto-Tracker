@@ -5150,25 +5150,32 @@ def _founder_vest_claim_views(groups: dict) -> None:
     leg = groups.get((name, "noncirculating_holding_tokens"))
     if leg is None or leg.empty:
         return
-    stock = _daily(leg).dropna()
-    fall = (stock.shift(1) - stock).dropna()
     by_day = {}
-    for d, v in config.morpho_founder_claims_by_day(spec).items():
-        # dated where the DAO's stock shows the fall: the claim's own day, or the next row (an archive row is read at
-        # the day's first block, so a claim shows a day later) — never a day whose fall cannot hold it
-        d = pd.Timestamp(d)
-        nxt = d + pd.Timedelta(days=1)
-        if float(fall.get(d, 0.0)) < v - 1.0 and float(fall.get(nxt, 0.0)) >= v - 1.0:
-            d = nxt
-        by_day[d] = by_day.get(d, 0.0) + float(v)
+    # R22: each vesting contract's claims are dated against the stock of ITS czar's wallet (the DAO's for the DAO
+    # Vester, the not-yet-released set's for the Labs vester) — config.morpho_vest_claims_by_leg
+    per_leg = (config.morpho_vest_claims_by_leg(spec) if hasattr(config, "morpho_vest_claims_by_leg")
+               else {"noncirculating_holding_tokens": config.morpho_founder_claims_by_day(spec)})
+    for leg_m, claims in per_leg.items():
+        g_leg = groups.get((name, leg_m))
+        stock = _daily(g_leg).dropna() if g_leg is not None and not g_leg.empty else pd.Series(dtype=float)
+        fall = (stock.shift(1) - stock).dropna()
+        for d, v in claims.items():
+            # dated where the czar's stock shows the fall: the claim's own day, or the next row (an archive row is read
+            # at the day's first block, so a claim shows a day later) — never a day whose fall cannot hold it
+            d = pd.Timestamp(d)
+            nxt = d + pd.Timedelta(days=1)
+            if float(fall.get(d, 0.0)) < v - 1.0 and float(fall.get(nxt, 0.0)) >= v - 1.0:
+                d = nxt
+            by_day[d] = by_day.get(d, 0.0) + float(v)
     days = set(pd.to_datetime(leg["date"]).dt.normalize()) | set(by_day)
     days = sorted(d for d in days if d >= pd.Timestamp(spec["fin"]))
     if not days:
         return
     groups[(name, spec["metric"])] = _as_stored(pd.DataFrame(
         {"date": days, "project": name, "metric": spec["metric"], "value": [float(by_day.get(d, 0.0)) for d in days],
-         "tier": 2, "source": f"declared:vester_vest_events[{spec['address'][:10]}… awards "
-                              f"{','.join(str(a) for a in spec['awards'])}; R21b]"}), leg.columns)
+         "tier": 2, "source": spec.get("view_tag") or (f"declared:vester_vest_events[{spec['address'][:10]}… awards "
+                                                        f"{','.join(str(a) for a in spec['awards'])}; R21b]")}),
+        leg.columns)   # R22: every vesting contract's claims (config.MORPHO_VESTING_CLAIMS) name their own tag
 
 
 def _schedule_lock_leg_views(groups: dict) -> None:

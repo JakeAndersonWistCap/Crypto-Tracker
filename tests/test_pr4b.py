@@ -115,7 +115,10 @@ def test_3_a_release_missing_its_claims_leg_says_blocked(monkeypatch):
     groups = {("Morpho", "noncirculating_holding_tokens"): _rows("Morpho", "noncirculating_holding_tokens", days, 10.0),
               ("Morpho", "morpho_undistributed_tokens"): _rows("Morpho", "morpho_undistributed_tokens", days, 5.0),
               # PR4C.1: the relocked stock is a leg of the release as well
-              ("Morpho", "morpho_relocked_tokens"): _rows("Morpho", "morpho_relocked_tokens", days, 100.0)}
+              ("Morpho", "morpho_relocked_tokens"): _rows("Morpho", "morpho_relocked_tokens", days, 100.0),
+              # R22: the vesting contracts' schedule is a leg of the release as well
+              ("Morpho", "morpho_vesting_unvested_tokens"): _rows("Morpho", "morpho_vesting_unvested_tokens", days,
+                                                                  7.0)}
     bw._VIEW_BLOCKS.pop(("Morpho", "unlock_release_tokens"), None)
     bw._unlock_release_view(groups, "Morpho", "unlock_release_tokens", config.unlock_stock_metrics("Morpho"))
     assert bw._VIEW_BLOCKS.pop(("Morpho", "unlock_release_tokens")).startswith(

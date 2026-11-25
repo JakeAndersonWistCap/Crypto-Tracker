@@ -1843,6 +1843,18 @@ staking and vote-locks by holders ARE circulating (off free float only); undistr
 | PR4C.5 | Morpho frozen | Not frozen. | FROZEN_PROJECTS['Morpho'] (tests/fixtures/frozen_morpho.json, 285 cells; the switch PENDING on the dumps); the 48 cells that differ from the pre-round-4 build declared (41 first moved by PR4, 1 by PR4B, 6 by PR4C alone). |
 | PR4C.GATE | Test pins PR4C moves | tests/test_pr4_morpho.py pinned Morpho's dump circulating 696.0M / float 547.25M and a pin without Mantle. | 574.8M / 426.05M (the relocked 121.2M on 2026-10-13 out); the probe test uses Sonic as the chain beyond the pin. Also moved: test_pr4_morpho / test_pr4b (the relock is a circulating and unlock leg; the limitation text is now the modelled relock), test_round_p3_4 (a switch leg is owed from the window's start). tests/test_pr1_freeze.py: the floor "baseline > 300 cells" became "> 250 and every cell on one side only is declared" — Morpho, an A2 project, writes 285 cells; the cell-set check is stronger than the count it replaces. Gate: tests/test_final_round.py's Morpho pin states the relock leg; tests/test_adapters.py's gap-text test starts from no build state (a build earlier on the same worker left GEODNET's series current, and write_gap_report dropped the test's row as answered by the store — an order dependence, fixed in the test, nothing skipped). |
 
+### Round 22 — Morpho: every vesting contract (Jake 2026-11-25), old → new
+
+Jake: "the same rule applies to every vesting contract. A claim of tokens that have already vested is not new supply. Vesting counts as dilution on its schedule. [...] List every vesting contract on chain with its end date and the amount still unvested." Table and sources: docs/r22_morpho_vesting.md. Config: the "R22 — MORPHO" block at the end of config.py. Tests: tests/test_r22_morpho.py.
+
+| Item | Old | New |
+|---|---|---|
+| Vesting contracts | the DAO Vester's six founder awards only (R21b) | three DssVest contracts read on chain (`MORPHO_VESTING_CONTRACTS`): the DAO Vester (end 2025-06-11, 0 unvested), the Labs vester 0xe206…4407 (end 2028-10-02, 3,039,455.91 unvested), the Association vester (never funded) |
+| A claim of vested tokens | not a release for the founders' six awards (`morpho_founder_vest_claims_tokens`) | not a release for every award of both live contracts (`morpho_vest_claims_tokens`, `RELEASE_LESS`), netted only out of the leg holding the czar's wallet; named float movement |
+| Vesting on schedule | not in (e) | `morpho_vesting_unvested_tokens` (each award's DssVest accrual, `SCHEDULE_LOCK_LEGS`) is a release leg: its fall is (e) on the day it vests (Labs: ~6,800 a day; the DAO Vester: 0 after 2025-06-11) |
+| The founders' relock | 152M modelled locked to 2027-11-21, out of circulating, its fall in (e) | out of the model: their MIP1 awards vested on chain 2025-06-11 (circulating once vested). `MORPHO_RELOCK` = Cohort 3's 67M only |
+| 11-20 export | circulating 890.2M; float 461.0M; (e) Q0 28.70M; total dilution 27.2% of float | 966.4M; 537.2M; 10.45M; 9.6% |
+
 ### Round 21b — lead: NEAR approval, beacon source, route-'none' buybacks (Jake 2026-11-25), old → new
 - NEAR's P2P history: no approval → Jake's dated approval given ahead for ONE named month (`for_month` 2026-12, approved
   2026-11-25, max_gb 337 = the month's room in the 1,000 GB budget); near_p2p_history.refusal reads `for_month`.

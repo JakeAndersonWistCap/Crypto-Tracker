@@ -51242,3 +51242,413 @@ DECLARED_COMPONENTS.setdefault(("Morpho", "unlock_release_tokens"), []).append({
     "source": "derived:unlock_release-morpho_founder_vest_claims_tokens",
     "why": "R21b item 2 (Jake 2026-11-25): the founders' vest() claims of already-vested tokens from the Vester "
            "0x229A…0bfc are not new supply — taken out of the release (e), shown as a named insider float movement"})
+
+
+
+# =====================================================================================================================
+# R22 — MORPHO: EVERY VESTING CONTRACT (Jake 2026-11-25, Round 22 item 3, verbatim: "Morpho: the same rule applies to
+# every vesting contract. A claim of tokens that have already vested is not new supply. Vesting counts as dilution on its
+# schedule. Morpho's docs say every MIP1 award vests through a contract: at least a 6-month lock, then 30 months linear,
+# from 25 Dec 2022. List every vesting contract on chain with its end date and the amount still unvested. Show what's
+# left of Morpho's dilution, which should be mostly DAO emissions.")
+# Evidence and the table: docs/r22_morpho_vesting.md (eth_call / eth_getLogs, Ethereum block 26,492,109, 2026-11-25).
+# THE VESTING CONTRACTS ON CHAIN (DssVestTransferrable: a contract holds NO tokens — a claim, vest(id), pulls the gem
+# from its czar under an allowance; the unvested and the vested-unclaimed stay in the czar's own wallet):
+#   the DAO Vester  0x229AD370…0bfc  czar the DAO 0xcBa28b38…      23 awards 279,882,199.73, end 2025-06-11: unvested 0,
+#                                     vested-unclaimed 50,356,568.01 (allowance 101,500,000.01);
+#   the Labs vester 0xe206A800…4407  czar 0x1590e7F4… (seatbelt: Morpho Labs; the filing: Contributor Grants Safe 2)
+#                                     62 awards 21,227,398.12, last end 2028-10-02: unvested 3,039,455.91, vested-unclaimed
+#                                     7,110,830.23 (allowance 67,922,888.08, czar legacy balance 11,388,690.76);
+#   the Association vester 0x60167C23…eB5A  czar the Association 0x6ABfd613…  22 awards 286,755,555.56, end 2025-06-11,
+#                                     NEVER FUNDED: allowance 0, nothing ever claimed (the MIP1 list again, superseded by
+#                                     the DAO Vester) — no tokens vest through it; it enters nothing.
+# THE RULE APPLIED (choices in the report; old -> new):
+#   (1) A CLAIM IS NOT A RELEASE, for every award of every contract (was: the six founder awards only, R21b). The claim
+#       moves vested tokens from the czar's wallet (issuer side, off the float) to the beneficiary: a named float
+#       movement, never (e). Netted only out of a release leg that holds the czar's wallet (the DAO always; the Labs
+#       czar's leg, morpho_undistributed_tokens, only while that switch is in force) — never out of another release.
+#   (2) VESTING ON ITS SCHEDULE IS THE DILUTION: morpho_vesting_unvested_tokens (each award's DssVest accrual, exact from
+#       its on-chain bgn / clf / fin / tot) is an unlock leg: its daily fall enters (e) on the day it vests. The DAO
+#       Vester vests 0 on every stored day (all ended 2025-06-11, before Morpho's first stored DAO day 2025-07-14); the
+#       Labs vester ~6,800 a day (613,974 in the 90 days to 2026-11-20).
+#   (3) CIRCULATING, CHECKED: the vested-unclaimed and the unvested of both live contracts sit in their czar's Safe, which
+#       can move them (the vester holds an allowance only) — under the settled rule they are IN circulating and OFF the
+#       float (R9.2, RULE_IN: the DAO and the Grants / Labs Safes), which is what the build does. Nothing changes there.
+#   (4) THE FOUNDERS' RELOCK TRANCHE GOES (Founders 152M of MORPHO_RELOCK): the founders' 15.2% IS the six restricted
+#       DAO-Vester awards (sum exactly 152,000,000; #17 / #18 Paul Frambot's, the rest INFERRED), fully vested on chain
+#       2025-06-11 and claimable — 86.8M claimed in 2026 (65M of it on 23 Nov, wrapped and held by Paul Frambot's own
+#       wallets). Jake (R21b): "under Jake's rule they were circulating once vested". The modelled relock kept
+#       152M x (days to 2027-11-21 / 730) OUT of circulating and released it into (e) daily — a second schedule for tokens
+#       the contract had already vested. Out: circulating rises by that leg (76,208,219 on 2026-11-20) and (e) loses
+#       208,219 a day. Cohort 3's 67M stays: no vesting contract for it was found on chain (docs: 2-year linear after a
+#       1-year lockup from 2024-11-21) — it is the only modelled schedule left.
+# What is left of Morpho's dilution (the 11-20 export, Q0): (b) DAO rewards 2.21M + (e) 10.45M = Cohort 3's relock 8.26M +
+# the Labs vester's vesting 0.61M + other falls of the not-yet-released set 1.58M. NOT mostly DAO emissions: Cohort 3's
+# schedule is ~2/3 of it (said in the report).
+# =====================================================================================================================
+MORPHO_VESTING_READ = {"block": 26_492_109, "on": "2026-11-25",
+                       "how": "eth_call ids() / czar() / gem() / usr|bgn|clf|fin|tot|rxd|accrued|unpaid(id), "
+                              "allowance(czar, vester) on legacy MORPHO 0x9994E35D…; eth_getLogs Vest(uint256,uint256) — "
+                              "public RPC (rpc.mevblocker.io / ethereum-rpc.publicnode.com)"}
+# (id, usr, bgn, clf, fin, tot, rxd) — UTC; tot / rxd as read (a yanked award reads its yanked tot and fin)
+MORPHO_DAO_VESTER_AWARDS = (
+    (1, "0x33e2691004d8aabf1cd5baa53732988f55dad8f6", "2022-12-24 13:00", "2022-12-24 13:00", "2025-06-11 13:00", 4750000.0, 4750000.0),
+    (2, "0x33e2691004d8aabf1cd5baa53732988f55dad8f6", "2022-12-24 13:00", "2022-12-24 13:00", "2025-06-11 13:00", 4750000.0, 4750000.0),
+    (3, "0x113805562492718ba9705ac7210e638322cddab2", "2022-12-24 13:00", "2022-12-24 13:00", "2025-06-11 13:00", 8000000.0, 8000000.0),
+    (4, "0x4b7b1a1d732c69fa2f41bf4c205aeb8823ae675b", "2022-12-24 13:00", "2022-12-24 13:00", "2025-06-11 13:00", 4750000.0, 2000000.0),
+    (5, "0xa3657f04dd15500faf71c35d3c7f2e87c9dafdd1", "2022-12-24 13:00", "2022-12-24 13:00", "2025-06-11 13:00", 6000000.0, 6000000.0),
+    (6, "0xa3657f04dd15500faf71c35d3c7f2e87c9dafdd1", "2022-12-24 13:00", "2022-12-24 13:00", "2025-06-11 13:00", 1000000.0, 1000000.0),
+    (7, "0x97f458a858f3dfa5c88a3aa0d2bdeca6fe9d9348", "2022-12-24 13:00", "2022-12-24 13:00", "2025-06-11 13:00", 4750000.0, 4750000.0),
+    (8, "0x97f458a858f3dfa5c88a3aa0d2bdeca6fe9d9348", "2022-12-24 13:00", "2022-12-24 13:00", "2023-07-23 18:13", 1114761.17, 1114761.17),
+    (9, "0x2301af623d36d8834239b42ceda03f152d8e7d16", "2022-12-24 13:00", "2022-12-24 13:00", "2025-06-11 13:00", 3000000.0, 600000.0),
+    (10, "0x45b9dc999ae70d39ef89711c6c5627deecfc77ec", "2022-12-24 13:00", "2022-12-24 13:00", "2025-06-11 13:00", 15000000.0, 15000000.0),
+    (11, "0x8aa177e6d52e87e1b4633926b65b22394026c90c", "2022-12-24 13:00", "2022-12-24 13:00", "2025-06-11 13:00", 2500000.0, 2500000.0),
+    (12, "0x6abfd6139c7c3cc270ee2ce132e309f59caaf6a2", "2022-12-24 13:00", "2022-12-24 13:00", "2025-06-11 13:00", 500000.0, 0.0),
+    (13, "0x2fe3f12227e8eecf80affdad3935de48513bbe9a", "2022-12-24 13:00", "2022-12-24 13:00", "2025-06-11 13:00", 28000000.0, 28000000.0),
+    (14, "0xafd6158e176d27f0c901492cc8717e6de39f86c8", "2022-12-24 13:00", "2022-12-24 13:00", "2025-06-11 13:00", 30000000.0, 4000000.0),
+    (15, "0xafd6158e176d27f0c901492cc8717e6de39f86c8", "2022-12-24 13:00", "2022-12-24 13:00", "2025-06-11 13:00", 8000000.0, 2000000.0),
+    (16, "0x53051ef9e20cb8ad9262b77754b1d95e7b79b281", "2022-12-24 13:00", "2022-12-24 13:00", "2025-06-11 13:00", 79000000.0, 66624770.9),
+    (17, "0xd9e0f068c5d61c14f758cdaab8f76e9b5dd0dd91", "2022-12-24 13:00", "2022-12-24 13:00", "2025-06-11 13:00", 55000000.0, 55000000.0),
+    (18, "0xb6914e908536e345939090a4cbcb1501f1aa13ed", "2022-12-24 13:00", "2022-12-24 13:00", "2025-06-11 13:00", 16000000.0, 16000000.0),
+    (19, "0xd250ec91441125581e31a43f716559df4a5d43c4", "2022-12-24 13:00", "2022-12-24 13:00", "2023-08-02 17:43", 245774.06, 245774.06),
+    (20, "0x57213dbaacb9fb066f8a1d614db8203fb2c0443b", "2022-12-24 13:00", "2022-12-24 13:00", "2023-08-02 17:43", 122887.03, 122887.03),
+    (21, "0xa3657f04dd15500faf71c35d3c7f2e87c9dafdd1", "2022-12-24 13:00", "2022-12-24 13:00", "2025-06-11 13:00", 4750000.0, 4750000.0),
+    (22, "0x8543bbd93138046c088bdb7208dd64120de3334e", "2022-12-24 13:00", "2022-12-24 13:00", "2024-03-07 15:14", 2317438.56, 2317438.56),
+    (23, "0x9223dc2bb5abbe94ecc164b87110895739e96523", "2022-12-24 13:00", "2022-12-24 13:00", "2025-06-11 13:00", 331338.91, 0.0),)
+MORPHO_LABS_VESTER_AWARDS = (
+    (1, "0x1cdb2c26a767ba197fdbbd9fa3488a6032811a7b", "2022-12-24 13:00", "2022-12-24 13:00", "2025-06-11 13:00", 4526.25, 4526.25),
+    (2, "0xd78df836fe93d7f4ce58985f984abe1e09f158e6", "2022-12-24 13:00", "2022-12-24 13:00", "2025-06-11 13:00", 583518.5, 583518.5),
+    (3, "0x14e7a30b0fae1907a9df4c401afa5a4df7ce58c1", "2022-12-24 13:00", "2022-12-24 13:00", "2025-06-11 13:00", 35354.45, 35354.45),
+    (4, "0x14e7a30b0fae1907a9df4c401afa5a4df7ce58c1", "2022-12-24 13:00", "2022-12-24 13:00", "2023-01-25 18:05", 28632.9526749, 0.0),
+    (5, "0xddd40652d15bf37ddeaf3b04c23cd2f541978ccc", "2022-12-24 13:00", "2022-12-24 13:00", "2025-06-11 13:00", 391250.0, 391250.0),
+    (6, "0x97f458a858f3dfa5c88a3aa0d2bdeca6fe9d9348", "2023-02-12 10:37", "2023-02-12 10:37", "2023-11-16 23:59", 431756.16512346, 431756.16512346),
+    (7, "0x8c839aefab35f90d73579bcf91c9b7b146466415", "2023-02-12 10:37", "2023-02-12 10:37", "2023-09-13 17:43", 94798.3127572, 94798.3127572),
+    (8, "0xa573ed241036d43c3e8a7b01d5721af0ed824746", "2022-12-24 13:00", "2022-12-24 13:00", "2025-06-11 13:00", 15540.0, 0.0),
+    (9, "0xe1e220c705405a32daa23c8ed9864c18bf3308d6", "2022-12-24 13:00", "2022-12-24 13:00", "2025-06-11 13:00", 124200.0, 124200.0),
+    (10, "0xe1e220c705405a32daa23c8ed9864c18bf3308d6", "2022-12-24 13:00", "2022-12-24 13:00", "2022-12-27 18:05", 5353.22145062, 5353.22145062),
+    (11, "0xc806dcf39ef08833a7eaac42dafe9a7bdbfacf35", "2022-12-24 13:00", "2022-12-24 13:00", "2025-06-11 13:00", 85000.0, 85000.0),
+    (12, "0xea302deac43a3f2419035ed1f838a8b8070cce87", "2022-12-24 13:00", "2022-12-24 13:00", "2025-06-11 13:00", 73212.5, 73212.5),
+    (13, "0xb50a8067de3914e18121f12813d867d664f5379c", "2022-12-24 13:00", "2022-12-24 13:00", "2025-06-11 13:00", 88967.14, 46147.25437388),
+    (14, "0xb50a8067de3914e18121f12813d867d664f5379c", "2022-12-24 13:00", "2022-12-24 13:00", "2025-06-11 13:00", 500000.0, 259355.53369342),
+    (15, "0xc76dd9f520efd40aa94677e90c517fa261365eca", "2022-12-24 13:00", "2022-12-24 13:00", "2025-06-11 13:00", 1629525.0, 1629525.0),
+    (16, "0xbaaf2b6872eda03ab675f46b558e345df3b70df4", "2022-12-24 13:00", "2022-12-24 13:00", "2025-06-11 13:00", 5364.5, 5364.5),
+    (17, "0xbaaf2b6872eda03ab675f46b558e345df3b70df4", "2022-12-24 13:00", "2022-12-24 13:00", "2025-06-11 13:00", 1200000.0, 1200000.0),
+    (18, "0xa90a51b1c9a66d626280c176f3afb57d0ca9e6fc", "2022-12-24 13:00", "2022-12-24 13:00", "2025-06-11 13:00", 120165.0, 99067.36237133),
+    (19, "0x9e5f054328f91d13f904d630e81537b80b38a647", "2022-12-24 13:00", "2022-12-24 13:00", "2025-06-11 13:00", 583518.5, 583518.5),
+    (20, "0xb21731d830b7e8460e5d6c66dc1ccc0a5d0a6b87", "2022-12-24 13:00", "2022-12-24 13:00", "2025-06-11 13:00", 268466.0, 268466.0),
+    (21, "0xb50a8067de3914e18121f12813d867d664f5379c", "2022-12-24 13:00", "2022-12-24 13:00", "2025-06-11 13:00", 300000.0, 155610.36651235),
+    (22, "0xcd4c3605d152c50a08f8f97ecfa063d10ce1ec56", "2023-02-12 07:08", "2023-02-12 07:08", "2025-07-31 07:08", 400000.0, 400000.0),
+    (23, "0x8feebfa4ac7af314d90a0c17c3f91c800cfde44b", "2023-02-12 07:08", "2023-02-12 07:08", "2023-08-31 12:00", 266936.34259259, 266936.34259259),
+    (24, "0xe1e220c705405a32daa23c8ed9864c18bf3308d6", "2022-12-27 18:05", "2022-12-27 18:05", "2023-03-27 12:00", 149577.33410494, 149577.33410494),
+    (25, "0xacdd96f0beacd3a83f636c15df25456b65691b6f", "2023-03-20 23:00", "2023-03-20 23:00", "2025-09-05 23:00", 240000.0, 100000.0),
+    (26, "0x53b4b5101d46dc9c7004ad493cec04f7bb4dc9da", "2023-02-05 23:00", "2023-02-05 23:00", "2025-07-24 23:00", 460000.0, 75110.0),
+    (27, "0xc8ab2f79fda01ef0807e99bc9d31f6174b5f3b6d", "2023-03-27 22:00", "2023-03-27 22:00", "2024-02-21 23:59", 147148.14300412, 147148.14300412),
+    (28, "0xaa8d6d306da25decb35c2668519352155d75adff", "2023-03-13 23:00", "2023-03-13 23:00", "2024-03-22 23:59", 166685.18004115, 166685.18004115),
+    (29, "0xce621c7bf89c9d1eac78df897ac153cad18b6000", "2023-02-28 23:00", "2023-02-28 23:00", "2023-04-12 15:30", 21818.19161523, 21818.19161523),
+    (30, "0xbaaf2b6872eda03ab675f46b558e345df3b70df4", "2022-12-23 23:00", "2022-12-23 23:00", "2025-06-10 23:00", 120000.0, 120000.0),
+    (31, "0xc39505d640064a36e83aa48539eddadecb4b5c4f", "2023-10-31 23:00", "2023-10-31 23:00", "2026-06-17 23:00", 33334.0, 0.0),
+    (32, "0x12bd00c72c169255777b46890a1b22a103013b64", "2023-08-16 22:00", "2023-08-16 22:00", "2026-04-02 22:00", 1200000.0, 1200000.0),
+    (33, "0x7c87a02d67e058b25ffee617dc94d701c2e647e2", "2023-11-06 11:00", "2023-11-06 11:00", "2024-03-15 00:00", 134939.23611111, 0.0),
+    (34, "0xb50a8067de3914e18121f12813d867d664f5379c", "2023-12-01 11:00", "2023-12-01 11:00", "2026-07-18 11:00", 80000.0, 10409.5476466),
+    (35, "0x53b4b5101d46dc9c7004ad493cec04f7bb4dc9da", "2023-12-01 11:00", "2023-12-01 11:00", "2026-07-18 11:00", 460000.0, 0.0),
+    (36, "0xbaaf2b6872eda03ab675f46b558e345df3b70df4", "2023-12-01 11:00", "2023-12-01 11:00", "2026-07-18 11:00", 280000.0, 280000.0),
+    (37, "0x6b76000f1c36cf9cb08c1e84db64294692aa2207", "2023-10-11 14:30", "2023-10-11 14:30", "2023-10-11 14:30", 9444.0, 0.0),
+    (38, "0xdf5dbc03f500bc5fc10d7ce3c6948b1209157b4f", "2023-12-20 00:00", "2023-12-20 00:00", "2024-09-06 23:59", 21833.33236883, 21833.33236883),
+    (39, "0xd5cc8639664fdc958346b600ca95623f45747a99", "2024-03-01 00:00", "2024-03-01 00:00", "2027-10-12 00:00", 666667.0, 0.0),
+    (40, "0x912411bd06dda4ef64fa1e6d30504928902cae1e", "2023-11-29 00:00", "2023-11-29 00:00", "2027-11-08 00:00", 480000.0, 119881.29243827),
+    (41, "0x2b4fe5343f61b10fa924d5d1dcdf5e67c4364449", "2023-11-13 00:00", "2023-11-13 00:00", "2027-10-23 00:00", 586667.0, 428967.70300792),
+    (42, "0x6c85488a52ce933ddc29472b75ea65aee1a98cca", "2024-01-01 00:00", "2024-01-01 00:00", "2027-08-13 00:00", 2666667.0, 200000.0),
+    (43, "0x8493f7433aaa380c907f07afa980895e5e3c80bb", "2024-05-15 00:00", "2024-05-15 00:00", "2028-01-15 00:00", 586667.0, 129482.16911019),
+    (44, "0x2158b20da3f7517dd368e2dc287cee2c601a16e2", "2024-03-15 00:00", "2024-03-15 00:00", "2026-06-23 11:00", 865060.76388889, 0.0),
+    (45, "0xbb1023d89229b2792c4deb87209299549077ff59", "2024-07-25 00:00", "2024-07-25 00:00", "2028-03-25 00:00", 440000.0, 0.0),
+    (46, "0x4b1b5f5b0b0f177cb4cf4a3b71cc7c1d3c454568", "2024-07-25 00:00", "2024-07-25 00:00", "2028-03-25 00:00", 320000.0, 25713.44839986),
+    (47, "0xbc4f98d5d38da32d87368da1abce1a16b8243005", "2022-12-24 00:00", "2022-12-24 00:00", "2025-06-11 00:00", 180000.0, 180000.0),
+    (48, "0x64f91bace7929290bb5e5f379e65bdbd0fa7b010", "2024-07-01 00:00", "2024-07-01 00:00", "2028-07-01 00:00", 320000.0, 136348.03914113),
+    (49, "0xc690bf655305292fcd51abdab1ec0d9e11a12e55", "2024-05-20 00:00", "2024-05-20 00:00", "2024-08-01 00:00", 40000.0, 40000.0),
+    (50, "0x98461c402e5e4eff0870ab1fd4b69b1f3c2c3472", "2024-11-02 00:00", "2024-11-02 00:00", "2028-07-02 00:00", 378000.0, 0.0),
+    (51, "0x28ad7adbab03a2ef5fc0a602faade7ac8b1e1dfe", "2024-11-29 00:00", "2024-11-29 00:00", "2028-07-29 00:00", 480000.0, 206486.54293307),
+    (52, "0xc92531e345850eccff9ecf315f6c7d5da34ed796", "2024-08-15 00:00", "2024-08-15 00:00", "2025-02-15 00:00", 13095.0, 13095.0),
+    (53, "0x6aa7aa13e069478b8cf20cfc43d373b495c2b26f", "2025-01-09 00:00", "2025-01-09 00:00", "2028-09-09 00:00", 310482.0, 133428.06521207),
+    (54, "0xe1f04609f7bc45e23a1ba4cd4a76f476755beba6", "2025-01-16 00:00", "2025-01-16 00:00", "2028-09-16 00:00", 613216.0, 309073.56724615),
+    (55, "0xed14bbd62ac2845e9e14b2bad1c544cb42a76fad", "2024-11-08 09:37", "2024-11-08 09:37", "2024-11-08 09:37", 0.0, 0.0),
+    (56, "0xc690bf655305292fcd51abdab1ec0d9e11a12e55", "2024-07-31 22:00", "2024-07-31 22:00", "2024-09-29 22:00", 13200.0, 13200.0),
+    (57, "0x51d4a85c75735732fa59be82ea54576205d78eac", "2024-12-04 23:00", "2024-12-04 23:00", "2025-03-11 00:00", 29408.74435973, 29408.74435973),
+    (58, "0xde83b1ece2a2a8001cd6507c61a8e8354202c75e", "2025-01-01 23:00", "2025-01-01 23:00", "2025-09-11 00:00", 67765.36486697, 67765.36486697),
+    (59, "0xacdd96f0beacd3a83f636c15df25456b65691b6f", "2024-10-02 22:00", "2024-10-02 22:00", "2028-10-02 22:00", 741000.0, 0.0),
+    (60, "0x18e46e77fee3023e646f09d76d8969d8f7d962fa", "2025-01-31 23:00", "2025-01-31 23:00", "2028-09-30 22:00", 659918.0, 0.0),
+    (61, "0xc690bf655305292fcd51abdab1ec0d9e11a12e55", "2024-10-01 00:00", "2024-10-01 00:00", "2025-01-01 00:00", 4760.0, 4760.0),
+    (62, "0xc690bf655305292fcd51abdab1ec0d9e11a12e55", "2025-01-01 00:00", "2025-01-01 00:00", "2025-03-01 00:00", 3960.0, 3960.0),)
+MORPHO_VESTING_CONTRACTS = {
+    "dao": {"name": "the DAO Vester", "address": "0x229AD3703b7962a9E1C9B6C4Dbaa1852bf770bfc",
+            "czar": "0xcBa28b38103307Ec8dA98377ffF9816C164f9AFa", "gem": "0x9994E35Db50125E0DF82e4c2dde62496CE330999",
+            "leg": "noncirculating_holding_tokens", "awards": MORPHO_DAO_VESTER_AWARDS, "end": "2025-06-11",
+            "tot": 279_882_199.73, "claimed": 229_525_631.72, "vested_unclaimed": 50_356_568.01, "unvested": 0.0,
+            "allowance": 101_500_000.01,
+            "what": "MIP1 (forum.morpho.org/t/94): the early contributors' MECT vestings converted to MORPHO — the founders' "
+                    "15.2% (#10, #13, #14, #15, #17, #18), the Contributor Grants Safe (#16, 79M), the Association (#12)"},
+    "labs": {"name": "the Labs vester", "address": "0xe206A8006669A0913D6D13A781580e7E65524407",
+             "czar": "0x1590e7F4c3E1B4493Abb462e34593aef3A9397Dd", "gem": "0x9994E35Db50125E0DF82e4c2dde62496CE330999",
+             "leg": "morpho_undistributed_tokens", "awards": MORPHO_LABS_VESTER_AWARDS, "end": "2028-10-02",
+             "tot": 21_227_398.12, "claimed": 11_077_111.92, "vested_unclaimed": 7_110_830.23, "unvested": 3_039_455.91,
+             "allowance": 67_922_888.08,
+             "what": "contributors' grants paid from 0x1590e7F4… (morpho-org/morpho-transfervest@7364e829 "
+                     "MorphoLabsVestingCreatorDeployment.s.sol: MORPHO_LABS_VESTER)"},
+    "association": {"name": "the Association vester", "address": "0x60167C23eECe006dF7aDB048AeC4b4558957eB5A",
+                    "czar": "0x6ABfd6139c7C3CC270ee2Ce132E309F59cAaF6a2",
+                    "gem": "0x9994E35Db50125E0DF82e4c2dde62496CE330999", "leg": None, "awards": (), "end": "2025-06-11",
+                    "tot": 286_755_555.56, "claimed": 0.0, "vested_unclaimed": 0.0, "unvested": 0.0, "allowance": 0.0,
+                    "what": "NEVER FUNDED: allowance(Association, vester) = 0, wards(Association) = 0, no award ever "
+                            "claimed; its 22 awards repeat MIP1's list (the DAO Vester pays them) — no token vests "
+                            "through it (morpho-transfervest@7364e829 AdmoVestingCreatorDeployment.s.sol: ADMO_VESTER)"},
+}
+
+
+def morpho_vesting_unvested_on(day, contracts: tuple = ("dao", "labs")) -> float:
+    """R22: MORPHO not yet vested at 00:00 UTC of `day` under the vesting contracts' own DssVest accrual (each award:
+    nothing before clf, tot x (t − bgn) / (fin − bgn) between, all at fin) — from the parameters read on chain."""
+    import pandas as _pd
+    t = _pd.Timestamp(day).normalize()
+    out = 0.0
+    for k in contracts:
+        for _id, _usr, bgn, clf, fin, tot, _rxd in MORPHO_VESTING_CONTRACTS[k]["awards"]:
+            b, c, f = _pd.Timestamp(bgn), _pd.Timestamp(clf), _pd.Timestamp(fin)
+            if t >= f:
+                continue
+            out += tot if (t < c or f <= b) else tot * (f - t).total_seconds() / (f - b).total_seconds()
+    return out
+
+
+METRICS["morpho_vesting_unvested_tokens"] = {
+    "label": "MORPHO not yet vested in the vesting contracts on chain (the DAO Vester 0x229A…0bfc: 0 from 2025-06-11; the "
+             "Labs vester 0xe206…4407 to 2028-10-02), each award's DssVest accrual from its on-chain parameters (read "
+             "2026-11-25) — an unlock leg: its daily fall is the vesting on schedule, dilution (e) (R22). It sits in the "
+             "czar's Safe, which can move it: in circulating, off the free float",
+    "kind": "stock", "unit": "tokens", "archetypes": [2], "tiers": [2], "sanity_min": 0, "sanity_max": 3e8,
+    "only_projects": ("Morpho",), "view_only": True}
+SCHEDULE_LOCK_LEGS["Morpho"] = {"metric": "morpho_vesting_unvested_tokens", "fn": morpho_vesting_unvested_on,
+                                "point": "declared:vester_schedule", "launch": "2022-12-24", "end": "2028-10-02"}
+UNLOCK_STOCKS["Morpho"] = tuple(UNLOCK_STOCKS["Morpho"]) + ("morpho_vesting_unvested_tokens",)
+
+# (4) THE FOUNDERS' RELOCK TRANCHE OUT (the relock model keeps Cohort 3 only)
+MORPHO_RELOCK["tranches"] = tuple(t for t in MORPHO_RELOCK["tranches"] if not t[0].startswith("Founders"))
+MORPHO_RELOCK["r22"] = (
+    "R22 (Jake 2026-11-25, item 3): the Founders' 152M tranche is out — the founders' 15.2% is their MIP1 awards in the "
+    "DAO Vester, fully vested on chain 2025-06-11 and claimable (circulating once vested; R21b). Cohort 3's 67M stays: "
+    "no vesting contract for it was found on chain")
+METRICS["morpho_relocked_tokens"] = dict(
+    METRICS["morpho_relocked_tokens"],
+    label="MORPHO still locked under Strategic Partners Cohort 3's vesting (67M, daily linear 2025-11-21..2027-11-21; "
+          "docs.morpho.org morpho-token, read 2026-11-12), MODELLED — no vesting contract or wallet for it was found on "
+          "chain (R22, 2026-11-25). The Founders' 152M left the model in R22: their MIP1 awards vested on chain "
+          "2025-06-11 (the DAO Vester)")
+MODELLED_POINTS["modelled:relock_schedule"] = (
+    "PARTLY MODELLED — Morpho's Strategic Partners Cohort 3 MORPHO (67M, daily linear 2025-11-21..2027-11-21) is "
+    "computed from the published schedule, no vesting contract or wallet for it being found on chain: docs.morpho.org "
+    "morpho-token, read 2026-11-12; searched on chain 2026-11-25 (R22). The Founders' 152M left the model in R22 (their "
+    "MIP1 awards vested on chain 2025-06-11); the supply and the excluded wallets are read on chain")
+
+# (1) EVERY CLAIM — the R21b mechanism generalised (the founders' six awards were its first case). (UTC day, award,
+# tokens, tx): Vest(id, amt) events on each vester since the DAO Vester's end 2025-06-11 (blocks 22,600,000..26,492,097,
+# read 2026-11-24/25); a 1-wei test claim is left out.
+MORPHO_VEST_CLAIMS = (
+    ("2025-06-12", "dao#7", 73_451.334233531, "0xbf12cfea…"),
+    ("2025-06-24", "dao#1", 980_869.9299125514, "0x0ddf5f8f…"),
+    ("2025-06-24", "dao#2", 980_869.9299125514, "0x3cedde88…"),
+    ("2025-09-26", "dao#3", 126_203.80658436214, "0x8a9972d1…"),
+    ("2025-12-05", "dao#6", 224_290.9079218107, "0x48eeb60b…"),
+    ("2025-12-05", "dao#21", 1_065_354.6907150205, "0x74f72a37…"),
+    ("2025-12-05", "dao#5", 1_345_694.5216049382, "0x2aa3b50f…"),
+    ("2026-03-15", "dao#11", 513_388.1494341564, "0x077f4e72…"),
+    *((_d, f"dao#{_aw}", _t, _tx) for _d, _aw, _t, _tx in MORPHO_FOUNDER_VESTER["claims"]),
+    ("2025-06-12", "labs#1", 783.03851423, "0x753bbb59…"),
+    ("2025-06-12", "labs#54", 3203.21526844, "0x85bfaded…"),
+    ("2025-06-13", "labs#51", 36498.30592925, "0x3bbebfe3…"),
+    ("2025-06-19", "labs#54", 3228.97583603, "0xbfab44b7…"),
+    ("2025-06-21", "labs#20", 7250.73980928, "0x7a5579b3…"),
+    ("2025-06-22", "labs#2", 101678.91657146, "0xb3948e6b…"),
+    ("2025-06-26", "labs#19", 22053.8550838, "0xf609ea29…"),
+    ("2025-06-26", "labs#54", 3202.57920505, "0xcf1b0cdc…"),
+    ("2025-07-02", "labs#9", 13825.09076389, "0x1904dd8b…"),
+    ("2025-07-03", "labs#54", 3191.44809559, "0x104f5ed5…"),
+    ("2025-07-05", "labs#58", 42169.53477517, "0x8054dd87…"),
+    ("2025-07-06", "labs#11", 3127.75186471, "0x48c64201…"),
+    ("2025-07-10", "labs#54", 3210.46639117, "0xe14af53d…"),
+    ("2025-07-12", "labs#16", 667.88280255, "0xe9207ef4…"),
+    ("2025-07-12", "labs#17", 149400.57098765, "0xe9207ef4…"),
+    ("2025-07-12", "labs#30", 14862.27932099, "0xe9207ef4…"),
+    ("2025-07-12", "labs#36", 41667.05439815, "0xe9207ef4…"),
+    ("2025-07-17", "labs#54", 3202.38838603, "0xb366fece…"),
+    ("2025-07-22", "labs#48", 40842.22374325, "0x032dde3e…"),
+    ("2025-07-24", "labs#54", 3197.99954859, "0x562b6f65…"),
+    ("2025-07-30", "labs#57", 29408.74435973, "0x10def5d8…"),
+    ("2025-08-04", "labs#54", 3200.0, "0x2073d1b8…"),
+    ("2025-08-07", "labs#54", 3245.86646751, "0xca923c6d…"),
+    ("2025-08-10", "labs#41", 52042.13862288, "0x9b7c0a5b…"),
+    ("2025-08-14", "labs#54", 3171.79373662, "0xde4bbf66…"),
+    ("2025-08-20", "labs#3", 35354.45, "0x020149a9…"),
+    ("2025-08-21", "labs#54", 3204.55100158, "0xa169d377…"),
+    ("2025-08-22", "labs#22", 24774.68106996, "0x8d707cbe…"),
+    ("2025-08-23", "labs#26", 10100.0, "0xf9fe3687… + 0xdf557fd0…"),
+    ("2025-08-28", "labs#54", 3211.80212431, "0x56962aa9…"),
+    ("2025-09-04", "labs#54", 3210.72081653, "0x207132c7…"),
+    ("2025-09-07", "labs#5", 58321.67420589, "0x5873aba0…"),
+    ("2025-09-09", "labs#47", 180000.0, "0x5497d278…"),
+    ("2025-09-11", "labs#54", 3242.84201809, "0x920dcacd…"),
+    ("2025-09-13", "labs#58", 18143.398164, "0x84dc1b41…"),
+    ("2025-09-17", "labs#54", 2876.78753298, "0x1543bdc0…"),
+    ("2025-09-25", "labs#54", 3474.49630736, "0xc8cabb3f…"),
+    ("2025-10-02", "labs#54", 3235.90892706, "0x699e11d3…"),
+    ("2025-10-06", "labs#12", 73212.5, "0xc490b47b…"),
+    ("2025-10-19", "labs#15", 423404.93345583, "0x28a0b84d…"),
+    ("2025-10-24", "labs#54", 10208.88113186, "0xc35210f7…"),
+    ("2025-10-30", "labs#54", 2895.5514032, "0x82d46c4e…"),
+    ("2025-11-03", "labs#36", 33317.16435185, "0x3661f6aa…"),
+    ("2025-11-07", "labs#54", 3498.15786574, "0xb04edc84…"),
+    ("2025-11-09", "labs#51", 53567.46387643, "0xd5d5a1e4…"),
+    ("2025-11-13", "labs#54", 2907.57300141, "0x2f8f63fe…"),
+    ("2025-11-14", "labs#41", 39036.21559529, "0xb57264c2…"),
+    ("2025-11-14", "labs#54", 255.63387935, "0x2f6307ca…"),
+    ("2025-11-21", "labs#54", 3250.09314082, "0xc1401c6b…"),
+    ("2025-11-22", "labs#32", 218701.73611111, "0x9af5e3e1…"),
+    ("2025-11-24", "labs#53", 44968.87727409, "0x543a75f6…"),
+    ("2025-11-28", "labs#54", 3373.23501452, "0x8080fd46…"),
+    ("2025-12-05", "labs#54", 3048.1430122, "0xaa37f887…"),
+    ("2025-12-12", "labs#54", 3207.15886151, "0xb2eaa240…"),
+    ("2025-12-17", "labs#48", 32399.51327097, "0x30681df4…"),
+    ("2025-12-19", "labs#54", 3288.57497635, "0xaf1eda44…"),
+    ("2025-12-26", "labs#54", 3079.43733134, "0x329c40d6…"),
+    ("2026-01-02", "labs#14", 5.0, "0x16df8a88…"),
+    ("2026-01-02", "labs#54", 3174.14717119, "0xb8595e6a…"),
+    ("2026-01-09", "labs#54", 3262.81440876, "0x9e9a54d3…"),
+    ("2026-01-16", "labs#54", 3218.92603435, "0x8bf8d4de…"),
+    ("2026-01-21", "labs#36", 23030.64814815, "0x71d70582…"),
+    ("2026-01-23", "labs#54", 3217.7175139, "0xf863ca2f…"),
+    ("2026-01-31", "labs#54", 3626.1974276, "0xb2c151fc…"),
+    ("2026-02-06", "labs#54", 2826.41131192, "0xb16d48e9…"),
+    ("2026-02-13", "labs#54", 3133.94796448, "0x7fb0787c…"),
+    ("2026-02-25", "labs#54", 5611.66932205, "0x68c54202…"),
+    ("2026-02-26", "labs#41", 42538.78960185, "0x0dcfddfc…"),
+    ("2026-03-04", "labs#54", 3155.00166293, "0x2719788e…"),
+    ("2026-03-11", "labs#54", 3205.63230935, "0xf069ed68…"),
+    ("2026-03-15", "labs#48", 19198.87443912, "0x2b196ced…"),
+    ("2026-03-19", "labs#54", 3560.04683429, "0x7fc78bc0…"),
+    ("2026-03-26", "labs#54", 3209.76672143, "0x814cde29…"),
+    ("2026-04-02", "labs#54", 3297.03461953, "0xc7660aba…"),
+    ("2026-04-09", "labs#54", 3320.95060327, "0x9e1bde27…"),
+    ("2026-04-17", "labs#36", 25128.90625, "0xb843bb07…"),
+    ("2026-04-17", "labs#54", 3527.22596299, "0x67f9a083…"),
+    ("2026-06-09", "labs#54", 24156.73373164, "0xb18d927e…"),
+    ("2026-06-20", "labs#23", 266936.34259259, "0xfefa214b…"),
+    ("2026-06-26", "labs#54", 7788.40548004, "0x37a47500…"),
+    ("2026-06-27", "labs#51", 82406.32785252, "0x897b4ea3…"),
+    ("2026-06-30", "labs#32", 164130.04918981, "0x45cfcd21…"),
+    ("2026-07-01", "labs#54", 2478.739059, "0x5337577e…"),
+    ("2026-07-08", "labs#54", 3232.2833657, "0xf58ecb58…"),
+    ("2026-07-16", "labs#54", 3533.71380964, "0x4045ca99…"),
+    ("2026-07-18", "labs#41", 57687.05438166, "0x7e67eb17…"),
+    ("2026-07-23", "labs#54", 3142.15318231, "0x0e934822…"),
+    ("2026-07-31", "labs#54", 3774.78183719, "0x500e2c94…"),
+    ("2026-08-07", "labs#53", 59270.92620239, "0x46fcb7c3…"),
+    ("2026-08-08", "labs#54", 3782.28738528, "0x575c9b59…"),
+    ("2026-08-15", "labs#54", 3140.69023649, "0xe2996fec…"),
+    ("2026-08-20", "labs#36", 26763.29619985, "0x21a86e27…"),
+    ("2026-08-22", "labs#54", 3021.61916853, "0x26f8dc90…"),
+    ("2026-08-24", "labs#26", 5000.0, "0x926c1a12…"),
+    ("2026-08-25", "labs#26", 50000.0, "0x3404949c…"),
+    ("2026-08-28", "labs#54", 3021.49195585, "0xd903c74e…"),
+    ("2026-09-04", "labs#54", 3080.77306448, "0xcaebb51f…"),
+    ("2026-09-11", "labs#54", 3070.59605012, "0xddb53465…"),
+    ("2026-09-18", "labs#54", 3312.49096009, "0x1c510246…"),
+    ("2026-09-24", "labs#54", 2712.61957016, "0xfa9e4085…"),
+    ("2026-09-26", "labs#54", 655.14529915, "0x7fdb5e76…"),
+    ("2026-09-30", "labs#41", 30327.93389844, "0x09f63f24…"),
+    ("2026-10-02", "labs#54", 3031.16011949, "0x5958cd0d…"),
+    ("2026-10-09", "labs#54", 3069.26031699, "0xccb87704…"),
+    ("2026-10-16", "labs#54", 3461.71143308, "0xbf8dc055…"),
+    ("2026-10-28", "labs#54", 5355.08134761, "0x04f54028…"),
+    ("2026-11-07", "labs#54", 4581.31022488, "0x929cee92…"),
+    ("2026-11-14", "labs#54", 3377.81467098, "0x1a08186f…"),
+    ("2026-11-21", "labs#54", 3173.76553315, "0x34c2e608…"),)
+MORPHO_VEST_AWARD_NAMES = {
+    **{f"dao#{_r[0]}": (_r[1], "a MIP1 award") for _r in MORPHO_DAO_VESTER_AWARDS},
+    **{f"dao#{_k}": _v for _k, _v in MORPHO_FOUNDER_VESTER["awards"].items()},
+    "dao#12": (MORPHO_DAO_VESTER_AWARDS[11][1], "the Association Master Safe"),
+    "dao#16": (MORPHO_DAO_VESTER_AWARDS[15][1], "the Contributor Grants Safe"),
+    **{f"labs#{_r[0]}": (_r[1], "a contributor grant") for _r in MORPHO_LABS_VESTER_AWARDS}}
+MORPHO_VESTING_CLAIMS = {
+    "metric": "morpho_vest_claims_tokens", "fin": "2025-06-11",
+    "address": MORPHO_VESTING_CONTRACTS["dao"]["address"], "czar": MORPHO_VESTING_CONTRACTS["dao"]["czar"],
+    "awards": MORPHO_VEST_AWARD_NAMES, "claims": MORPHO_VEST_CLAIMS,
+    "view_tag": "declared:vester_vest_events[the DAO Vester 0x229A…0bfc + the Labs vester 0xe206…4407; R22]",
+    "source": "eth_getLogs Vest(uint256,uint256) on 0x229AD370… and 0xe206A800…, read 2026-11-24/25 (R21b, R22)",
+    "decided": "Jake 2026-11-25 (Round 22 item 3: every vesting contract — a claim of vested tokens is not new supply)"}
+METRICS["morpho_vest_claims_tokens"] = {
+    "label": "MORPHO claimed from VESTED awards of Morpho's vesting contracts on the day (the DAO Vester 0x229A…0bfc, every "
+             "award; the Labs vester 0xe206…4407) — a move from the czar's wallet to the beneficiary, NOT a release: "
+             "netted out of unlock_release_tokens (e) where the czar's wallet is a release leg, and shown on the Flows "
+             "sheet as a named float movement (R21b generalised, R22)",
+    "kind": "flow", "unit": "tokens", "archetypes": [2], "tiers": [2], "sanity_min": 0, "sanity_max": 2e8,
+    "only_projects": ("Morpho",), "view_only": True}
+METRICS.pop(MORPHO_FOUNDER_VESTER["metric"], None)
+MORPHO_FOUNDER_VESTER = MORPHO_VESTING_CLAIMS     # build_workbook._founder_vest_claim_views / circ_legs read this name
+
+
+def _vest_claim_leg(award: str) -> str:
+    return MORPHO_VESTING_CONTRACTS[award.split("#")[0]]["leg"]
+
+
+def morpho_founder_claims_by_day(spec: dict | None = None, legs: tuple | None = None) -> dict:     # noqa: F811
+    """R22 (R21b generalised): {UTC day: tokens} of the vesting contracts' claims, summed per day — only those whose
+    czar's wallet is a release leg (`legs`; default the build's own: config.unlock_stock_metrics), so a claim is never
+    netted out of a release that does not hold it."""
+    spec = spec or MORPHO_VESTING_CLAIMS
+    held = set(legs if legs is not None else unlock_stock_metrics("Morpho"))
+    out: dict = {}
+    for day, aw, tok, _tx in spec["claims"]:
+        if _vest_claim_leg(aw) in held:
+            out[day] = out.get(day, 0.0) + float(tok)
+    return out
+
+
+def morpho_founder_claim_names(day_from, day_to, spec: dict | None = None) -> list:     # noqa: F811
+    """R22: the named float movements dated in (day_from, day_to] — one text per claim, with its amount."""
+    import pandas as _pd
+    spec = spec or MORPHO_VESTING_CLAIMS
+    a, b = _pd.Timestamp(day_from), _pd.Timestamp(day_to)
+    held = set(unlock_stock_metrics("Morpho"))
+    out = []
+    for day, aw, tok, _tx in spec["claims"]:
+        if a < _pd.Timestamp(day) <= b and _vest_claim_leg(aw) in held:
+            usr, who = spec["awards"][aw]
+            ctr = MORPHO_VESTING_CONTRACTS[aw.split("#")[0]]
+            out.append(f"{day}: vest() claim {tok:,.2f} MORPHO, {ctr['name']} {ctr['address'][:6]}…"
+                       f"{ctr['address'][-4:]} award #{aw.split('#')[1]} -> {usr[:10]}… ({who})")
+    return out
+
+
+RELEASE_LESS["Morpho"] = (MORPHO_VESTING_CLAIMS["metric"],)
+RELEASE_LESS_OPTIONAL = {("Morpho", MORPHO_VESTING_CLAIMS["metric"])}
+FLOAT_NAMED_MOVES["Morpho"] = {
+    "series": MORPHO_VESTING_CLAIMS["metric"], "inside": "issuer", "names": morpho_founder_claim_names,
+    "label": "of which: vest() claims of VESTED awards from Morpho's vesting contracts (the DAO Vester 0x229A…0bfc — the "
+             "founders' #10, #13, #14, #15, #17, #18 among them — and the Labs vester 0xe206…4407) into the beneficiaries' "
+             "own wallets — a named float movement inside the ± issuer line, NOT an unlock (R21b, R22)"}
+DECLARED_COMPONENTS.setdefault(("Morpho", "unlock_release_tokens"), []).append({
+    "metric": MORPHO_VESTING_CLAIMS["metric"], "from": None,
+    "source": "derived:unlock_release-" + MORPHO_VESTING_CLAIMS["metric"],
+    "why": "R22 item 3 (Jake 2026-11-25): a claim of already-vested tokens from any of Morpho's vesting contracts is "
+           "not new supply — taken out of the release (e) (R21b's founders' leg generalised and renamed)"})
+
+
+def morpho_vest_claims_by_leg(spec: dict | None = None, legs: tuple | None = None) -> dict:
+    """R22: {czar's release leg: {UTC day: tokens}} — the claims morpho_founder_claims_by_day keeps, split by the wallet
+    they leave (build_workbook dates each against its own leg's stock)."""
+    spec = spec or MORPHO_VESTING_CLAIMS
+    held = set(legs if legs is not None else unlock_stock_metrics("Morpho"))
+    out: dict = {}
+    for day, aw, tok, _tx in spec["claims"]:
+        leg = _vest_claim_leg(aw)
+        if leg in held:
+            out.setdefault(leg, {})
+            out[leg][day] = out[leg].get(day, 0.0) + float(tok)
+    return out

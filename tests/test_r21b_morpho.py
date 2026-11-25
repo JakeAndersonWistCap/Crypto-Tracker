@@ -25,8 +25,10 @@ import build_workbook as bw  # noqa: E402
 import config  # noqa: E402
 import free_float  # noqa: E402
 
-V = config.MORPHO_FOUNDER_VESTER
+V = config.MORPHO_FOUNDER_VESTER      # R22: every vesting contract's claims (config.MORPHO_VESTING_CLAIMS)
 M = V["metric"]
+FOUNDER_AWARDS = tuple(f"dao#{a}" for a in (10, 13, 14, 15, 17, 18))
+FOUNDERS_ONLY = dict(V, claims=tuple(c for c in V["claims"] if c[1] in FOUNDER_AWARDS))
 
 
 def _frame(name, metric, pairs, source="test:read"):
@@ -42,14 +44,16 @@ def _days(start, values):
 
 # ====================================================================================== 1. the declared claims
 def test_the_claims_are_the_six_founder_awards_vest_events_to_the_wei():
-    assert set(V["awards"]) == {10, 13, 14, 15, 17, 18} and V["fin"] == "2025-06-11"
-    by_day = config.morpho_founder_claims_by_day()
+    # R22: the spec holds every award of every vesting contract; the founders' six are a subset of it
+    assert set(FOUNDER_AWARDS) <= set(V["awards"]) and V["fin"] == "2025-06-11"
+    by_day = config.morpho_founder_claims_by_day(FOUNDERS_ONLY)
     assert by_day == {"2026-04-28": 1_500_000.0, "2026-11-06": pytest.approx(3_264_486.30401235),
                       "2026-11-11": pytest.approx(17_015_150.97736626), "2026-11-23": 65_000_000.0}
     # the 6 and 11 Nov claims Jake named: 20,279,637.28 — and the 23 Nov 65M (Paul Frambot's #17 / #18)
     assert by_day["2026-11-06"] + by_day["2026-11-11"] == pytest.approx(20_279_637.28, abs=0.01)
-    assert V["unpaid"]["tokens"] == 32_000_000.0 == sum(V["unpaid"]["awards"].values())
-    assert "paulframbot.eth" in V["awards"][17][1] and V["awards"][10][1] == "INFERRED founder"
+    old = config.MORPHO_VESTING_CONTRACTS["dao"]["awards"]
+    assert sum(a[5] - a[6] for a in old if a[0] in (14, 15)) == 32_000_000.0     # unpaid on the six on 2026-11-25
+    assert "paulframbot.eth" in V["awards"]["dao#17"][1] and V["awards"]["dao#10"][1] == "INFERRED founder"
     assert config.RELEASE_LESS["Morpho"] == (M,)
 
 
@@ -57,6 +61,7 @@ def test_the_view_dates_a_claim_where_the_daos_stock_falls(monkeypatch):
     """A live read shows the claim the same day (11-06); an archive read at the day's first block a day later (the
     04-28 claim fell on 04-29 in the store): the claim is dated on the fall. 0 on every other day, from fin."""
     monkeypatch.setattr(bw, "scoped_projects", lambda: [config.PROJECT_BY_NAME["Morpho"]])
+    monkeypatch.setattr(config, "MORPHO_FOUNDER_VESTER", FOUNDERS_ONLY)     # R22: the founders' subset of the claims
     stock = [300e6, 300e6, 300e6 - 1.5e6, 298.5e6]                                     # 04-27 .. 04-30
     nov = [298.5e6, 298.5e6 - 3_264_486.30401235, 295_235_513.69598765]                # 11-05 .. 11-07
     groups = {("Morpho", "noncirculating_holding_tokens"): _frame(
@@ -158,6 +163,7 @@ def test_the_declared_leg_never_blocks_the_release_and_is_not_a_b_claim(monkeypa
 def test_the_names_carry_the_award_the_wallet_and_the_amount():
     names = config.morpho_founder_claim_names("2026-11-01", "2026-11-30")
     assert len(names) == 4
-    assert names[0].startswith("2026-11-06: founder vest() claim 3,264,486.30 MORPHO") and "#10" in names[0]
+    # R22 wording: "vest() claim … the DAO Vester … award #10" (was "founder vest() claim")
+    assert names[0].startswith("2026-11-06: vest() claim 3,264,486.30 MORPHO") and "#10" in names[0]
     assert any("52,500,000.00" in x and "#17" in x and "paulframbot.eth" in x for x in names)
     assert config.morpho_founder_claim_names("2026-08-22", "2026-11-20")[-1].startswith("2026-11-11")
