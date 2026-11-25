@@ -51184,3 +51184,89 @@ ENV_KEYS = tuple((k, "nothing: " + _R21B_BEACON, tiers) if k == "BEACONCHAIN_API
                  for k, what, tiers in ENV_KEYS)
 SOURCE_REGISTER["beaconcha.in"] = dict(SOURCE_REGISTER["beaconcha.in"], status="NOT USED (R21b)",
                                        used_for=_R21B_BEACON + "; the R20 wiring stays on record, not asked")
+
+
+# =====================================================================================================================
+# R21b — MORPHO: A FOUNDER'S VESTER CLAIM IS NOT NEW SUPPLY (Jake 2026-11-25, Round 21b item 2: "Morpho: recommendation
+# C, including the 6 and 11 Nov claims. Founder claims of already-vested tokens aren't new supply; under Jake's rule
+# they were circulating once vested. Show them as a named insider float movement on the day.")
+# Evidence: docs/r21_morpho_wallets.md. The Vester 0x229AD370…0bfc (DssVestTransferrable, czar = the DAO, gem = legacy
+# MORPHO) pays an award by transferFrom(the DAO, usr, amt): a claim is a fall of the DAO's legacy balance. The six
+# restricted awards #10, #13, #14, #15, #17, #18 (sum 152,000,000 = the founders' 15.2%; MIP1) were FULLY VESTED on
+# 2025-06-11 13:00 UTC (fin, read on chain 2026-11-25 at block 26,490,686). #17 / #18 are Paul Frambot's (Safe
+# 0xd9e0f068… ENS reverse paulframbot.eth; EOA 0xb6914e90… renews it); #10, #13, #14, #15 are INFERRED founders (the
+# exact 152M sum). Under the settled rule the vested tokens circulate from 2025-06-11 — and they already do: since R9.2
+# the DAO's whole stock (noncirculating_holding_tokens) is IN circulating and off the float (RULE_IN["Morpho"]), so
+# circulating does not move. What changes: (1) a claim is NOT a release — taken out of unlock_release_tokens (and so
+# out of outflow (e), total dilution, net holder yield and net float pressure) on its day or the next stored day
+# (RELEASE_LESS, as Ether.fi's (f) and Pendle's gauge funding); (2) the claimed tokens leave the DAO's wallet (issuer /
+# treasury, off the float) for the founder's own wallet (not issuer-side, not staked: on the float under the existing
+# rules) — a float movement on the day, inside the "± issuer and treasury moves" line and NAMED on its own line with
+# its amount (FLOAT_NAMED_MOVES, free_float.movements). The other awards' claims (#1-#9, #11, #12, #16, #19-#23:
+# contributors, advisers, the Association, Contributor Grants) are NOT covered by Jake's text and stay releases.
+# Every claim on the six awards from fin to 2026-11-24 (Vest(id, amt) events on the Vester, blocks 22,600,000..
+# 26,487,000, read 2026-11-24; unpaid on the six awards 2026-11-25: #14 26,000,000 + #15 6,000,000 = 32,000,000).
+# A LATER claim on #14 / #15 is not in this list: until it is added it reads as a release (said in the report).
+MORPHO_FOUNDER_VESTER = {
+    "address": "0x229AD3703b7962a9E1C9B6C4Dbaa1852bf770bfc", "chain": "ethereum",
+    "czar": "0xcBa28b38103307Ec8dA98377ffF9816C164f9AFa", "gem": "0x9994E35Db50125E0DF82e4c2dde62496CE330999",
+    "fin": "2025-06-11", "metric": "morpho_founder_vest_claims_tokens",
+    "awards": {10: ("0x45b9dc999ae70d39ef89711c6c5627deecfc77ec", "INFERRED founder"),
+               13: ("0x2fe3f12227e8eecf80affdad3935de48513bbe9a", "INFERRED founder"),
+               14: ("0xafd6158e176d27f0c901492cc8717e6de39f86c8", "INFERRED founder"),
+               15: ("0xafd6158e176d27f0c901492cc8717e6de39f86c8", "INFERRED founder"),
+               17: ("0xd9e0f068c5d61c14f758cdaab8f76e9b5dd0dd91", "Paul Frambot's Safe (ENS paulframbot.eth)"),
+               18: ("0xb6914e908536e345939090a4cbcb1501f1aa13ed", "Paul Frambot's EOA (renews paulframbot.eth)")},
+    # (UTC day, award, tokens, tx) — Vest(id, amt) amounts to the wei, rounded to 1e-8
+    "claims": (("2026-04-28", 15, 1_500_000.00, "0xec326d03c237ecd770ecdee709e843bec34ab01b83c93a7f13ee234fa6ffa56a"),
+               ("2026-11-06", 10, 3_264_486.30401235, "0xebd0c2d09fd87e3d5479f722b862af8a6904ac9b24ee25258e21244f6eb484f9"),
+               ("2026-11-11", 13, 17_015_150.97736626, "0x76666ed98216f44529bb490fe0a4b3c5690305a62a528659988dc709be021989"),
+               ("2026-11-23", 18, 12_500_000.00, "0x2e2f3f56721d5dd32878c32bb78b9e7192c76eed2d6125cef2c3080cbca6c6e4"),
+               ("2026-11-23", 17, 52_500_000.00, "0x3341de34… 0.01 + 0x686b5fe0… 4,000,000 + 0xe1054052… "
+                                                 "48,499,999.99")),
+    "unpaid": {"on": "2026-11-25", "block": 26_490_686, "tokens": 32_000_000.00,
+               "awards": {14: 26_000_000.0, 15: 6_000_000.0}},
+    "source": "eth_call / eth_getLogs on the Vester 0x229AD370… (awards(), Vest events), read 2026-11-24/25; "
+              "docs/r21_morpho_wallets.md",
+    "decided": "Jake 2026-11-25 (Round 21b item 2: recommendation C, including the 6 and 11 Nov claims)"}
+METRICS[MORPHO_FOUNDER_VESTER["metric"]] = {
+    "label": "MORPHO the founders claimed from their VESTED Vester awards (#10, #13, #14, #15, #17, #18; vested "
+             "2025-06-11) on the day — a move from the DAO's wallet to the founder's own, NOT a release: netted out of "
+             "unlock_release_tokens (e) and shown on the Flows sheet as a named insider float movement (R21b)",
+    "kind": "flow", "unit": "tokens", "archetypes": [2], "tiers": [2], "sanity_min": 0, "sanity_max": 2e8,
+    "only_projects": ("Morpho",), "view_only": True}
+RELEASE_LESS["Morpho"] = (MORPHO_FOUNDER_VESTER["metric"],)
+# a declared leg of the release_less list that is NOT a distributor's (b) claim: never required (it is built from the
+# declaration, no store read can be missing), never on the Flows "+ claimed out of the distributors (b)" line
+RELEASE_LESS_OPTIONAL = {("Morpho", MORPHO_FOUNDER_VESTER["metric"])}
+
+
+def morpho_founder_claims_by_day(spec: dict | None = None) -> dict:
+    """R21b: {UTC day: tokens} of the founders' Vester claims (MORPHO_FOUNDER_VESTER), summed per day."""
+    out: dict = {}
+    for day, _aw, tok, _tx in (spec or MORPHO_FOUNDER_VESTER)["claims"]:
+        out[day] = out.get(day, 0.0) + float(tok)
+    return out
+
+
+def morpho_founder_claim_names(day_from, day_to, spec: dict | None = None) -> list:
+    """R21b: the named insider float movements dated in (day_from, day_to] — one text per claim, with its amount."""
+    import pandas as _pd
+    spec = spec or MORPHO_FOUNDER_VESTER
+    a, b = _pd.Timestamp(day_from), _pd.Timestamp(day_to)
+    out = []
+    for day, aw, tok, _tx in spec["claims"]:
+        if a < _pd.Timestamp(day) <= b:
+            usr, who = spec["awards"][aw]
+            out.append(f"{day}: founder vest() claim {tok:,.2f} MORPHO, Vester 0x229A…0bfc award #{aw} -> {usr[:10]}… "
+                       f"({who})")
+    return out
+
+
+# THE NAMED FLOAT MOVEMENT (R21b): a series inside one of the free float's daily lines, shown on its own line with its
+# amount (free_float.movements / statements / period_table); `names` gives the texts of a period's movements.
+FLOAT_NAMED_MOVES = {
+    "Morpho": {"series": MORPHO_FOUNDER_VESTER["metric"], "inside": "issuer", "names": morpho_founder_claim_names,
+               "label": "of which: founder vest() claims from the Vester 0x229A…0bfc to the founders' own wallets "
+                        "(Paul Frambot's #17 / #18; #10, #13, #14, #15 INFERRED) — a named insider float movement "
+                        "inside the ± issuer line, NOT an unlock (vested 2025-06-11; R21b)"}}

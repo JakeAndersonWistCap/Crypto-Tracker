@@ -5138,6 +5138,39 @@ def _modelled_lock_views(groups: dict) -> None:
     groups[(name, spec["metric"])] = _as_stored(view, tot.columns)
 
 
+def _founder_vest_claim_views(groups: dict) -> None:
+    """R21b (config.MORPHO_FOUNDER_VESTER, Jake 2026-11-25): the founders' claims from their vested Vester awards, per
+    UTC day (0 on every other day the DAO's stock is held, from the awards' fin) — a declared series of on-chain Vest
+    events, netted out of the release (config.RELEASE_LESS) and named on the free float's daily movements
+    (config.FLOAT_NAMED_MOVES). Built only where the DAO's stock is held: no stock, no series."""
+    spec = getattr(config, "MORPHO_FOUNDER_VESTER", None)
+    name = "Morpho"
+    if not spec or name not in {p["name"] for p in scoped_projects()}:
+        return
+    leg = groups.get((name, "noncirculating_holding_tokens"))
+    if leg is None or leg.empty:
+        return
+    stock = _daily(leg).dropna()
+    fall = (stock.shift(1) - stock).dropna()
+    by_day = {}
+    for d, v in config.morpho_founder_claims_by_day(spec).items():
+        # dated where the DAO's stock shows the fall: the claim's own day, or the next row (an archive row is read at
+        # the day's first block, so a claim shows a day later) — never a day whose fall cannot hold it
+        d = pd.Timestamp(d)
+        nxt = d + pd.Timedelta(days=1)
+        if float(fall.get(d, 0.0)) < v - 1.0 and float(fall.get(nxt, 0.0)) >= v - 1.0:
+            d = nxt
+        by_day[d] = by_day.get(d, 0.0) + float(v)
+    days = set(pd.to_datetime(leg["date"]).dt.normalize()) | set(by_day)
+    days = sorted(d for d in days if d >= pd.Timestamp(spec["fin"]))
+    if not days:
+        return
+    groups[(name, spec["metric"])] = _as_stored(pd.DataFrame(
+        {"date": days, "project": name, "metric": spec["metric"], "value": [float(by_day.get(d, 0.0)) for d in days],
+         "tier": 2, "source": f"declared:vester_vest_events[{spec['address'][:10]}… awards "
+                              f"{','.join(str(a) for a in spec['awards'])}; R21b]"}), leg.columns)
+
+
 def _schedule_lock_leg_views(groups: dict) -> None:
     """R14.1b (config.SCHEDULE_LOCK_LEGS): a locked leg no wallet can be read for, computed from the published schedule
     on every day the project's total supply is held — a MODELLED point (labelled wherever it shows)."""
@@ -8193,7 +8226,7 @@ def _unlock_release_view(groups: dict, name: str, metric: str, legs: tuple) -> N
     for m in less_legs:
         less = _daily(groups.get((name, m)))
         if less.empty:
-            if less_required:
+            if less_required and (name, m) not in getattr(config, "RELEASE_LESS_OPTIONAL", ()):   # R21b: a declared leg
                 # PR4.1: claims out of a distributor inside the set are (b); without them the release would count the
                 # claims twice — so no release series is built (the cell says BLOCKED), never a figure that is too high
                 UNLOCK_LESS_MISSING[(name, metric)] = m
@@ -8211,7 +8244,8 @@ def _unlock_release_view(groups: dict, name: str, metric: str, legs: tuple) -> N
                     t = min(left, float(total.loc[day]))
                     total.loc[day] -= t
                     left -= t
-                    if less_required or config.flow_less_line(name):
+                    if (less_required or config.flow_less_line(name)) and \
+                            (name, m) not in getattr(config, "RELEASE_LESS_OPTIONAL", ()):   # R21b: not a (b) claim
                         # PR4E.1: what was netted out of (e), on the day it was netted — the claims that left the
                         # non-circulating set and entered circulating; the Flows statement's "+ claimed" line. R5.1:
                         # Pendle's gauge funding too (RELEASE_LESS, not required: config.FLOW_LESS_LINE)
@@ -8812,6 +8846,7 @@ def aggregate(long: pd.DataFrame, fetch_status: pd.DataFrame, asof: pd.Timestamp
     _treasury_split_views(groups)       # G9 L3: NEAR's (a) = the epoch mint less the treasury's 1/10 (line m)
     _issuer_mint_views(groups)    # fix round 2 S5/S3: mints straight to issuer-side wallets, BEFORE the unlock view
     _issuance_from_supply_views(groups)   # G11 B2: Maple's gross issuance = the rises of its stored total supply
+    _founder_vest_claim_views(groups)   # R21b: Morpho's founder Vester claims, netted out of the release below
     _unlock_views(groups)         # releases from the non-circulating wallets (Jake 2026-10-11, A2)
     _chain_burn_revenue_views(groups)   # R10.B1b: NEAR's gas revenue = the chain's own burn x price (before the total)
     _revenue_total_views(groups)  # alignment C10: NEAR's revenue = gas + Intents fee switch

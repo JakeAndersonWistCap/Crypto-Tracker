@@ -124,7 +124,10 @@ def test_2_circ_legs_release_lists_each_leg_and_the_claims_taken_out(tmp_path):
     for i, d in enumerate(days):
         ds = str(d.date())
         conn.execute("INSERT INTO metrics VALUES (?,?,?,?,?)", (ds, "Morpho", "total_supply", 1e9, "chain"))
-        hold = 300e6 - (20_279_637.28 if d >= pd.Timestamp("2026-11-12") else 0.0)    # the DAO's two releases
+        # the DAO's two falls: R21b — the founders' Vester claims of 11-06 and 11-11 (config.MORPHO_FOUNDER_VESTER), on
+        # their own days (was: one fall of 20,279,637.28 on 11-12, read as two releases)
+        hold = 300e6 - (3_264_486.30401235 if d >= pd.Timestamp("2026-11-06") else 0.0) \
+            - (17_015_150.97736626 if d >= pd.Timestamp("2026-11-11") else 0.0)
         conn.execute("INSERT INTO metrics VALUES (?,?,?,?,?)", (ds, "Morpho", "noncirculating_holding_tokens", hold, "c"))
         conn.execute("INSERT INTO metrics VALUES (?,?,?,?,?)", (ds, "Morpho", "morpho_undistributed_tokens",
                                                                  5e6 - 10_000.0 * i, now))
@@ -140,14 +143,16 @@ def test_2_circ_legs_release_lists_each_leg_and_the_claims_taken_out(tmp_path):
     assert "morpho_undistributed_tokens: fall 900,000.00" in out
     assert "less emissions_tokens_claims_ethereum: 540,000.00 claimed; 540,000.00 taken" in out
     assert "less emissions_tokens_claims_base: 360,000.00 claimed; 360,000.00 taken" in out
-    assert "falls − claims = 47,279,637.28" in out
-    assert "Unlocks Q0 (per day: released − claims taken) = 47,279,637.28" in out
+    # R21b (Jake 2026-11-25): the founders' claims are not releases — taken out of (e) (was 47,279,637.28 both)
+    assert "less morpho_founder_vest_claims_tokens: 20,279,637.28 claimed; 20,279,637.28 taken" in out
+    assert "falls − claims = 27,000,000.00" in out
+    assert "Unlocks Q0 (per day: released − claims taken) = 27,000,000.00" in out
     # a return on a day the set fell is netted that day: the workbook's figure is below the per-leg sum by exactly it
     conn.execute("UPDATE metrics SET value = value + 1290 WHERE metric='noncirculating_holding_tokens' AND date>='2026-10-20'")
     conn.commit()
     out = "\n".join(circ_legs.release_parts(conn, "Morpho"))
     assert "noncirculating_holding_tokens: fall 20,279,637.28; rise 1,290.00" in out
-    assert "Unlocks Q0 (per day: released − claims taken) = 47,278,347.28" in out
+    assert "Unlocks Q0 (per day: released − claims taken) = 26,998,710.00" in out     # R21b (was 47,278,347.28)
     assert "the difference 1,290.00 = rises netted on days the set fell 1,290.00" in out
 
 

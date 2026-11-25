@@ -132,11 +132,18 @@ def release_parts(conn, project: str, period: int = 90) -> list[str]:
     lines.append(f"  per day (the legs summed each day): released {released.sum():,.2f}; returned {returned.sum():,.2f}")
     claims_total = taken_total = 0.0
     rel = released.copy()
-    less_legs = config.release_less(project)[0] or tuple(swc.get("release_less") or ())
+    # R21b: the declared legs and the switch's claims both (was: the switch's only where no leg was declared)
+    less_legs = tuple(dict.fromkeys(config.release_less(project)[0] + tuple(swc.get("release_less") or ())))
+    fv = getattr(config, "MORPHO_FOUNDER_VESTER", None) or {}
     for m in less_legs:
-        rows = conn.execute("SELECT substr(date,1,10), sum(value) FROM metrics WHERE project=? AND metric=? AND "
-                            "substr(date,1,10)>? AND substr(date,1,10)<=? GROUP BY substr(date,1,10)",
-                            (project, m, str(start.date()), str(end.date()))).fetchall()
+        if project == "Morpho" and m == fv.get("metric"):
+            # R21b: the founders' Vester claims are a declaration, not a stored series (a view of the build)
+            rows = [(d, v) for d, v in sorted(config.morpho_founder_claims_by_day(fv).items())
+                    if str(start.date()) < d <= str(end.date())]
+        else:
+            rows = conn.execute("SELECT substr(date,1,10), sum(value) FROM metrics WHERE project=? AND metric=? AND "
+                                "substr(date,1,10)>? AND substr(date,1,10)<=? GROUP BY substr(date,1,10)",
+                                (project, m, str(start.date()), str(end.date()))).fetchall()
         tot = taken = 0.0
         for d, v in rows:
             left = float(v or 0.0)
@@ -147,7 +154,9 @@ def release_parts(conn, project: str, period: int = 90) -> list[str]:
                     rel.loc[day] -= t
                     left -= t
                     taken += t
-        lines.append(f"  less {m}: {tot:,.2f} claimed; {taken:,.2f} taken out of (e) ((b), in Emissions)")
+        lines.append(f"  less {m}: {tot:,.2f} claimed; {taken:,.2f} taken out of (e) "
+                     + ("(founders' vested Vester claims: not a release, R21b)" if m == fv.get("metric")
+                        else "((b), in Emissions)"))
         claims_total += tot
         taken_total += taken
     unlocks = float(released.sum()) - taken_total
