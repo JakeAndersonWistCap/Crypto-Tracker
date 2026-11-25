@@ -1843,6 +1843,14 @@ staking and vote-locks by holders ARE circulating (off free float only); undistr
 | PR4C.5 | Morpho frozen | Not frozen. | FROZEN_PROJECTS['Morpho'] (tests/fixtures/frozen_morpho.json, 285 cells; the switch PENDING on the dumps); the 48 cells that differ from the pre-round-4 build declared (41 first moved by PR4, 1 by PR4B, 6 by PR4C alone). |
 | PR4C.GATE | Test pins PR4C moves | tests/test_pr4_morpho.py pinned Morpho's dump circulating 696.0M / float 547.25M and a pin without Mantle. | 574.8M / 426.05M (the relocked 121.2M on 2026-10-13 out); the probe test uses Sonic as the chain beyond the pin. Also moved: test_pr4_morpho / test_pr4b (the relock is a circulating and unlock leg; the limitation text is now the modelled relock), test_round_p3_4 (a switch leg is owed from the window's start). tests/test_pr1_freeze.py: the floor "baseline > 300 cells" became "> 250 and every cell on one side only is declared" — Morpho, an A2 project, writes 285 cells; the cell-set check is stronger than the count it replaces. Gate: tests/test_final_round.py's Morpho pin states the relock leg; tests/test_adapters.py's gap-text test starts from no build state (a build earlier on the same worker left GEODNET's series current, and write_gap_report dropped the test's row as answered by the store — an order dependence, fixed in the test, nothing skipped). |
 
+### Round 21b — lead: NEAR approval, beacon source, route-'none' buybacks (Jake 2026-11-25), old → new
+- NEAR's P2P history: no approval → Jake's dated approval given ahead for ONE named month (`for_month` 2026-12, approved
+  2026-11-25, max_gb 337 = the month's room in the 1,000 GB budget); near_p2p_history.refusal reads `for_month`.
+- Staked ETH: beaconcha.in v2 once a key is in .env → the keyless public beacon node is the standing source; the
+  beaconcha.in reader is not asked, key or no key (`not_standing`). 2026-10-26 to the node's first day stays a named hole.
+- Coverage audit: a buyback input of a project whose buyback route is 'none' read MISSING [C] off stored pre-decision
+  copies → N/A BY DESIGN with the route's decided reason (coverage_audit.route_none_buyback).
+
 ### Round 21b — Morpho founder claims (Jake 2026-11-25), old → new
 
 Jake: "Morpho: recommendation C, including the 6 and 11 Nov claims. Founder claims of already-vested tokens aren't new supply; under Jake's rule they were circulating once vested. Show them as a named insider float movement on the day." Evidence: docs/r21_morpho_wallets.md. Config: the "R21b — MORPHO" block at the end of config.py (`MORPHO_FOUNDER_VESTER`, `RELEASE_LESS["Morpho"]`, `FLOAT_NAMED_MOVES`). Code: `build_workbook._founder_vest_claim_views`; `free_float.movements` / `statements` / `period_table` (the named line). Tests: tests/test_r21b_morpho.py.

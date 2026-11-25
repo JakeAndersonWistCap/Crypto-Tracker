@@ -142,7 +142,16 @@ Freeze order once a project reads READY on the store and the gate is green: one 
   `python token_metrics.py --project Ethereum --project Near`, then
   `python done_check.py --verbose | Select-String "^(Ethereum|Near)" -Context 0,16`.
 
-## 8. Round 21 (2026-11-25) — burns in the net, bought-back rules, Aethir, Pendle, Hyperliquid: THE NEXT RUN ON THE STORE, IN ORDER
+## 8. Rounds 21 and 21b (2026-11-25) — burns in the net, bought-back rules, Jake's decisions: THE NEXT RUN ON THE STORE, IN ORDER
+
+Round 21b applied Jake's decisions on Round 21: Hyperliquid's Assistance Fund is BURNED (the validators' vote, HyperFND
+2025-12-17 proposal / 2025-12-24 result, 85% of stake for) — out of circulating and total supply, its buybacks
+buy-and-burn, tags A3, A1, A4 (A4 scored on the Fund + the Core burns); Morpho's founder vest() claims of vested tokens
+are not new supply (the 6, 11 and 23 Nov claims leave (e) and show as a named insider float movement); fee burns are
+revenue sent to holders in A3's key (Aethir tagged A2, A3, A4 with the declared direct-fee-burn wording; Ethereum A1,
+A3, A4; Near's gas burn beside its Intents buyback); NEAR's December P2P chunk approved; the keyless beacon node is
+Ethereum's standing staked-ETH source. 239 more frozen cells moved on the fixture (all Hyperliquid), declared in
+`docs/moves_r21.md` (section "Round 21b").
 
 Round 21 changed rules (Jake's): every burn counts in net float pressure as its own line, separate from buying
 (net float pressure = revenue-funded buying + burns − new supply − bought tokens returned, all ÷ free float); the
@@ -170,7 +179,8 @@ gcloud auth application-default set-quota-project near-data-510309
 python project_freeze.py --compare all
 #    expect: nine lines, each "0 undeclared move(s)"
 python check_offline_items.py env_keys
-#    expect: ALCHEMY_API_KEY PRESENT (Berachain asks it first); BEACONCHAIN_API_KEY ABSENT (not needed this run)
+#    expect: ALCHEMY_API_KEY PRESENT (Berachain asks it first); BEACONCHAIN_API_KEY says "nothing: ... the keyless
+#    public beacon node is the standing staked-ETH source" (R21b) — no key is needed or used
 python -m fetch.aethir_chain
 #    stores nothing. Expect "schedule matches"; the burns read FIRST (no longer after the slow history): 22+ days from
 #    2026-11-02, sum >= 11,955,182.09 ATH, one stray 0.0159 ATH transfer excluded; the claims check
@@ -208,6 +218,19 @@ python project_freeze.py --compare all
 foreach ($p in 'Aerodrome','Chainlink','Ethereum','GEODNET','Aethir','Near','Morpho','Ether.fi','Maple','Sky','Pendle','Fluid','Hyperliquid','Uniswap') { python store_export.py --project $p --out-dir ..\tm-exports }
 ```
 
+### On or after 2026-12-01 — NEAR's December P2P history chunk (approved, R21b)
+
+Jake's dated approval is in config (NEAR_P2P_HISTORY_APPROVAL: approved 2026-11-25, for 2026-12 only, max 337 GB —
+the month's room in the 1,000 GB budget after Ethereum's 31 weeks and the top-up reserve). One chunk, 2025-11-01..11-30.
+```
+python near_p2p_history.py plan
+#    "2026-12   2025-11-01..2025-11-30   30   226.2 ..." on the first row of THE COMBINED SCHEDULE
+python near_p2p_history.py dry-run
+#    a free dry run; its GB must be <= 337 (else it refuses and says what to approve)
+python near_p2p_history.py run
+#    the chunk; refused before 2026-12-01 or after 2026-12-31, and after the month's one chunk
+```
+
 ### Expected done_check after that run
 
 Read from a build of the ten store exports on file (Aerodrome, Ether.fi, Maple, Morpho 20 Nov; Fluid, Pendle 18 Nov;
@@ -215,12 +238,14 @@ Sky 17 Nov; Hyperliquid 16 Nov; Near, Uniswap 20 Nov) at this code, each at its 
 
 | Project | Expected | Notes |
 |---|---|---|
-| Aerodrome, Ether.fi, Hyperliquid, Maple, Uniswap, Near, Sky | READY | READY on their exports at this code. |
-| Morpho | READY | Key 0 (the fee switch is off), rank "unranked" with its label "off" (decision 5). Total dilution still ~45% of float on the 20 Nov export; on the store the 23 Nov 65M claims make it about 89% (section 9). |
+| Aerodrome, Ether.fi, Maple, Uniswap, Sky | READY | READY on their exports at this code. |
+| Hyperliquid | READY | READY on its 16 Nov export at R21b. The Fund out: circulating about 539.5M, total supply about 949M; the A4 tab filled (burn ÷ issuance about 0.40 on the export); Credibility records in_total_supply_api at about −4.9% (the API still counts the Fund — named, not judged); in_total_supply_coingecko within 1%. |
+| Near | READY | READY on its 20 Nov export at R21b; A3 key 0.190 → 0.202 with the gas burn in the numerator (A3 secondary; its primary is A1). |
+| Morpho | READY | READY on its 20 Nov export at R21b. Key 0, rank "unranked" with its label "off" (decision 5). Total dilution 45.1% → 27.2% of float on the export (the 6 and 11 Nov claims out of (e)); on the store, with the 23 Nov 65M also out and on the float, about 23.9%. The Flows sheet's 2026-11-23 row: "± issuer" about +65.0M with the named insider line 65,000,000 (award #18 12.5M → 0xb6914e90…, #17 52.5M → 0xd9e0f068…). |
 | Fluid | READY | READY on its 18 Nov export at this code. Key and rank read "paused, no restart condition stated" and "unranked" (decision 5). |
 | Pendle | READY | Was STALE on 24 Nov. The new chain reader dates each epoch's buyback on the day it is bought, so buying pressure is current. On the 18 Nov export without the reader's rows it still reads STALE (16 days; its only lines); with them, READY (the Pendle lane's build). |
-| Chainlink, GEODNET, Ethereum | READY | READY on 24 Nov. Nothing this round blocks them: Chainlink's net holder yield is allowed "blocked until the history is complete" (Jake, item 8); burns lines are a declared 0 (Chainlink) or the burn series (GEODNET, Ethereum EIP-1559, now in the net, no longer n/a). |
-| Aethir | 1–2 lines | The burn has rows again and the unlocks read the published schedule. What can stay: "no buyback programme declared" until Jake confirms the buyback wording (section 9), and UNIFORMITY (no staker yield: the pools are emissions-funded, A3 off). |
+| Chainlink, GEODNET, Ethereum | READY | READY on 24 Nov. Chainlink's net holder yield is allowed "blocked until the history is complete" (Jake, item 8). Ethereum gains an A3 tab (secondary): its key is the EIP-1559 burn $ ÷ new supply; its buyback cells read N/A by the decided route "nothing is bought" (R21b fixed a Coverage line that read stale buyback copies as missing history). |
+| Aethir | 1 line | The burn has rows again; the unlocks read the published schedule; the buyback line is the declared direct-fee-burn wording (R21b). What stays: UNIFORMITY ("no staker yield series is wired": the pools are emissions-funded) — section 9. |
 | Plume | on hold | No change. |
 | World Mobile | parked | No change. |
 
@@ -256,21 +281,18 @@ git push -u origin claude/crypto-metrics-supply-demand-ovkg8g
 ```
 Aethir, Plume and World Mobile are not frozen; freeze Aethir when it reads READY.
 
-## 9. Decisions open after Round 21 (Jake's)
+## 9. Decisions open after Round 21b (Jake's)
 
-- Hyperliquid (docs/r21_hyperliquid_burns.md): the default wired is the Fund HELD (circulating +48.0M, off the float,
-  A4 off). Recommendation B: keep the Fund held and count the three true burns (HyperCore supply fall ~4,316 HYPE/day,
-  zero-address priority fees ~278/day, the HyperEVM base fee ~96k lifetime INFERRED and not yet subtracted), with A4 on
-  them (~1.71M a year, 1.72% of float). One switch: `HYPERLIQUID_TRUE_BURN_A4` in config.
-- Morpho (docs/r21_morpho_wallets.md): both wallets are Paul Frambot's (the Safe's ENS paulframbot.eth, renewed by the
-  EOA); the 23 Nov transfers were vest() claims from the founder Vester (fully vested 2025-06-11). It stays a real unlock
-  (~89% of float) until you decide. Recommendation C: treat founder claims of already-vested tokens as not new supply
-  (dilution 39.5%; 23.8% if the 6 and 11 Nov claims go too). 50.36M is vested and unclaimed.
-- Aethir's buyback wording (draft, NOT applied): "Aethir has no buy-then-burn programme. The ServiceFeeBurner
-  (0xf8ec…) claims a share of service fees from AethirCore in ATH and sends it to 0x…dEaD: a direct fee burn, not a
-  buyback — no swap." Confirm and it becomes the declared reason.
-- Aethir's outflow (e): the published schedule (~1.04bn a quarter) is wired, the measured claims (Q0 514.1M) shown beside.
-- beaconcha.in after 2026-12-01 15:02 UTC: start the 30-day trial then (steps in git history, Round 20 section 8), or
-  keep the keyless public beacon node as the standing source.
-- Near's December P2P history chunks (near_p2p_history.py) need your dated approval in config before they run.
-- Highlights: three cards were written for the old tags and key and may not render.
+- Aethir UNIFORMITY: done_check's one remaining Aethir line ("no staker yield series is wired"). The pools pay ATH from
+  RewardFaucets fed only by the issuer Safe 0x3e7e6c3d… (emissions). Declare it n/a with that reason, or wire the
+  pools' emissions-funded staker yield?
+- Hyperliquid A4: scored on the Fund + the Core burns (G7 0c, 2026-10-19: the HyperEVM gas burn is A1 only, not
+  rewritten by R21b). To score A4 on every burn, set `R21B_HL_A4_METRIC = "total_burn_tokens"`.
+- Hyperliquid: CoinGecko's and CMC's circulating are 127% / 114% below ours (237.7M / 252.6M vs 539.5M on the 16 Nov
+  export) — the R9.2 rule basis (team 238.25M + Foundation stake 60.64M + Grants 2.98M counted in), not the Fund.
+  Unchanged; recorded.
+- Morpho: Jake's text covers the founder awards. Claims on the other vested Vester awards (#1–9, #11, #12, #16, #19–23)
+  still read as releases — treat them the same? Awards #10, #13, #14, #15 are tagged INFERRED founders (from the exact
+  152M sum); #17/#18 are Paul Frambot's. 32M founder tokens are still unclaimed (#14 26M, #15 6M): a future claim reads
+  as a release until it is added to config (MORPHO_FOUNDER_VESTER `claims`).
+- Highlights: three cards were written for the old tags and key and may not render (left alone, as instructed).
