@@ -25,9 +25,10 @@ import done_check  # noqa: E402
 import reader  # noqa: E402
 
 JAKE_TAGS = {   # Jake's list, primary first
-    # R21b (Jake 2026-11-25, fee burns in A3): Ethereum [1, 4] -> [1, 3, 4]; Aethir [2, 4] -> [2, 3, 4]
+    # R21b (Jake 2026-11-25, fee burns in A3): Ethereum [1, 4] -> [1, 3, 4]; Aethir [2, 4] -> [2, 3, 4];
+    # Hyperliquid [3, 1] -> [3, 1, 4] (the Assistance Fund's buy-and-burn)
     "Ethereum": [1, 3, 4], "Near": [1, 3, 4], "Chainlink": [2, 3], "Aethir": [2, 3, 4], "GEODNET": [2, 3, 4],
-    "Hyperliquid": [3, 1], "Sky": [3, 4], "Aerodrome": [3, 4], "Pendle": [3], "Maple": [3], "Fluid": [3],
+    "Hyperliquid": [3, 1, 4], "Sky": [3, 4], "Aerodrome": [3, 4], "Pendle": [3], "Maple": [3], "Fluid": [3],
     "Ether.fi": [3], "Uniswap": [4, 3], "Morpho": [3],
 }
 
