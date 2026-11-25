@@ -1106,7 +1106,7 @@ Funding: revenue (the default: the programme documented base)
 | into circulating | (b) supply-side incentives | `merkl_campaigns_plume_tokens` |
 | into circulating | (c) demand-side incentives | `plume_airdrop_claims_tokens` |
 | into circulating | (d) ecosystem / grant spend | **NO SERIES** |
-| into circulating | (e) unlocks | `insider_unlock_tokens` |
+| into circulating | (e) unlocks | `insider_unlock_tokens` + `plume_ecosystem_foundation_unlock_tokens` |
 | into circulating | (f) named float outflow | **NO SERIES** |
 | out of circulating | retirement (bought, burned + held) | **NO SERIES** |
 | out of circulating | burn (every burn) | **NO SERIES** |
@@ -1191,7 +1191,7 @@ Funding: revenue (the default: the programme documented base)
 
 | Flow | Category | Series |
 |---|---|---|
-| into circulating | (a) security emissions | `staker_rewards_paid_tokens` |
+| into circulating | (a) security emissions | `staker_rewards_tokens` |
 | into circulating | (b) supply-side incentives | `supplier_rewards_b_tokens` |
 | into circulating | (c) demand-side incentives | **NO SERIES** |
 | into circulating | (d) ecosystem / grant spend | **NO SERIES** |
@@ -1200,7 +1200,7 @@ Funding: revenue (the default: the programme documented base)
 | out of circulating | retirement (bought, burned + held) | **NO SERIES** |
 | out of circulating | burn (every burn) | `gross_burn_tokens` |
 
-Basis: checker and edge node rewards pay the compute / infrastructure SUPPLY side
+Basis: checker and edge node rewards pay the compute / infrastructure SUPPLY side; (a) = ATH paid to the AI and Gaming pools' stakers (security emissions from the issuer Safe; the measured faucet payouts, the published schedule's rise before them — R22)
 
 **Value flow statement**
 
@@ -1508,7 +1508,7 @@ Funding: 2025-05-09..2025-11-03 treasury: April 2025 withdrawal-fee buyback (pai
 | Virtuals | 2 | `circulating_supply` | CoinGecko first | none | `gross_burn_tokens` | `gross_issuance_tokens` | `emissions_tokens` | — |
 | Maple | 3 | `circulating_supply_onchain` | on-chain first | treasury_inflow | `gross_burn_tokens` | `pool_release_tokens` | `emissions_tokens` | `treasury_holding_tokens_chain` + `noncirculating_holding_tokens` |
 | Morpho | 3 | `circulating_supply_onchain` | on-chain first | none | `gross_burn_tokens` | `gross_issuance_tokens` | `emissions_tokens` | `noncirculating_holding_tokens` + `morpho_relocked_tokens` + `morpho_vesting_unvested_tokens` |
-| Hyperliquid | 3, 1, 4 | `circulating_supply_first_party` | on-chain first | burn | `burn_ex_chain_fee_tokens` | `pool_release_tokens` | `emissions_tokens` | `excluded_wallets_spot_tokens` + `team_wallet_tokens` |
+| Hyperliquid | 3, 1, 4 | `circulating_supply_first_party` | on-chain first | burn | `total_burn_tokens` | `pool_release_tokens` | `emissions_tokens` | `excluded_wallets_spot_tokens` + `team_wallet_tokens` |
 | Uniswap | 4, 3 | `circulating_supply_onchain` | on-chain first | burn | `gross_burn_tokens` | `gross_issuance_tokens` | `emissions_tokens` | `treasury_holding_tokens` + `noncirculating_holding_tokens` |
 | Aerodrome | 3, 4 | `circulating_supply_onchain` | on-chain first | treasury_inflow | `buyback_burned_tokens` | `gross_issuance_tokens` | `gross_issuance_accrued_tokens` + `emissions_tokens` | — |
 | PancakeSwap | 4, 3 | `circulating_supply` | CoinGecko first | none | `gross_burn_tokens` | `gross_issuance_tokens` | `emissions_tokens` | — |
