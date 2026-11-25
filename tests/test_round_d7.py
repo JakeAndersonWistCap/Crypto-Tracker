@@ -32,7 +32,9 @@ def _spec_addresses() -> list[str]:
 
 def test_1_every_address_is_a_full_string_from_the_research_never_a_prefix():
     research = ((ROOT / "research" / "pyth" / "sources.csv").read_text(encoding="utf-8")
-                + (ROOT / "research" / "pyth" / "dossier.md").read_text(encoding="utf-8"))
+                + (ROOT / "research" / "pyth" / "dossier.md").read_text(encoding="utf-8")
+                # R22 (AAVEPYTH): the PPR distribution wallet's PYTH account, read on chain 2026-11-25
+                + (ROOT / "docs" / "r22_pyth.md").read_text(encoding="utf-8"))
     circle_usdc = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v"      # Circle's address list, cited in config
     for a in _spec_addresses():
         assert B58.match(a), f"{a}: not a full base58 address"
@@ -42,9 +44,12 @@ def test_1_every_address_is_a_full_string_from_the_research_never_a_prefix():
     assert metrics == {"pyth_treasury_pyth_tokens", "pyth_treasury_usdc", "pyth_council_pyth_tokens",
                        "pyth_council_usdc", "pyth_community_council_pyth_tokens", "pyth_douro_pyth_tokens",
                        "pyth_douro_usdc", "pyth_funder_cewsb_pyth_tokens", "pyth_funder_e6nab_pyth_tokens",
-                       "pyth_ois_unclaimed_tokens"}
+                       "pyth_ois_unclaimed_tokens",
+                       # R22 (AAVEPYTH, Jake 2026-11-25): + the PPR distribution wallet
+                       "pyth_ppr_distribution_pyth_tokens"}
     assert config.PYTH_STOCKS["rpc"] == "https://api.mainnet-beta.solana.com"
-    assert "Pyth" in config.STORE_ONLY_PROJECTS and "Pyth" not in config.PROJECT_BY_NAME
+    # R22: Pyth is a project now (was: in STORE_ONLY_PROJECTS, not in PROJECT_BY_NAME)
+    assert "Pyth" not in config.STORE_ONLY_PROJECTS and "Pyth" in config.PROJECT_BY_NAME
 
 
 def test_1_the_sources_csv_stock_addresses_are_all_read():
@@ -160,7 +165,8 @@ def test_1_a_full_read_stores_every_line_with_its_slot_and_counts_calls():
     assert not res.failed, res.failed
     # 1 supply + 10 token accounts + DCA (1 program read + 1 per open account) + voting target + OIS pool + y + staking
     # config + 2 vesting program reads = 19 with the fake's one open DCA (the live read on 2026-10-27: 2 open, 20 calls)
-    assert len(got) == 17 and res.calls == http.stats["calls"] == 19
+    # R22 (AAVEPYTH): + the PPR distribution wallet's account — was 17 lines / 19 calls
+    assert len(got) == 18 and res.calls == http.stats["calls"] == 20
     assert all("slot 462000000" in s for _v, s in got.values())
     assert got["pyth_unvested_genesis_tokens"][0] == 1.0            # 4.0 initial, a quarter left
     assert got["pyth_unvested_other_tokens"][0] == 1.0              # before its start: all of it
@@ -181,9 +187,9 @@ def test_1_a_lookalike_owner_or_a_refused_program_read_stores_nothing_for_that_l
     assert {"pyth_unvested_genesis_tokens", "pyth_unvested_other_tokens"} <= set(failed) and \
         not ({"pyth_unvested_genesis_tokens", "pyth_unvested_other_tokens"} & stored)
     assert "not available" in failed["pyth_unvested_genesis_tokens"]
-    assert len(stored) == 14                                        # every other line still read
+    assert len(stored) == 15                     # every other line still read (R22: was 14, + the PPR distribution wallet)
     lines = ps.log_entries(res)
-    assert lines[0].status == "warn" and "RPC call(s)" in lines[0].message and "14 STOCK line(s) stored" in lines[0].message
+    assert lines[0].status == "warn" and "RPC call(s)" in lines[0].message and "15 STOCK line(s) stored" in lines[0].message
     assert sum(1 for e in lines if e.status == "failed") == 3
 
 
@@ -213,6 +219,8 @@ def test_1_the_pacer_spaces_calls_and_a_429_waits_its_retry_after(monkeypatch):
 
 def test_1_a_store_only_project_never_reaches_the_build(tmp_path, monkeypatch):
     import build_workbook as bw
+    # R22 (AAVEPYTH): Pyth is a project now; the store-only mechanism is still tested, with Pyth put back on the list
+    monkeypatch.setattr(config, "STORE_ONLY_PROJECTS", ("Pyth",))
     long = pd.DataFrame({"project": ["Pyth", "Hyperliquid"], "metric": ["pyth_mint_supply_tokens", "price_usd"],
                          "value": [1.0, 2.0]})
     assert list(bw.drop_store_only(long)["project"]) == ["Hyperliquid"]

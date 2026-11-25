@@ -68,6 +68,8 @@ from .price_onchain import OnchainPrices
 from .staked_eth import BeaconchainEth, BeaconNodeStakedEth, BeaconStakedEth, StakedEth  # noqa: F401
 from .ef_wallets import EFWallets  # noqa: F401
 from .aethir_chain import AethirChain  # noqa: F401
+from .aave_chain import AaveChain  # noqa: F401 — R22
+from .pyth_chain import PythChain  # noqa: F401 — R22
 from .treasury import TreasuryBills
 from .sky_msc import SkyMsc
 from .fluid_buybacks import FluidBuybacks
@@ -199,6 +201,10 @@ TIER_ORDER = [
     # R20 (Jake 2026-11-24): Aethir's vesting stock, issuer wallets, issuer stake and the daily fee burn, once a day,
     # keyless (public RPC: Ethereum at one finalized block + the Transfer logs for the past days; Arbitrum burn logs)
     ("aethir_chain", 2, lambda ctx: AethirChain()),
+    # R22 (Jake 2026-11-25): Aave's treasury, held buyback, stake, emission rates and buys (Ethereum, keyless), and
+    # Pyth's stocks, stake inside circulating and Council buybacks (Solana, keyless public RPC)
+    ("aave_chain", 2, lambda ctx: AaveChain(last_dates=ctx.get("last_dates"))),
+    ("pyth_chain", 2, lambda ctx: PythChain()),
     # The 3-month US T-bill, the risk-free benchmark (Phase 3, 2026-10-12 night): Treasury's own daily bill rates, FRED
     # DTB3 the cross-check; stored under the pseudo-project Macro.
     ("treasury_bills", 1, lambda ctx: TreasuryBills()),
@@ -2141,6 +2147,10 @@ TIER_BUDGET_S = {
     # measured 81 s alone on 2026-11-24 (the Ethereum history 58 s of it, 14 eth_getLogs of 1M blocks); the burn now
     # reads first, so a cut-off costs the history only
     "aethir_chain": 300,
+    # R22: Aave ~25 eth_calls + ~34 eth_getLogs of 100,000 blocks on a first run (~60 s); Pyth ~20 calls of stocks,
+    # 258 getProgramAccounts for the stake once a week (measured 8 min with the 429s waited) and the buyback scan, which stops
+    # itself at PYTH_CHAIN["scan_budget_s"] and resumes next run
+    "aave_chain": 240, "pyth_chain": 900,
     "aero_v3": 240,
     "aero_v3_epoch": 240,              # R8 item 2: stops itself at 200 s (fetch.aero_v3.EPOCH_BUDGET_S), scan saved
     "scrape": 240, "dune": 420, "ultrasound": 60, "plume_staking": 180, "plume_claims": 180, "blockscout_stats": 90,

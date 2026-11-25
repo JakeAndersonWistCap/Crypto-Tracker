@@ -1843,6 +1843,19 @@ staking and vote-locks by holders ARE circulating (off free float only); undistr
 | PR4C.5 | Morpho frozen | Not frozen. | FROZEN_PROJECTS['Morpho'] (tests/fixtures/frozen_morpho.json, 285 cells; the switch PENDING on the dumps); the 48 cells that differ from the pre-round-4 build declared (41 first moved by PR4, 1 by PR4B, 6 by PR4C alone). |
 | PR4C.GATE | Test pins PR4C moves | tests/test_pr4_morpho.py pinned Morpho's dump circulating 696.0M / float 547.25M and a pin without Mantle. | 574.8M / 426.05M (the relocked 121.2M on 2026-10-13 out); the probe test uses Sonic as the chain beyond the pin. Also moved: test_pr4_morpho / test_pr4b (the relock is a circulating and unlock leg; the limitation text is now the modelled relock), test_round_p3_4 (a switch leg is owed from the window's start). tests/test_pr1_freeze.py: the floor "baseline > 300 cells" became "> 250 and every cell on one side only is declared" — Morpho, an A2 project, writes 285 cells; the cell-set check is stronger than the count it replaces. Gate: tests/test_final_round.py's Morpho pin states the relock leg; tests/test_adapters.py's gap-text test starts from no build state (a build earlier on the same worker left GEODNET's series current, and write_gap_report dropped the test's row as answered by the store — an order dependence, fixed in the test, nothing skipped). |
 
+### Round 22 — Aave and Pyth (Jake 2026-11-25, branch claude/aave-pyth), old → new
+- Aave: A3 labelled "paused since 19 Apr 2026" (unranked) — was unlabelled; the label clears itself when fetch/aave_chain.py
+  stores a swap-venue buy dated after 19 Apr (config.STATUS_CLEARS_ON_BUYS, refresh_status_on_buys at build start). A4
+  off (ARCHETYPE_OFF). New tier `aave_chain`: treasury (Ecosystem Reserve + Collector + TreasurySpoke + swapper +
+  TokenLogic), held buyback (AFC Safe AAVE + aAAVE), dead-address burn, stake (stkAAVE + AAVE inside staked BPT),
+  emission rate check, daily buys. Circulating = totalSupply − dead (treasury IN, off float) — was CoinGecko's
+  (16M − the Reserve). Emission schedule = the measured AssetConfigUpdated steps (531 → 390 → 300 → 220 → 150/day) —
+  was 150/day from 2026-08-28. docs/r22_aave.md.
+- Pyth: a project (A3, held; A2 off) — was STORE-ONLY (D7-1). New tier `pyth_chain`: the D7-1 stocks mapped onto
+  total / unvested / treasury / operator / INFERRED funders / held buyback; the stake inside circulating (per account
+  max(voting, OIS) − unvested, proved against the voting target and the OIS pool); the Council vault's buys and returns
+  (resumable scan, reconciled to the monthly reports). Circulating = supply − all unvested. docs/r22_pyth.md.
+
 ### Round 21b — lead: NEAR approval, beacon source, route-'none' buybacks (Jake 2026-11-25), old → new
 - NEAR's P2P history: no approval → Jake's dated approval given ahead for ONE named month (`for_month` 2026-12, approved
   2026-11-25, max_gb 337 = the month's room in the 1,000 GB budget); near_p2p_history.refusal reads `for_month`.

@@ -18494,6 +18494,7 @@ def build_workbook(store, path: Path | str, run_id: str | None = None,
         _SCOPE = list(PROJECTS)
     long = store.load_long()
     long = drop_store_only(long)
+    config.refresh_status_on_buys(long)          # R22: a paused label (Aave A3) clears itself when buys are stored
     # G16 1: the provisional list counts this store's low reads; a listed row is released by the runs that re-read it
     import store as _store_mod                       # noqa: PLC0415
     _early = config.PROVIDERS_WITH_INCOMPLETE_CURRENT_PERIOD

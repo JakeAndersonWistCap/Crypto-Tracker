@@ -18823,6 +18823,35 @@ PROJECTS = [
         "materiality": "medium",
         "notes": "Buyback confirmed.",
     },
+    # ===== ROUND 22 (AAVEPYTH, Jake 2026-11-25): PYTH JOINS AS A PROJECT — A3, HELD BUYBACK; NOT A2 (Jake: publisher
+    # emissions ended). Everything else Pyth carries (the Solana reader's spec, circulating, the float legs, the
+    # evidence) is in the "ROUND 22 — AAVE AND PYTH" block at the end of this file. Every address there was read on
+    # chain 2026-11-25 (public Solana RPC; mint and owner of every token account checked). docs/r22_pyth.md.
+    {
+        "name": "Pyth", "symbol": "PYTH",
+        "coingecko_id": "pyth-network",
+        # DefiLlama's fees slug is the PARENT "pyth" (parent#pyth: Pyth Pro + Entropy + Core + Express Relay; read
+        # 2026-11-25 — "pyth-network" answers HTTP 400 on /summary/fees). No TVL.
+        "defillama_fees_slug": "pyth", "defillama_protocol": None, "defillama_chain": None,
+        "archetypes": [3], "archetypes_held": [3],
+        "fee_split": {
+            "share_to_buyback": 1.0,
+            "source_url": "https://forum.pyth.network/t/passed-op-pip-136-pyth-strategic-reserve-v2/2711",
+            "source_date": "2026-09-24", "programmed": False, "status": "active",
+            "note": "OP-PIP-136 (PASSED, posted 24 Sep 2026): 100% of the DAO's approved share of Pyth Pro, LaaS, Data "
+                    "Marketplace and Indices revenue (and Core / Entropy fees) is converted to PYTH by the Pythian "
+                    "Council Ops multisig and returned to the DAO Treasury, HELD. Governance-revisable (an OP-PIP), "
+                    "not contract-enforced. Before it, OP-PIP-87 (passed 9 Dec 2025): monthly buys with one third of "
+                    "the Treasury's non-PYTH balance.",
+        },
+        "burn_split": None, "issuance_schedule": None,
+        "contracts": {},
+        "buyback_destination": "hold", "destination_split": None, "burn_execution": "n/a",
+        "destination_effect": "treasury_redeployable",
+        "dune_queries": _dune(),
+        "materiality": "medium",
+        "notes": "Solana SPL token; no mint or freeze authority. Read by fetch/pyth_chain.py (tier pyth_chain).",
+    },
 ]
 
 # P3-7: projects added by YAML (projects/*.yaml, `status: active` only; drafts and _files are not loaded) — see
@@ -51242,3 +51271,275 @@ DECLARED_COMPONENTS.setdefault(("Morpho", "unlock_release_tokens"), []).append({
     "source": "derived:unlock_release-morpho_founder_vest_claims_tokens",
     "why": "R21b item 2 (Jake 2026-11-25): the founders' vest() claims of already-vested tokens from the Vester "
            "0x229A…0bfc are not new supply — taken out of the release (e), shown as a named insider float movement"})
+
+
+# =====================================================================================================================
+# ===== ROUND 22 — AAVE AND PYTH (AAVEPYTH lane, branch claude/aave-pyth; Jake 2026-11-25). One block. =====
+# Evidence and sources: docs/r22_aave.md, docs/r22_pyth.md (every address read on chain 2026-11-25). Readers:
+# fetch/aave_chain.py (tier aave_chain), fetch/pyth_chain.py (tier pyth_chain). Tests: tests/test_r22_aave.py,
+# tests/test_r22_pyth.py. Circulating on Jake's Round 22 rule (item 1): unvested OUT; an unreleased emissions reserve
+# OUT; issuer / foundation / treasury IN circulating, off the free float; burned out of circulating and total; staked /
+# locked / earning off the float.
+# =====================================================================================================================
+R22_USER_AGENT = "token-metrics-check/1.0"
+_R22 = "Round 22 (Jake 2026-11-25, AAVEPYTH)"
+
+# ---------------------------------------------------------------------------------------------------------- AAVE
+# Addresses: bgd-labs/aave-address-book (AaveV3Ethereum, MiscEthereum, AaveSafetyModule, UmbrellaEthereum), each read
+# on chain 2026-11-25 at Ethereum block 26,492,057 (code present; balances; stake tokens' STAKED_TOKEN / REWARD_TOKEN /
+# REWARDS_VAULT). The brief's second Umbrella address 0x5AC6C5C70934939d7Ad4aAB253aFD760Ad5E5313 has NO code on
+# Ethereum, Base, Arbitrum, Avalanche, Optimism or Gnosis (read 2026-11-25): NOT VERIFIED, not used.
+AAVE_CHAIN = {
+    "rpc": ("https://ethereum-rpc.publicnode.com", "https://mainnet.gateway.tenderly.co"),
+    # eth_getLogs over ranges: publicnode refuses archive logs without a token, drpc caps free ranges at 100 blocks;
+    # Tenderly's keyless gateway answers 100,000-block ranges (2026-11-25)
+    "log_rpc": ("https://mainnet.gateway.tenderly.co",),
+    "log_step": 100_000,
+    "aave": "0x7Fc66500c84A76Ad7e9c93437bFc5Ac33E2DDaE9",
+    "aaave": "0xA700b4eB416Be35b2911fd5Dee80678ff64fF6C9",    # aEthAAVE, UNDERLYING_ASSET_ADDRESS() = AAVE (read)
+    "dead": "0x000000000000000000000000000000000000dEaD",
+    "balancer_vault": "0xBA12222222228d8Ba445958a75a0704d566BF2C8",
+    "wallets": {
+        "ecosystem_reserve": "0x25F2226B597E8F9514B3F68F00f494cF4f286491",   # 558,394.92 AAVE (2026-11-25)
+        "collector": "0x464C71f6c2F760DdA6093dCB91C24c39e5d6e18c",           # 0 AAVE + 6,663.43 aAAVE
+        "treasury_spoke_v4": "0xB9B0b8616f6Bf6841972a52058132BE08d723155",   # 0 (code, 1,419 bytes)
+        "aave_swapper": "0x3ea64b1C0194524b48F9118462C8E9cd61a243c7",         # 0
+        "tokenlogic_safe": "0x9DE1d45e2786b03498289959203F25b29B4D1193",      # 0 (a Safe proxy, 171 bytes)
+        "afc_safe": "0x22740deBa78d5a0c24C58C740e3715ec29de1bFa",             # 0 AAVE + 240,502.34 aAAVE: the bought AAVE
+    },
+    "treasury_wallets": ("ecosystem_reserve", "collector", "treasury_spoke_v4", "aave_swapper", "tokenlogic_safe"),
+    "held_buyback_wallets": ("afc_safe",),
+    "stake": {
+        "stkAAVE": "0x4da27a545c0c5B758a6BA100e3a049001de870f5",
+        # (stake token, its BPT): stkABPT holds ABPT v1 (a Balancer v1 smart pool: the AAVE sits in its bPool());
+        # stkAAVEwstETHBPTv2 holds the 20wstETH-80AAVE Balancer v2 pool's BPT
+        "bpt": {"stkABPT": ("0xa1116930326D21fB917d5A27F1E9943A9595fb47", "0x41A08648C3766F9F9d85598fF102a08f4ef84F84"),
+                "stkAAVEwstETHBPTv2": ("0x9eDA81C21C273a82BE9Bbc19B6A6182212068101",
+                                       "0x3de27EFa2F1AA663Ae5D458857e731c129069F29")},
+        "bpt_v1": ("stkABPT",),
+        # the stake tokens whose REWARD_TOKEN() is AAVE (all four; REWARDS_VAULT() = the Ecosystem Reserve)
+        "reward_assets": {"stkAAVE": "0x4da27a545c0c5B758a6BA100e3a049001de870f5",
+                          "stkABPT": "0xa1116930326D21fB917d5A27F1E9943A9595fb47",
+                          "stkAAVEwstETHBPTv2": "0x9eDA81C21C273a82BE9Bbc19B6A6182212068101",
+                          "stkGHO": "0x1a88Df1cFe15Af22B3c4c783D4e6F7F9e0C1885d"},
+    },
+    # the buys: AAVE / aAAVE INTO these wallets FROM a swap venue
+    "buy_sinks": {"collector": "0x464C71f6c2F760DdA6093dCB91C24c39e5d6e18c",
+                  "afc_safe": "0x22740deBa78d5a0c24C58C740e3715ec29de1bFa",
+                  "ecosystem_reserve": "0x25F2226B597E8F9514B3F68F00f494cF4f286491",
+                  "treasury_spoke_v4": "0xB9B0b8616f6Bf6841972a52058132BE08d723155"},
+    # CoW Protocol GPv2Settlement: every pre-pause fill of the Swap Steward's TWAP orders landed in the Collector from it
+    # (e.g. 4 fills of ~200-243 AAVE a day, 10-19 Apr 2026; the last three on 19 Apr). AAVE_SWAPPER: the address-book's
+    # swapper (none since the pause).
+    "buy_sources": {"cow_settlement": "0x9008D19f58AAbD9eD0D60971565AA8510560ab41",
+                    "aave_swapper": "0x3ea64b1C0194524b48F9118462C8E9cd61a243c7"},
+    "scan_from_block": 24_850_000,          # 2026-04-10 (Tenderly block time): the last pre-pause week is in the scan
+    "rescan_days": 7,
+    "other_inflow_log_min": 100.0,
+    "read_on": "2026-11-25",
+}
+# THE EMISSION SCHEDULE, MEASURED: AssetConfigUpdated(asset, emission) on each AAVE-paying stake token since Ethereum
+# block 21,500,000 (read 2026-11-25), summed per day (AAVE/day): stkAAVE 315 (2025-06-05) -> 260 (2025-07-29) -> 220
+# (2026-03-24) -> 150 (2026-06-13, AIP 491); stkAAVE/wstETH BPTv2 360 (2025-02-18) -> 240 (2025-04-29) -> 216
+# (2025-06-05) -> 130 (2025-07-29) -> 40 (2026-01-20) -> 0 (2026-03-24, AIP 459); stkGHO 100 (2025-05-11) -> 0
+# (2025-06-05); stkABPT 0 (DISTRIBUTION_END 2025-01-17). Was: 150/day from 2026-08-28 (the Allowance-Update AIP's date,
+# not the rate's). Paid from the Ecosystem Reserve (REWARDS_VAULT()). Umbrella pays aTokens and GHO, no AAVE
+# (RewardsController.getAllRewards of its four stake tokens, read 2026-11-25).
+PROJECT_BY_NAME["Aave"]["issuance_schedule"].update({
+    "steps": [{"from": "2025-06-05", "tokens_per_day": 531.0}, {"from": "2025-07-29", "tokens_per_day": 390.0},
+              {"from": "2026-01-20", "tokens_per_day": 300.0}, {"from": "2026-03-24", "tokens_per_day": 220.0},
+              {"from": "2026-06-13", "tokens_per_day": 150.0}],
+    "source_url": "https://etherscan.io/address/0x4da27a545c0c5B758a6BA100e3a049001de870f5#events",
+    "source_date": "2026-11-25",
+    "note": _R22 + ": the AAVE-paying stake tokens' AssetConfigUpdated events, summed per day (stkAAVE + stkAAVE/wstETH "
+            "BPTv2 + stkGHO + stkABPT); paid from the Ecosystem Reserve; fetch/aave_chain.py re-reads the rate daily "
+            "(aave_emission_rate_tokens) and logs a mismatch"})
+
+
+def aave_schedule_rate(day) -> float | None:
+    """The declared AAVE/day on `day` (the last step on or before it), or None before the first step."""
+    import pandas as _pd
+    d = _pd.Timestamp(day)
+    rate = None
+    for st in PROJECT_BY_NAME["Aave"]["issuance_schedule"]["steps"]:
+        if _pd.Timestamp(st["from"]) <= d:
+            rate = float(st["tokens_per_day"])
+    return rate
+
+
+for _m, _lab in (
+        ("aave_ecosystem_reserve_tokens", "AAVE in the Ecosystem Reserve (pays the stakers' rewards; in circulating, off "
+                                          "the float — R22)"),
+        ("aave_held_buyback_tokens", "AAVE + aAAVE in the Aave Finance Committee Safe: the bought AAVE, held (R22)"),
+        ("aave_emission_rate_tokens", "AAVE/day paid to stakers at the read: Σ emissionPerSecond x 86,400 of the "
+                                      "AAVE-paying stake tokens (the schedule's check, R22)")):
+    METRICS[_m] = {"label": _lab, "kind": "stock", "unit": "tokens", "archetypes": [3], "tiers": [2], "sanity_min": 0,
+                   "sanity_max": 1.6e7, "only_projects": ("Aave",)}
+TOTAL_SUPPLY_ONCHAIN_FIRST["Aave"] = {"decided_by": "Jake", "decided_on": "2026-11-25",
+                                      "why": _R22 + ": totalSupply() = 16,000,000 on chain (the chain tier's token read)"}
+CIRCULATING_ONCHAIN["Aave"] = {
+    "status": "established", "total": "total_supply", "ratios_use": "onchain",
+    "subtract": ("burn_address_balance", "treasury_holding_tokens"),
+    "method": "16,000,000 (totalSupply) − AAVE at 0x…dEaD; the DAO's wallets (Ecosystem Reserve, Collector, V4 "
+              "TreasurySpoke, AAVE_SWAPPER, TokenLogic safe) are IN circulating, off the float; the AFC Safe's bought "
+              "AAVE is IN circulating, off the float as held buybacks",
+    "decision": _R22 + ": brief — 'Ecosystem Reserve 0x25F2… (circulating, off float)'. CoinGecko and CoinMarketCap "
+                "leave the Ecosystem Reserve out (15,441,604.87 = 16,000,000 − 558,395; read 2026-11-25)",
+}
+declare_rule_in("Aave", ("treasury_holding_tokens",),
+                "docs/r22_aave.md: the Ecosystem Reserve is a governance-controlled reserve that streams grants (Aave "
+                "Labs 75,000 AAVE over 4 years, LlamaRisk, TokenLogic) and funds the stakers' rewards — movable by an "
+                "AIP; the Collector, TreasurySpoke, swapper and TokenLogic safe are DAO-controlled. None is unvested AND "
+                "immovable AND idle",
+                references={"coingecko": (15_441_604.87, {"the Ecosystem Reserve 0x25F2…6491": 558_394.92,
+                                                          "0x…dEaD (burned, out of ours)": -0.31}),
+                            "coinmarketcap": (15_441_605.08, {"the Ecosystem Reserve 0x25F2…6491": 558_394.92,
+                                                              "0x…dEaD (burned, out of ours)": -0.31})})
+RULE_IN["Aave"].update({"read_on": "2026-11-25", "decided": _R22 + " — brief: Ecosystem Reserve circulating, off float"})
+HELD_BUYBACK_FLOAT["Aave"] = {"how": "subtract", "held": "aave_held_buyback_tokens",
+                              "why": _R22 + ": the bought AAVE sits in the AFC Safe as aAAVE (AIP 449; on chain 240,502.34 "
+                                     "on 2026-11-25), inside circulating"}
+UNLOCK_STOCKS["Aave"] = ()
+UNLOCK_DECLARED_ZERO["Aave"] = {
+    "days_of": "total_supply",
+    "source": "AaveToken.sol (13M migration + 3M reserve minted once, no vesting); the Ecosystem Reserve's streams are "
+              "paid from a wallet IN circulating (docs/r22_aave.md)",
+    "read_on": "2026-11-25", "decided": _R22}
+ARCHETYPES_R20["Aave"] = [3]
+ARCHETYPE_OFF["Aave"] = {4: "off (" + _R22 + ": 'A4 off' — no burn: totalSupply() 16,000,000, bought AAVE held)"}
+_AAVE_PAUSED = "paused since 19 Apr 2026"
+ARCHETYPE_STATUS["Aave"] = {3: _AAVE_PAUSED}
+ARCHETYPE_STATUS_WHY[("Aave", 3)] = (
+    "ARFC 'Pause AAVE Buybacks' (TokenLogic, 22 Apr 2026; Snapshot closed 1 May 2026): 'paused effective April 19, 2026'. "
+    "On chain (aave_chain, 2026-11-25): the last swap-venue fills into the Collector are 19 Apr 2026; no AAVE / aAAVE "
+    "from a swap venue into the Collector, the AFC Safe, the Ecosystem Reserve or the V4 TreasurySpoke since. Aavenomics "
+    "3.0 (announced 25 Jun 2026) has no contract or AIP yet. The label clears itself when a buy is stored "
+    "(config.STATUS_CLEARS_ON_BUYS)")
+apply_archetypes_r20()
+
+# THE PAUSED LABEL CLEARS WHEN BUYS APPEAR: the build calls refresh_status_on_buys(long) once, after the store is read;
+# a stored day after `after` with a positive buy series removes the label (and puts it back on a build without one).
+STATUS_CLEARS_ON_BUYS = {
+    "Aave": {"arch": 3, "label": _AAVE_PAUSED, "after": "2026-04-19",
+             "metrics": ("actual_buyback_tokens",), "sources_like": "aave_chain:buys"},
+}
+STATUS_CLEARED: dict = {}        # {(project, arch): the first day a buy was stored after the pause} — this build
+
+
+def refresh_status_on_buys(long) -> dict:
+    """Set or clear each STATUS_CLEARS_ON_BUYS label from the store's rows (`long`: date, project, metric, value,
+    source). Returns STATUS_CLEARED."""
+    import pandas as _pd
+    STATUS_CLEARED.clear()
+    for name, spec in STATUS_CLEARS_ON_BUYS.items():
+        arch = int(spec["arch"])
+        first = None
+        if long is not None and len(long):
+            g = long[(long["project"] == name) & (long["metric"].isin(spec["metrics"]))]
+            if spec.get("sources_like") and "source" in g:
+                g = g[g["source"].astype(str).str.startswith(spec["sources_like"])]
+            g = g[(_pd.to_datetime(g["date"]) > _pd.Timestamp(spec["after"])) & (g["value"].astype(float) > 0)]
+            if len(g):
+                first = str(_pd.to_datetime(g["date"]).min().date())
+        st = ARCHETYPE_STATUS.setdefault(name, {})
+        if first:
+            st.pop(arch, None)
+            STATUS_CLEARED[(name, arch)] = first
+        else:
+            st[arch] = spec["label"]
+    return STATUS_CLEARED
+
+
+# ---------------------------------------------------------------------------------------------------------- PYTH
+# Pyth is a project now (PROJECTS, R22): its D7-1 stock reads stay stored by token_metrics.read_pyth_stocks under their
+# own names; nothing of Pyth is dropped from the build any more.
+STORE_ONLY_PROJECTS = ()
+PYTH_STOCKS["token_accounts"] = tuple(PYTH_STOCKS["token_accounts"]) + (
+    # the PPR distribution wallet Douro's paying wallet funds (dossier §1.7; ATA found by getTokenAccountsByOwner
+    # 2026-11-25: 11.032 PYTH — a pass-through)
+    ("pyth_ppr_distribution_pyth_tokens", "8kE8RK1G2jwkZMPMxL7spGh9RPzUchDyejdvvBgr2Dee", _PYTH_MINT,
+     "GiipfVdYT8yH4ZDZGkVyWgWrjKkLcEgpztSkFf865hJz", "PPR distribution wallet (funded by Douro's paying wallet)"),
+)
+PYTH_CHAIN = {
+    "rpc": PYTH_STOCKS["rpc"], "rpc_min_interval_s": 0.5, "max_retry_wait_s": 30.0,
+    "epoch_seconds": 604_800,                                  # the staking program's epoch (config account)
+    "position_partitions": 256,                               # PositionData read by the owner's first byte
+    "council_pyth_account": "BTy44YBx9AVLHbKkSVLGaCBNKUpzw78W6hKy43vpeCHp",   # owner GAdn7TZh… (Council Ops vault)
+    "treasury_pyth_account": "AYBdhJU8Wao48SEDyKVRXgDRbo9SU8Thnytakof4HDDH",  # owner Gx4MBPb1… (DAO Treasury)
+    "swap_programs": ("DCA265Vj8a9CEuX1eb1LWRnDT7uK6q1xMipnNyatn23M",      # Jupiter DCA
+                      "JUP6LkbZbjS1jKKwapdHNy74zcZ3tLUZoi5QNyVTaV4",       # Jupiter aggregator v6
+                      "jupoNjAxXgZ4rjzxzPMP4oxduvQsQtZzyknqvzYNrNu",       # Jupiter limit orders v1
+                      "j1o2qRpjcyUwEvwtcfhEQefh773ZgjxcVRry7LDqg5X"),      # Jupiter limit orders v2
+    "scan_from": "2025-12-01",           # OP-PIP-87's first month (the Council's first PYTH tx: 2025-12-05)
+    "scan_budget_s": 240.0,
+    # the series the build reads, each the sum of D7-1 lines — ALL-OR-NO-ROW (metric, legs, what)
+    "sums": (
+        ("pyth_unvested_tokens", ("pyth_unvested_genesis_tokens", "pyth_unvested_other_tokens"),
+         "unvested: genesis lockup + other periodic vesting — OUT of circulating"),
+        ("treasury_holding_tokens", ("pyth_treasury_pyth_tokens", "pyth_community_council_pyth_tokens"),
+         "DAO Treasury + Community Council vault — in circulating, off the float"),
+        ("pyth_operator_tokens", ("pyth_douro_pyth_tokens", "pyth_ppr_distribution_pyth_tokens"),
+         "Douro Labs' paying wallet + the PPR distribution wallet — issuer side, off the float"),
+        ("pyth_issuer_inferred_tokens", ("pyth_funder_cewsb_pyth_tokens", "pyth_funder_e6nab_pyth_tokens"),
+         "INFERRED: the two wallets that fund Douro's paying wallet — off the float"),
+        ("pyth_held_buyback_tokens", ("pyth_council_pyth_tokens",),
+         "the Pythian Council Ops vault: bought, not yet returned — held buybacks"),
+    ),
+    "read_on": "2026-11-25",
+    # the V1 returns to the Treasury, from the Council's monthly 'PYTH Purchases Report' posts (forum category; the
+    # research dossier §1.2) — the scan's 'returned' series reconciles to these, month by month
+    "reported_returns": {"2025-12": 2_157_086.989773, "2026-01": 2_190_179.028906, "2026-02": 2_205_117.505101,
+                         "2026-03": 2_752_177.01716, "2026-04": 2_473_976.02141, "2026-05": 2_570_154.710439,
+                         "2026-06": 1_803_872.741588, "2026-07": 1_144_629.131118, "2026-08": 669_661.722734,
+                         "2026-09": 2_582_433.550131},
+}
+for _m, _lab, _kind in (
+        ("pyth_unvested_tokens", "PYTH still vesting (genesis lockup + other periodic vesting locks): out of circulating",
+         "stock"),
+        ("pyth_operator_tokens", "PYTH held by Douro Labs' paying wallet and the PPR distribution wallet (issuer side)",
+         "stock"),
+        ("pyth_issuer_inferred_tokens", "PYTH held by the two wallets that fund Douro's paying wallet — INFERRED",
+         "stock"),
+        ("pyth_held_buyback_tokens", "PYTH bought by the Pythian Council, not yet returned to the Treasury", "stock"),
+        ("pyth_buyback_returned_tokens", "PYTH returned by the Council to the DAO Treasury (held), per day", "flow")):
+    METRICS[_m] = {"label": _lab, "kind": _kind, "unit": "tokens", "archetypes": [3], "tiers": [2], "sanity_min": 0,
+                   "sanity_max": 1e10, "only_projects": ("Pyth",)}
+TOTAL_SUPPLY_ONCHAIN_FIRST["Pyth"] = {"decided_by": "Jake", "decided_on": "2026-11-25",
+                                      "why": _R22 + ": the mint's getTokenSupply (no mint authority)"}
+CIRCULATING_ONCHAIN["Pyth"] = {
+    "status": "established", "total": "total_supply", "ratios_use": "onchain",
+    "subtract": ("pyth_unvested_tokens", "treasury_holding_tokens", "pyth_operator_tokens", "pyth_issuer_inferred_tokens"),
+    "method": "the mint's supply − every unvested PYTH in the staking program's vesting accounts (genesis lockup, 379 "
+              "accounts, all released 2027-05-19 14:00 UTC; the other periodic locks, PPR and grants); the DAO, "
+              "Douro and the two funding wallets are IN circulating, off the float",
+    "decision": _R22 + ": 'Locked tokens are out of circulating.' CoinGecko and CoinMarketCap = supply − 2,125,000,000 "
+                "(the docs' last tranche), read 2026-11-25",
+}
+declare_rule_in("Pyth", ("treasury_holding_tokens", "pyth_operator_tokens", "pyth_issuer_inferred_tokens"),
+                "docs/r22_pyth.md: the Treasury is spent by OP-PIP votes; the Community Council vault is a multisig; "
+                "Douro's paying wallet pays publishers monthly; the two funders (INFERRED) moved PYTH to Douro in 2026 — "
+                "all movable, none unvested",
+                references={"coingecko": (7_874_958_541.89, {"other periodic vesting locks (PPR / grants; 896 accounts "
+                                                             "with an unvested balance)": -187_646_221.90,
+                                                             "the genesis lockup on chain above the docs' 2.125B": -29_583_334.00}),
+                            "coinmarketcap": (7_874_958_541.89, {"other periodic vesting locks": -187_646_221.90,
+                                                                 "the genesis lockup above 2.125B": -29_583_334.00})})
+RULE_IN["Pyth"].update({"read_on": "2026-11-25", "decided": _R22})
+HELD_BUYBACK_FLOAT["Pyth"] = {"how": "subtract", "held": "pyth_held_buyback_tokens",
+                              "why": _R22 + ": the Council vault's bought PYTH, inside circulating until returned to the "
+                                     "Treasury (then issuer stock, still off the float)"}
+UNLOCK_STOCKS["Pyth"] = ("pyth_unvested_tokens",)
+ARCHETYPES_R20["Pyth"] = [3]
+ARCHETYPE_OFF["Pyth"] = {2: "off (" + _R22 + ": 'Not A2: publisher emissions ended' — OIS rewards y = 0 since 22 Apr "
+                            "2026; PPR is still paid monthly from the Publisher Rewards allocation, docs/r22_pyth.md)"}
+REVENUE_TIER["Pyth"] = ("revenue", "DefiLlama's parent 'pyth' revenue = the DAO's share: Pyth Pro (Douro's transfers to "
+                                   "the DAO / Council grossed up at 60/40) + Entropy + Core; not checked line by line "
+                                   "against Douro's monthly reports (LaaS is 90/10, the adapter assumes 60/40)")
+apply_archetypes_r20()
+_stale_after_days_r22 = stale_after_days
+
+
+def stale_after_days(project_name: str, metric: str, default: int) -> int:  # noqa: F811 — R22: Pyth's weekly stake read
+    if project_name == "Pyth" and metric == "locked_tokens":
+        return 7 + 2                                     # one staking epoch (604,800 s) and two days
+    return _stale_after_days_r22(project_name, metric, default)
