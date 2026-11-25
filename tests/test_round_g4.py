@@ -406,7 +406,8 @@ def test_g4_7b_ether_fi_circulating_is_checked_on_coingeckos_basis_and_a_real_ga
     spec = config.CIRCULATING_ONCHAIN["Ether.fi"]
     assert spec["coingecko_counts"] == ("noncirculating_holding_tokens",)
     base = {"total_supply": 998_535_999, "treasury_holding_tokens": 0, "noncirculating_holding_tokens": 188_586_981,
-            "total_supply_coingecko": 965_350_000}
+            "total_supply_coingecko": 965_350_000,
+            "etherfi_team_unvested_modelled_tokens": 0}       # R22 item 1(a): the leg, zero in this case
     # ours 809,949,018 (the 10-18 row); + the wallets CoinGecko counts, on CoinGecko's own total = 965,350,000
     out = FetchOutput()
     circulating.check(out, _circ_frame("Ether.fi", {**base, "circulating_supply": 965_350_000}),
@@ -543,7 +544,8 @@ def test_g4_7b_geodnet_coingecko_still_on_its_documented_static_figure_is_record
     from fetch import circulating
     st = config.CIRCULATING_ONCHAIN["GEODNET"]["static_cross_check"]
     spec = config.CIRCULATING_ONCHAIN["GEODNET"]
-    legs = {spec["total"]: 600_000_000, **{m: 0.0 for m in spec["subtract"]}}
+    legs = {spec["total"]: 600_000_000, **{m: 0.0 for m in spec["subtract"]},
+            **{m: 0.0 for m in spec.get("add") or ()}}                     # R22 item 1(b): GEODNET's added leg
     for cg, queued in ((float(st["figure"]), False), (float(st["figure"]) * 1.03, True)):
         out = FetchOutput()
         circulating.check(out, _circ_frame("GEODNET", {**legs, "circulating_supply": cg}),

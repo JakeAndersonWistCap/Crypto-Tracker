@@ -18057,7 +18057,8 @@ def test_hyperliquid_total_burn_is_fund_plus_core_and_a4_and_a3_read_it():
     assert config.a1_burn_metric("Hyperliquid") == "total_burn_tokens"
     # R21b (Jake 2026-11-25): A4 on, scored on the Fund + the Core burns (was gross_burn_tokens, the Fund alone;
     # G7 0c keeps the HyperEVM gas burn on A1)
-    assert config.a4_burn_metric("Hyperliquid") == "burn_ex_chain_fee_tokens"
+    # R22 item 2 (Jake 2026-11-25): A4 reads every burn (was burn_ex_chain_fee_tokens, the Fund + Core)
+    assert config.a4_burn_metric("Hyperliquid") == "total_burn_tokens"
     # G11 B7: the buyback is the Fund's purchases only — the Core / gas burns were never bought
     assert config.buyback_route("Hyperliquid")["metric"] == "gross_burn_tokens"
     assert config.buyback_route("GEODNET")["metric"] == "gross_burn_tokens", "others unchanged"
@@ -27133,6 +27134,7 @@ def test_geod_residual_counts_the_solana_side_once(monkeypatch, capsys):
     rows = [dict(date=d, project="GEODNET", metric=spec["total"], value=1e9, source="x")]
     rows += [dict(date=d, project="GEODNET", metric=m, value=v, source="x")
              for m, v in zip(spec["subtract"], [68.5e6, 100e6, 315.5e6, 0, 0, 0][:len(spec["subtract"])])]
+    rows += [dict(date=d, project="GEODNET", metric=m, value=0.0, source="x") for m in spec.get("add") or ()]  # R22
 
     class FakeStore:
         def __init__(self, *a, **k):

@@ -314,7 +314,9 @@ def test_s12_on_the_built_files_a_blocked_project_is_neither_green_on_its_statem
     blocks = reader.flow_blocks_of(au, bw)
     # Plume's Q0 residual (+5.00%) blocks it; Hyperliquid's balances since its dump holds its legs' replayed history
     # (R7C.A1, Jake decision 1b) — a project that balances is never blocked
-    assert "Plume" in blocks and "Hyperliquid" not in blocks, blocks
+    # R22 (Plume lane): Plume's ecosystem / foundation unlock leg balances its Q0 (+0.15%) — no project is blocked now
+    # (was: Plume blocked at +5.00%)
+    assert "Plume" not in blocks and "Hyperliquid" not in blocks, blocks
     ws = au["Master"]
     green = str(bw.FILL_GREEN.fgColor.rgb)[-6:]
     for r in range(5, ws.max_row + 1):

@@ -52246,3 +52246,8 @@ def _load_r22_moves() -> int:
 
 
 R22_MOVES_DECLARED = _load_r22_moves()
+# ===== ROUND 22 (lead, gate): AETHIR'S FAUCET SCAN RUNS IN ITS PROJECT'S OWN EXPLORER TIER (appended after the pass
+# that stamps own_tier on every scan; the tier list and its budget follow own_tier) =====
+for _sp in PROJECT_BY_NAME["Aethir"].get("log_scans") or ():
+    if not _sp.get("own_tier"):
+        _sp["own_tier"] = scan_tier("Aethir", _sp)

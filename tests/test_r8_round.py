@@ -117,6 +117,8 @@ def test_4_the_audit_is_applied_and_every_leg_it_moves_in_is_declared():
         named = {m for m, _v, _w in p["moves_in"]}
         # Morpho's relock is audited "moves in" on the literal rule and STAYS OUT by Jake's decision
         named -= {"morpho_relocked_tokens"} if name == "Morpho" else set()
+        # R22 item 1(a) (Jake 2026-11-25): Hyperliquid's team wallet (unvested) is OUT again
+        named -= {"team_wallet_tokens"} if name == "Hyperliquid" else set()
         assert named <= declared, (name, named - declared)
     assert "morpho_relocked_tokens" not in config.rule_in_legs("Morpho")
 

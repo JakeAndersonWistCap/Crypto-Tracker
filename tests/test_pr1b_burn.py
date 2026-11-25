@@ -203,7 +203,9 @@ def test_3_issuance_and_net_dollars_are_day_priced_and_net_uses_the_burn_dollars
     assert bw.day_priced_metric("Uniswap", config.a1_burn_metric("Uniswap")) == "gross_burn_day_priced_usd"
     assert bw.day_priced_metric("Uniswap", config.issuance_basis("Uniswap")) == "gross_issuance_day_priced_usd"
     assert bw.day_priced_metric("GEODNET", config.issuance_basis("GEODNET")) == "pool_release_day_priced_usd"
-    assert bw.day_priced_metric("Hyperliquid", config.a1_burn_metric("Hyperliquid")) == "total_burn_day_priced_usd"
+    # R21b/R22: Hyperliquid's priced burn is the declared gross_burn_day_priced_usd on total_burn_tokens (A1 = A4 = every
+    # burn; was total_burn_day_priced_usd)
+    assert bw.day_priced_metric("Hyperliquid", config.a1_burn_metric("Hyperliquid")) == "gross_burn_day_priced_usd"
     for m in ("gross_issuance_day_priced_usd", "pool_release_day_priced_usd", "total_burn_day_priced_usd",
               "net_mint_monthly_day_priced_usd"):
         assert config.METRICS[m]["view_only"]

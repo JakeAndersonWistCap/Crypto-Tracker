@@ -412,7 +412,7 @@ FLOATS_20261013 = {
     "Hyperliquid": 99462452,       # A1 read 337,547,997 (issuer stock still in it); CP / A3 99,462,452
     "Aerodrome": 903043091,        # A3 "Effective float" read 963,637,222; CP 903,043,091
     "Sky": 5880380760,             # A3 "Effective float" read 5,918,161,883; CP 5,880,380,760
-    "Morpho": 426052377,           # A2 and CP 426,052,377
+    "Morpho": 510172924.88,        # R22 item 3 (the founders' relock out): was 426,052,377
     "Uniswap": 612409760,          # CP 612,409,760
     "Pendle": 143108807,           # A3 "Effective float" read 206,548,528; CP 143,108,807
     "Fluid": 77971195,             # A3 and CP 77,971,195

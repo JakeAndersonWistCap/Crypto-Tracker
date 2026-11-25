@@ -173,12 +173,14 @@ def test_1_on_the_dumps_circulating_is_total_less_the_dao_pending_and_the_float_
     does not move: 426.05M."""
     circ = _cell(morpho, "Circulating supply (tokens)")
     flt = _cell(morpho, "FREE FLOAT (tokens)")
-    assert circ == pytest.approx(1_000_000_000 - 121_200_000, abs=1)
-    assert flt == pytest.approx(547_252_376.94 - 121_200_000, abs=1)
+    # R22 item 3: the founders' relock tranche is out of the model (was 878.8M circulating / 426.05M float)
+    assert circ == pytest.approx(962_920_548, abs=1)
+    assert flt == pytest.approx(510_172_924.88, abs=1)
     assert _cell(morpho, "Free float ÷ circulating") == pytest.approx(flt / circ, rel=1e-9)
     # R20 (Jake's tags): Morpho is on the A3 tab, off A2 — the same two figures, read there (was "reader|A2 Coordination|…")
-    assert morpho["reader|A3 Revenue Buyback|Free float (tokens)"] == pytest.approx(426_052_377, abs=1)
-    assert morpho["reader|A3 Revenue Buyback|Circulating supply"] == pytest.approx(878_800_000, abs=1)
+    assert morpho["reader|A3 Revenue Buyback|Free float (tokens)"] == pytest.approx(510_172_924.88, abs=1)  # R22 (was 426,052,377)
+    # R22 item 3: the founders' relock tranche out of the model (their MIP1 awards vested 2025-06-11) — was 878,800,000
+    assert morpho["reader|A3 Revenue Buyback|Circulating supply"] == pytest.approx(962_920_548, abs=1)
     # R13: the note is formed on THIS build's switch state, taken from the build's record (was: the live module's,
     # which holds it only in the process that made the shared build — another worker reads the disk copy)
     monkeypatch.setitem(config.CIRCULATING_ONCHAIN["Morpho"]["subtract_when_complete"], "state",

@@ -289,8 +289,9 @@ def test_buying_pressure_is_every_market_buyback_annualised_over_tradeable_float
 # was Maple 0.008541006768956963, Sky 0.024434984263792533, Hyperliquid 0.01691147794146245, Pendle
 # 0.009420640711118868, Chainlink 0.005996886350660165, Near 0.002418363439991883. Re-pinned in the Round 20 gate fix on
 # the 15 dumps; the same six figures read on the pre-Round-20 build (1894183), so Round 20 moved none of them.
-BEFORE_HVY = {"Maple": 0.010720597913026847, "Sky": 0.023648788113572274, "Hyperliquid": 0.015591883176373859,  # R21b: the Fund burned (R21 held: 0.014323244030331778)
-              "Pendle": 0.01071647386102105, "Chainlink": 0.005392940384874894, "Near": 0.004504518825379258}
+BEFORE_HVY = {"Maple": 0.010720597913026847, "Sky": 0.023648788113572274, "Hyperliquid": 0.02805044524055248,  # R22 1(a): the team out of circulating (R21b: 0.015591883176373859)
+              "Pendle": 0.01071647386102105, "Chainlink": 0.007199298329454736,  # R22 1(b) applied (was 0.005392940384874894)
+              "Near": 0.004504518825379258}
 
 
 @pytest.fixture(scope="module")

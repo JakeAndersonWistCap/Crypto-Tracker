@@ -85,7 +85,8 @@ def test_0b_etherfi_safe_label_silence_check_and_no_ratio_without_a_stated_share
 # ======================================================================================== 0c HyperEVM burn is A1 only
 def test_0c_hyperevm_gas_burn_leaves_a4_and_is_added_on_a1(monkeypatch):
     import build_workbook as bw
-    assert config.a4_net_burn_metric("Hyperliquid") == "burn_ex_chain_fee_tokens"
+    # R22 item 2 (Jake 2026-11-25) rewrites 0c: A4 reads every burn, the HyperEVM gas burn included
+    assert config.a4_net_burn_metric("Hyperliquid") == "total_burn_tokens"
     assert config.a4_net_burn_metric("Sky") == config.a1_burn_metric("Sky")
     hl = config.PROJECT_BY_NAME["Hyperliquid"]
     days = ["2026-10-10", "2026-10-11", "2026-10-12"]

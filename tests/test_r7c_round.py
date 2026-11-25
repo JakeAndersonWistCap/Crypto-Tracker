@@ -124,7 +124,8 @@ def test_a1_the_two_lost_headlines_hold_values_and_hyperliquid_balances(built):
     pool = _val(built, A1, "Hyperliquid", lambda h: h.startswith("Issuer releases Q0 (tokens)"))
     # R9.2 (the rule): the team wallet is circulating, so its payouts are no release INTO circulation (they stay the
     # unlock leg, R9.3) — what enters is the staking rewards: 214,122 on the dump's stored days (was 3.8166e6)
-    assert isinstance(pool, float) and pool == pytest.approx(214_122.0, rel=0.05)
+    # R22 item 1(a): the team's unvested HYPE is out again, so its October tranche enters as a release (was 214,122)
+    assert isinstance(pool, float) and pool == pytest.approx(3_836_218.87, rel=0.05)
     nrr = _val(built, A1, "Hyperliquid", lambda h: h.startswith("NRR ON TRADING THROUGHPUT"))
     assert isinstance(nrr, float) and 0 < nrr < 0.05
     assert "Hyperliquid" not in reader.flow_blocks_of(built["audit"], bw)

@@ -195,8 +195,9 @@ def test_c1_the_foundation_and_grants_stake_is_released_and_their_spot_stays_out
     c = g[("Hyperliquid", "circulating_supply_first_party")].set_index("date")["value"]
     # R9.2 (the rule, Jake 2026-11-17): the team wallet (staked and earning) and the two wallets' spot (keyed wallets)
     # are IN circulating too — off the float (was: their spot out, the team out)
-    assert c[pd.Timestamp("2026-10-10")] == pytest.approx(302_000_000 + 237_900_000)     # raw day: + the team
-    assert c[pd.Timestamp("2026-10-12")] == pytest.approx(238_500_000 + 63_500_000 + 237_900_000)   # net day: all back
+    # R22 item 1(a): the team's unvested HYPE stays out (was + 237,900,000 on both days)
+    assert c[pd.Timestamp("2026-10-10")] == pytest.approx(302_000_000)                   # raw day
+    assert c[pd.Timestamp("2026-10-12")] == pytest.approx(238_500_000 + 63_500_000)      # net day: Foundation + Grants back
     assert pd.Timestamp("2026-10-13") not in c.index                                      # a leg missing: no value
     assert g[("Hyperliquid", "circulating_supply_first_party")]["source"].nunique() == 1  # one basis
     assert config.unlock_stock_metrics("Hyperliquid") == ("excluded_wallets_spot_tokens", "team_wallet_tokens")
@@ -237,8 +238,9 @@ def test_c4_burns_and_revenue_judge_on_hyperliquids_own_data_and_asxn_is_beside(
     cr = config.CREDIBILITY["Hyperliquid"]
     # R21b (Jake 2026-11-25): the Fund burned; A4 = the Fund + the Core burns, A1 = every burn — each judged on
     # Hyperliquid's own stocks (the Fund's listing, the zero address, the fall of totalSupply); tolerances unchanged
-    assert cr["a4_gross_burn"]["formula"] == "delta_diff_q0" and cr["a4_gross_burn"]["tol"] == 15.0
-    assert cr["a4_gross_burn"]["args"] == {"a": "af_noncirc_listed_tokens", "b": "total_supply_gross"}
+    # R22 item 2: A4 reads every burn, judged as A1 is (was delta_diff_q0 on the Fund's listing and totalSupply)
+    assert cr["a4_gross_burn"]["formula"] == cr["a1_gross_burn"]["formula"] and cr["a4_gross_burn"]["tol"] == 15.0
+    assert cr["a4_gross_burn"]["args"] == cr["a1_gross_burn"]["args"]
     assert cr["a1_gross_burn"]["formula"] == "sum_deltas_less_q0" and cr["a1_gross_burn"]["tol"] == 15.0
     assert cr["a1_gross_burn"]["args"]["metrics"] == ("af_noncirc_listed_tokens", "hyperevm_zero_address_balance")
     assert cr["a1_gross_burn"]["args"]["less"] == ("total_supply_gross",)
