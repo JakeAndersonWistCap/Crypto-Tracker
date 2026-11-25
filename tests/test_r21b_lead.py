@@ -47,3 +47,19 @@ def test_the_keyless_beacon_node_is_the_standing_source_and_beaconchain_is_not_a
     assert config.SOURCE_REGISTER["beaconcha.in"]["status"] == "NOT USED (R21b)"
     key = next(w for k, w, _t in config.ENV_KEYS if k == "BEACONCHAIN_API_KEY")
     assert key.startswith("nothing:") and "trial" not in key.lower().replace("a 30-day trial or a paid plan", "")
+
+
+def test_a_buyback_input_of_a_project_that_buys_nothing_is_na_not_missing_history():
+    """R21b: Ethereum's new A3 tab read 'MISSING [C — NEEDS HISTORY] — actual_buyback_tokens is stored from …' off the
+    stale ':as-buyback' copies; its buyback route is 'none' (nothing is bought), so the cell is N/A by that decision."""
+    import pandas as pd
+    import coverage_audit as ca
+    g = pd.DataFrame({"date": pd.date_range("2026-08-25", "2026-09-27"), "value": 1.0})
+    row = {"Project": "Ethereum", "Tab": "A3 Revenue Buyback", "Column": "Net absorption Q0 (tokens)",
+           "Reason / route / error": "actual_buyback_tokens (q0) covers 34 days", "Formula as built": ""}
+    cls, why = ca.missing_class(row, None, {("Ethereum", "actual_buyback_tokens"): g}, pd.Timestamp("2026-10-13"))
+    assert cls == "N/A" and "NOTHING IS BOUGHT" in why
+    # a project that does buy keeps the history class
+    row2 = dict(row, Project="Pendle")
+    cls2, _ = ca.missing_class(row2, None, {("Pendle", "actual_buyback_tokens"): g}, pd.Timestamp("2026-10-13"))
+    assert cls2 != "N/A"

@@ -917,6 +917,12 @@ def missing_class(row: dict, gap: dict | None = None, groups: dict | None = None
     na = declared_not_applicable(proj, named)
     if na:
         return "N/A", na
+    # R21b (lead): a buyback input of a project whose buyback route is 'none' (nothing is bought — Ethereum's EIP-1559
+    # burn, decided 2026-09-28) is N/A by that decision: the Data rows already read n/a, and stored copies from before
+    # the decision (':as-buyback') are never history the calendar brings
+    bb = [m for m in named if m in tuple(cfg.BUYBACK_METRICS) + tuple(cfg.BUYBACK_SPLIT_METRICS)]
+    if bb and proj in cfg.PROJECT_BY_NAME and cfg.buyback_route(proj)["route"] == "none":
+        return "N/A", f"{', '.join(bb)}: {cfg.buyback_route(proj)['reason'][:200]}"
     text = " ".join(str(x or "") for x in (why, (gap or {}).get("reason"), (gap or {}).get("suggestion"))).lower()
     # an input the cell says has NO ROWS at all is not history the calendar brings: that one decides (D / E below)
     unstored = [m for m, _w in re.findall(r"\b([a-z][a-z0-9_]+) \((now|m1|q[0-4])\): no rows stored", why)
