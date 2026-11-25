@@ -235,16 +235,17 @@ def test_b3a_the_foundation_accounts_are_in_circulating_and_only_idle_locked_is_
     bw._near_lockup_views(g)
     s = g[("Near", "circulating_supply_lockup_rule")].set_index("date")
     assert s.loc["2026-11-17", "value"] == pytest.approx(total - locked)
-    assert "not read" in s.loc["2026-11-17", "source"]
-    # the staked part of LOCKED earns: it is in; only the idle part is out
+    assert "R22" in s.loc["2026-11-17", "source"]                   # R22 (was: "not read")
+    # R22 (Jake 2026-11-25, item 1a): LOCKED is out, staked or not — the staked part is reported, never counted
+    # (was R10.B3b: total − (locked − 1_200_000.0))
     g = _circ_groups(staked=1_200_000.0)
     bw._near_lockup_views(g)
     s = g[("Near", "circulating_supply_lockup_rule")].set_index("date")
-    assert s.loc["2026-11-17", "value"] == pytest.approx(total - (locked - 1_200_000.0))
-    # a staked figure above LOCKED can never push circulating above the total
+    assert s.loc["2026-11-17", "value"] == pytest.approx(total - locked)
+    # a staked figure above LOCKED changes nothing: R22 leaves all of LOCKED out (was R10.B3b: capped at the total)
     g = _circ_groups(staked=5_000_000.0)
     bw._near_lockup_views(g)
-    assert g[("Near", "circulating_supply_lockup_rule")]["value"].max() == pytest.approx(total)
+    assert g[("Near", "circulating_supply_lockup_rule")]["value"].max() == pytest.approx(total - locked)
     # a staked row from ANOTHER read is not this read's: all of LOCKED stays out
     g = _circ_groups(staked=1_200_000.0)
     g[("Near", "near_lockup_locked_staked_tokens")] = _g("near_lockup_locked_staked_tokens", ["2026-11-05"], 1_200_000.0)
@@ -271,7 +272,8 @@ def test_b3a_every_basis_the_circulating_view_writes_is_a_declared_handover_poin
         g = _circ_groups(**kw)
         bw._near_lockup_views(g)
         seen |= {trajectory.basis_of(m, s) for s in g[("Near", m)]["source"]}
-    assert len(seen) == 4 and seen <= mg._declared("Near", m), seen - mg._declared("Near", m)
+    # R22: a read with or without its staked part is one basis now (was 4 points seen)
+    assert len(seen) == 3 and seen <= mg._declared("Near", m), seen - mg._declared("Near", m)
     decl = config.declared_handover("Near", m)
     assert decl["declared"] == "2026-11-18" and decl["composition_change"].startswith("WIDENS")
 

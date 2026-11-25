@@ -97,9 +97,11 @@ def test_c_the_figure_in_use_still_names_only_the_series_but_its_basis_is_the_po
     by_day = dict(zip(days, [bw._circ_basis_name(b) for b in basis]))
     names = config.NEAR_CIRC_SEAM["points"]
     assert by_day[pd.Timestamp("2026-10-10")] == names[list(names)[1]]       # NEAR's own table + the two accounts
-    assert by_day[pd.Timestamp("2026-10-11")] == by_day[pd.Timestamp("2026-11-18")] == names[list(names)[2]]
-    assert by_day[pd.Timestamp("2026-11-19")] == names[list(names)[3]]       # the final rule, from the staked read
-    assert len(set(names.values())) == 4 == len(config.NEAR_CIRC_RULE_POINTS)
+    # R22 (Jake 2026-11-25, item 1a): every lockup read is one basis — all of LOCKED out, staked or not (was R13: the
+    # 2026-10-11..11-18 reads on point 2, the staked read of 11-19 on point 3)
+    assert by_day[pd.Timestamp("2026-10-11")] == by_day[pd.Timestamp("2026-11-18")] == names[list(names)[4]]
+    assert by_day[pd.Timestamp("2026-11-19")] == names[list(names)[4]]
+    assert len(set(names.values())) == 5 == len(config.NEAR_CIRC_RULE_POINTS)          # R22 (was 4)
     # a project that declares no such series keeps its row's own source as its basis
     assert bw._circ_used_basis(g, "Uniswap", days[:2], ["a", "b"]) == ["a", "b"]
 
@@ -111,7 +113,8 @@ def test_c_the_net_supply_change_leaves_both_steps_out_and_loses_no_day(built):
     raw = circ[ASOF] - circ[lo]
     # the two seams, each measured on both bases on its own day
     steps = {d: st for d, _a, _b, st in bw.CIRC_SEAM_STEPS["Near"]}
-    assert steps[pd.Timestamp("2026-11-19")] == pytest.approx(1_084_000.0)                   # the staked part, counted in
+    # R22: the staked part is never counted in, so 2026-11-19 is no seam (was R13: a step of +1,084,000 that day)
+    assert set(steps) == {pd.Timestamp("2026-10-11")}
     assert steps[pd.Timestamp("2026-10-11")] == pytest.approx(_own_locked("2026-10-11") - 2_155_000.0)   # −15,000
     q0 = chg[(chg.index > lo) & (chg.index <= ASOF)]
     assert len(q0) == 90 and not bw.CIRC_CHANGE_GAPS["Near"]                 # every day dated: nothing is a gap
@@ -131,7 +134,7 @@ def test_c_with_the_link_switched_off_a_seam_day_holds_no_change_and_the_window_
     monkeypatch.setitem(config.NEAR_CIRC_SEAM, "link_net_supply_change", False)
     g = built()
     chg = _s(g, "circulating_change_tokens")
-    seams = [pd.Timestamp("2026-10-11"), pd.Timestamp("2026-11-19")]
+    seams = [pd.Timestamp("2026-10-11")]                    # R22: one seam (was + 2026-11-19)
     assert not any(d in chg.index for d in seams)
     assert [d for d, _why in bw.CIRC_CHANGE_GAPS["Near"]] == seams and not bw.CIRC_SEAM_STEPS["Near"]
     assert chg[chg.index >= pd.Timestamp("2026-10-01")].abs().max() < 200_000.0   # no 1,084,000 step on any day
@@ -140,12 +143,12 @@ def test_c_with_the_link_switched_off_a_seam_day_holds_no_change_and_the_window_
 def test_c_before_the_first_staked_reading_nothing_is_restated_and_the_staked_part_is_never_0_under_the_rule(built):
     g = built()
     rule = g[("Near", "circulating_supply_lockup_rule")].set_index("date")
-    for day, locked, _st in READS[:-1]:
+    # R22: every read leaves all of LOCKED out — with or without its staked part (was R13: the staked read of the as-of
+    # day counted its staked part in, total − (1_872_000.0 − 1_084_000.0))
+    for day, locked, _st in READS:
         row = rule.loc[pd.Timestamp(day)]
-        assert row["value"] == pytest.approx(_total(day) - locked)           # all of LOCKED out: an upper bound
-        assert "its staked part is not read yet" in row["source"] and "idle LOCKED" not in row["source"]
-    last = rule.loc[ASOF]
-    assert last["value"] == pytest.approx(_total(ASOF) - (1_872_000.0 - 1_084_000.0)) and "idle LOCKED" in last["source"]
+        assert row["value"] == pytest.approx(_total(day) - locked)
+        assert "R22" in row["source"] and "idle LOCKED" not in row["source"]
 
 
 def test_c_a_later_read_without_its_staked_part_is_a_gap_never_a_change(monkeypatch):
@@ -161,9 +164,11 @@ def test_c_a_later_read_without_its_staked_part_is_a_gap_never_a_change(monkeypa
     bw._market_cap_views(g)
     bw._circulating_change_views(g, asof)
     chg = _s(g, "circulating_change_tokens")
-    assert pd.Timestamp("2026-11-14") not in chg.index and pd.Timestamp("2026-11-05") in chg.index
-    assert [d for d, _why in bw.CIRC_CHANGE_GAPS["Near"]] == [pd.Timestamp("2026-11-14")]
-    assert pd.Timestamp("2026-11-14") not in _s(g, REL).index
+    # R22: a read with its staked part and one without are the same basis — no gap, the change is formed (was R13:
+    # 2026-11-14 a gap, never a change)
+    assert pd.Timestamp("2026-11-14") in chg.index and pd.Timestamp("2026-11-05") in chg.index
+    assert pd.Timestamp("2026-11-14") not in [d for d, _why in bw.CIRC_CHANGE_GAPS["Near"]]
+    assert _s(g, REL)[pd.Timestamp("2026-11-14")] == pytest.approx(1_971_000.0 - 1_908_000.0)
 
 
 # ============================================================================ (a) the lockup contracts' net release
@@ -217,9 +222,10 @@ def test_a_the_quarter_of_the_handovers_reads_a_series_break_with_each_step_and_
     leg = next(k for k in by if "lockup contracts" in k)
     assert q(leg, "Q0") == pytest.approx(255_000.0 + 283_000.0)              # no step in the release leg
     resid, status = q("Residual (closing − expected)", "Q0"), str(q("Status", "Q0"))
-    assert resid == pytest.approx(1_084_000.0 - 15_000.0, abs=1.0)           # the two steps, and nothing else
+    # R22: one step (was R13: the two steps, 1_084_000.0 − 15_000.0)
+    assert resid == pytest.approx(-15_000.0, abs=1.0)
     assert status.startswith("CHECK") and "SERIES BREAK" in status
-    assert "+1,084,000" in status and "-15,000" in status and "2026-11-19" in status and "2026-10-11" in status
+    assert "-15,000" in status and "2026-10-11" in status and "+1,084,000" not in status
     # a quarter with no handover inside names none
     assert "SERIES BREAK" not in str(q("Status", "Q-1"))
 

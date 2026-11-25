@@ -6314,7 +6314,9 @@ def _released_staked_views(groups: dict) -> None:
         if name in config.RULE_IN:
             # R9.2 (the rule, Jake 2026-11-17): the team wallet (unvested, but staked and earning) and the two
             # wallets' spot (keyed wallets the Foundation can move) are circulating too — off the float (RULE_IN)
-            val = val + spot + team.reindex(idx)
+            # R22 (Jake 2026-11-25, item 1a): the team wallet's HYPE is unvested — OUT of circulating until it vests,
+            # staked or not; it is added only while the rule lists it as a leg (config.RULE_IN)
+            val = val + spot + (team.reindex(idx) if spec["team"] in config.rule_in_legs(name) else 0.0)
             point = spec["rule_point"]
         cols = groups[key].columns
         groups[key] = _as_stored(pd.DataFrame(
@@ -6443,6 +6445,11 @@ def _near_lockup_views(groups: dict) -> None:
                 all_out = (f"derived:circulating_lockup_rule[total_supply − LOCKED (its staked part is not read "
                            f"yet: all of LOCKED left out, at most LOCKED too low); lockup.near + contributors.near "
                            f"in circulating (the rule, R10.B3), lockups read {read[0].date()}]")
+                r22 = (config.RULE_IN.get(name) or {}).get("locked_all_out")
+                if r22:
+                    # R22 (Jake 2026-11-25, item 1a): LOCKED is not yet vested or released — OUT, staked or not (the
+                    # staked part is reported, never counted: config.NEAR_R22_LOCKED_STAKED)
+                    all_out, staked = f"derived:circulating_lockup_rule[{r22}, lockups read {read[0].date()}]", None
                 other = {}
                 if staked is None:
                     vals.append(float(total[d]) - read[1])
@@ -15870,8 +15877,11 @@ def _cp_cols(R: Refs, data_by_key: dict) -> list[tuple]:
                        and config.circulating_primary_metric(p["name"]) in ("circulating_supply_onchain",)
                        # R7.C1: the Foundation + Grants STAKE is insider-held and inside circulating (released)
                        # R9.2: under the rule the team wallet and the two wallets' spot are inside circulating too
+                       # R22: + the team wallet only while the rule counts it in (its unvested HYPE is out since R22)
                        else calc(f"({R.D(r, config.CIRC_RELEASED_STAKED[p['name']]['held'], 'now')}"
-                                 f"+{R.D(r, config.CIRC_RELEASED_STAKED[p['name']]['team'], 'now')})"
+                                 + (f"+{R.D(r, config.CIRC_RELEASED_STAKED[p['name']]['team'], 'now')}"
+                                    if config.CIRC_RELEASED_STAKED[p['name']]['team'] in config.rule_in_legs(p['name'])
+                                    else "") + ")"
                                  f"/({circ(r, p)})") if (p["name"] in config.CIRC_RELEASED_STAKED
                                                          and p["name"] in config.RULE_IN)
                        else calc(f"({R.D(r, config.CIRC_RELEASED_STAKED[p['name']]['held'], 'now')}"

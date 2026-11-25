@@ -348,7 +348,8 @@ def test_4_the_figures_are_untouched_idle_locked_out_staked_locked_in(monkeypatc
     rows = nlw.rows_for(got, pd.Timestamp("2026-11-19")).set_index("metric")["value"]
     assert rows["near_lockup_locked_tokens"] == locked and rows["near_lockup_locked_staked_tokens"] == staked
     assert rows["near_lockup_unvested_tokens"] == 1_823_913.65 and len(rows) == 3
-    # what the build makes of them: circulating = total − idle LOCKED; the staked part is NOT subtracted
+    # what the build makes of them — R22 (Jake 2026-11-25, item 1a): circulating = total − LOCKED, staked or not (was
+    # R10.B3b: total − idle LOCKED, the staked part not subtracted)
     monkeypatch.setattr(bw, "_SCOPE", [NEAR])
     total = 1_312_113_606.0
     day = ["2026-11-19"]
@@ -359,8 +360,8 @@ def test_4_the_figures_are_untouched_idle_locked_out_staked_locked_in(monkeypatc
          ("Near", "near_foundation_accounts_tokens"): _g("near_foundation_accounts_tokens", day, 171_059.13)}
     bw._near_lockup_views(g)
     circ = g[("Near", "circulating_supply_lockup_rule")]
-    assert float(circ["value"].iloc[-1]) == pytest.approx(total - 788_417.85, abs=0.01)
-    assert "idle LOCKED" in circ["source"].iloc[-1]
+    assert float(circ["value"].iloc[-1]) == pytest.approx(total - locked, abs=0.01)    # was total − 788,417.85
+    assert "R22" in circ["source"].iloc[-1]
     # the staked part leaves the FLOAT through the validators' stake, not through the off-float legs (never twice)
     assert config.RULE_IN["Near"]["locked_staked"] == "near_lockup_locked_staked_tokens"
     assert "near_lockup_locked_staked_tokens" not in config.RULE_IN["Near"]["off_float"]
@@ -369,4 +370,4 @@ def test_4_the_figures_are_untouched_idle_locked_out_staked_locked_in(monkeypatc
     bw._near_lockup_views(g)
     circ = g[("Near", "circulating_supply_lockup_rule")]
     assert float(circ["value"].iloc[-1]) == pytest.approx(total - locked, abs=0.01)
-    assert "its staked part is not read yet" in circ["source"].iloc[-1]
+    assert "R22" in circ["source"].iloc[-1]                     # R22 (was: "its staked part is not read yet")

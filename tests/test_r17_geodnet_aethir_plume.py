@@ -30,7 +30,12 @@ def _legs() -> dict:
     return by
 
 
-LIVE = {"total_supply_gross": READ["total"], "burn_address_balance": sum(READ["burned"].values()), **_legs()}
+# R22: the Ecosystem Safe's own read (the same wallet as inside treasury_holding_tokens), added back
+ECO = 43_022_654.0
+LIVE = {"total_supply_gross": READ["total"], "burn_address_balance": sum(READ["burned"].values()), **_legs(),
+        "ecosystem_holding_tokens": ECO}
+MINING_POT = 89_000_000.0 + 1_063_344.64           # R22 (b): the Mining Safe + the Mining distribution wallet, OUT
+OURS_R22 = READ["ours"] - MINING_POT              # 836,152,717.87 on 2026-11-23
 
 
 # =========================================================================== R17.1 GEODNET on the rule
@@ -38,8 +43,15 @@ def test_1_every_subtracted_wallet_can_be_moved_so_the_rule_counts_it_in():
     assert len(READ["wallets"]) == 7
     for role, _addr, _tokens, who, metric in READ["wallets"]:
         assert "2-of-3" in who or "one key" in who, role                    # a Safe's signers or a key: movable
-        assert metric in config.rule_in_legs(G), role
-    assert set(config.RULE_IN[G]["off_float"]) == set(config.rule_in_legs(G))   # in circulating, OFF the float
+        if role.startswith("Mining"):
+            # R22 (Jake 2026-11-25, item 1b): the Mining pot is the unreleased reserve — OUT (was R17: counted in)
+            assert metric == "treasury_holding_tokens" and metric not in config.rule_in_legs(G), role
+        elif role == "Ecosystem":
+            assert "ecosystem_holding_tokens" in config.CIRCULATING_ONCHAIN[G]["add"], role   # R22: added back
+        else:
+            assert metric in config.rule_in_legs(G), role
+    # in circulating, OFF the float (R22: the Ecosystem by its own series; was the two rule legs)
+    assert config.RULE_IN[G]["off_float"] == ("ecosystem_holding_tokens", "noncirculating_holding_tokens")
     # the legs stay the project's issuer-side set (the unlock legs and the references still read them)
     assert set(config.rule_in_legs(G)) <= set(config.CIRCULATING_ONCHAIN[G]["subtract"])
     assert config.UNLOCK_STOCKS[G] == ("noncirculating_holding_tokens", "ecosystem_holding_tokens")   # R9.3: unchanged
@@ -48,11 +60,12 @@ def test_1_every_subtracted_wallet_can_be_moved_so_the_rule_counts_it_in():
 def test_1_circulating_is_total_less_the_burn_only():
     h = _h(LIVE)
     ours = circ.series(h, G).iloc[-1]
-    assert ours == pytest.approx(READ["total"] - sum(READ["burned"].values()), abs=1e-6)
-    assert ours == pytest.approx(READ["ours"], abs=1.0)                      # 926,216,062.51
-    # the old basis is the like-for-like figure (rule=False): what Jake's store read on 2026-11-23, to the token
-    assert circ.series(h, G, rule=False).iloc[-1] == pytest.approx(READ["ours_before"], abs=1.0)
-    assert config.RULE_IN[G]["circulating"] == (524_985_588, 926_216_062.51)
+    # R22: total − burned − the Mining pot (was R17: total − burned = 926,216,062.51)
+    assert ours == pytest.approx(READ["total"] - sum(READ["burned"].values()) - MINING_POT, abs=1e-6)
+    assert ours == pytest.approx(OURS_R22, abs=1.0)
+    # the like-for-like figure (rule=False): R17's old basis + the Ecosystem added back
+    assert circ.series(h, G, rule=False).iloc[-1] == pytest.approx(READ["ours_before"] + ECO, abs=1.0)
+    assert config.RULE_IN[G]["circulating"] == (930_406_064, 834_982_730)   # R22 on the dump (was R17 on 11-23)
     # burned stays out of circulating AND of total
     assert config.classify_position(burned=True)["in_total"] is False
     assert "burn_address_balance" in config.CIRCULATING_ONCHAIN[G]["subtract"]
@@ -60,9 +73,9 @@ def test_1_circulating_is_total_less_the_burn_only():
 
 
 def test_1_the_float_does_not_move():
-    legs = _legs()
+    legs = {**_legs(), "ecosystem_holding_tokens": ECO}
     old_float_base = READ["ours_before"]                                      # circulating before, nothing more off it
-    new_float_base = READ["ours"] - sum(legs[m] for m in config.RULE_IN[G]["off_float"])
+    new_float_base = OURS_R22 - sum(legs[m] for m in config.RULE_IN[G]["off_float"])   # R22: still the same float
     assert new_float_base == pytest.approx(old_float_base, abs=1.0)
 
 
@@ -78,7 +91,7 @@ def test_2_the_gap_to_coingecko_is_named_by_wallet_to_the_token():
     assert cg["total"] == pytest.approx(READ["ours"], abs=0.01)              # CoinGecko's total = ours under the rule
     assert cg["circulating"] + sum(cg["leaves_out"].values()) == pytest.approx(READ["ours"], abs=0.01)
     ref, named = config.RULE_IN[G]["references"]["coingecko"]
-    assert ref + sum(named.values()) == pytest.approx(READ["ours"], abs=0.01)
+    assert ref + sum(named.values()) == pytest.approx(OURS_R22, abs=0.01)    # R22 (was READ["ours"])
     # the gap Jake's store showed (ours before − CoinGecko), by wallet: far inside the 2% asked for
     og = READ["old_gap"]
     gap = cg["circulating"] - READ["ours_before"]
@@ -91,7 +104,7 @@ def test_2_the_daily_check_logs_the_declared_difference_and_reviews_a_figure_off
     p = config.PROJECT_BY_NAME[G]
     cg = READ["coingecko"]["circulating"]
     d = circ.rule_basis_difference(_h(LIVE), G, cg, pd.Timestamp(DAY))
-    assert d and abs(d["diff"]) < 1e-6 and d["ours_rule"] == pytest.approx(READ["ours"], abs=1.0)
+    assert d and abs(d["diff"]) < 1e-6 and d["ours_rule"] == pytest.approx(OURS_R22, abs=1.0)   # R22
     out = FetchOutput()
     circ.check(out, _h({**LIVE, "circulating_supply": cg}), [p])
     assert not [r for r in out.review if r["reason"] == "onchain_vs_coingecko"]
@@ -100,9 +113,10 @@ def test_2_the_daily_check_logs_the_declared_difference_and_reviews_a_figure_off
     out = FetchOutput()
     circ.check(out, _h({**LIVE, "circulating_supply": 600_000_000.0}), [p])
     assert [r for r in out.review if r["reason"] == "onchain_vs_coingecko"]
-    # the wallets moved by more than the tolerance (the Mining Safe paid out 30M): reviewed again, never absorbed
+    # the wallets moved by more than the tolerance (R22: the Ecosystem Safe paid out 30M — a Mining payout now enters
+    # ours as new supply, so it is no longer the example): reviewed again, never absorbed
     moved = {**LIVE, "treasury_holding_tokens": LIVE["treasury_holding_tokens"] - 30_000_000.0,
-             "circulating_supply": cg + 30_000_000.0}
+             "ecosystem_holding_tokens": ECO - 30_000_000.0, "circulating_supply": cg + 30_000_000.0}
     out = FetchOutput()
     circ.check(out, _h(moved), [p])
     assert [r for r in out.review if r["reason"] == "onchain_vs_coingecko"]
@@ -125,7 +139,8 @@ def test_2_credibility_judges_the_rule_figure_like_for_like(tmp_path, monkeypatc
     # the free float is the figure it was on the dump (513,407,599.81); the retirement rate now divides by the rule's
     # circulating (was 0.0770 on total − burned − the seven wallets)
     assert float(o["a2_free_float"]["ours"]) == pytest.approx(513_407_599.81, rel=1e-6)
-    assert float(o["a3_circ_retirement"]["ours"]) == pytest.approx(0.04274, abs=5e-5)
+    # R22: divided by the circulating without the Mining pot (was R17: 0.04274)
+    assert float(o["a3_circ_retirement"]["ours"]) == pytest.approx(0.0476234, abs=5e-5)
 
 
 # =========================================================================== R17.3 Plume's RWA read

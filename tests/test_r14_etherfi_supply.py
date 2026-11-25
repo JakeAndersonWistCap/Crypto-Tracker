@@ -40,21 +40,26 @@ def test_1_circulating_is_the_total_supply(scoped):
                    _frame("treasury_holding_tokens", [(d, 0.0) for d in days]),
                    _frame("noncirculating_holding_tokens", [(d, 187_838_959.0) for d in days])])
     s = circ.series(h, EF)
-    assert list(s.values) == [998_535_999.0, 998_535_999.0]               # nothing subtracted: circulating = total
+    # R22 (Jake 2026-11-25, item 1a): the unvested team leg (MODELLED, 6/36 of 214.7M on the dump) is OUT — the run-time
+    # series forms it from the schedule (was R14.1: [998_535_999.0, 998_535_999.0], nothing subtracted)
+    assert list(s.values) == pytest.approx([998_535_999.0 - 35_783_333.33] * 2, abs=0.01)
     # the like-for-like figure (rule=False) still leaves the legs out — what a reference that leaves them out is set against
-    assert circ.series(h, EF, rule=False).iloc[-1] == pytest.approx(998_535_999 - 187_838_959.0)
+    assert circ.series(h, EF, rule=False).iloc[-1] == pytest.approx(998_535_999 - 187_838_959.0 - 35_783_333.33,
+                                                                     abs=0.01)
     spec = config.RULE_IN[EF]
-    assert spec["circulating"] == (810_696_040, 998_535_999)
+    assert spec["circulating"] == (998_535_999, 962_752_666)           # R22 (was R14.1: (810_696_040, 998_535_999))
     assert spec["reference_leaves_out"] is False                          # CoinGecko counts the total (2026-11-19)
     ref, legs = spec["references"]["coinmarketcap"]
     assert ref + sum(legs.values()) == spec["circulating"][1]             # the CMC gap named to the token
-    assert spec["references"]["coingecko"] == (998_535_999, {})
+    ref, legs = spec["references"]["coingecko"]                          # R22 (was (998_535_999, {}))
+    assert ref == 998_535_999 and ref + sum(legs.values()) == spec["circulating"][1]
     assert "declared handover" in config.circulating_rule_note(EF).lower()
 
 
 def test_1_the_burn_is_out_of_total_and_circulating():
-    # 1,000,000,000 minted once − 1,464,001 burned = the on-chain totalSupply the rule takes as circulating
-    assert 1_000_000_000 - 1_464_001 == config.RULE_IN[EF]["circulating"][1]
+    # 1,000,000,000 minted once − 1,464,001 burned = the on-chain totalSupply; R22: less the unvested team leg on the
+    # dump (35,783,333) = circulating (was R14.1: the totalSupply itself)
+    assert 1_000_000_000 - 1_464_001 - 35_783_333 == config.RULE_IN[EF]["circulating"][1]
     assert config.classify_position(burned=True) == {"circulating": False, "in_total": False, "off_float": True,
                                                      "why": "burned"}
 
@@ -88,9 +93,10 @@ def test_1b_the_team_leg_is_derived_per_day_and_labelled_modelled(scoped):
 # =========================================================================== R14.1 off the float, not off circulating
 def test_1_the_off_float_legs_leave_the_float_only(scoped):
     spec = config.RULE_IN[EF]
-    assert spec["off_float"] == ("treasury_holding_tokens", "noncirculating_holding_tokens",
-                                 "etherfi_team_unvested_modelled_tokens")
-    assert "etherfi_team_unvested_modelled_tokens" not in config.rule_in_legs(EF)      # never subtracted from circulating
+    # R22: the modelled team leg is OUT of circulating (subtracted), so it no longer leaves the float on its own (was
+    # R14.1: off_float = the two legs + the modelled leg)
+    assert spec["off_float"] == ("treasury_holding_tokens", "noncirculating_holding_tokens")
+    assert "etherfi_team_unvested_modelled_tokens" in config.CIRCULATING_ONCHAIN[EF]["subtract"]
     days = ["2026-11-18", "2026-11-19"]
     groups = {(EF, "total_supply"): _frame("total_supply", [(d, 998_535_999) for d in days]),
               (EF, "treasury_holding_tokens"): _frame("treasury_holding_tokens", [(d, 0.0) for d in days]),
@@ -99,9 +105,9 @@ def test_1_the_off_float_legs_leave_the_float_only(scoped):
     bw._schedule_lock_leg_views(groups)
     bw._rule_in_views(groups)
     off = bw._daily(groups[(EF, "rule_in_off_float_tokens")])
-    assert off["2026-11-19"] == pytest.approx(182_710_017 + 23_855_555.6, abs=1)
-    # the pack's float: total − stake − issuer − the modelled team leg = 653,939,368 (65.5% of total)
-    assert 998_535_999 - 138_031_058 - off["2026-11-19"] == pytest.approx(653_939_368, abs=1)
+    assert off["2026-11-19"] == pytest.approx(182_710_017, abs=1)      # R22 (was 182_710_017 + 23_855_555.6)
+    # the pack's float, unchanged: (total − the modelled team leg) − stake − issuer = 653,939,368 (65.5% of total)
+    assert 998_535_999 - 23_855_555.6 - 138_031_058 - off["2026-11-19"] == pytest.approx(653_939_368, abs=1)
     # decision 3: the vested custody holdings are in the float — the insider share beside it, never subtracted
     assert "etherfi_insider_custody_tokens" not in spec["off_float"]
     assert "etherfi_insider_custody_tokens" in config.INSIDER_INSIDE_CIRCULATING[EF]["held"]

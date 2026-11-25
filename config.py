@@ -51565,3 +51565,256 @@ NOT_VERIFIED.setdefault("Plume", []).append(
                  "docs.plume.org/plume/llms-full.txt, plume.org/blog/q3report, explorer.plume.org labels "
                  "(docs/r19_plume_brief.md 'Could not verify': no published wallets) — no insider wallet named",
      "read_on": "2026-11-23", "decided": R22_PLUME["decided"] + " — Jake to review (R17: every entry is his)"})
+
+
+
+# =====================================================================================================================
+# ===== R22 — CIRC: CIRCULATING LINED UP WITH THE INDUSTRY ON JAKE'S RULE (Jake 2026-11-25, item 1; CIRC lane) =====
+# Jake, verbatim: "Circulating supply: line up with the industry, on Jake's rule. HYPE reads 539.76M against CoinGecko's
+# ~222M and CMC's ~252M. Fix it: a. Core-contributor HYPE (238M, monthly vesting from 29 Nov 2025 to 2027–28) is out of
+# circulating until it vests. Unvested tokens can't be staked. Confirm each team wallet's locked and unlocked balance via
+# api.hyperliquid.xyz. If any unvested balance shows as staked, report it; don't count it. b. The future-emissions and
+# community-rewards pot (~388.9M) is out of circulating. It's an unreleased emissions reserve, treated like unminted
+# supply. HYPE paid out of it (staking rewards) counts as new supply on the day it's paid. c. Hyper Foundation (60M) and
+# community grants (3M) are circulating, off the float, as issuer holdings. d. The Assistance Fund stays burned (R21b).
+# e. Report HYPE's circulating against CoinGecko and CMC afterwards, naming every gap over 2% by wallet. Then sweep all
+# 15 projects [...] Apply (a) and (b) the same way everywhere, including GEODNET's subtracted-wallet basis, and declare
+# every move."
+# THE READING (the simplest): (a) tokens NOT YET VESTED under a published vesting / release schedule are OUT of
+# circulating until they vest, whoever holds the key and whether or not they are staked (a staked unvested balance is
+# reported, never counted); (b) an UNRELEASED RESERVE (a pre-minted pot that pays rewards / emissions, or that the issuer
+# releases on a published schedule) is OUT, like unminted supply, and what it pays is new supply the day it is paid — a
+# distribution pipe the reserve has already paid into is released; (c) everything else the rule counts in (treasuries,
+# foundations, issuer holdings, locks that earn) stays IN, off the float — reported, not changed.
+# The full table: docs/r22_circulating.md. SPEC "Round 22 — circulating on Jake's rule". Tests: tests/test_r22_circ.py.
+# =====================================================================================================================
+_R22C_DECIDED = "Jake 2026-11-25 (R22 item 1)"
+_R22C_READ = "2026-11-25"
+
+# --- 1. HYPERLIQUID ---------------------------------------------------------------------------------------------------
+# (a) The team wallet 0x43e9abea… is the core-contributor allocation (genesis 238,000,000 HYPE, 2024-11-29; tokenDetails
+# lists it in nonCirculatingUserBalances). Read 2026-11-25 ~12:00 UTC, api.hyperliquid.xyz/info:
+#   spotClearinghouseState: 0.00327328 HYPE spot; delegatorSummary: delegated 238,360,840.8724812, undelegated 0, no
+#   pending withdrawal; delegations: 23 validators, every lockedUntilTimestamp 2026-06-07 16:57 UTC (the delegation
+#   lock has expired: "unlocked" as staking goes). The API exposes NO vesting state: no call splits the wallet into
+#   vested and unvested. The wallet has paid out 9,722,176 HYPE since 2025-11 (userNonFundingLedgerUpdates: undelegate,
+#   then spotTransfer to 132 addresses, mostly on the 6th-7th of a month) — the vested tranches; what it still holds is
+#   the allocation not yet paid out, ALL OF IT STAKED. Reported, not counted: the whole wallet is OUT of circulating, as
+#   tokenDetails itself counts it; each payout is the vested tranche entering circulation (an unlock, R9.3).
+# (b) The pot: genesis 0xdddd…dddd 428,062,211.29 = the 38.888% future-emissions + community-rewards allocation
+#   (388,880,000) + the genesis distribution's unallocated rest (310M − 270,937,788.71 airdropped + the HIP-2 0.12M =
+#   39,182,211). It is tokenDetails.futureEmissions (409,635,985.37 today: 18,426,226 paid as staking rewards since
+#   genesis), no wallet, idle — OUT of circulating already (it is outside tokenDetails.circulatingSupply); its payouts
+#   are emissions_tokens (the daily fall of futureEmissions): new supply the day paid. No change of value.
+# (c) Hyper Foundation 0xd57ecca4… 60,663,959.56 staked (+0.00000044 spot) and Community Grants 0xa20fcfa0…
+#   2,875,904.21 staked + 105,001.00 spot: IN circulating (they are inside tokenDetails.circulatingSupply), off the float.
+# (d) The Assistance Fund stays burned (R21b, untouched).
+HYPERLIQUID_R22 = {
+    "read_on": _R22C_READ, "decided": _R22C_DECIDED,
+    "api": "https://api.hyperliquid.xyz/info (tokenDetails 0x0d01dc56dcaaca66ad901c959b4011ec, spotClearinghouseState, "
+           "delegatorSummary, delegations, userNonFundingLedgerUpdates; User-Agent token-metrics-check/1.0)",
+    "team": {"wallet": "0x43e9abea1910387c4292bca4b94de81462f8a251", "spot": 0.00327328,
+             "staked": 238_360_840.8724812, "validators": 23, "delegation_lock_until": "2026-06-07 (expired)",
+             "vesting_state_in_api": None, "paid_out_since_2025_11": 9_722_176,
+             "finding": "UNVESTED BALANCE SHOWS AS STAKED: the whole 238,360,840.87 HYPE is delegated across 23 "
+                        "validators (the API carries no vested / unvested split) — reported, not counted (out of "
+                        "circulating, R22 a)"},
+    "foundation": {"wallet": "0xd57ecca444a9acb7208d286be439de12dd09de5d", "staked": 60_663_959.5613470, "spot": 4.4e-7},
+    "grants": {"wallet": "0xa20fcfa0507fe762011962cc581b95bbbc3bbdba", "staked": 2_875_904.2096829, "spot": 105_001.0},
+    "assistance_fund": {"wallet": "0xfefefefefefefefefefefefefefefefefefefefe", "spot": 49_310_020.8347392,
+                        "status": "burned (R21b)"},
+    "pot": {"future_emissions": 409_635_985.3685353, "genesis_0xdddd": 428_062_211.29, "allocation_38_888pct": 388_880_000,
+            "genesis_rest": 39_182_211.29, "paid_since_genesis": 18_426_225.92,
+            "treatment": "OUT (outside tokenDetails.circulatingSupply); payouts = emissions_tokens, new supply the day "
+                         "paid — no change of value (R22 b)"},
+    "tokendetails": {"total_supply": 998_677_629.5863562, "circulating": 301_369_106.0038505,
+                     "hyperevm_zero_address": 321_279.0459828},
+    "ours_now": 301_047_826.96, "coingecko_now": 237_661_043.89, "coinmarketcap_now": 252_059_821.92,
+    "fixture": {"asof": "2026-10-13", "before": 539_758_895.85, "after": 301_828_851.37, "team": 237_930_044.48,
+                "coingecko": 222_445_714.07},
+}
+RULE_IN["Hyperliquid"].update({
+    "legs": ("excluded_wallets_spot_tokens",), "off_float": ("excluded_wallets_spot_tokens",),
+    "evidence": "R22 (" + _R22C_DECIDED + "): the team wallet 0x43e9abea… is the unvested core-contributor allocation — "
+                "OUT of circulating until it vests, though all of it is staked (238,360,840.87 across 23 validators, "
+                "read 2026-11-25; the API carries no vested / unvested split; config.HYPERLIQUID_R22); Grants' spot "
+                "0xa20fcfa0… (105,001) is a keyed issuer holding: in, off the float. Was R9.2: the team wallet in "
+                "(staked and earning)",
+    "read_on": _R22C_READ, "decided": _R22C_DECIDED + " (a), (c); R9.2 (Jake 2026-11-17) for Grants' spot",
+    "circulating": (539_758_896, 301_828_851),
+    # the token-flow statement: the team's rewards stay in its wallet (outside); its payouts are the vested tranches
+    "flow_in": (("+ staking rewards paid to stake inside circulating (new supply the day paid; the team wallet's "
+                 "rewards stay in it, outside circulating)", "emissions_circulating_stake_tokens"),),
+    "flow_outside": (("+ released from the team wallet (its vested tranches; the wallet is outside circulating)",
+                      "unlock_release_outside_tokens"),)})
+CIRC_RELEASED_STAKED["Hyperliquid"]["rule_point"] = "R22: foundation + grants in; the team's unvested HYPE out"
+PROJECT_BY_NAME["Hyperliquid"]["series_handover"]["circulating_supply_first_party"]["ordered_points"] = tuple(
+    PROJECT_BY_NAME["Hyperliquid"]["series_handover"]["circulating_supply_first_party"]["ordered_points"]) + (
+    "derived:released_staked[" + CIRC_RELEASED_STAKED["Hyperliquid"]["rule_point"] + "]",)
+PROJECT_BY_NAME["Hyperliquid"]["series_handover"]["circulating_supply_first_party"]["why_r22"] = (
+    "R22 (" + _R22C_DECIDED + " a): the team wallet's unvested HYPE leaves circulating on every day — the whole series "
+    "restated on one basis: tokenDetails.circulatingSupply (+ the Foundation / Grants stake where stored net of it) "
+    "+ Grants' spot − the HyperEVM zero address")
+UNLOCK_RELEASE_SUBSETS["Hyperliquid"]["unlock_release_outside_tokens"] = ("team_wallet_tokens",)
+METRICS["unlock_release_outside_tokens"]["only_projects"] = tuple(dict.fromkeys(
+    (*METRICS["unlock_release_outside_tokens"]["only_projects"], "Hyperliquid", "Ether.fi")))
+METRICS["unlock_release_outside_tokens"]["label"] = (
+    "Released from the wallets / schedules still OUTSIDE circulating under the rule — Morpho: the modelled relock's "
+    "scheduled releases (R9.2); Hyperliquid: the team wallet's payouts (its vested tranches, R22); Ether.fi: the "
+    "core-contributor tokens vesting on the docs' schedule (MODELLED, R22) — the release leg of the token-flow statement")
+HYPERLIQUID_RULE_REFERENCES.update({
+    "read_on": _R22C_READ, "ours": 301_047_827,
+    "tokendetails": (301_369_106, {"the HyperEVM zero address (burned: out of ours)": -321_279}),
+    "coingecko": (237_661_044, {"Hyper Foundation stake 0xd57ecca4… (issuer holding: in ours, off the float)": 60_663_960,
+                                "Community Grants 0xa20fcfa0… (stake 2,875,904 + spot 105,001)": 2_980_905,
+                                "not named (0.11% of CoinGecko's figure)": -258_082}),
+    "coinmarketcap": (252_059_822, {"the Assistance Fund 0xfefe…fefe — CoinMarketCap's figure = tokenDetails' "
+                                    "circulating less the Fund's balance to 737 HYPE, though tokenDetails' circulating "
+                                    "already leaves the Fund out (INFERRED from the arithmetic; CoinMarketCap publishes "
+                                    "no method)": 49_310_021,
+                                    "the HyperEVM zero address (out of ours, in CoinMarketCap's)": -321_279,
+                                    "not named": -737}),
+    "basis": "R22: the team wallet's unvested HYPE is out of ours as it is out of all three; CoinGecko leaves the Hyper "
+             "Foundation and Community Grants out (a rule-basis difference: issuer holdings count in, off the float); "
+             "CoinMarketCap counts both in and takes the burned Assistance Fund out a second time",
+    "r9_2": {"ours": 539_530_000, "read_on": "2026-11-17"}})
+CREDIBILITY["Hyperliquid"]["in_circ"]["ref"]["why"] += (
+    " R22 (" + _R22C_DECIDED + "): the team wallet 0x43e9abea…'s unvested HYPE (238.36M, all staked — reported, not "
+    "counted) is OUT of ours again; ours = tokenDetails' 301.37M − the HyperEVM zero address 0.32M = 301.05M "
+    "(2026-11-25). Against CoinGecko 237.66M (+26.7%): the Hyper Foundation stake 60.66M + Community Grants 2.98M, which "
+    "the rule counts in, off the float; residual −0.26M. Against CoinMarketCap 252.06M (+19.4%): CoinMarketCap takes the "
+    "burned Assistance Fund (49.31M) out of a figure that already leaves it out; residual −737 HYPE "
+    "(config.HYPERLIQUID_RULE_REFERENCES).")
+
+# --- 2. ETHER.FI (a): the core-contributor tokens not yet vested (MODELLED from the docs' schedule) are OUT ---------------
+# R14 (decision 1 (a)) counted them in (the custodian wallets carry a key) and off the float. R22 (a): out until they
+# vest. Same leg, same schedule (config.ETHERFI_TEAM_SCHEDULE: 214.7M, a third at the 2025-03-18 cliff, 1/36 a month to
+# 2027-03-18). On the dump (2026-10-13): 998,535,999 − 35,783,333 = 962,752,666 (CoinGecko and CoinMarketCap 965,350,000:
+# −0.27%); on 2026-11-25: 998,535,999 − 23,855,556 = 974,680,443 (CoinMarketCap 965,350,000 +0.97%, CoinGecko 998,535,999
+# −2.39%). The circulating figure now rests on a MODELLED leg (trajectory follows the subtract list: the cell says so).
+CIRCULATING_ONCHAIN["Ether.fi"]["subtract"] = (*CIRCULATING_ONCHAIN["Ether.fi"]["subtract"],
+                                               "etherfi_team_unvested_modelled_tokens")
+RULE_IN["Ether.fi"].update({
+    "off_float": tuple(m for m in RULE_IN["Ether.fi"]["off_float"] if m != "etherfi_team_unvested_modelled_tokens"),
+    "circulating": (998_535_999, 962_752_666),
+    "decided": RULE_IN["Ether.fi"]["decided"] + "; R22 (" + _R22C_DECIDED + " a): the unvested team leg OUT",
+    "flow_outside": (("+ vested from the core-contributor schedule (MODELLED; outside circulating until it vests)",
+                      "unlock_release_outside_tokens"),)})
+UNLOCK_RELEASE_SUBSETS.setdefault("Ether.fi", {})["unlock_release_outside_tokens"] = (
+    "etherfi_team_unvested_modelled_tokens",)
+# the references against ours on the dump (962,752,666): every gap named, to the token
+RULE_IN["Ether.fi"]["references"] = {
+    "coingecko": (998_535_999, {"the core-contributor tokens not yet vested (MODELLED; CoinGecko counts the whole total, "
+                                "read 2026-11-19 / 2026-11-25)": -35_783_333}),
+    "coinmarketcap": (965_350_000, {
+        "CoinMarketCap's static self-reported figure (app.ether.fi/api/ethfi/coinmarketcap, last updated 2026-09-16) "
+        "implies 34,650,000 out; ours leaves out the unvested team leg (35,783,333 on the dump) + the 2025 burn "
+        "(1,464,001): 2,597,334 more, not named by wallet (CMC lists none)": -2_597_334})}
+CIRCULATING_ONCHAIN["Ether.fi"]["handover_r22"] = {
+    "on": _R22C_READ, "decided": _R22C_DECIDED + " (a)",
+    "from": "total (998,535,999); the unvested team leg in circulating, off the float (R14.1b)",
+    "to": "total − etherfi_team_unvested_modelled_tokens (MODELLED, the docs' schedule): 962,752,666 on the dump",
+    "how": "the whole series restated on one basis: every day the total and the modelled leg are held"}
+CIRCULATING_POLICY["Ether.fi"]["now"] = (
+    "THE RULE (Jake 2026-11-17), R14.1 (2026-11-19), R22 (2026-11-25): circulating = totalSupply() − the core-contributor "
+    "tokens not yet vested (MODELLED from the docs' schedule)")
+
+# --- 3. CHAINLINK (b): the 33 non-circulating wallets are the unreleased reserve, OUT -----------------------------------
+# docs/r15_chainlink_pack.md: the 33 wallets Chainlink's own supply page lists (233,150,029.58 LINK) release on
+# Chainlink's published 7%-a-year schedule (quarterly tranches 21.0M / 18.75M / 11.25M / 19.0M since 2023-06; U = yes in
+# the pack's own table). R18 counted them in (Safes their signers can move). R22: supply not yet released under the
+# issuer's published release schedule — the node-operator / ecosystem incentive and company reserve of LINK's
+# allocation — is OUT like unminted supply; each tranche enters circulating the day it leaves (unlock_release_tokens,
+# their falls). The Reserve (6.80M, a held buyback), the RewardVault and the path wallets stay IN, off the float (c).
+RULE_IN["Chainlink"].update({
+    "legs": ("buyback_fund_balance",),
+    "off_float": tuple(m for m in RULE_IN["Chainlink"]["off_float"] if m != "noncirculating_holding_tokens"),
+    "circulating": (1_000_000_000, 766_849_999.90),
+    "decided": RULE_IN["Chainlink"]["decided"] + "; R22 (" + _R22C_DECIDED + " b): the 33 wallets OUT",
+    "flow_outside": (("+ released from the 33 non-circulating wallets (Chainlink's 7%-a-year schedule; outside "
+                      "circulating until released)", "unlock_release_tokens"),),
+    "references": {"chainlink_api": (766_849_970.42, {}), "coingecko": (766_849_970.42, {}),
+                   "coinmarketcap": (766_849_970.42, {})}})
+RULE_IN["Chainlink"].pop("reference_minus", None)
+# the references (Chainlink's API, CoinGecko, CoinMarketCap) now count what ours counts: compared as they stand
+RULE_IN["Chainlink"]["reference_leaves_out"] = False
+CIRCULATING_ONCHAIN["Chainlink"]["handover_r22"] = {
+    "on": _R22C_READ, "decided": _R22C_DECIDED + " (b)",
+    "from": "total (1,000,000,000) − nothing (R18: the 33 wallets in circulating, off the float)",
+    "to": "total − noncirculating_holding_tokens (the 33 wallets): 766,849,999.90 on the dump = Chainlink's API, CoinGecko "
+          "and CoinMarketCap (766,849,970.42 on 2026-11-25)",
+    "how": "the whole series restated on one basis: every day the total and the 33 wallets are held"}
+
+# --- 4. GEODNET (b): the Mining pot (the Mining Safe + the Mining distribution wallet) is OUT ----------------------------
+# docs.geodnet.com/geod-token/tokenomics (read 2026-11-25): Mining 35% — "Mined tokens will be unlocked and distributed
+# to each miner daily"; the Mining Safe 0xfa5fEd5c… (89,000,000 on 2026-11-23) and the Mining distribution wallet
+# 0x8FB9dd00… (1,063,344.64) are the reserve the miners' rewards are paid from (pool_release_tokens already reads their
+# falls as the mining release, config.mining_wallets). R17 counted both in. R22 (b): OUT; what they pay to miners is new
+# supply the day paid. The subtracted-wallet basis: treasury_holding_tokens (Mining + Mining distribution + Ecosystem) is
+# subtracted again and ecosystem_holding_tokens (the same Ecosystem Safe 0x3A6906E4…) added back — so the two mining
+# wallets, exactly, are out. Ecosystem, Team, Investor, Vendor / Marketing and Public sale stay IN, off the float: the
+# docs say "team, investors, and ecosystem will undergo a multi-year unlocking process" but publish no dates or amounts
+# (the page's chart is the allocation split only), so no unvested amount is established (a) — named, not applied.
+# On the dump (2026-10-13): 930,406,063.62 − 95,423,333.50 = 834,982,730.11; on 2026-11-23: 926,216,062.51 −
+# 90,063,344.64 = 836,152,717.87 (CoinGecko 754,193,399: +10.9% = Ecosystem 43,022,654 + 0x47c8ebec… 40,000,010).
+RULE_IN["GEODNET"].update({
+    "legs": ("noncirculating_holding_tokens",),
+    "off_float": ("ecosystem_holding_tokens", "noncirculating_holding_tokens"),
+    "circulating": (930_406_064, 834_982_730),
+    "decided": RULE_IN["GEODNET"]["decided"] + "; R22 (" + _R22C_DECIDED + " b): the Mining pot OUT",
+    "flow_outside": (("+ mining rewards paid out of the Mining wallets (the unreleased reserve; new supply the day "
+                      "paid)", "pool_release_tokens"),),
+    # CoinGecko (2026-11-23) against ours under R22 (836,152,717.87), to the token: it leaves out two wallets ours counts
+    # and counts the Mining distribution wallet ours now leaves out with the pot
+    "references": {"coingecko": (754_193_398.51, {"Ecosystem 0x3A6906E4…": 43_022_654,
+                                                  "0x47c8ebec… (EOA funded by the Investor Safe; not in our set)":
+                                                  40_000_010,
+                                                  "the Mining distribution wallet 0x8FB9dd00… (CoinGecko counts it; "
+                                                  "ours leaves the whole Mining pot out)": -1_063_344.64})}})
+CIRCULATING_ONCHAIN["GEODNET"]["add"] = (*(CIRCULATING_ONCHAIN["GEODNET"].get("add") or ()), "ecosystem_holding_tokens")
+CIRCULATING_ONCHAIN["GEODNET"]["handover_r22"] = {
+    "on": _R22C_READ, "decided": _R22C_DECIDED + " (b)",
+    "from": "total − burned (R17: the seven wallets in circulating, off the float)",
+    "to": "total − burned − treasury_holding_tokens + ecosystem_holding_tokens = total − burned − the two Mining wallets "
+          "(834,982,730 on the dump; 836,152,718 on 2026-11-23)",
+    "how": "the whole series restated on one basis: every day the total, the burn and both wallet legs are held"}
+CIRCULATING_POLICY["GEODNET"]["now"] = (
+    "THE RULE (Jake 2026-11-17), R17 (2026-11-23), R22 (2026-11-25): circulating = total − burned − the Mining pot (the "
+    "Mining Safe + the Mining distribution wallet: the unreleased mining reserve); the other five wallets of GEODNET's "
+    "tokenomics page are in circulating, off the float")
+
+# --- 5. NEAR (a): the lockups' LOCKED NEAR is out, staked or not -----------------------------------------------------------
+# R10.B3b counted the part of LOCKED a lockup has staked in (it earns). LOCKED is unvested + vested-but-not-yet-released
+# by the lockup: R22 (a) — out until it vests / is released; a staked unvested balance is reported, never counted.
+# Jake's store, read of 2026-11-19 (block 225,245,079): LOCKED 1,872,900.53, of it staked 1,084,482.68 (unvested
+# 1,823,913.65) — circulating −1,084,482.68 from that day. The fixture (2026-10-13) holds no lockup read: no move there.
+NEAR_R22_LOCKED_STAKED = {"read_on": "2026-11-19", "block": 225_245_079, "locked": 1_872_900.53,
+                          "locked_staked": 1_084_482.68, "unvested": 1_823_913.65,
+                          "finding": "UNVESTED / UNRELEASED NEAR SHOWS AS STAKED: 1,084,482.68 of the lockups' LOCKED "
+                                     "is staked by its lockup — reported, not counted (R22 a)"}
+RULE_IN["Near"]["locked_all_out"] = (
+    "total_supply − LOCKED (staked or not: not yet vested or released, out until it is — R22); lockup.near + "
+    "contributors.near in circulating (the rule, R10.B3)")
+NEAR_CIRC_RULE_POINTS = (*NEAR_CIRC_RULE_POINTS, _R10N_CIRC + RULE_IN["Near"]["locked_all_out"] + ", lockups read]")
+PROJECT_BY_NAME["Near"]["series_handover"]["circulating_supply_lockup_rule"]["ordered_points"] = NEAR_CIRC_RULE_POINTS
+PROJECT_BY_NAME["Near"]["series_handover"]["circulating_supply_lockup_rule"]["why_r22"] = (
+    "R22 (" + _R22C_DECIDED + " a): every day with a lockup read is total − all of LOCKED (its staked part reported, "
+    "not counted) — one basis from the first lockup read (2026-10-11); the 2026-11-19 seam of R13 is gone")
+NEAR_CIRC_SEAM["points"][NEAR_CIRC_RULE_POINTS[-1][len(_R10N_CIRC):].rstrip("]")] = "total − LOCKED (R22: staked or not)"
+METRICS["circulating_supply_lockup_rule"]["label"] = (
+    "Circulating supply — NEAR total supply − the lockup contracts' LOCKED NEAR (not yet vested or released), staked or "
+    "not (R22, Jake 2026-11-25); lockup.near, contributors.near and the Foundation set in, off the float")
+
+# --- 6. THE SWEEP (docs/r22_circulating.md): every gap over 10% named by wallet and class; (c) reported, not changed ---
+R22_CIRC_SWEEP = {
+    "read_on": _R22C_READ,
+    "sources": "ours: the 15 fixture dumps (as of 2026-10-13) built at 840733d and the R22 changes; CoinGecko: the "
+               "dump's stored circulating_supply and api.coingecko.com /coins/markets read 2026-11-25 11:59 UTC; "
+               "CoinMarketCap: api.coinmarketcap.com/data-api/v3/cryptocurrency/detail read 2026-11-25 12:00 UTC",
+    "moved": {"Hyperliquid": "a", "Ether.fi": "a", "Chainlink": "b", "GEODNET": "b", "Near": "a"},
+    "class_c": ("Aerodrome", "Fluid", "Maple", "Morpho", "Pendle", "Uniswap", "Hyperliquid", "GEODNET"),
+    "not_established": {"Aethir": "Aethir's own figure (the published schedule) is 3.92bn above CoinGecko's on the dump; "
+                                  "no wallet-level reconciliation exists (Aethir publishes no wallet address)",
+                        "GEODNET": "Team 245M / Ecosystem 43.0M: 'a multi-year unlocking process', no dates published",
+                        "Morpho": "the Contributor Grants Safes (52.8M) and the Rewards Safe (2.57M): the MORPHO lane"},
+}

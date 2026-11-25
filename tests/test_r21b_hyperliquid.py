@@ -180,10 +180,11 @@ def _cell(cells, prefix):
 
 
 def test_on_the_dump_the_fund_is_out_of_circulating_and_total_supply(built):
-    assert _cell(built, CP + "Circulating supply (tokens)") == pytest.approx(539_758_896, abs=1)      # R21: 587,768,491
+    # R22 (Jake 2026-11-25, item 1a: the team wallet's unvested HYPE out): was 539,758,896 (R21b); R21: 587,768,491
+    assert _cell(built, CP + "Circulating supply (tokens)") == pytest.approx(301_828_851, abs=1)
     assert _cell(built, CP + "FREE FLOAT (tokens)") == pytest.approx(99_462_451.6, abs=1)             # unchanged
     assert _cell(built, CP + "Total supply (tokens)") == pytest.approx(950_543_705, abs=1)            # R21: 998,553,300
-    assert _cell(built, CP + "Market cap ($)") == pytest.approx(43_702_446_000, rel=1e-6)             # R21: 47,589,620,000
+    assert _cell(built, CP + "Market cap ($)") == pytest.approx(24_438_057_800, rel=1e-6)  # R22; R21b 43,702,446,000
 
 
 def test_on_the_dump_the_buyback_is_burned_and_every_burn_counts(built):
@@ -202,9 +203,11 @@ def test_on_the_dump_the_burns_and_the_nets_check_clean(built):
 
 def test_on_the_dump_the_headlines(built):
     s = "reader|Summary|"
-    assert _cell(built, s + "Holder value yield") == pytest.approx(0.0155918832, abs=1e-8)           # R21: 0.014323244
-    assert _cell(built, s + "Dilution, % of market cap") == pytest.approx(0.047139246, abs=1e-8)     # R21: 0.0433037444
-    assert _cell(built, s + "Net holder yield") == pytest.approx(-0.0315473628, abs=1e-8)            # R21: -0.0289805003
+    # R22 (market cap on the circulating without the team's unvested HYPE): R21b 0.0155918832 / 0.047139246 /
+    # -0.0315473628; R21: 0.014323244 / 0.0433037444 / -0.0289805003
+    assert _cell(built, s + "Holder value yield") == pytest.approx(0.0280504452, abs=1e-8)
+    assert _cell(built, s + "Dilution, % of market cap") == pytest.approx(0.0848054608, abs=1e-8)
+    assert _cell(built, s + "Net holder yield") == pytest.approx(-0.0567550156, abs=1e-8)
     # net float pressure: the Fund's buy-and-burn on the burns line only (R21: buying 9.71%, burns 1.13%)
     assert _cell(built, s + "Buying pressure on float") == 0.0                                        # R21: 0.0970550318
     assert _cell(built, s + "Net float pressure") == pytest.approx(-0.170563056, abs=1e-8)           # R21: -0.16312006

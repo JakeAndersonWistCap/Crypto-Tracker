@@ -1886,6 +1886,21 @@ end of config.py. Tests: tests/test_r22_plume.py.
 - S13: "not yet split" → fees = gas (on chain), revenue = fees (REVENUE_FROM_FEES), holder revenue = the measured 0.
 - Declared n/a with source (Unlocks Q0 wallet column, buyback destination, no buyback programme); insider share of
   the stake → "not verified" (R17; no insider wallet published) — Jake to review.
+### Round 22 — circulating on Jake's rule, lined up with the industry (Jake 2026-11-25), old → new
+- The reading: (a) unvested tokens under a published schedule are OUT until they vest, staked or not (a staked unvested
+  balance is reported, never counted); (b) an unreleased reserve (a pre-minted pot that pays emissions, or that the issuer
+  releases on a published schedule) is OUT like unminted supply, its payouts new supply the day paid; (c) issuer holdings
+  stay IN, off the float — reported, not changed. Table and wallets: docs/r22_circulating.md; config `R22 — CIRC` block.
+- Hyperliquid (a): the team wallet 0x43e9abea… IN (R9.2) → OUT (238.36M, all staked on 23 validators; the API has no
+  vesting split). Dump 539,758,896 → 301,828,851; float unchanged. 2026-11-25: 301.05M vs CoinGecko 237.66M (+26.7% =
+  Foundation 60.66M + Grants 2.98M, (c)) and CMC 252.06M (+19.4% = CMC takes the burned Assistance Fund out twice).
+  The pot (futureEmissions 409.6M = 388.88M allocation + 39.18M genesis rest − 18.43M paid) was and stays out. Flows: the
+  team's rewards stay outside; its payouts are unlock_release_outside_tokens.
+- Ether.fi (a): the MODELLED unvested team leg in circulating, off the float (R14) → out: 998,535,999 → 962,752,666.
+- Chainlink (b): the 33 wallets (7%-a-year release schedule) IN (R18) → OUT: 1,000,000,000 → 766,850,000 (= Chainlink's
+  API, CoinGecko, CMC).
+- GEODNET (b): the Mining Safe + Mining distribution wallet IN (R17) → OUT (treasury − ecosystem): 930.41M → 834.98M.
+- Near (a): LOCKED staked by its lockup IN (R10.B3b) → OUT, staked or not: −1,084,482.68 from Jake's 2026-11-19 read.
 
 ### Round 21b — lead: NEAR approval, beacon source, route-'none' buybacks (Jake 2026-11-25), old → new
 - NEAR's P2P history: no approval → Jake's dated approval given ahead for ONE named month (`for_month` 2026-12, approved

@@ -66,6 +66,11 @@ def series(h: pd.DataFrame, name: str, rule: bool = True) -> pd.Series:
         if m in rule_in:
             continue
         bal = _daily(h, name, m)
+        sl = (getattr(config, "SCHEDULE_LOCK_LEGS", {}) or {}).get(name) or {}
+        if bal.empty and sl.get("metric") == m:
+            # R22: a MODELLED schedule leg (Ether.fi's unvested team tokens) is never stored — formed on the total's
+            # days from its published schedule, as the build forms it (build_workbook._schedule_lock_leg_views)
+            bal = pd.Series([float(sl["fn"](d)) for d in out.index], index=out.index)
         out = (out - bal).dropna()
     # ADDED BACK (Sky, Jake 2026-10-12 decision 2a): a subtracted reserve's part that backs a legacy token held by
     # non-issuers — circulating in the legacy form; only days it was read

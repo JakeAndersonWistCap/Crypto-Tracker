@@ -209,15 +209,17 @@ def test_the_daily_identity_holds_and_a_payout_that_stays_staked_stays_off(one_p
 
 
 def test_new_supply_counts_when_created_and_the_staking_is_its_own_movement(one_project):
-    """Rule 3 (Hyperliquid: every staking reward enters circulating): a reward that goes straight into the stake is
-    + emissions AND − newly staked on its day — two lines, not a float that never moved for no stated reason."""
+    """Rule 3 (Hyperliquid: a staking reward paid to stake inside circulating enters circulating — R22: the team
+    wallet's rewards stay in it, outside, so the line reads emissions_circulating_stake_tokens; was emissions_tokens,
+    R9.2): a reward that goes straight into the stake is + emissions AND − newly staked on its day — two lines, not a
+    float that never moved for no stated reason."""
     name = "Hyperliquid"
     less = {m: _days("2026-10-01", [0, 0, 0]) for m in config.locked_excluded_metrics(name)}
     one_project(name, {
         "circulating_supply_used": _days("2026-10-01", [1000, 1005, 1005]),
         "locked_tokens": _days("2026-10-01", [400, 405, 405]),
         "rule_in_off_float_tokens": _days("2026-10-01", [100, 100, 100]),
-        "emissions_tokens": _days("2026-10-01", [0, 5, 0]), **less}, "2026-10-03")
+        "emissions_circulating_stake_tokens": _days("2026-10-01", [0, 5, 0]), **less}, "2026-10-03")
     day = free_float.MOVES[name].loc[pd.Timestamp("2026-10-02")]
     assert day["emissions"] == 5.0 and day["staked"] == -5.0 and day["close"] == day["open"] == 500.0
     assert abs(day["residual"]) < 1e-9 and not day["flag"]
