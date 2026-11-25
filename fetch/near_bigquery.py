@@ -112,6 +112,22 @@ def _sql(name: str) -> str:
     return (SQL_DIR / name).read_text()
 
 
+def hole_days(held, gap_from) -> list:
+    """R23: the days inside [gap_from, the newest held day] that `held` (the state's days) does not hold, oldest first.
+    [] when nothing is held or gap_from is not a date. Pure: no network, no state write."""
+    try:
+        lo = pd.Timestamp(str(gap_from)[:10])
+    except (ValueError, TypeError):
+        return []
+    have = {str(d)[:10] for d in held}
+    if not have:
+        return []
+    hi = pd.Timestamp(max(have))
+    if lo > hi:
+        return []
+    return [d for d in pd.date_range(lo, hi, freq="D") if str(d.date()) not in have]
+
+
 class NearBigQuery:
     SOURCE = SOURCE
     TIER = TIER
@@ -650,10 +666,25 @@ class NearBigQuery:
         top = [d for d in pd.date_range(yday, floor, freq="-1D")
                if str(d.date()) not in st["days"] and (newest is None or d > newest)]
         top = top[:1] if newest is None else top[:int(spec["chunk_days"])]
+        # 1b. R23: THE HOLES - days inside [gap_from, the newest held day] the state never read - right after the
+        #     top-up, newest first, in contiguous chunks of <= chunk_days. They go through the same _run as a backfill
+        #     (the per-query cap, the month's budget AND the top-up reserve all hold) and are not counted against the
+        #     older backfill's chunk limit.
+        import config as _cfg                                   # noqa: PLC0415
+        hcfg = getattr(_cfg, "NEAR_P2P_HISTORY", {}) or {}
+        hole_set = {pd.Timestamp(d) for d in hole_days(held, hcfg.get("gap_from"))}
         # 2. THEN THE BACKFILL: the remaining missing days in chunks of <= chunk_days, newest first.
         missing = [d for d in pd.date_range(yday, floor, freq="-1D")
-                   if str(d.date()) not in st["days"] and d not in top]
+                   if str(d.date()) not in st["days"] and d not in top and d not in hole_set]
         chunks = [("top-up", top)] if top else []
+        n_hole, n_seen = int(hcfg.get("hole_chunks_per_run", 3)), 0
+        for d in sorted(hole_set, reverse=True):              # newest first, contiguous, <= chunk_days
+            if chunks and chunks[-1][0] == "hole" and (min(chunks[-1][1]) - d).days == 1 \
+                    and len(chunks[-1][1]) < int(spec["chunk_days"]):
+                chunks[-1][1].append(d)
+            elif n_seen < n_hole:
+                n_seen += 1
+                chunks.append(("hole", [d]))
         for d in missing:                                     # newest first, contiguous, <= chunk_days
             if chunks and chunks[-1][0] == "backfill" and (min(chunks[-1][1]) - d).days == 1 \
                     and len(chunks[-1][1]) < int(spec["chunk_days"]):
@@ -662,7 +693,7 @@ class NearBigQuery:
                 chunks.append(("backfill", [d]))
         limit = None if unbounded else int(spec["max_chunks_per_run"])
         done_backfill = 0
-        n_run = len(chunks) if limit is None else min(len(chunks), 1 + limit)
+        n_run = len(chunks) if limit is None else min(len(chunks), 1 + n_seen + limit)
         prog = Progress(f"near_bigquery p2p {name}", total=n_run or None, unit="chunk(s)", every_units=1,
                         checkpoint=lambda: self._save(st),
                         status=lambda: (f"{len(st['days'])} day(s) held (floor {floor.date()}); "
@@ -672,10 +703,24 @@ class NearBigQuery:
                 if limit is not None and done_backfill >= limit:
                     break
                 done_backfill += 1
+            if kind == "hole":
+                # R23: a hole chunk is cut to the days the month's room holds at the estimate (newest first), so a
+                # month with 60 GB left still reads 7 hole days instead of holding a 31-day chunk whole; the dry run
+                # and the budget/reserve/per-query checks in _run still decide, so no cap moves
+                reserve, _why = self._reserve(spec, st)
+                room = int(spec["monthly_budget_bytes"]) - int(st["ledger"].get(str(today().date())[:7], 0)) \
+                    - int(reserve or 0)
+                fit = int(room // (float(hcfg.get("est_gb_per_day", 7.54)) * 1e9)) if reserve is not None else 0
+                if fit < 1:
+                    out.skipped(SOURCE, name, f"p2p hole {min(days).date()}..{max(days).date()}: HELD - the month's "
+                                              f"room after the top-up reserve ({max(room, 0) / 1e9:,.1f} GB) is under "
+                                              f"one day's estimate; resumes when the ledger allows", TIER)
+                    continue
+                days = sorted(days, reverse=True)[:min(fit, int(spec["chunk_days"]))]
             d0, d1 = min(days), max(days)
             rows = self._run(client, f"p2p {kind} {d0.date()}..{d1.date()}", _sql("bigquery_p2p_daily.sql"),
                              {"d0": d0.date(), "d1": d1.date(), "tokens": toks}, spec, st, out, name,
-                             backfill=(kind == "backfill"), topup_days=len(days) if kind == "top-up" else 0)
+                             backfill=(kind in ("backfill", "hole")), topup_days=len(days) if kind == "top-up" else 0)
             if rows is None:
                 break
             for d in days:

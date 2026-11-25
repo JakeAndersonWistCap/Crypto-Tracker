@@ -52296,3 +52296,16 @@ for _n, _legs in BURN_SINCE_LEGS.items():
         BURN_NOT_IN_NET[(_n, f"{_m}_sinceburn")] = (
             f"{_m} from the day the A4 burn began (R22 read-time view, read only by A4's burn ÷ issuance and release ÷ "
             f"burn) — the same tokens as {_m}, never summed with it")
+
+
+# =====================================================================================================================
+# ROUND 23 — NEAR's HOLES: the daily top-up reads the missing days inside [gap_from, the newest held day] (Jake 2026-11-25).
+# Code: fetch/near_bigquery.NearBigQuery._p2p (the "hole" chunks), near_p2p_history.py `gaps`. SPEC R23.
+# A hole is a day inside the held run that the BigQuery state never read. It is read through the normal daily read, newest
+# first, right after the newest days' top-up and before the older backfill, under the SAME caps (400 GB a query, the
+# month's ledger budget, the top-up reserve): nothing here raises a limit or spends outside the free allowance.
+# ESTIMATE: 7.54 GB a day (NEAR_P2P_HISTORY.est_gb_per_day), the same figure the history chunks use.
+NEAR_P2P_HISTORY.update({
+    "gap_from": "2025-12-29",        # the first day of the stored year per SPEC R18.N1 (held from 2025-12-29)
+    "hole_chunks_per_run": 3,        # hole chunks (contiguous days, <= chunk_days each) one daily run may read
+})
