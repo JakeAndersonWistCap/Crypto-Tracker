@@ -86,8 +86,8 @@ def test_1_hyperevm_burn_is_a_declared_component_with_one_basis_on_every_row(mon
     import trajectory
     hl = config.PROJECT_BY_NAME["Hyperliquid"]
     dc = config.DECLARED_COMPONENTS[("Hyperliquid", "total_burn_tokens")]
-    # R21: the held default's re-based total is declared beside it (its own metric, config _R21_HL_HELD_WHY)
-    assert [c["metric"] for c in dc if c["metric"] != "total_burn_tokens"] == ["hyperevm_priority_burn_tokens"]
+    # R21b: the held default's declaration of its re-based total is gone with it
+    assert [c["metric"] for c in dc] == ["hyperevm_priority_burn_tokens"]
     days = ["2026-10-10", "2026-10-11", "2026-10-12", "2026-10-13"]
     groups = {("Hyperliquid", "gross_burn_tokens"): _rows("Hyperliquid", "gross_burn_tokens", days, 100.0, "hypercore"),
               ("Hyperliquid", "core_burn_tokens"): _rows("Hyperliquid", "core_burn_tokens", days, 10.0, "hypercore"),
@@ -96,16 +96,16 @@ def test_1_hyperevm_burn_is_a_declared_component_with_one_basis_on_every_row(mon
     monkeypatch.setattr(bw, "scoped_projects", lambda: [hl])
     bw._burn_total_views(groups)
     g = groups[("Hyperliquid", "total_burn_tokens")].set_index("date")
-    # R21 (Jake's default): the Fund's leg (gross_burn_tokens) is HELD, not a burn — the total is the true burns
-    assert list(g["value"]) == [10.0, 11.0, 10.0, 11.0]
+    # R21b (Jake 2026-11-25): the Fund's leg is a burn again (R21's held default read [10, 11, 10, 11])
+    assert list(g["value"]) == [110.0, 111.0, 110.0, 111.0]
     assert {trajectory.basis_of("total_burn_tokens", s) for s in g["source"]} == {
-        trajectory.basis_of("total_burn_tokens", "derived:burn_total(core_burn_tokens)")}
+        trajectory.basis_of("total_burn_tokens", "derived:burn_total(gross_burn_tokens+core_burn_tokens)")}
     assert "declared component from 2026-10-11" in g["source"].iloc[1]
     # a day after the start that the component did not report is SAID, never a silent 0
     assert "hyperevm_priority_burn_tokens not read this day" in g["source"].iloc[2]
     assert "[" not in g["source"].iloc[0]
     a4 = groups[("Hyperliquid", "burn_ex_chain_fee_tokens")].set_index("date")["value"]
-    assert list(a4) == [10.0] * 4
+    assert list(a4) == [110.0] * 4                                          # R21 (held) read [10.0] * 4
 
 
 def test_1_the_48_42m_figure_is_gone_and_the_hypercore_reads_are_cited():

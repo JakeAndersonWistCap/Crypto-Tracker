@@ -153,10 +153,10 @@ def test_hyperliquid_circulating_excludes_foundation_and_grants():
     from fetch.base import _measuring_point
     # the stored (fetch-time) point is the last stored one; R7.C1 adds the read-time restatement after it, and R9.2
     # the rule's (team + foundation + grants in) after that
-    # R21: the held Assistance Fund (Jake's default) is one more read-time point after the rule's
-    assert _measuring_point(f.loc["circulating_supply_first_party", "source"]) == h["ordered_points"][-4]
-    assert all(pt.startswith("derived:released_staked") for pt in h["ordered_points"][-3:])
-    assert "the rule" in h["ordered_points"][-2] and "held buyback (R21)" in h["ordered_points"][-1]
+    # R21b: the Assistance Fund is burned (out of circulating) — R21's held read-time point is gone
+    assert _measuring_point(f.loc["circulating_supply_first_party", "source"]) == h["ordered_points"][-3]
+    assert all(pt.startswith("derived:released_staked") for pt in h["ordered_points"][-2:])
+    assert "the rule" in h["ordered_points"][-1]
 
 
 def test_hyperliquid_unread_wallet_stores_no_circulating():

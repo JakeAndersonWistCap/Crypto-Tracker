@@ -86,24 +86,26 @@ def test_projects_not_on_the_list_keep_their_tags():
 def test_the_two_conditional_tags_are_off_and_one_switch_each_turns_them_on():
     c = config.CONDITIONAL_ARCHETYPES
     assert set(c) == {"Aethir", "Hyperliquid"} and (c["Aethir"]["tag"], c["Hyperliquid"]["tag"]) == (3, 4)
-    assert not c["Aethir"]["on"] and not c["Hyperliquid"]["on"]
+    # R21b (Jake 2026-11-25): Hyperliquid's A4 is ON — the Assistance Fund's buybacks are buy-and-burn (was off)
+    assert not c["Aethir"]["on"] and c["Hyperliquid"]["on"]
     assert c["Aethir"]["needs"] and c["Hyperliquid"]["needs"]
-    # off
-    assert config.archetypes_r20("Aethir") == [2, 4] and config.archetypes_r20("Hyperliquid") == [3, 1]
-    # on (the override the function takes; then the switch itself, applied and restored)
+    assert config.archetypes_r20("Aethir") == [2, 4] and config.archetypes_r20("Hyperliquid") == [3, 1, 4]
+    # the override the function takes; then the switch itself, applied and restored
     assert config.archetypes_r20("Aethir", {"Aethir": True}) == [2, 4, 3]
-    assert config.archetypes_r20("Hyperliquid", {"Hyperliquid": True}) == [3, 1, 4]
+    assert config.archetypes_r20("Hyperliquid", {"Hyperliquid": False}) == [3, 1]
     try:
-        c["Aethir"]["on"] = c["Hyperliquid"]["on"] = True
+        c["Aethir"]["on"] = True
+        c["Hyperliquid"]["on"] = False
         config.apply_archetypes_r20()
         assert config.PROJECT_BY_NAME["Aethir"]["archetypes"] == [2, 4, 3]
-        assert config.PROJECT_BY_NAME["Hyperliquid"]["archetypes"] == [3, 1, 4]
-        assert reader._primary(config.PROJECT_BY_NAME["Hyperliquid"]) == 3       # the primary does not move
+        assert config.PROJECT_BY_NAME["Hyperliquid"]["archetypes"] == [3, 1]
     finally:
-        c["Aethir"]["on"] = c["Hyperliquid"]["on"] = False
+        c["Aethir"]["on"] = False
+        c["Hyperliquid"]["on"] = True
         config.apply_archetypes_r20()
     assert config.PROJECT_BY_NAME["Aethir"]["archetypes"] == [2, 4]
-    assert config.PROJECT_BY_NAME["Hyperliquid"]["archetypes"] == [3, 1]
+    assert config.PROJECT_BY_NAME["Hyperliquid"]["archetypes"] == [3, 1, 4]
+    assert reader._primary(config.PROJECT_BY_NAME["Hyperliquid"]) == 3       # the primary does not move
 
 
 def test_a_retag_moves_no_series():

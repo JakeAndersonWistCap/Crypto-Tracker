@@ -15934,12 +15934,16 @@ def _a4_phase2_cols(R: Refs) -> list[tuple]:
         return p.get("issuance_declared_zero") and p["name"] not in config.A4_RELEASE_ISSUANCE
 
     def cum(r, p):
-        held = (getattr(config, "BURN_ADDRESS_IS_HELD", None) or {}).get(p["name"])     # R21: the stock is no burn
-        if held:
-            return held
         if "burn_address_balance" not in config.metrics_for_project(p):
             return "n/a — no cumulative burn stock (burn_address_balance) on file"
         b, mx = R.D(r, "burn_address_balance", "now"), R.D(r, "max_supply", "now")
+        ex = (getattr(config, "BURN_CUMULATIVE_EXTRA", None) or {}).get(p["name"])
+        if ex:      # R21b (Hyperliquid): every true burn's cumulative — + the other burn stocks + the fall from max supply
+            refs = [b, *(R.D(r, m, "now") for m in ex.get("add") or ()),
+                    *((R.D(r, ex["fall_of"], "now"),) if ex.get("fall_of") else ())]
+            num = "+".join(refs[:1 + len(ex.get("add") or ())]) + (f"+({mx}-{refs[-1]})" if ex.get("fall_of") else "")
+            ok = ",".join(f"ISNUMBER({x})" for x in (*refs, mx))
+            return calc(f"IF(AND({ok},{mx}>0),({num})/{mx},{NA})")
         return calc(f"IF(AND(ISNUMBER({mx}),{mx}>0),{b}/{mx},{NA})")
 
     def legs(p):

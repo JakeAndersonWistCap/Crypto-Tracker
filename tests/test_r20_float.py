@@ -168,9 +168,7 @@ def test_a_stake_circulating_already_leaves_out_comes_off_once(one_project):
     g = one_project("Hyperliquid", {
         "circulating_supply_used": _days("2026-10-01", [1000, 1000, 1000]),
         "locked_tokens": _days("2026-10-01", [400, 400, 400]),
-        "rule_in_off_float_tokens": _days("2026-10-01", [100, 100, 100]), **less,
-        # R21: the Assistance Fund is a held buyback component (here 0: this test is about the stake)
-        "burn_address_balance": _days("2026-10-01", [0, 0, 0])}, "2026-10-03")
+        "rule_in_off_float_tokens": _days("2026-10-01", [100, 100, 100]), **less}, "2026-10-03")
     assert list(bw._daily(g[("Hyperliquid", free_float.C_LOCK)]).values) == [400.0 - 40.0 * len(less)] * 3
     assert list(bw._daily(g[("Hyperliquid", FF)]).values) == [1000.0 - (400.0 - 40.0 * len(less)) - 100.0] * 3
 
@@ -219,8 +217,7 @@ def test_new_supply_counts_when_created_and_the_staking_is_its_own_movement(one_
         "circulating_supply_used": _days("2026-10-01", [1000, 1005, 1005]),
         "locked_tokens": _days("2026-10-01", [400, 405, 405]),
         "rule_in_off_float_tokens": _days("2026-10-01", [100, 100, 100]),
-        "emissions_tokens": _days("2026-10-01", [0, 5, 0]), **less,
-        "burn_address_balance": _days("2026-10-01", [0, 0, 0])}, "2026-10-03")     # R21: the Fund's held component
+        "emissions_tokens": _days("2026-10-01", [0, 5, 0]), **less}, "2026-10-03")
     day = free_float.MOVES[name].loc[pd.Timestamp("2026-10-02")]
     assert day["emissions"] == 5.0 and day["staked"] == -5.0 and day["close"] == day["open"] == 500.0
     assert abs(day["residual"]) < 1e-9 and not day["flag"]
@@ -234,7 +231,7 @@ def test_a_residual_over_half_a_percent_is_flagged_with_its_cause(one_project):
     one_project(name, {
         "circulating_supply_used": _days("2026-10-01", [1000, 1010, 1012, 1012]),
         "locked_tokens": _days("2026-10-01", [400] * 4), "rule_in_off_float_tokens": _days("2026-10-01", [100] * 4),
-        **less, "burn_address_balance": _days("2026-10-01", [0] * 4)}, "2026-10-04")   # R21: the Fund (held)
+        **less}, "2026-10-04")
     mv = free_float.MOVES[name]
     a, b = mv.loc[pd.Timestamp("2026-10-02")], mv.loc[pd.Timestamp("2026-10-03")]
     assert a["residual"] == 10.0 and a["pct"] == pytest.approx(10 / 500) and bool(a["flag"])
@@ -253,8 +250,7 @@ def test_a_day_after_a_gap_carries_the_gap_and_names_it(one_project):
     one_project(name, {
         "circulating_supply_used": _days("2026-09-01", [1000] * (n - 1) + [1100]),
         "locked_tokens": _days("2026-09-01", [400] * n), "rule_in_off_float_tokens": _days("2026-09-01", rule),
-        **less, "burn_address_balance": _days("2026-09-01", [0] * n)},                 # R21: the Fund (held)
-        pd.Timestamp("2026-09-01") + pd.Timedelta(days=n - 1))
+        **less}, pd.Timestamp("2026-09-01") + pd.Timedelta(days=n - 1))
     mv = free_float.MOVES[name]
     last = mv.iloc[-1]
     assert last["gap_days"] >= 1 and bool(last["flag"]) and "the float was not formed on the" in last["cause"]

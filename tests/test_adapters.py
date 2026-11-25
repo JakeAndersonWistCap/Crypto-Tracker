@@ -15643,7 +15643,7 @@ def test_a_burn_route_buyback_is_a_view_of_the_whole_burn_series():
     b, t, u = by["Hyperliquid|gross_burn_tokens"], by["Hyperliquid|actual_buyback_tokens"], by["Hyperliquid|actual_buyback_usd"]
     tot = by["Hyperliquid|total_burn_tokens"]
     assert b["q0"] == 290_000.0, b["q0"]                              # the Fund leg, unchanged
-    assert tot["q0"] == 58_000.0, tot["q0"]                            # R21: the true burns only, 29 days x 2,000 (the Fund is held)
+    assert tot["q0"] == 348_000.0, tot["q0"]                           # 29 days x (10,000 + 2,000): A1's burn (R21b; R21 held: 58,000)
     # G11 B7: the buyback is the Fund's purchases only — the Core burns were never bought
     assert t["q0"] == 290_000.0, t["q0"]
     assert u["q0"] == 290_000.0 * 40 and u["q0_covered_days"] == b["q0_covered_days"] == 29
@@ -18055,7 +18055,8 @@ def test_hyperliquid_total_burn_is_fund_plus_core_and_a4_and_a3_read_it():
     import build_workbook as bw
 
     assert config.a1_burn_metric("Hyperliquid") == "total_burn_tokens"
-    # R21 (Jake 2026-11-25, the default): the Fund is a HELD buyback, in no burn series (was gross_burn_tokens)
+    # R21b (Jake 2026-11-25): A4 on, scored on the Fund + the Core burns (was gross_burn_tokens, the Fund alone;
+    # G7 0c keeps the HyperEVM gas burn on A1)
     assert config.a4_burn_metric("Hyperliquid") == "burn_ex_chain_fee_tokens"
     # G11 B7: the buyback is the Fund's purchases only — the Core / gas burns were never bought
     assert config.buyback_route("Hyperliquid")["metric"] == "gross_burn_tokens"
@@ -18074,9 +18075,9 @@ def test_hyperliquid_total_burn_is_fund_plus_core_and_a4_and_a3_read_it():
                                                        [100.0, 97.0, 94.0, 95.0, 92.0])}
     bw._burn_total_views(groups)
     tot = groups[("Hyperliquid", "total_burn_tokens")].set_index("date")["value"]
-    # R21: the Core leg only (was 13 / 13 / 17 with the Fund's 10 a day)
-    assert dict(tot) == {pd.Timestamp("2026-09-25"): 3.0, pd.Timestamp("2026-09-26"): 3.0,
-                         pd.Timestamp("2026-09-28"): 7.0}, dict(tot)
+    # R21b: the Fund's 10 a day is a burn again (R21 held: 3 / 3 / 7)
+    assert dict(tot) == {pd.Timestamp("2026-09-25"): 13.0, pd.Timestamp("2026-09-26"): 13.0,
+                         pd.Timestamp("2026-09-28"): 17.0}, dict(tot)
     assert ("Hyperliquid", "core_burn_tokens") in groups and ("Hyperliquid", "gross_burn_tokens") in groups
 
 
@@ -20847,13 +20848,11 @@ def test_hyperliquid_a4_total_burn_uses_the_assistance_fund_leg_before_both_legs
     bw._usd_history_views(groups)
     bw._burn_total_views(groups)
     t = groups[("Hyperliquid", "total_burn_tokens")].set_index("date")
-    # R21 (Jake 2026-11-25, the default): the Fund is HELD, so its buyback history is no burn history — the total starts
-    # on the Core leg's first day (was: from days[0] at 25,000 a day, the Fund leg only; 30,100 on live_from)
-    assert t.index.min() == live_from and not t.index.duplicated().any()
-    assert t.loc[live_from, "value"] == 100.0
+    assert t.index.min() == days[0] and not t.index.duplicated().any()
+    assert t.loc[days[0], "value"] == 25_000.0 and "leg only" in t.loc[days[0], "source"]
+    assert t.loc[live_from, "value"] == 30_100.0         # R21b: the Fund burned again (R21 held: from live_from, 100)
     pts = {_measuring_point(s_) for s_ in t["source"]}
-    assert pts == {"derived:burn_total(core_burn_tokens)"}
-    assert config.declared_handover("Hyperliquid", "total_burn_tokens") is None
+    assert pts == set(config.declared_handover("Hyperliquid", "total_burn_tokens")["ordered_points"])
     assert "total_burn_tokens" not in config.HISTORY_FORWARD_ONLY["Hyperliquid"]["metrics"]
 
 
@@ -22980,9 +22979,11 @@ def test_browser_capture_asxn_units_burn_history_crosschecks_rsc_and_aethir_tile
               ("Hyperliquid", "price_usd"): hist.assign(metric="price_usd", value=40.0)}
     bw._burn_total_views(groups)
     tb = groups[("Hyperliquid", "total_burn_tokens")].sort_values("date")
-    # R21 (Jake 2026-11-25, the default): the Fund is HELD, so no history leg — the total is the Core leg from its
-    # first day (was: 50,000 + 100 + 20 on 09-01, the Fund's history + the ASXN legs; then 2.0 = Fund 1 + Core 1)
-    assert list(tb.value) == [1.0] and tb.date.iloc[0] == pd.Timestamp("2026-09-20")
+    assert tb.value.iloc[0] == 50_000 + 100 + 20
+    assert "burn_auction_usd/price" in tb.source.iloc[0] and "burn_hyperevm_usd/price" in tb.source.iloc[0]
+    from fetch.base import _measuring_point
+    assert _measuring_point(tb.source.iloc[0]) == _measuring_point("defillama:holders_revenue_usd/price")
+    assert tb.value.iloc[1] == 2.0                      # R21b: Fund 1 + Core 1 (R21 held: [1.0] from 09-20)
     # AETHIR STAKE DURATION (probes9): the tile 'read' the chart axis's year -> UNAVAILABLE; the guard refuses
     # a year, a date or evenly spaced axis labels, and keeps real tiles
     assert "browser_capture" not in config.PROJECT_BY_NAME["Aethir"]
@@ -27863,9 +27864,9 @@ def test_hyperliquid_release_is_the_first_party_circulating_change_plus_the_af_b
               ("Hyperliquid", "pool_release_tokens"): mk("pool_release_tokens", [9.0] * 4)}
     bw._onchain_release_views(groups)
     rel = groups[("Hyperliquid", "pool_release_tokens")].set_index("date")["value"]
-    # R21 (Jake's default): the Fund's purchases are HELD inside circulating, so they are no longer added back — the
-    # release is the circulating rise alone (a fall releases nothing)
-    assert list(rel.round(6)) == [0.0, 0.0, 3_736_200.0]
+    # R21b (Jake 2026-11-25): the Fund is burned again — its purchase leaves circulating and is added back (R21's held
+    # default read [0, 0, 3,736,200])
+    assert list(rel.round(6)) == [50.0, 50.0, 3_736_300.0]
     assert ("Hyperliquid", "pool_release_tokens_coingecko") in groups
     f = config.CREDIBILITY["Hyperliquid"]["a4_pool_release"]
     assert f["verdict"] == "VERIFIED FINDING" and "3,736,300" in f["why"] and "9.92M" in f["why"]
