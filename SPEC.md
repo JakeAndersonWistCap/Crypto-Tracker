@@ -1843,6 +1843,19 @@ staking and vote-locks by holders ARE circulating (off free float only); undistr
 | PR4C.5 | Morpho frozen | Not frozen. | FROZEN_PROJECTS['Morpho'] (tests/fixtures/frozen_morpho.json, 285 cells; the switch PENDING on the dumps); the 48 cells that differ from the pre-round-4 build declared (41 first moved by PR4, 1 by PR4B, 6 by PR4C alone). |
 | PR4C.GATE | Test pins PR4C moves | tests/test_pr4_morpho.py pinned Morpho's dump circulating 696.0M / float 547.25M and a pin without Mantle. | 574.8M / 426.05M (the relocked 121.2M on 2026-10-13 out); the probe test uses Sonic as the chain beyond the pin. Also moved: test_pr4_morpho / test_pr4b (the relock is a circulating and unlock leg; the limitation text is now the modelled relock), test_round_p3_4 (a switch leg is owed from the window's start). tests/test_pr1_freeze.py: the floor "baseline > 300 cells" became "> 250 and every cell on one side only is declared" — Morpho, an A2 project, writes 285 cells; the cell-set check is stronger than the count it replaces. Gate: tests/test_final_round.py's Morpho pin states the relock leg; tests/test_adapters.py's gap-text test starts from no build state (a build earlier on the same worker left GEODNET's series current, and write_gap_report dropped the test's row as answered by the store — an order dependence, fixed in the test, nothing skipped). |
 
+### Round 22 — Plume back to active (Jake 2026-11-25), old → new
+Jake (item 5): "Plume is active, not on hold … Token utility, fees and burns are unchanged. Bring it back into
+done_check and the freeze with no holder value, per docs/r19_plume_brief.md." Config: the "R22 — PLUME" block at the
+end of config.py. Tests: tests/test_r22_plume.py.
+- Status: "on hold, no change" (ARCHETYPES_NO_CHANGE_R20) → active; tags unchanged (A1). Not frozen yet.
+- Holder value: declared 0 on the 2026-09-14 "being explored" reading → the same measured 0 on the 2026-11-23 re-read
+  (token docs, tokenomics post; brief section a). CP destination: stale fee receiver 0x6CBb… → the live ones.
+- Unlocks (e): insider legs only (Flows Q0 residual +5.00%, FLOWS BLOCK) → plus the Community & Ecosystem and
+  Foundation legs of the same DefiLlama dataset (EVIDENCE_LADDER, AGGREGATOR; fixture residual +0.15%).
+- S13: "not yet split" → fees = gas (on chain), revenue = fees (REVENUE_FROM_FEES), holder revenue = the measured 0.
+- Declared n/a with source (Unlocks Q0 wallet column, buyback destination, no buyback programme); insider share of
+  the stake → "not verified" (R17; no insider wallet published) — Jake to review.
+
 ### Round 21b — lead: NEAR approval, beacon source, route-'none' buybacks (Jake 2026-11-25), old → new
 - NEAR's P2P history: no approval → Jake's dated approval given ahead for ONE named month (`for_month` 2026-12, approved
   2026-11-25, max_gb 337 = the month's room in the 1,000 GB budget); near_p2p_history.refusal reads `for_month`.

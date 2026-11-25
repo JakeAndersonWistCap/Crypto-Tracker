@@ -168,7 +168,10 @@ def test_cp_plume_has_no_measured_outflow_and_says_why(tmp_path, monkeypatch):
                                                          "b": ("merkl_campaigns_plume_tokens",),
                                                          # G17-1f: (c) the airdrop claims out of the Hedgey contract
                                                          "c": ("plume_airdrop_claims_tokens",),
-                                                         "e": ("insider_unlock_tokens",)}
+                                                         # R22 (Jake 2026-11-25): + the ecosystem / foundation
+                                                         # legs (was ("insider_unlock_tokens",))
+                                                         "e": ("insider_unlock_tokens",
+                                                               "plume_ecosystem_foundation_unlock_tokens")}
     wb, _rows = _built(tmp_path, monkeypatch, "Plume")
     X = xlcalc.Workbook(wb)
     o = _row(wb, X, CP, "Plume")

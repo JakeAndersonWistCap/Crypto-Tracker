@@ -78,7 +78,7 @@ def test_projects_not_on_the_list_keep_their_tags():
     for p in config.PROJECTS:
         if p["name"] not in JAKE_TAGS:
             assert p["archetypes"] == config.ARCHETYPES_BEFORE_R20[p["name"]], p["name"]
-    assert config.PROJECT_BY_NAME["Plume"]["archetypes"] == [1]                  # on hold, no change
+    assert config.PROJECT_BY_NAME["Plume"]["archetypes"] == [1]                  # R22: active again, tags unchanged
     assert config.PROJECT_BY_NAME["World Mobile"]["archetypes"] == [2, 3]        # parked
     assert reader.parked_reason("World Mobile")
     assert 1 not in config.PROJECT_BY_NAME["Chainlink"]["archetypes"] and 1 in config.ARCHETYPE_OFF["Chainlink"]

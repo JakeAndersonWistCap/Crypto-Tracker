@@ -17590,10 +17590,12 @@ def flow_statements(groups: dict, asof) -> list[dict]:
         note_tok = {"Sky": "MKR -> SKY conversions (converter 0xA1Ea1bA1…) enter circulating with NO series — NOT WIRED "
                            "(149.6M SKY in the 90 days to 2026-10-12, research of 2026-10-13); they are not dilution "
                            "(SPEC.md section 12, item 7) and show here as residual",
-                    "Plume": "Plume's non-insider unlocks (ecosystem / community / foundation) have no series — the "
-                             "insider leg (e) is DefiLlama's reading of the published chart (G11 B4); the rest of the "
-                             "monthly schedule steps (+212,116,114.6 about the 21st from 2026-03, every category) shows "
-                             "here as residual"}.get(name, "")
+                    # R22: config.PLUME_TOKEN_FLOW_NOTE ("" once the ecosystem / foundation leg is wired)
+                    "Plume": getattr(config, "PLUME_TOKEN_FLOW_NOTE",
+                                     "Plume's non-insider unlocks (ecosystem / community / foundation) have no series — "
+                                     "the insider leg (e) is DefiLlama's reading of the published chart (G11 B4); the "
+                                     "rest of the monthly schedule steps (+212,116,114.6 about the 21st from 2026-03, "
+                                     "every category) shows here as residual")}.get(name, "")
         tok = {"open": [], "close": [], "expected": [], "residual": [], "pct": [], "status": []}
         leg_vals = {lab: [] for lab, _m, _s in legs}
         for k in range(5):
