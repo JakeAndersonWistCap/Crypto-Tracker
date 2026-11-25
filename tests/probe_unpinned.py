@@ -45,3 +45,25 @@ def unpinned(monkeypatch) -> None:
             elif k in p:
                 monkeypatch.delitem(p, k)
     monkeypatch.setitem(config.OUTFLOW_CATEGORIES["Fluid"], "b", _SNAP["fluid_b"])
+    _unwire_unserved(monkeypatch)
+
+
+def _unwire_unserved(monkeypatch) -> None:
+    """The exact inverse of config.wire_probed_scans for every probed chain explorer_routes.json does not serve (none,
+    where the file is absent): its scan out of log_scans, its leg out of Pendle's emissions and Fluid's (b). Holds even
+    where the snapshot itself was taken after a pin (a test that restored log_scans to the SAME list a pin had
+    appended to leaves the pinned entries in it)."""
+    import config
+    st = config.explorer_probe_state()
+    served = {int(c) for c in (st.get("served") or ())} | {int(c) for c in ((st.get("alchemy") or {}).get("served") or ())}
+    for cid, proj, _chain, key, metric, _tok, _holders in config.EXPLORER_PROBED_SCANS:
+        if cid in served:
+            continue
+        p = config.PROJECT_BY_NAME[proj]
+        if any(sp.get("key") == key for sp in p.get("log_scans") or ()):
+            monkeypatch.setitem(p, "log_scans", [sp for sp in p["log_scans"] if sp.get("key") != key])
+        if proj == "Pendle" and metric in tuple(p.get("emissions_from_metric") or ()):
+            monkeypatch.setitem(p, "emissions_from_metric", tuple(m for m in p["emissions_from_metric"] if m != metric))
+        if proj == "Fluid" and metric in config.OUTFLOW_CATEGORIES["Fluid"]["b"]:
+            monkeypatch.setitem(config.OUTFLOW_CATEGORIES["Fluid"], "b",
+                                tuple(m for m in config.OUTFLOW_CATEGORIES["Fluid"]["b"] if m != metric))
