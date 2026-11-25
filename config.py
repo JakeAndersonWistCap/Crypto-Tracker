@@ -51232,3 +51232,13 @@ DECLARED_NA_REASONS["Ethereum"] = (*DECLARED_NA_REASONS["Ethereum"], {
     "read_on": "2026-11-03", "decided": "Jake 2026-11-03 (P4-Q4: the lock rate counts staked ETH from its own metric; "
                                         "locked_tokens stays not applicable) — on the A3 tab from R21b",
     "why": "Ethereum has no vote-escrow or lock contract; staked ETH is read as its own metric, not as a lock balance"})
+# ===== R21b (lead, gate): AETHIR JOINED THE A3 TAB — its "Buyback destination" says why it is n/a =====
+# (the same fix as Morpho's in R20; the coverage audit's BLANK-UNEXPLAINED): the declared wording, R21b item 3
+ATTRIBUTE_TEXT[("Aethir", "buyback_destination")] = (
+    "n/a — no buyback: a direct fee burn (ServiceFeeBurner 0xf8ec… → 0x…dEaD, no swap; R21b, Jake 2026-11-25)")
+# ===== R21b (lead, gate): MORPHO'S RELEASE LESS THE FOUNDER CLAIMS — a declared component, not a new measuring point =====
+DECLARED_COMPONENTS.setdefault(("Morpho", "unlock_release_tokens"), []).append({
+    "metric": "morpho_founder_vest_claims_tokens", "from": None,
+    "source": "derived:unlock_release-morpho_founder_vest_claims_tokens",
+    "why": "R21b item 2 (Jake 2026-11-25): the founders' vest() claims of already-vested tokens from the Vester "
+           "0x229A…0bfc are not new supply — taken out of the release (e), shown as a named insider float movement"})

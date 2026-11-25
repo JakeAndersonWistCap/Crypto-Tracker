@@ -21285,7 +21285,8 @@ def test_beaconchain_is_dropped_entirely():
     assert "cross_check_metric" not in config.VALIDATOR_YIELD["Ethereum"]
     fwd = config.HISTORY_FORWARD_ONLY["Ethereum"]
     assert "DROPPED 2026-10-01" in fwd["why"] and fwd["until"] is None
-    assert config.SOURCE_REGISTER["beaconcha.in"]["status"] == "IN USE (R20)"      # was "DROPPED" (Jake 2026-11-24)
+    # R21b (Jake 2026-11-25): the keyless beacon node is the standing source (was "IN USE (R20)"; before that "DROPPED")
+    assert config.SOURCE_REGISTER["beaconcha.in"]["status"] == "NOT USED (R21b)"
     assert not any("beaconcha" in h[0] for h in bw._eth_yield_columns(bw.Refs.__new__(bw.Refs)))
 
 

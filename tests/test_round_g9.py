@@ -233,7 +233,9 @@ def test_c1_fdv_holds_a_value_with_five_quarters_where_the_handover_is_declared(
     for name in ("Ethereum", "Near", "Plume", "Uniswap"):
         note = built["fdv_notes"].get(name, "")
         assert "same quantity" in note and "NOT" not in note, (name, note)
-        row = next(t for t in built["traj"] if t["project"] == name and str(t["header"]).startswith("FDV"))
+        # the FDV row itself (R21b: Ethereum's A3 tab adds "FDV RETIREMENT RATE …", which is not it)
+        row = next(t for t in built["traj"] if t["project"] == name and str(t["header"]).startswith("FDV")
+                   and "RETIREMENT" not in str(t["header"]).upper())
         n = sum(isinstance(row.get(q), (int, float)) for q in ("Q0", "Q-1", "Q-2", "Q-3", "Q-4"))
         # five quarters wherever the inputs hold them (the store-based fixture build: all four read 5); a dump whose
         # price history is shorter names the input in its why (E4)

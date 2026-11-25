@@ -743,7 +743,7 @@ def honest_statuses(rows: list[dict], gap_rows: list | None = None, groups: dict
         named = _metrics_named(why, r.get("Formula as built"))
         nb = route_none_buyback(str(r["Project"]), named)
         if nb:
-            r["Reason / route / error"] = f"{why} — N/A BY DESIGN (R21b): {nb}"
+            r["Reason / route / error"] = f"N/A BY DESIGN (R21b): {nb}"
             continue                                       # stays N/A BY DESIGN, with the route's decided reason
         g = next((gaps.get((str(r["Project"]), m)) for m in named if gaps.get((str(r["Project"]), m))), None)
         if rule == "MISSING C":

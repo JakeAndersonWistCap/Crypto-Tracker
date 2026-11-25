@@ -134,11 +134,13 @@ def test_1_unlocks_follow_the_set_circulating_subtracts_and_never_count_claims_t
     monkeypatch.setitem(config.UNLOCK_STOCKS, "Morpho", ("noncirculating_holding_tokens",))
     assert "noncirculating_holding_tokens" in config.rule_in_legs("Morpho")
     assert config.unlock_stock_metrics("Morpho") == ("noncirculating_holding_tokens",)
-    assert config.release_less("Morpho") == ((), False)
+    # R21b (Jake 2026-11-25): the founders' Vester claims are taken out of (e) (an optional leg; was ())
+    assert config.release_less("Morpho") == (("morpho_founder_vest_claims_tokens",), False)
     monkeypatch.setitem(swc, "in_force", True)
     assert config.unlock_stock_metrics("Morpho") == ("noncirculating_holding_tokens", "morpho_undistributed_tokens")
     # PR4F.2: every claims leg of emissions_tokens (legacy URD, Arbitrum, Katana too) is netted out of (e) once
-    assert config.release_less("Morpho") == (("emissions_tokens_claims_ethereum", "emissions_tokens_claims_ethereum_legacy",
+    assert config.release_less("Morpho") == (("morpho_founder_vest_claims_tokens",
+                                              "emissions_tokens_claims_ethereum", "emissions_tokens_claims_ethereum_legacy",
                                               "emissions_tokens_claims_base", "emissions_tokens_claims_arbitrum",
                                               "emissions_tokens_claims_katana"), True)
     # a required leg with no rows leaves (e) unbuilt — never a release that counts the claims twice
