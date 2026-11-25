@@ -15380,11 +15380,10 @@ def _cp_cols(R: Refs, data_by_key: dict) -> list[tuple]:
     def hvy(r, p):
         if not hv_has(p):
             return no_hv(p)
-        # R22: with value to stakers beside the credited figure the yield is a SUM of two parts, each annualised over its
-        # own covered days — D7-2's same-span rule is for a net or a ratio (as the validator yield's consensus +
-        # execution, same_span=False); each part still needs RATE_MIN_DAYS. Net holder yield (a net) keeps the rule.
-        return _coverage_guard(R, r, [("holder value", "holder_value_revenue_usd", "q0")] + sv_legs(p), hvy_expr(r, p),
-                               same_span=False if sv_legs(p) else None)
+        # R22: with value to stakers beside the credited figure the yield is a SUM of two parts. The same-span rule
+        # (D7-2) is KEPT for it (lead, R22: not loosened to make the cell form — exempting a sum, as the validator
+        # yield's consensus + execution is, is Jake's decision, handover section 9): legs over unequal days BLOCK.
+        return _coverage_guard(R, r, [("holder value", "holder_value_revenue_usd", "q0")] + sv_legs(p), hvy_expr(r, p))
 
     def hv_fees_only(r, p):
         if "holder_value_fees_only_usd" not in config.metrics_for_project(p):
