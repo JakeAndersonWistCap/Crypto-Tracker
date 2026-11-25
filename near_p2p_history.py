@@ -268,10 +268,11 @@ def _near():
 
 def done_in_month(st: dict, today) -> int:
     m = f"{_day(today):%Y-%m}"
-    return sum(1 for r in ((st.get("history") or {}).get("runs") or []) if r.get("month") == m)
+    # R22: a chunk the one-shot billed history read (bigquery_backfill.py) is not one of the month's approved chunks
+    return sum(1 for r in ((st.get("history") or {}).get("runs") or []) if r.get("month") == m and not r.get("oneshot"))
 
 
-def store_gaps(db: Path, d0: dt.date, d1: dt.date, metrics=("price_usd", "dex_volume_usd")) -> dict:
+def store_gaps(db: Path, d0: dt.date, d1: dt.date, metrics=("price_usd", "dex_volume_usd"), project: str = "Near") -> dict:
     """{metric: [days of the chunk the store holds no value on]} - read-only. A P2P day is valued at the store's
     same-day NEAR price and a settlement day forms only with the DEX leg, so a chunk over days without them would bill
     and form nothing."""
@@ -281,8 +282,8 @@ def store_gaps(db: Path, d0: dt.date, d1: dt.date, metrics=("price_usd", "dex_vo
         out = {}
         for m in metrics:
             have = {r[0] for r in con.execute(
-                "SELECT substr(date,1,10) FROM metrics WHERE project='Near' AND metric=? AND value IS NOT NULL "
-                "AND substr(date,1,10) BETWEEN ? AND ?", (m, str(d0), str(d1)))}
+                "SELECT substr(date,1,10) FROM metrics WHERE project=? AND metric=? AND value IS NOT NULL "
+                "AND substr(date,1,10) BETWEEN ? AND ?", (project, m, str(d0), str(d1)))}
             miss = [d for d in want if str(d) not in have]
             if miss:
                 out[m] = miss

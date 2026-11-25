@@ -144,7 +144,11 @@ class NearBigQuery:
     def _save(self, st: dict) -> None:
         p = self._path()
         p.parent.mkdir(parents=True, exist_ok=True)
-        p.write_text(json.dumps(st))
+        # R22 (BQ one-shot): written whole or not at all - a run killed mid-write leaves the previous state, never a
+        # truncated file that _load would read as an empty state (every held day lost)
+        tmp = p.with_name(p.name + ".tmp")
+        tmp.write_text(json.dumps(st))
+        os.replace(tmp, p)
 
     # --- BigQuery ------------------------------------------------------------------------------
     def _client(self, spec: dict):
@@ -226,11 +230,15 @@ class NearBigQuery:
         return int(client.query(sql, job_config=cfg).total_bytes_processed or 0)
 
     def _run(self, client, what: str, sql: str, params: dict, spec: dict, st: dict, out, name: str,
-             backfill: bool = False, topup_days: int = 0, hard_cap: int | None = None):
+             backfill: bool = False, topup_days: int = 0, hard_cap: int | None = None, billed: bool = False):
         """Rows, or None with the reason logged. Dry run, budget, then the job capped at its dry run.
         A BACKFILL query may only spend what the month's top-up reserve leaves (_reserve).
         R12.5: `hard_cap` is the condition a one-off read was approved under (bytes): a dry run over it is NOT RUN,
-        and the job's maximum_bytes_billed never exceeds it — BigQuery itself refuses anything larger."""
+        and the job's maximum_bytes_billed never exceeds it — BigQuery itself refuses anything larger.
+        R22: `billed` is the one-shot billed history (bigquery_backfill.py, only once Jake's billing is confirmed on):
+        the free tier's monthly budget and the top-up reserve do not hold it (its own 4 TB total does, through
+        hard_cap), and its bytes go to st["ledger_billed"], not the free-tier ledger, so the daily reads keep their
+        month."""
         try:
             est = self._dry(client, sql, params, spec)
         except Exception as e:  # noqa: BLE001
@@ -251,7 +259,7 @@ class NearBigQuery:
             out.skipped(SOURCE, name, f"{what}: dry run {est:,} bytes is over the {int(hard_cap):,}-byte condition it "
                                       f"was approved under — NOT RUN (a new decision for Jake)", TIER)
             return None
-        if backfill:
+        if backfill and not billed:
             reserve, why = self._reserve(spec, st)
             if reserve is None:
                 out.skipped(SOURCE, name, f"{what}: BACKFILL HELD — {why}", TIER)
@@ -262,7 +270,7 @@ class NearBigQuery:
                                           f"{max(room, 0) / 1e9:,.1f} GB left for backfill after the top-up reserve "
                                           f"({reserve / 1e9:,.1f} GB: {why}); resumes next month", TIER)
                 return None
-        if used + est > int(spec["monthly_budget_bytes"]):
+        if not billed and used + est > int(spec["monthly_budget_bytes"]):
             out.skipped(SOURCE, name, f"{what}: dry run {est / 1e9:,.1f} GB would take {month} to "
                                       f"{(used + est) / 1e9:,.1f} GB, past the budget "
                                       f"{int(spec['monthly_budget_bytes']) / 1e9:,.0f} GB — NOT RUN; resumes "
@@ -282,12 +290,22 @@ class NearBigQuery:
         if getattr(job, "project", spec["project"]) != spec["project"]:
             out.fail(SOURCE, name, f"{what}: the job ran in a project other than {spec['project']} — stopped", TIER)
             return None
+        billed_mode = billed
         billed = int(getattr(job, "total_bytes_billed", None) or est)
         self._run_bytes += billed
         if backfill:
             self._backfill_bytes += billed
-        st["ledger"][month] = used + billed
+        if billed_mode:
+            lb = st.setdefault("ledger_billed", {})
+            lb[month] = int(lb.get(month, 0)) + billed
+        else:
+            st["ledger"][month] = used + billed
         self._save(st)
+        if billed_mode:
+            out.skipped(SOURCE, name, f"{what}: {len(rows)} row(s); {billed / 1e9:,.2f} GB billed (dry run "
+                                      f"{est / 1e9:,.2f} GB, maximum_bytes_billed {cap:,}) — the one-shot billed "
+                                      f"history, outside the free-tier ledger", TIER)
+            return rows
         out.skipped(SOURCE, name, f"{what}: {len(rows)} row(s); {billed / 1e9:,.2f} GB billed (dry run "
                                   f"{est / 1e9:,.2f} GB); {month} so far {(used + billed) / 1e9:,.1f} GB of "
                                   f"{int(spec['monthly_budget_bytes']) / 1e9:,.0f} GB", TIER)
@@ -668,7 +686,7 @@ class NearBigQuery:
         if prog.done:
             prog.flush(final=True)
 
-    def history_chunk(self, client, spec, st, out, name, d0, d1, hard_cap: int) -> dict | None:
+    def history_chunk(self, client, spec, st, out, name, d0, d1, hard_cap: int, billed: bool = False) -> dict | None:
         """R18 (Jake 2026-11-24): ONE CHUNK OF P2P HISTORY BEFORE THE STORED RUN — the same SQL and token list as the
         daily read, over [d0, d1], as a BACKFILL (the month's budget, the per-query cap and the top-up reserve apply)
         under `hard_cap`, the bytes the month's approval allows. NEVER CALLED BY run(): only near_p2p_history.py's
@@ -696,7 +714,8 @@ class NearBigQuery:
         before = self._run_bytes
         rows = self._run(client, what, _sql("bigquery_p2p_daily.sql"),
                          {"d0": pd.Timestamp(d0).date(), "d1": pd.Timestamp(d1).date(), "tokens": toks}, spec, st, out,
-                         name, backfill=True, hard_cap=int(hard_cap))
+                         name, backfill=True, hard_cap=int(hard_cap), billed=billed)
+        oneshot = billed
         if rows is None:
             return None
         billed = self._run_bytes - before
@@ -719,6 +738,8 @@ class NearBigQuery:
             st["days"][d] = got[d]
         rec = {"month": str(today().date())[:7], "on": str(today().date()), "d0": days[0], "d1": days[-1],
                "days": len(days), "billed_bytes": int(billed)}
+        if oneshot:
+            rec["oneshot"] = True              # R22: not one of the month's approved chunks (near_p2p_history)
         st.setdefault("history", {}).setdefault("runs", []).append(rec)
         self._save(st)
         out.skipped(SOURCE, name, f"{what}: {len(days)} day(s) kept, {billed / 1e9:,.2f} GB billed; the next "

@@ -51242,3 +51242,41 @@ DECLARED_COMPONENTS.setdefault(("Morpho", "unlock_release_tokens"), []).append({
     "source": "derived:unlock_release-morpho_founder_vest_claims_tokens",
     "why": "R21b item 2 (Jake 2026-11-25): the founders' vest() claims of already-vested tokens from the Vester "
            "0x229A…0bfc are not new supply — taken out of the release (e), shown as a named insider float movement"})
+
+
+# ===== ROUND 22, item 7 (BQ lane, Jake 2026-11-25): THE ONE-SHOT BILLED HISTORY — NEAR AND ETHEREUM IN ONE GO =====
+# "If Jake enables billing on near-data-510309, both histories fill in one go: NEAR back to the 2024-12-10 floor
+# (~2.7 TB), and Ethereum 2024-11-04 to 2026-05-31 (~0.8 TB). Write a single command that refuses unless billing is on.
+# It must set maximum_bytes_billed per query and total no more than 4 TB, about $25. It dry-runs first and prints the
+# cost, and the run is chunked and resumable. If billing stays off, the free-tier schedule in docs/r19_bigquery_plan.md
+# stands." The command is bigquery_backfill.py (plan | dry-run | run). OPTIONAL: nothing schedules it; with billing off
+# BIGQUERY_SCHEDULE (R20) and NEAR_P2P_HISTORY_APPROVAL (R21b) stand unchanged.
+# Jake sets this when he has enabled billing on near-data-510309: billing_enabled True, confirmed_by, confirmed_on (a
+# YYYY-MM-DD date). The flag alone is never enough: `run` also asks the Cloud Billing API (projects.getBillingInfo,
+# billingEnabled) with his Application Default Credentials, and refuses when that answer is not True or cannot be had.
+BIGQUERY_BILLING = {"project": PROJECT_BY_NAME["Near"]["near_bigquery"]["project"], "billing_enabled": False,
+                    "confirmed_by": None, "confirmed_on": None}
+BIGQUERY_ONESHOT = {
+    "decided": "Jake 2026-11-25 (Round 22, item 7): one-shot fill if billing is enabled; <= 4 TB, about $25",
+    "command": "python bigquery_backfill.py run",
+    # THE TOTAL: every query's maximum_bytes_billed summed (the most BigQuery can bill), plus what earlier runs of the
+    # one-shot billed, never above 4,000 GB in the ledger's decimal units (bytes / 1e9) = 3.638 TiB
+    "total_cap_gb": 4000.0,
+    # Google's on-demand price, read 2026-11-25 on cloud.google.com/bigquery/pricing: "Queries (on-demand) 0 tebibyte
+    # to 1 tebibyte: Free per 1 month / account; 1 tebibyte and above: $6.25 / 1 tebibyte". The page's default region
+    # (Iowa, us-central1) was read; the US multi-region price (where bigquery-public-data sits) was not read apart.
+    "price_usd_per_tib": 6.25,
+    "price_source": "cloud.google.com/bigquery/pricing, read 2026-11-25 (default region us-central1): $6.25 per TiB "
+                    "on demand after the first free 1 TiB a month",
+    # NEAR: from the floor up to the stored run, in NEAR_P2P_HISTORY's calendar-month chunks (near_p2p_history.next_chunk)
+    "near": {"project": "Near", "from": NEAR_P2P_HISTORY["floor"],
+             "est_gb_per_day": NEAR_P2P_HISTORY["est_gb_per_day"], "est_source": NEAR_P2P_HISTORY["est_source"],
+             "store_needs": ("price_usd", "dex_volume_usd")},
+    # ETHEREUM: the extension's first day (BIGQUERY_SCHEDULE's furthest eth_back_to, Jake 2026-11-04) to 2026-05-31,
+    # calendar-month chunks of the days not yet held (a chunk over the 60 GB per-query cap is halved until it fits)
+    "ethereum": {"project": "Ethereum", "from": min(r["eth_back_to"] for r in BIGQUERY_SCHEDULE["months"].values()),
+                 "to": "2026-05-31", "est_gb_per_day": round(9.48 / 7, 3),
+                 "est_source": "9.48 GB a week, Jake's dry runs (777 GB over 82 weekly pieces, RUNBOOK P5-1.9 step 3)",
+                 "store_needs": ("price_usd",)},
+    "never_automatic": "not in windows/daily_run.ps1, token_metrics.py or check_offline_items.py: only its own command",
+}
