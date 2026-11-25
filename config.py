@@ -43494,9 +43494,14 @@ FROZEN_MOVES["Hyperliquid"] = _frozen_moves_record("hyperliquid")
 # holder" test). A position is classified by classify_position(): OUT of circulating only when unvested / unreleased AND
 # immovable AND idle; BURNED = out of circulating and of total; everything else circulating, and OFF FREE FLOAT when it
 # is staked, locked or earning, or held by the issuer / foundation / treasury (bought-back tokens held included).
+ISSUANCE_PCT_LABEL = {   # R23 (Jake 2026-11-25): the number stays, the window it was read over is said on the cell
+    "Hyperliquid": "13-day window, annualised (as read 2026-11-25)"}
 CIRCULATING_RULE = {
     "decided": "Jake 2026-11-17 (final)",
     "out_only_if_all": ("not yet vested or released", "nobody can move it", "earns nothing (idle)"),
+    # R23 (Jake 2026-11-25, Hyperliquid's team wallet): the unvested leg stays out even where it is staked
+    "unvested_staked": "unvested and non-transferable is out of circulating even when staked, because the holder can't "
+                       "sell it",
     "burned": "destroyed, or at an address nobody controls: out of circulating and of total supply",
     "off_float": ("staked, locked or earning (staking yield, fees, allocation rewards)",
                   "an issuer, foundation or treasury holding, bought-back tokens held (not burned) included"),
@@ -52277,11 +52282,14 @@ def burn_start(project_name: str) -> str | None:
     return None
 
 
+# R23 (Jake 2026-11-25, item A3): a sum with a leg that starts inside the window is read since that leg began — Aethir's
+# holder value yield (the fee burn's credited $ + the value to stakers) from the burn's start, labelled with the date
+BURN_SINCE_EXTRA = {"Aethir": ("holder_value_revenue_usd", STAKER_EMISSION_VALUE["Aethir"]["metric"])}
 BURN_SINCE_LEGS = {}      # project -> (burn metric, issuance-basis metric) for projects with a declared burn start
 for _p in PROJECTS:
     if burn_start(_p["name"]):
         BURN_SINCE_LEGS[_p["name"]] = (a4_burn_metric(_p["name"]), crossover_issuance_metric(_p["name"]))
-        for _m in set(BURN_SINCE_LEGS[_p["name"]]) | {"pool_release_tokens"}:
+        for _m in set(BURN_SINCE_LEGS[_p["name"]]) | {"pool_release_tokens"} | set(BURN_SINCE_EXTRA.get(_p["name"], ())):
             if _m not in METRICS:
                 continue
             _v = METRICS.setdefault(f"{_m}_sinceburn", {
@@ -52293,6 +52301,22 @@ for _p in PROJECTS:
 # the since-the-burn-began views are the same burns / issuance cut at the start, read only by A4's two ratios
 for _n, _legs in BURN_SINCE_LEGS.items():
     for _m in set(_legs) | {"pool_release_tokens"}:
+        if _m in BURN_SINCE_EXTRA.get(_n, ()):
+            continue
         BURN_NOT_IN_NET[(_n, f"{_m}_sinceburn")] = (
             f"{_m} from the day the A4 burn began (R22 read-time view, read only by A4's burn ÷ issuance and release ÷ "
             f"burn) — the same tokens as {_m}, never summed with it")
+
+
+# ===== ROUND 23 (Jake 2026-11-25) =====
+# A4 PLUME: "Insider share of stake" is n/a — "issuer publishes no insider wallet list" — an allowed label, not a
+# NOT VERIFIED line (R17's entry withdrawn). Plume is not being frozen now (taken out of the freeze commands).
+INSIDER_SHARE_ROUTES["Plume"]["cell"] = "n/a — issuer publishes no insider wallet list"
+NOT_VERIFIED["Plume"] = [e for e in NOT_VERIFIED.get("Plume", []) if "Insider share of stake" not in (e.get("cols") or ())]
+DECLARED_NA_REASONS.setdefault("Plume", []).append(
+    {"cols": ("Insider share of stake",), "match": "issuer publishes no insider wallet list",
+     "text": "n/a — issuer publishes no insider wallet list",
+     "source": "docs.plume.org contract-addresses page and assets.plume.org/mainnet/core.json (no allocation, team, backer "
+               "or foundation wallet), supply.plume.org (a figure, no wallets), docs/r19_plume_brief.md 'Could not verify'",
+     "read_on": "2026-11-23", "decided": "Jake 2026-11-25 (Round 23 item A4)",
+     "why": "the insiders cannot be found among the stakers without a published wallet list"})

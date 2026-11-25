@@ -2560,7 +2560,8 @@ corrected only on a primary post.
 **THE RULE: CIRCULATING AND FREE FLOAT (Jake 2026-11-17, final — config.CIRCULATING_RULE; it replaces every earlier
 circulating convention and test, on every project).**
 1. A token is OUT of circulating only if ALL THREE hold: it is not yet vested or released, nobody can move it, and it
-   earns nothing (it sits idle).
+   earns nothing (it sits idle). R23 (Jake 2026-11-25): unvested and non-transferable is out of circulating even when
+   staked, because the holder can't sell it (Hyperliquid's team wallet, 238.36M HYPE, stays out).
 2. Burned tokens (destroyed, or sent to an address nobody controls) are out of circulating AND of total supply.
 3. Everything else is circulating. Who locked it, and whether the holder can unlock it, does not matter.
 4. OFF FREE FLOAT: anything staked, locked or earning (staking yield, fees, allocation rewards), and any issuer,

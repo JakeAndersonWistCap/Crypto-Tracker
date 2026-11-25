@@ -2103,7 +2103,7 @@ def _burn_since_views(groups: dict, asof) -> None:
         if not (lo < start <= hi):
             continue
         cut = set()
-        for m in set(legs) | {"pool_release_tokens"}:
+        for m in set(legs) | {"pool_release_tokens"} | set(config.BURN_SINCE_EXTRA.get(name, ())):
             g = groups.get((name, m))
             if g is None or g.empty or f"{m}_sinceburn" not in config.METRICS:
                 continue
@@ -2116,6 +2116,12 @@ def _burn_since_views(groups: dict, asof) -> None:
             cut.add(m)
         if set(legs) <= cut:
             BURN_SINCE[name] = {"start": str(start.date()), "days": int((hi - start).days) + 1, "cut": cut}
+
+
+def _iss_pct_fmt(name: str) -> str | None:
+    """R23: the window an issuance % was read over, said on the cell (config.ISSUANCE_PCT_LABEL); the number is unchanged."""
+    lab = config.ISSUANCE_PCT_LABEL.get(name)
+    return f'0.0%" ({lab})";(0.0%)" ({lab})"' if lab else None
 
 
 def burn_since(p: dict, m: str) -> str:
@@ -2132,6 +2138,13 @@ def _rb_both(name: str) -> bool:
 
 def _rb(p: dict, m: str) -> str:
     return f"{m}_sinceburn" if _rb_both(p["name"]) else m
+
+
+def _hvy_since_fmt(name: str) -> str | None:
+    st = BURN_SINCE.get(name) if not _SHIFT["k"] else None
+    if not st or name not in config.BURN_SINCE_EXTRA or not set(config.BURN_SINCE_EXTRA[name]) <= st["cut"]:
+        return None
+    return f'0.0%" since {st["start"]}";(0.0%)" since {st["start"]})"'
 
 
 def burn_since_fmt(name: str) -> str | None:
@@ -15448,15 +15461,17 @@ def _cp_cols(R: Refs, data_by_key: dict) -> list[tuple]:
 
     def sv_legs(p):
         sv = sv_of(p)
-        return [("value to stakers (emissions)", sv, "q0")] if sv else []
+        return [("value to stakers (emissions)", burn_since(p, sv), "q0")] if sv else []
 
     def hv_ann(r, p):
         """Holder value annualised ($ a year) — the credited figure, plus R22's value to stakers where declared."""
-        v = R.D(r, "holder_value_revenue_usd", "q0")
-        a = _annualise(R, r, p, "holder_value_revenue_usd", v)
+        hm = burn_since(p, "holder_value_revenue_usd")           # R23: since the burn began, where it began inside Q0
+        v = R.D(r, hm, "q0")
+        a = _annualise(R, r, p, hm, v)
         sv = sv_of(p)
         if not sv:
             return [v], a
+        sv = burn_since(p, sv)
         w = R.D(r, sv, "q0")
         return [v, w], f"({a})+({_annualise(R, r, p, sv, w)})"
 
@@ -15478,7 +15493,8 @@ def _cp_cols(R: Refs, data_by_key: dict) -> list[tuple]:
         # R22: with value to stakers beside the credited figure the yield is a SUM of two parts. The same-span rule
         # (D7-2) is KEPT for it (lead, R22: not loosened to make the cell form — exempting a sum, as the validator
         # yield's consensus + execution is, is Jake's decision, handover section 9): legs over unequal days BLOCK.
-        return _coverage_guard(R, r, [("holder value", "holder_value_revenue_usd", "q0")] + sv_legs(p), hvy_expr(r, p))
+        return _coverage_guard(R, r, [("holder value", burn_since(p, "holder_value_revenue_usd"), "q0")] + sv_legs(p),
+                               hvy_expr(r, p))
 
     def hv_fees_only(r, p):
         if "holder_value_fees_only_usd" not in config.metrics_for_project(p):
@@ -15889,7 +15905,8 @@ def _cp_cols(R: Refs, data_by_key: dict) -> list[tuple]:
          {"metric": "outflow_b_usd", "fmt_fn": _subsidy_dates_fmt}),
         (CP_SUBSIDY_BC_HEAD, subsidy(("b", "c")), FMT_X, "calc"),
         # ---- HOLDER VALUE (item 3, LITMUS A) ----
-        (CP_HVY_HEAD, hvy, FMT_PCT, "calc", True, {"metric": "holder_value_revenue_usd", "note_fn": lambda p: _holder_value_note(p)}),
+        (CP_HVY_HEAD, hvy, FMT_PCT, "calc", True, {"metric": "holder_value_revenue_usd", "fmt_fn": _hvy_since_fmt,
+                                                    "note_fn": lambda p: "\n\n".join(x for x in (_holder_value_note(p), burn_since_note(p)) if x)}),
         ("Holder value yield — fees only (where liquid bribes are credited: Aerodrome, decision 4)", hv_fees_only,
          FMT_PCT, "calc"),
         ("Holder value RECORDED, NOT CREDITED (treasury / emissions-funded) ÷ average market cap over the window",
@@ -16348,7 +16365,8 @@ def write_a4(ws, R: Refs, data_by_key: dict):
          lambda r, p: _coverage_guard(R, r, [("burn $", "gross_burn_day_priced_usd", "q0"), ("fees", "fees_usd", "q0")],
                                       f"{_flow_rate(R, r, 'gross_burn_day_priced_usd', p=p)}/{_flow_rate(R, r, 'fees_usd')}"),
          FMT_PCT, "calc"),
-        ("Issuance as % of supply (annualised)", lambda r, p: calc(f"{_annualise(R, r, p, _a4_iss_metric(p['name']), R.D(r, _a4_iss_metric(p['name']), 'q0'))}/{R.D(r, 'circulating_supply', 'now')}"), FMT_PCT, "calc"),
+        ("Issuance as % of supply (annualised)", lambda r, p: calc(f"{_annualise(R, r, p, _a4_iss_metric(p['name']), R.D(r, _a4_iss_metric(p['name']), 'q0'))}/{R.D(r, 'circulating_supply', 'now')}"), FMT_PCT, "calc", False,
+         {"fmt_fn": _iss_pct_fmt}),
         *_a4_phase2_cols(R),
         # THE BASE THE SHARE IS OF (Uniswap, G6 2026-10-19): config burn_split.fee_base_metric — Uniswap's documented
         # share is 100% of PROTOCOL fees (revenue_usd), not of LP fees; fees_usd everywhere else.
@@ -16655,7 +16673,7 @@ def write_a1(ws, R: Refs, data_by_key: dict, months: list[str]):
         # G11 C7: ONE BASIS with A4 — a pre-minted token whose minted figure is declared n/a reads its release
         ("Issuance as % of supply (annualised)",
          lambda r, p: calc(f"{_annualise(R, r, p, _a4_iss_metric(p['name']), R.D(r, _a4_iss_metric(p['name']), 'q0'))}"
-                           f"/{circ(r)}"), FMT_PCT, "calc"),
+                           f"/{circ(r)}"), FMT_PCT, "calc", False, {"fmt_fn": _iss_pct_fmt}),
         # staked_tokens WAS MERGED INTO locked_tokens (2bc2e5d); these three still looked it up and
         # read #N/A on every row until 2026-09-28.
         # G11 C3 (Jake's 10-21 run: Ethereum's staked / staking rate / float read n/a with beacon_chain_eth 43.67M
