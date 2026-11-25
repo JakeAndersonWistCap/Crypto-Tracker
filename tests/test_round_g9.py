@@ -480,7 +480,9 @@ def test_i1_the_alchemy_checkpoint_survives_a_new_head_block(tmp_path):
 
 def test_i3_aethir_b_reads_the_supplier_view():
     assert config.OUTFLOW_CATEGORIES["Aethir"]["b"] == ("supplier_rewards_b_tokens",)
-    assert config.OUTFLOW_CATEGORIES["Aethir"]["a"] == ("staker_rewards_paid_tokens",)
+    # R22: (a) = the measured faucet payouts, the schedule rise (was: staker_rewards_paid_tokens alone) before them
+    assert config.OUTFLOW_CATEGORIES["Aethir"]["a"] == ("staker_rewards_tokens",)
+    assert config.STAKER_REWARD_VIEWS[("Aethir", "staker_rewards_tokens")]["declared"] == "staker_rewards_paid_tokens"
 
 
 def test_i4_world_mobile_gas_is_not_labelled_operator_income_and_plume_fees_go_to_the_distributor():

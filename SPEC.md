@@ -1843,6 +1843,24 @@ staking and vote-locks by holders ARE circulating (off free float only); undistr
 | PR4C.5 | Morpho frozen | Not frozen. | FROZEN_PROJECTS['Morpho'] (tests/fixtures/frozen_morpho.json, 285 cells; the switch PENDING on the dumps); the 48 cells that differ from the pre-round-4 build declared (41 first moved by PR4, 1 by PR4B, 6 by PR4C alone). |
 | PR4C.GATE | Test pins PR4C moves | tests/test_pr4_morpho.py pinned Morpho's dump circulating 696.0M / float 547.25M and a pin without Mantle. | 574.8M / 426.05M (the relocked 121.2M on 2026-10-13 out); the probe test uses Sonic as the chain beyond the pin. Also moved: test_pr4_morpho / test_pr4b (the relock is a circulating and unlock leg; the limitation text is now the modelled relock), test_round_p3_4 (a switch leg is owed from the window's start). tests/test_pr1_freeze.py: the floor "baseline > 300 cells" became "> 250 and every cell on one side only is declared" — Morpho, an A2 project, writes 285 cells; the cell-set check is stronger than the count it replaces. Gate: tests/test_final_round.py's Morpho pin states the relock leg; tests/test_adapters.py's gap-text test starts from no build state (a build earlier on the same worker left GEODNET's series current, and write_gap_report dropped the test's row as answered by the store — an order dependence, fixed in the test, nothing skipped). |
 
+### Round 22 — Aethir staking yield (Jake 2026-11-25), old → new
+Jake: "Aethir uniformity: wire the staking yield. … 1,000,000 ATH a week for each of the two pools … Count it as value
+to stakers and as emissions; it nets out. That clears UNIFORMITY. A3 still counts only the fee burn." Config: the
+"ROUND 22 — AETHIR" block at the end of config.py. Code: `build_workbook._staker_reward_views` (+ `staker_reward_series`,
+`staker_reward_crosscheck`), CP hvy / nhy / dil_mc (`sv_of`). Tests: tests/test_r22_aethir.py.
+- Reward series: the published schedule's weekly rise alone (staker_rewards_paid_tokens) → `staker_rewards_tokens` = the
+  MEASURED faucet payouts (log scan staker_faucet_out: ATH out of the two RewardFaucets into their RewardDistributors,
+  reconciled to the wei) from their first stored day, the schedule's rise before (declared handover); the docs' 2,000,000
+  a week is the cross-check (the staker yield's comment). Outflow (a) reads it.
+- Staker yield / whole-token yield / UNIFORMITY: n/a ("no staker yield series is wired") → VALIDATOR_YIELD["Aethir"]
+  (issuance_share): Q0 reward tokens annualised ÷ the two pools' stake on chain now (`aethir_reward_pools_staked_tokens`
+  = locked_tokens_ai_onchain + locked_tokens_gaming_onchain); whole = that × stake ÷ circulating; UNIFORMITY = the
+  staked share. Fixture (10-13): 13.60%, 0.448%, 0.0329.
+- Holder value yield: the fee burn only → + value to stakers (`holder_value_staking_usd` = the same tokens × the same
+  day's price), a SUM of two parts (same_span off for the sum only, as the validator yield's consensus + execution);
+  net holder yield = holder value yield − dilution, where the same dollars are outflow (a): it nets out. NOT credited
+  holder value: A3's key (revenue_to_holders_usd), payout ratios and the S13 holder revenue line read the fee burn only.
+
 ### Round 21b — lead: NEAR approval, beacon source, route-'none' buybacks (Jake 2026-11-25), old → new
 - NEAR's P2P history: no approval → Jake's dated approval given ahead for ONE named month (`for_month` 2026-12, approved
   2026-11-25, max_gb 337 = the month's room in the 1,000 GB budget); near_p2p_history.refusal reads `for_month`.
