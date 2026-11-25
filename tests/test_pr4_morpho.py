@@ -135,11 +135,12 @@ def test_1_unlocks_follow_the_set_circulating_subtracts_and_never_count_claims_t
     assert "noncirculating_holding_tokens" in config.rule_in_legs("Morpho")
     assert config.unlock_stock_metrics("Morpho") == ("noncirculating_holding_tokens",)
     # R21b (Jake 2026-11-25): the founders' Vester claims are taken out of (e) (an optional leg; was ())
-    assert config.release_less("Morpho") == (("morpho_founder_vest_claims_tokens",), False)
+    # R22: every vesting contract's claims (renamed from R21b's morpho_founder_vest_claims_tokens)
+    assert config.release_less("Morpho") == (("morpho_vest_claims_tokens",), False)
     monkeypatch.setitem(swc, "in_force", True)
     assert config.unlock_stock_metrics("Morpho") == ("noncirculating_holding_tokens", "morpho_undistributed_tokens")
     # PR4F.2: every claims leg of emissions_tokens (legacy URD, Arbitrum, Katana too) is netted out of (e) once
-    assert config.release_less("Morpho") == (("morpho_founder_vest_claims_tokens",
+    assert config.release_less("Morpho") == (("morpho_vest_claims_tokens",
                                               "emissions_tokens_claims_ethereum", "emissions_tokens_claims_ethereum_legacy",
                                               "emissions_tokens_claims_base", "emissions_tokens_claims_arbitrum",
                                               "emissions_tokens_claims_katana"), True)

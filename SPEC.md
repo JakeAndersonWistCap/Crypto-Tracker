@@ -1901,6 +1901,17 @@ end of config.py. Tests: tests/test_r22_plume.py.
   API, CoinGecko, CMC).
 - GEODNET (b): the Mining Safe + Mining distribution wallet IN (R17) → OUT (treasury − ecosystem): 930.41M → 834.98M.
 - Near (a): LOCKED staked by its lockup IN (R10.B3b) → OUT, staked or not: −1,084,482.68 from Jake's 2026-11-19 read.
+### Round 22 — Morpho: every vesting contract (Jake 2026-11-25), old → new
+
+Jake: "the same rule applies to every vesting contract. A claim of tokens that have already vested is not new supply. Vesting counts as dilution on its schedule. [...] List every vesting contract on chain with its end date and the amount still unvested." Table and sources: docs/r22_morpho_vesting.md. Config: the "R22 — MORPHO" block at the end of config.py. Tests: tests/test_r22_morpho.py.
+
+| Item | Old | New |
+|---|---|---|
+| Vesting contracts | the DAO Vester's six founder awards only (R21b) | three DssVest contracts read on chain (`MORPHO_VESTING_CONTRACTS`): the DAO Vester (end 2025-06-11, 0 unvested), the Labs vester 0xe206…4407 (end 2028-10-02, 3,039,455.91 unvested), the Association vester (never funded) |
+| A claim of vested tokens | not a release for the founders' six awards (`morpho_founder_vest_claims_tokens`) | not a release for every award of both live contracts (`morpho_vest_claims_tokens`, `RELEASE_LESS`), netted only out of the leg holding the czar's wallet; named float movement |
+| Vesting on schedule | not in (e) | `morpho_vesting_unvested_tokens` (each award's DssVest accrual, `SCHEDULE_LOCK_LEGS`) is a release leg: its fall is (e) on the day it vests (Labs: ~6,800 a day; the DAO Vester: 0 after 2025-06-11) |
+| The founders' relock | 152M modelled locked to 2027-11-21, out of circulating, its fall in (e) | out of the model: their MIP1 awards vested on chain 2025-06-11 (circulating once vested). `MORPHO_RELOCK` = Cohort 3's 67M only |
+| 11-20 export | circulating 890.2M; float 461.0M; (e) Q0 28.70M; total dilution 27.2% of float | 966.4M; 537.2M; 10.45M; 9.6% |
 
 ### Round 21b — lead: NEAR approval, beacon source, route-'none' buybacks (Jake 2026-11-25), old → new
 - NEAR's P2P history: no approval → Jake's dated approval given ahead for ONE named month (`for_month` 2026-12, approved

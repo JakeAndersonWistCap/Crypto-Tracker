@@ -21,10 +21,11 @@ def built(tmp_path_factory):
 def test_1_the_relocked_balance_follows_the_published_schedule():
     r = config.MORPHO_RELOCK
     assert (r["start"], r["end"]) == ("2025-11-21", "2027-11-21")
-    assert sum(a for _, a in r["tranches"]) == 219_000_000
-    assert config.relocked_on("2025-09-08") == 219_000_000            # before the cliff: all of it
-    assert config.relocked_on("2025-11-21") == 219_000_000
-    assert config.relocked_on("2026-11-12") == pytest.approx(219_000_000 * 374 / 730)    # 112.2M
+    # R22 (Jake 2026-11-25): the Founders' 152M tranche left the model — Cohort 3's 67M only (was 219,000,000)
+    assert sum(a for _, a in r["tranches"]) == 67_000_000
+    assert config.relocked_on("2025-09-08") == 67_000_000             # before the cliff: all of it (was 219,000,000)
+    assert config.relocked_on("2025-11-21") == 67_000_000
+    assert config.relocked_on("2026-11-12") == pytest.approx(67_000_000 * 374 / 730)     # 34.3M (was 112.2M)
     assert config.relocked_on("2027-11-21") == 0 and config.relocked_on("2028-01-01") == 0
     assert config.CIRCULATING_ONCHAIN["Morpho"]["subtract"] == ("noncirculating_holding_tokens", "morpho_relocked_tokens")
     # each day's vesting is an unlock (e): the modelled stock is a leg of the release
@@ -41,12 +42,19 @@ def test_1_the_view_is_labelled_modelled_and_vesting_reaches_the_release():
     bw._modelled_lock_views(groups)
     v = groups[("Morpho", "morpho_relocked_tokens")]
     assert v["source"].iloc[0] == "modelled:relock_schedule[2025-11-21..2027-11-21]"
-    assert list(v["value"].diff().dropna().round(2)) == [-300_000.0, -300_000.0]   # 219M / 730 a day
+    # R22: 67M / 730 a day (was −300,000: 219M / 730)
+    assert list(v["value"].diff().dropna().round(2)) == [-91_780.82, -91_780.82]
     hold = pd.DataFrame({"date": days, "project": "Morpho", "metric": "noncirculating_holding_tokens", "value": 2.8e8,
                          "source": "chain:sum(x)", "tier": 2})
     groups[("Morpho", "noncirculating_holding_tokens")] = hold
+    # R22: the vesting contracts' schedule is a release leg too (the Labs vester vests ~6,700 a day)
+    import config as _c
+    vest = [_c.morpho_vesting_unvested_on(d) for d in days]
+    groups[("Morpho", "morpho_vesting_unvested_tokens")] = hold.assign(metric="morpho_vesting_unvested_tokens",
+                                                                       value=vest)
     bw._unlock_release_view(groups, "Morpho", "unlock_release_tokens", config.unlock_stock_metrics("Morpho"))
-    assert list(groups[("Morpho", "unlock_release_tokens")]["value"].round(2)) == [300_000.0, 300_000.0]
+    want = [round(91_780.82 + vest[i - 1] - vest[i], 2) for i in (1, 2)]      # was [300,000, 300,000]
+    assert list(groups[("Morpho", "unlock_release_tokens")]["value"].round(2)) == pytest.approx(want, abs=0.02)
 
 
 def test_1_on_the_dumps_the_schedule_takes_121_2m_out_and_unlocks_27m(built):
@@ -56,7 +64,9 @@ def test_1_on_the_dumps_the_schedule_takes_121_2m_out_and_unlocks_27m(built):
     # R9.2 (the rule): the DAO is in circulating (off the float) — the schedule's 121.2M is what stays out of the total
     assert circ == pytest.approx(1_000_000_000 - config.relocked_on("2026-10-13"), abs=1)
     unl = next(v for k, v in m.items() if k.startswith(cp + "Unlocks Q0"))
-    assert unl == pytest.approx(219_000_000 * 90 / 730, abs=1)
+    # R22: Cohort 3's 67M + the Labs vester's vesting on schedule (was 219,000,000 x 90 / 730 = 27,000,000)
+    vest = config.morpho_vesting_unvested_on("2026-07-15") - config.morpho_vesting_unvested_on("2026-10-13")
+    assert unl == pytest.approx(67_000_000 * 90 / 730 + vest, abs=1)
 
 
 # ================================================================================================ 2: the timeouts

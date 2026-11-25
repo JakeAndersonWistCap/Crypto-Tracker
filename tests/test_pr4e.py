@@ -42,6 +42,7 @@ def _morpho_in_force(monkeypatch):
               ("Morpho", "emissions_tokens_claims_arbitrum"): _rows("emissions_tokens_claims_arbitrum", days, arb),
               ("Morpho", "emissions_tokens_claims_katana"): _rows("emissions_tokens_claims_katana", days, kat)}
     bw._modelled_lock_views(groups)
+    bw._schedule_lock_leg_views(groups)     # R22: the vesting contracts' schedule is a release leg too
     reloc = groups[("Morpho", "morpho_relocked_tokens")].set_index("date")["value"].reindex(days).values
     # R9.2 (the rule, Jake 2026-11-17): the DAO and the distributors are IN circulating (off the float); only the
     # relock stays out — was 1e9 − hold − reloc − undist
@@ -139,20 +140,25 @@ def test_2_circ_legs_release_lists_each_leg_and_the_claims_taken_out(tmp_path):
     out = "\n".join(circ_legs.release_parts(conn, "Morpho"))
     assert "(2026-08-14, 2026-11-12]" in out
     assert "noncirculating_holding_tokens: fall 20,279,637.28; rise 0.00" in out
-    assert "morpho_relocked_tokens: fall 27,000,000.00 (MODELLED" in out
+    # R22: Cohort 3's relock only (was 27,000,000.00 with the founders' tranche) + the vesting contracts' schedule
+    assert "morpho_relocked_tokens: fall 8,260,273.97 (MODELLED" in out
+    assert "morpho_vesting_unvested_tokens: fall 613,973.95 (the vesting on schedule" in out
     assert "morpho_undistributed_tokens: fall 900,000.00" in out
     assert "less emissions_tokens_claims_ethereum: 540,000.00 claimed; 540,000.00 taken" in out
     assert "less emissions_tokens_claims_base: 360,000.00 claimed; 360,000.00 taken" in out
     # R21b (Jake 2026-11-25): the founders' claims are not releases — taken out of (e) (was 47,279,637.28 both)
-    assert "less morpho_founder_vest_claims_tokens: 20,279,637.28 claimed; 20,279,637.28 taken" in out
-    assert "falls − claims = 27,000,000.00" in out
-    assert "Unlocks Q0 (per day: released − claims taken) = 27,000,000.00" in out
+    # R22: every vesting contract's claims — the founders' 20,279,637.28 + the Labs vester's 153,605.18 out of the set
+    # (was: less morpho_founder_vest_claims_tokens 20,279,637.28; falls − claims and Unlocks Q0 27,000,000.00)
+    assert "less morpho_vest_claims_tokens: 20,433,242.46 claimed; 20,433,242.46 taken" in out
+    assert "falls − claims = 8,720,642.74" in out
+    assert "Unlocks Q0 (per day: released − claims taken) = 8,720,642.74" in out
     # a return on a day the set fell is netted that day: the workbook's figure is below the per-leg sum by exactly it
     conn.execute("UPDATE metrics SET value = value + 1290 WHERE metric='noncirculating_holding_tokens' AND date>='2026-10-20'")
     conn.commit()
     out = "\n".join(circ_legs.release_parts(conn, "Morpho"))
     assert "noncirculating_holding_tokens: fall 20,279,637.28; rise 1,290.00" in out
-    assert "Unlocks Q0 (per day: released − claims taken) = 26,998,710.00" in out     # R21b (was 47,278,347.28)
+    # R22 (was 26,998,710.00; R21b was 47,278,347.28)
+    assert "Unlocks Q0 (per day: released − claims taken) = 8,719,352.74" in out
     assert "the difference 1,290.00 = rises netted on days the set fell 1,290.00" in out
 
 

@@ -95,9 +95,13 @@ def release_parts(conn, project: str, period: int = 90) -> list[str]:
     Unlocks Q0 = per-day release − claims taken. It sits below Σ leg falls − Σ claims by the rises netted on days the
     set fell and by any claim with no release left to take it from — both printed."""
     swc = config.circulating_swc(project)
-    legs = list((config.CIRCULATING_ONCHAIN.get(project) or {}).get("subtract") or ())
-    if swc.get("unlock_legs"):
+    # R22: the release's own legs (config.UNLOCK_STOCKS — Morpho's vesting-contract schedule leg is one, though not a
+    # circulating subtraction), else the circulating subtractions
+    legs = list(((getattr(config, "UNLOCK_STOCKS", {}) or {}).get(project) if project == "Morpho" else None)
+                or (config.CIRCULATING_ONCHAIN.get(project) or {}).get("subtract") or ())
+    if swc.get("unlock_legs") and swc["metric"] not in legs:
         legs.append(swc["metric"])
+    sched = (getattr(config, "SCHEDULE_LOCK_LEGS", {}) or {}).get(project) or {}
     asof = conn.execute("SELECT max(substr(date,1,10)) FROM metrics WHERE project=? AND metric='total_supply'",
                         (project,)).fetchone()[0]
     if not asof:
@@ -113,6 +117,13 @@ def release_parts(conn, project: str, period: int = 90) -> list[str]:
             ch = pd.Series({d: config.relocked_on(str((d - pd.Timedelta(days=1)).date())) - config.relocked_on(str(d.date()))
                             for d in days})
             lines.append(f"  {m}: fall {ch.sum():,.2f} (MODELLED from the published schedule)")
+            falls_total += float(ch.sum())
+            net = net.add(ch, fill_value=0.0)
+            continue
+        if m == sched.get("metric"):
+            # R22: a schedule leg computed from declared parameters (Morpho's vesting contracts) — its fall is the vesting
+            ch = pd.Series({d: sched["fn"](d - pd.Timedelta(days=1)) - sched["fn"](d) for d in days})
+            lines.append(f"  {m}: fall {ch.sum():,.2f} (the vesting on schedule, {sched.get('point', 'declared')})")
             falls_total += float(ch.sum())
             net = net.add(ch, fill_value=0.0)
             continue
@@ -138,8 +149,12 @@ def release_parts(conn, project: str, period: int = 90) -> list[str]:
     for m in less_legs:
         if project == "Morpho" and m == fv.get("metric"):
             # R21b: the founders' Vester claims are a declaration, not a stored series (a view of the build)
-            rows = [(d, v) for d, v in sorted(config.morpho_founder_claims_by_day(fv).items())
-                    if str(start.date()) < d <= str(end.date())]
+            # R22: every vesting contract's claims out of a wallet that is one of these legs
+            try:
+                by_day = config.morpho_founder_claims_by_day(fv, legs=tuple(legs))
+            except TypeError:
+                by_day = config.morpho_founder_claims_by_day(fv)
+            rows = [(d, v) for d, v in sorted(by_day.items()) if str(start.date()) < d <= str(end.date())]
         else:
             rows = conn.execute("SELECT substr(date,1,10), sum(value) FROM metrics WHERE project=? AND metric=? AND "
                                 "substr(date,1,10)>? AND substr(date,1,10)<=? GROUP BY substr(date,1,10)",
@@ -155,7 +170,7 @@ def release_parts(conn, project: str, period: int = 90) -> list[str]:
                     left -= t
                     taken += t
         lines.append(f"  less {m}: {tot:,.2f} claimed; {taken:,.2f} taken out of (e) "
-                     + ("(founders' vested Vester claims: not a release, R21b)" if m == fv.get("metric")
+                     + ("(vested claims from the vesting contracts: not a release, R21b / R22)" if m == fv.get("metric")
                         else "((b), in Emissions)"))
         claims_total += tot
         taken_total += taken
