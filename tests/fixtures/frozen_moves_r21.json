@@ -412,6 +412,12 @@
 "from": 0.432155966,
 "to": 0.411378274,
 "why": "R21 (Jake 2026-11-25) Item 6: Hyperliquid's default until Jake decides — the Assistance Fund is a held buyback (inside circulating, +48.0M; off the free float; A4 off); 'burn' now counts only true burns (HyperCore supply fall and zero-address fees), so gross burn, net issuance and every per-circulating ratio move"
+},
+{
+"date": "2026-11-25",
+"from": 0.411378274,
+"to": 0.432155966,
+"why": "R21b item 1 (Jake 2026-11-25): Hyperliquid's Assistance Fund is BURNED — out of circulating and total supply (the validators' vote, HyperFND 2025-12-24: 85% of stake for removing the Fund's HYPE permanently from the circulating and total supply); its buybacks are buy-and-burn (the burns line of net float pressure, A3's retired buyback), A4 on (scored on the Fund + the Core burns); the three true burns stay"
 }
 ],
 "audit|A1 Infrastructure|Gross burn Q0 (tokens) — every burn, fee-market included": [
@@ -420,6 +426,12 @@
 "from": 2474408.02,
 "to": 52260.6283,
 "why": "R21 (Jake 2026-11-25) Item 6: Hyperliquid's default until Jake decides — the Assistance Fund is a held buyback (inside circulating, +48.0M; off the free float; A4 off); 'burn' now counts only true burns (HyperCore supply fall and zero-address fees), so gross burn, net issuance and every per-circulating ratio move"
+},
+{
+"date": "2026-11-25",
+"from": 52260.6283,
+"to": 2474408.02,
+"why": "R21b item 1 (Jake 2026-11-25): Hyperliquid's Assistance Fund is BURNED — out of circulating and total supply (the validators' vote, HyperFND 2025-12-24: 85% of stake for removing the Fund's HYPE permanently from the circulating and total supply); its buybacks are buy-and-burn (the burns line of net float pressure, A3's retired buyback), A4 on (scored on the Fund + the Core burns); the three true burns stay"
 }
 ],
 "audit|A1 Infrastructure|NET ISSUANCE AFTER BURN Q0 (tokens) — issuance − every burn, on the basis A4 uses": [
@@ -428,6 +440,12 @@
 "from": -2474408.02,
 "to": -52260.6283,
 "why": "R21 (Jake 2026-11-25) Item 6: Hyperliquid's default until Jake decides — the Assistance Fund is a held buyback (inside circulating, +48.0M; off the free float; A4 off); 'burn' now counts only true burns (HyperCore supply fall and zero-address fees), so gross burn, net issuance and every per-circulating ratio move"
+},
+{
+"date": "2026-11-25",
+"from": -52260.6283,
+"to": -2474408.02,
+"why": "R21b item 1 (Jake 2026-11-25): Hyperliquid's Assistance Fund is BURNED — out of circulating and total supply (the validators' vote, HyperFND 2025-12-24: 85% of stake for removing the Fund's HYPE permanently from the circulating and total supply); its buybacks are buy-and-burn (the burns line of net float pressure, A3's retired buyback), A4 on (scored on the Fund + the Core burns); the three true burns stay"
 }
 ],
 "audit|A1 Infrastructure|NET ISSUANCE AFTER BURN, annualised % of circulating (+ is net inflation; fee-market burns included)": [
@@ -436,6 +454,12 @@
 "from": -0.0185918181,
 "to": -0.00190902787,
 "why": "R21 (Jake 2026-11-25) Item 6: Hyperliquid's default until Jake decides — the Assistance Fund is a held buyback (inside circulating, +48.0M; off the free float; A4 off); 'burn' now counts only true burns (HyperCore supply fall and zero-address fees), so gross burn, net issuance and every per-circulating ratio move"
+},
+{
+"date": "2026-11-25",
+"from": -0.00190902787,
+"to": -0.0185918181,
+"why": "R21b item 1 (Jake 2026-11-25): Hyperliquid's Assistance Fund is BURNED — out of circulating and total supply (the validators' vote, HyperFND 2025-12-24: 85% of stake for removing the Fund's HYPE permanently from the circulating and total supply); its buybacks are buy-and-burn (the burns line of net float pressure, A3's retired buyback), A4 on (scored on the Fund + the Core burns); the three true burns stay"
 }
 ],
 "audit|A1 Infrastructure|NRR HEADROOM (trading throughput) = M2/GDP ÷ NRR — valuation headroom, not a target": [
@@ -444,6 +468,12 @@
 "from": 45.5346796,
 "to": 41.8153555,
 "why": "R21 (Jake 2026-11-25) Item 6: Hyperliquid's default until Jake decides — the Assistance Fund is a held buyback (inside circulating, +48.0M; off the free float; A4 off); 'burn' now counts only true burns (HyperCore supply fall and zero-address fees), so gross burn, net issuance and every per-circulating ratio move"
+},
+{
+"date": "2026-11-25",
+"from": 41.8153555,
+"to": 45.5346796,
+"why": "R21b item 1 (Jake 2026-11-25): Hyperliquid's Assistance Fund is BURNED — out of circulating and total supply (the validators' vote, HyperFND 2025-12-24: 85% of stake for removing the Fund's HYPE permanently from the circulating and total supply); its buybacks are buy-and-burn (the burns line of net float pressure, A3's retired buyback), A4 on (scored on the Fund + the Core burns); the three true burns stay"
 }
 ],
 "audit|A1 Infrastructure|NRR ON TRADING THROUGHPUT — market cap ÷ trailing-365d DEX + perps volume (DefiLlama)": [
@@ -452,6 +482,12 @@
 "from": 0.0155925112,
 "to": 0.0169794084,
 "why": "R21 (Jake 2026-11-25) Item 6: Hyperliquid's default until Jake decides — the Assistance Fund is a held buyback (inside circulating, +48.0M; off the free float; A4 off); 'burn' now counts only true burns (HyperCore supply fall and zero-address fees), so gross burn, net issuance and every per-circulating ratio move"
+},
+{
+"date": "2026-11-25",
+"from": 0.0169794084,
+"to": 0.0155925112,
+"why": "R21b item 1 (Jake 2026-11-25): Hyperliquid's Assistance Fund is BURNED — out of circulating and total supply (the validators' vote, HyperFND 2025-12-24: 85% of stake for removing the Fund's HYPE permanently from the circulating and total supply); its buybacks are buy-and-burn (the burns line of net float pressure, A3's retired buyback), A4 on (scored on the Fund + the Core burns); the three true burns stay"
 }
 ],
 "audit|A1 Infrastructure|Staking rate = staked inside circulating ÷ circulating": [
@@ -460,6 +496,12 @@
 "from": 0.374631896,
 "to": 0.34403154,
 "why": "R21 (Jake 2026-11-25) Item 6: Hyperliquid's default until Jake decides — the Assistance Fund is a held buyback (inside circulating, +48.0M; off the free float; A4 off); 'burn' now counts only true burns (HyperCore supply fall and zero-address fees), so gross burn, net issuance and every per-circulating ratio move"
+},
+{
+"date": "2026-11-25",
+"from": 0.34403154,
+"to": 0.374631896,
+"why": "R21b item 1 (Jake 2026-11-25): Hyperliquid's Assistance Fund is BURNED — out of circulating and total supply (the validators' vote, HyperFND 2025-12-24: 85% of stake for removing the Fund's HYPE permanently from the circulating and total supply); its buybacks are buy-and-burn (the burns line of net float pressure, A3's retired buyback), A4 on (scored on the Fund + the Core burns); the three true burns stay"
 }
 ],
 "audit|A1 Infrastructure|Trend — a1_gross_burn (arrow · QoQ · 4Q growth/yr · quarters improved; Trajectory tab)": [
@@ -468,6 +510,12 @@
 "from": "SERIES BREAK 2026-09-25 · – · STEP CHANGE at Q0 · QoQ n/a",
 "to": "– · 4Q n/a · QoQ n/a — Q0 is part-held",
 "why": "R21 (Jake 2026-11-25) Item 6: Hyperliquid's default until Jake decides — the Assistance Fund is a held buyback (inside circulating, +48.0M; off the free float; A4 off); 'burn' now counts only true burns (HyperCore supply fall and zero-address fees), so gross burn, net issuance and every per-circulating ratio move"
+},
+{
+"date": "2026-11-25",
+"from": "– · 4Q n/a · QoQ n/a — Q0 is part-held",
+"to": "SERIES BREAK 2026-09-25 · – · STEP CHANGE at Q0 · QoQ n/a",
+"why": "R21b item 1 (Jake 2026-11-25): Hyperliquid's Assistance Fund is BURNED — out of circulating and total supply (the validators' vote, HyperFND 2025-12-24: 85% of stake for removing the Fund's HYPE permanently from the circulating and total supply); its buybacks are buy-and-burn (the burns line of net float pressure, A3's retired buyback), A4 on (scored on the Fund + the Core burns); the three true burns stay"
 }
 ],
 "audit|A1 Infrastructure|Trend — a1_net_issuance (arrow · QoQ · 4Q growth/yr · quarters improved; Trajectory tab)": [
@@ -476,6 +524,12 @@
 "from": "SERIES BREAK 2026-09-25 · – · STEP CHANGE at Q0 · QoQ n/a",
 "to": "– · 4Q n/a · QoQ n/a — Q0 is part-held",
 "why": "R21 (Jake 2026-11-25) Item 6: Hyperliquid's default until Jake decides — the Assistance Fund is a held buyback (inside circulating, +48.0M; off the free float; A4 off); 'burn' now counts only true burns (HyperCore supply fall and zero-address fees), so gross burn, net issuance and every per-circulating ratio move"
+},
+{
+"date": "2026-11-25",
+"from": "– · 4Q n/a · QoQ n/a — Q0 is part-held",
+"to": "SERIES BREAK 2026-09-25 · – · STEP CHANGE at Q0 · QoQ n/a",
+"why": "R21b item 1 (Jake 2026-11-25): Hyperliquid's Assistance Fund is BURNED — out of circulating and total supply (the validators' vote, HyperFND 2025-12-24: 85% of stake for removing the Fund's HYPE permanently from the circulating and total supply); its buybacks are buy-and-burn (the burns line of net float pressure, A3's retired buyback), A4 on (scored on the Fund + the Core burns); the three true burns stay"
 }
 ],
 "audit|A1 Infrastructure|Trend — a1_net_issuance_pct (arrow · QoQ · 4Q growth/yr · quarters improved; Trajectory tab)": [
@@ -484,6 +538,12 @@
 "from": "SERIES BREAK 2026-09-25 · – · STEP CHANGE at Q0 · QoQ n/a",
 "to": "SERIES BREAK 2026-09-24 · – · STEP CHANGE at Q0 · QoQ n/a",
 "why": "R21 (Jake 2026-11-25) Item 6: Hyperliquid's default until Jake decides — the Assistance Fund is a held buyback (inside circulating, +48.0M; off the free float; A4 off); 'burn' now counts only true burns (HyperCore supply fall and zero-address fees), so gross burn, net issuance and every per-circulating ratio move"
+},
+{
+"date": "2026-11-25",
+"from": "SERIES BREAK 2026-09-24 · – · STEP CHANGE at Q0 · QoQ n/a",
+"to": "SERIES BREAK 2026-09-25 · – · STEP CHANGE at Q0 · QoQ n/a",
+"why": "R21b item 1 (Jake 2026-11-25): Hyperliquid's Assistance Fund is BURNED — out of circulating and total supply (the validators' vote, HyperFND 2025-12-24: 85% of stake for removing the Fund's HYPE permanently from the circulating and total supply); its buybacks are buy-and-burn (the burns line of net float pressure, A3's retired buyback), A4 on (scored on the Fund + the Core burns); the three true burns stay"
 }
 ],
 "audit|A3 Revenue Buyback|Actual buyback Q0 BURNED (tokens)": [
@@ -492,6 +552,12 @@
 "from": 2380273.5,
 "to": 0.0,
 "why": "R21 (Jake 2026-11-25) Item 6: Hyperliquid's default until Jake decides — the Assistance Fund is a held buyback (inside circulating, +48.0M; off the free float; A4 off); 'burn' now counts only true burns (HyperCore supply fall and zero-address fees), so gross burn, net issuance and every per-circulating ratio move"
+},
+{
+"date": "2026-11-25",
+"from": 0.0,
+"to": 2380273.5,
+"why": "R21b item 1 (Jake 2026-11-25): Hyperliquid's Assistance Fund is BURNED — out of circulating and total supply (the validators' vote, HyperFND 2025-12-24: 85% of stake for removing the Fund's HYPE permanently from the circulating and total supply); its buybacks are buy-and-burn (the burns line of net float pressure, A3's retired buyback), A4 on (scored on the Fund + the Core burns); the three true burns stay"
 }
 ],
 "audit|A3 Revenue Buyback|Actual buyback Q0 HELD (tokens) — treasury, reserve, foundation-locked": [
@@ -500,6 +566,12 @@
 "from": 0.0,
 "to": 2380273.5,
 "why": "R21 (Jake 2026-11-25) Item 6: Hyperliquid's default until Jake decides — the Assistance Fund is a held buyback (inside circulating, +48.0M; off the free float; A4 off); 'burn' now counts only true burns (HyperCore supply fall and zero-address fees), so gross burn, net issuance and every per-circulating ratio move"
+},
+{
+"date": "2026-11-25",
+"from": 2380273.5,
+"to": 0.0,
+"why": "R21b item 1 (Jake 2026-11-25): Hyperliquid's Assistance Fund is BURNED — out of circulating and total supply (the validators' vote, HyperFND 2025-12-24: 85% of stake for removing the Fund's HYPE permanently from the circulating and total supply); its buybacks are buy-and-burn (the burns line of net float pressure, A3's retired buyback), A4 on (scored on the Fund + the Core burns); the three true burns stay"
 }
 ],
 "audit|A3 Revenue Buyback|Actual buyback as % of supply (annualised) — RETIRED (burned + held) only": [
@@ -508,6 +580,12 @@
 "from": 0.0178845249,
 "to": 0.0164236967,
 "why": "R21 (Jake 2026-11-25) Item 6: Hyperliquid's default until Jake decides — the Assistance Fund is a held buyback (inside circulating, +48.0M; off the free float; A4 off); 'burn' now counts only true burns (HyperCore supply fall and zero-address fees), so gross burn, net issuance and every per-circulating ratio move"
+},
+{
+"date": "2026-11-25",
+"from": 0.0164236967,
+"to": 0.0178845249,
+"why": "R21b item 1 (Jake 2026-11-25): Hyperliquid's Assistance Fund is BURNED — out of circulating and total supply (the validators' vote, HyperFND 2025-12-24: 85% of stake for removing the Fund's HYPE permanently from the circulating and total supply); its buybacks are buy-and-burn (the burns line of net float pressure, A3's retired buyback), A4 on (scored on the Fund + the Core burns); the three true burns stay"
 }
 ],
 "audit|A3 Revenue Buyback|BURNED ÷ (EMISSIONS + UNLOCKS) (x) = BURNED buyback ÷ (emissions + unlocks), per covered day, at the emission rate IN FORCE — a reference (A3's rank key until Round 20)": [
@@ -516,6 +594,12 @@
 "from": 0.296591773,
 "to": 0.0,
 "why": "R21 (Jake 2026-11-25) Item 6: Hyperliquid's default until Jake decides — the Assistance Fund is a held buyback (inside circulating, +48.0M; off the free float; A4 off); 'burn' now counts only true burns (HyperCore supply fall and zero-address fees), so gross burn, net issuance and every per-circulating ratio move"
+},
+{
+"date": "2026-11-25",
+"from": 0.0,
+"to": 0.296591773,
+"why": "R21b item 1 (Jake 2026-11-25): Hyperliquid's Assistance Fund is BURNED — out of circulating and total supply (the validators' vote, HyperFND 2025-12-24: 85% of stake for removing the Fund's HYPE permanently from the circulating and total supply); its buybacks are buy-and-burn (the burns line of net float pressure, A3's retired buyback), A4 on (scored on the Fund + the Core burns); the three true burns stay"
 }
 ],
 "audit|A3 Revenue Buyback|BUYBACK AS % OF SUPPLY (annualised, implied)": [
@@ -524,6 +608,12 @@
 "from": 0.0181198683,
 "to": 0.0166398169,
 "why": "R21 (Jake 2026-11-25) Item 6: Hyperliquid's default until Jake decides — the Assistance Fund is a held buyback (inside circulating, +48.0M; off the free float; A4 off); 'burn' now counts only true burns (HyperCore supply fall and zero-address fees), so gross burn, net issuance and every per-circulating ratio move"
+},
+{
+"date": "2026-11-25",
+"from": 0.0166398169,
+"to": 0.0181198683,
+"why": "R21b item 1 (Jake 2026-11-25): Hyperliquid's Assistance Fund is BURNED — out of circulating and total supply (the validators' vote, HyperFND 2025-12-24: 85% of stake for removing the Fund's HYPE permanently from the circulating and total supply); its buybacks are buy-and-burn (the burns line of net float pressure, A3's retired buyback), A4 on (scored on the Fund + the Core burns); the three true burns stay"
 }
 ],
 "audit|A3 Revenue Buyback|BUYING PRESSURE ON FLOAT, % a year = revenue-funded buying, held or paid out (tokens, annualised) ÷ free float — the demand side of net float pressure; a burned buyback is a burn (R21)": [
@@ -532,6 +622,12 @@
 "from": "<absent>",
 "to": 0.0970550318,
 "why": "R21 (Jake 2026-11-25) Item 6: Hyperliquid's default until Jake decides — the Assistance Fund is a held buyback (inside circulating, +48.0M; off the free float; A4 off); 'burn' now counts only true burns (HyperCore supply fall and zero-address fees), so gross burn, net issuance and every per-circulating ratio move"
+},
+{
+"date": "2026-11-25",
+"from": 0.0970550318,
+"to": 0.0,
+"why": "R21b item 1 (Jake 2026-11-25): Hyperliquid's Assistance Fund is BURNED — out of circulating and total supply (the validators' vote, HyperFND 2025-12-24: 85% of stake for removing the Fund's HYPE permanently from the circulating and total supply); its buybacks are buy-and-burn (the burns line of net float pressure, A3's retired buyback), A4 on (scored on the Fund + the Core burns); the three true burns stay"
 }
 ],
 "audit|A3 Revenue Buyback|Buyback % supply at Q1 (−3m window, split as at Q1)": [
@@ -540,6 +636,12 @@
 "from": 0.0192118917,
 "to": 0.0176426426,
 "why": "R21 (Jake 2026-11-25) Item 6: Hyperliquid's default until Jake decides — the Assistance Fund is a held buyback (inside circulating, +48.0M; off the free float; A4 off); 'burn' now counts only true burns (HyperCore supply fall and zero-address fees), so gross burn, net issuance and every per-circulating ratio move"
+},
+{
+"date": "2026-11-25",
+"from": 0.0176426426,
+"to": 0.0192118917,
+"why": "R21b item 1 (Jake 2026-11-25): Hyperliquid's Assistance Fund is BURNED — out of circulating and total supply (the validators' vote, HyperFND 2025-12-24: 85% of stake for removing the Fund's HYPE permanently from the circulating and total supply); its buybacks are buy-and-burn (the burns line of net float pressure, A3's retired buyback), A4 on (scored on the Fund + the Core burns); the three true burns stay"
 }
 ],
 "audit|A3 Revenue Buyback|Buyback % supply at Q2 (−6m, split as at Q2)": [
@@ -548,6 +650,12 @@
 "from": 0.0359936238,
 "to": 0.0330536239,
 "why": "R21 (Jake 2026-11-25) Item 6: Hyperliquid's default until Jake decides — the Assistance Fund is a held buyback (inside circulating, +48.0M; off the free float; A4 off); 'burn' now counts only true burns (HyperCore supply fall and zero-address fees), so gross burn, net issuance and every per-circulating ratio move"
+},
+{
+"date": "2026-11-25",
+"from": 0.0330536239,
+"to": 0.0359936238,
+"why": "R21b item 1 (Jake 2026-11-25): Hyperliquid's Assistance Fund is BURNED — out of circulating and total supply (the validators' vote, HyperFND 2025-12-24: 85% of stake for removing the Fund's HYPE permanently from the circulating and total supply); its buybacks are buy-and-burn (the burns line of net float pressure, A3's retired buyback), A4 on (scored on the Fund + the Core burns); the three true burns stay"
 }
 ],
 "audit|A3 Revenue Buyback|Buyback destination": [
@@ -556,6 +664,12 @@
 "from": "burn",
 "to": "hold — the Assistance Fund 0xfefe…fefe holds what it buys (R21, Jake's default: a held buyback, not a burn)",
 "why": "R21 (Jake 2026-11-25) Item 6: Hyperliquid's default until Jake decides — the Assistance Fund is a held buyback (inside circulating, +48.0M; off the free float; A4 off); 'burn' now counts only true burns (HyperCore supply fall and zero-address fees), so gross burn, net issuance and every per-circulating ratio move"
+},
+{
+"date": "2026-11-25",
+"from": "hold — the Assistance Fund 0xfefe…fefe holds what it buys (R21, Jake's default: a held buyback, not a burn)",
+"to": "burn",
+"why": "R21b item 1 (Jake 2026-11-25): Hyperliquid's Assistance Fund is BURNED — out of circulating and total supply (the validators' vote, HyperFND 2025-12-24: 85% of stake for removing the Fund's HYPE permanently from the circulating and total supply); its buybacks are buy-and-burn (the burns line of net float pressure, A3's retired buyback), A4 on (scored on the Fund + the Core burns); the three true burns stay"
 }
 ],
 "audit|A3 Revenue Buyback|Buyback to LOCKED supply (destination = hold) — off the free float while held": [
@@ -564,6 +678,12 @@
 "from": "n/a — buyback_fund_balance (now): not applicable to this project — THE FUND IS ALREADY READ, UNDER ITS CORRECT NAME. Repurchased HYPE goes to the Assistance Fund at 0xfefe...fEfe, whose balance IS the cumulative burn — recognised as permane",
 "to": "n/a — Data: not applicable to this project — THE FUND IS ALREADY READ, UNDER ANOTHER NAME: the Assistance Fund 0xfefe…fefe's HYPE is fetched every run as burn_address_balance (stored name kept) and, from R21 (Jake's default), counted IN cir",
 "why": "R21 (Jake 2026-11-25) Item 6: Hyperliquid's default until Jake decides — the Assistance Fund is a held buyback (inside circulating, +48.0M; off the free float; A4 off); 'burn' now counts only true burns (HyperCore supply fall and zero-address fees), so gross burn, net issuance and every per-circulating ratio move"
+},
+{
+"date": "2026-11-25",
+"from": "n/a — Data: not applicable to this project — THE FUND IS ALREADY READ, UNDER ANOTHER NAME: the Assistance Fund 0xfefe…fefe's HYPE is fetched every run as burn_address_balance (stored name kept) and, from R21 (Jake's default), counted IN cir",
+"to": "n/a — buyback_fund_balance (now): not applicable to this project — THE FUND IS ALREADY READ, UNDER ITS CORRECT NAME. Repurchased HYPE goes to the Assistance Fund at 0xfefe...fEfe, whose balance IS the cumulative burn — recognised as permane",
+"why": "R21b item 1 (Jake 2026-11-25): Hyperliquid's Assistance Fund is BURNED — out of circulating and total supply (the validators' vote, HyperFND 2025-12-24: 85% of stake for removing the Fund's HYPE permanently from the circulating and total supply); its buybacks are buy-and-burn (the burns line of net float pressure, A3's retired buyback), A4 on (scored on the Fund + the Core burns); the three true burns stay"
 }
 ],
 "audit|A3 Revenue Buyback|Buyback to YIELD PAYOUT (destination = distribute) — re-enters float, never netted against burn": [
@@ -572,6 +692,12 @@
 "from": "n/a — Destination effect on float is 'removed_from_supply' (declared), not 'yield_payout' — this line applies only to that destination",
 "to": "n/a — Destination effect on float is 'locked_supply' (declared), not 'yield_payout' — this line applies only to that destination",
 "why": "R21 (Jake 2026-11-25) Item 6: Hyperliquid's default until Jake decides — the Assistance Fund is a held buyback (inside circulating, +48.0M; off the free float; A4 off); 'burn' now counts only true burns (HyperCore supply fall and zero-address fees), so gross burn, net issuance and every per-circulating ratio move"
+},
+{
+"date": "2026-11-25",
+"from": "n/a — Destination effect on float is 'locked_supply' (declared), not 'yield_payout' — this line applies only to that destination",
+"to": "n/a — Destination effect on float is 'removed_from_supply' (declared), not 'yield_payout' — this line applies only to that destination",
+"why": "R21b item 1 (Jake 2026-11-25): Hyperliquid's Assistance Fund is BURNED — out of circulating and total supply (the validators' vote, HyperFND 2025-12-24: 85% of stake for removing the Fund's HYPE permanently from the circulating and total supply); its buybacks are buy-and-burn (the burns line of net float pressure, A3's retired buyback), A4 on (scored on the Fund + the Core burns); the three true burns stay"
 }
 ],
 "audit|A3 Revenue Buyback|CIRCULATING RETIREMENT RATE (tokens) = RETIRED buyback tokens (burned + held, annualised) ÷ circulating — primary": [
@@ -580,6 +706,12 @@
 "from": 0.0178845249,
 "to": 0.0164236967,
 "why": "R21 (Jake 2026-11-25) Item 6: Hyperliquid's default until Jake decides — the Assistance Fund is a held buyback (inside circulating, +48.0M; off the free float; A4 off); 'burn' now counts only true burns (HyperCore supply fall and zero-address fees), so gross burn, net issuance and every per-circulating ratio move"
+},
+{
+"date": "2026-11-25",
+"from": 0.0164236967,
+"to": 0.0178845249,
+"why": "R21b item 1 (Jake 2026-11-25): Hyperliquid's Assistance Fund is BURNED — out of circulating and total supply (the validators' vote, HyperFND 2025-12-24: 85% of stake for removing the Fund's HYPE permanently from the circulating and total supply); its buybacks are buy-and-burn (the burns line of net float pressure, A3's retired buyback), A4 on (scored on the Fund + the Core burns); the three true burns stay"
 }
 ],
 "audit|A3 Revenue Buyback|Circulating retirement rate ($) = RETIRED buyback $ (burned + held, annualised) ÷ market cap — alongside": [
@@ -588,6 +720,12 @@
 "from": 0.0169114779,
 "to": 0.0155301293,
 "why": "R21 (Jake 2026-11-25) Item 6: Hyperliquid's default until Jake decides — the Assistance Fund is a held buyback (inside circulating, +48.0M; off the free float; A4 off); 'burn' now counts only true burns (HyperCore supply fall and zero-address fees), so gross burn, net issuance and every per-circulating ratio move"
+},
+{
+"date": "2026-11-25",
+"from": 0.0155301293,
+"to": 0.0169114779,
+"why": "R21b item 1 (Jake 2026-11-25): Hyperliquid's Assistance Fund is BURNED — out of circulating and total supply (the validators' vote, HyperFND 2025-12-24: 85% of stake for removing the Fund's HYPE permanently from the circulating and total supply); its buybacks are buy-and-burn (the burns line of net float pressure, A3's retired buyback), A4 on (scored on the Fund + the Core burns); the three true burns stay"
 }
 ],
 "audit|A3 Revenue Buyback|Circulating supply": [
@@ -596,6 +734,12 @@
 "from": 539758896.0,
 "to": 587768491.0,
 "why": "R21 (Jake 2026-11-25) Item 6: Hyperliquid's default until Jake decides — the Assistance Fund is a held buyback (inside circulating, +48.0M; off the free float; A4 off); 'burn' now counts only true burns (HyperCore supply fall and zero-address fees), so gross burn, net issuance and every per-circulating ratio move"
+},
+{
+"date": "2026-11-25",
+"from": 587768491.0,
+"to": 539758896.0,
+"why": "R21b item 1 (Jake 2026-11-25): Hyperliquid's Assistance Fund is BURNED — out of circulating and total supply (the validators' vote, HyperFND 2025-12-24: 85% of stake for removing the Fund's HYPE permanently from the circulating and total supply); its buybacks are buy-and-burn (the burns line of net float pressure, A3's retired buyback), A4 on (scored on the Fund + the Core burns); the three true burns stay"
 }
 ],
 "audit|A3 Revenue Buyback|Contract vs dashboard divergence (flagged when beyond tolerance)": [
@@ -604,6 +748,12 @@
 "from": "n/a — buyback_fund_balance (now): not applicable to this project — THE FUND IS ALREADY READ, UNDER ITS CORRECT NAME. Repurchased HYPE goes to the Assistance Fund at 0xfefe...fEfe, whose balance IS the cumulative burn — recognised as permane",
 "to": "n/a — buyback_fund_balance (now): not applicable to this project — THE FUND IS ALREADY READ, UNDER ANOTHER NAME: the Assistance Fund 0xfefe…fefe's HYPE is fetched every run as burn_address_balance (stored name kept) and, from R21 (Jake's de",
 "why": "R21 (Jake 2026-11-25) Item 6: Hyperliquid's default until Jake decides — the Assistance Fund is a held buyback (inside circulating, +48.0M; off the free float; A4 off); 'burn' now counts only true burns (HyperCore supply fall and zero-address fees), so gross burn, net issuance and every per-circulating ratio move"
+},
+{
+"date": "2026-11-25",
+"from": "n/a — buyback_fund_balance (now): not applicable to this project — THE FUND IS ALREADY READ, UNDER ANOTHER NAME: the Assistance Fund 0xfefe…fefe's HYPE is fetched every run as burn_address_balance (stored name kept) and, from R21 (Jake's de",
+"to": "n/a — buyback_fund_balance (now): not applicable to this project — THE FUND IS ALREADY READ, UNDER ITS CORRECT NAME. Repurchased HYPE goes to the Assistance Fund at 0xfefe...fEfe, whose balance IS the cumulative burn — recognised as permane",
+"why": "R21b item 1 (Jake 2026-11-25): Hyperliquid's Assistance Fund is BURNED — out of circulating and total supply (the validators' vote, HyperFND 2025-12-24: 85% of stake for removing the Fund's HYPE permanently from the circulating and total supply); its buybacks are buy-and-burn (the burns line of net float pressure, A3's retired buyback), A4 on (scored on the Fund + the Core burns); the three true burns stay"
 }
 ],
 "audit|A3 Revenue Buyback|Destination effect on float": [
@@ -612,6 +762,12 @@
 "from": "removed_from_supply",
 "to": "locked_supply",
 "why": "R21 (Jake 2026-11-25) Item 6: Hyperliquid's default until Jake decides — the Assistance Fund is a held buyback (inside circulating, +48.0M; off the free float; A4 off); 'burn' now counts only true burns (HyperCore supply fall and zero-address fees), so gross burn, net issuance and every per-circulating ratio move"
+},
+{
+"date": "2026-11-25",
+"from": "locked_supply",
+"to": "removed_from_supply",
+"why": "R21b item 1 (Jake 2026-11-25): Hyperliquid's Assistance Fund is BURNED — out of circulating and total supply (the validators' vote, HyperFND 2025-12-24: 85% of stake for removing the Fund's HYPE permanently from the circulating and total supply); its buybacks are buy-and-burn (the burns line of net float pressure, A3's retired buyback), A4 on (scored on the Fund + the Core burns); the three true burns stay"
 }
 ],
 "audit|A3 Revenue Buyback|FDV ($)": [
@@ -620,6 +776,12 @@
 "from": 76962297900.0,
 "to": 80849471900.0,
 "why": "R21 (Jake 2026-11-25) Item 6: Hyperliquid's default until Jake decides — the Assistance Fund is a held buyback (inside circulating, +48.0M; off the free float; A4 off); 'burn' now counts only true burns (HyperCore supply fall and zero-address fees), so gross burn, net issuance and every per-circulating ratio move"
+},
+{
+"date": "2026-11-25",
+"from": 80849471900.0,
+"to": 76962297900.0,
+"why": "R21b item 1 (Jake 2026-11-25): Hyperliquid's Assistance Fund is BURNED — out of circulating and total supply (the validators' vote, HyperFND 2025-12-24: 85% of stake for removing the Fund's HYPE permanently from the circulating and total supply); its buybacks are buy-and-burn (the burns line of net float pressure, A3's retired buyback), A4 on (scored on the Fund + the Core burns); the three true burns stay"
 }
 ],
 "audit|A3 Revenue Buyback|FDV RETIREMENT RATE (tokens) = RETIRED buyback tokens (burned + held, annualised) ÷ FDV supply (the total supply FDV uses) — always read with the rate to its left": [
@@ -628,6 +790,12 @@
 "from": 0.0101555892,
 "to": 0.00966731711,
 "why": "R21 (Jake 2026-11-25) Item 6: Hyperliquid's default until Jake decides — the Assistance Fund is a held buyback (inside circulating, +48.0M; off the free float; A4 off); 'burn' now counts only true burns (HyperCore supply fall and zero-address fees), so gross burn, net issuance and every per-circulating ratio move"
+},
+{
+"date": "2026-11-25",
+"from": 0.00966731711,
+"to": 0.0101555892,
+"why": "R21b item 1 (Jake 2026-11-25): Hyperliquid's Assistance Fund is BURNED — out of circulating and total supply (the validators' vote, HyperFND 2025-12-24: 85% of stake for removing the Fund's HYPE permanently from the circulating and total supply); its buybacks are buy-and-burn (the burns line of net float pressure, A3's retired buyback), A4 on (scored on the Fund + the Core burns); the three true burns stay"
 }
 ],
 "audit|A3 Revenue Buyback|FDV retirement rate ($) = RETIRED buyback $ (burned + held, annualised) ÷ FDV — alongside": [
@@ -636,6 +804,12 @@
 "from": 0.00960305203,
 "to": 0.00914134545,
 "why": "R21 (Jake 2026-11-25) Item 6: Hyperliquid's default until Jake decides — the Assistance Fund is a held buyback (inside circulating, +48.0M; off the free float; A4 off); 'burn' now counts only true burns (HyperCore supply fall and zero-address fees), so gross burn, net issuance and every per-circulating ratio move"
+},
+{
+"date": "2026-11-25",
+"from": 0.00914134545,
+"to": 0.00960305203,
+"why": "R21b item 1 (Jake 2026-11-25): Hyperliquid's Assistance Fund is BURNED — out of circulating and total supply (the validators' vote, HyperFND 2025-12-24: 85% of stake for removing the Fund's HYPE permanently from the circulating and total supply); its buybacks are buy-and-burn (the burns line of net float pressure, A3's retired buyback), A4 on (scored on the Fund + the Core burns); the three true burns stay"
 }
 ],
 "audit|A3 Revenue Buyback|Fees ÷ FDV (annualised)": [
@@ -644,6 +818,12 @@
 "from": 0.0120705522,
 "to": 0.0114902103,
 "why": "R21 (Jake 2026-11-25) Item 6: Hyperliquid's default until Jake decides — the Assistance Fund is a held buyback (inside circulating, +48.0M; off the free float; A4 off); 'burn' now counts only true burns (HyperCore supply fall and zero-address fees), so gross burn, net issuance and every per-circulating ratio move"
+},
+{
+"date": "2026-11-25",
+"from": 0.0114902103,
+"to": 0.0120705522,
+"why": "R21b item 1 (Jake 2026-11-25): Hyperliquid's Assistance Fund is BURNED — out of circulating and total supply (the validators' vote, HyperFND 2025-12-24: 85% of stake for removing the Fund's HYPE permanently from the circulating and total supply); its buybacks are buy-and-burn (the burns line of net float pressure, A3's retired buyback), A4 on (scored on the Fund + the Core burns); the three true burns stay"
 }
 ],
 "audit|A3 Revenue Buyback|Lock rate = locked inside circulating ÷ circulating (stake held by wallets outside circulating excluded)": [
@@ -652,6 +832,12 @@
 "from": 0.374631896,
 "to": 0.34403154,
 "why": "R21 (Jake 2026-11-25) Item 6: Hyperliquid's default until Jake decides — the Assistance Fund is a held buyback (inside circulating, +48.0M; off the free float; A4 off); 'burn' now counts only true burns (HyperCore supply fall and zero-address fees), so gross burn, net issuance and every per-circulating ratio move"
+},
+{
+"date": "2026-11-25",
+"from": 0.34403154,
+"to": 0.374631896,
+"why": "R21b item 1 (Jake 2026-11-25): Hyperliquid's Assistance Fund is BURNED — out of circulating and total supply (the validators' vote, HyperFND 2025-12-24: 85% of stake for removing the Fund's HYPE permanently from the circulating and total supply); its buybacks are buy-and-burn (the burns line of net float pressure, A3's retired buyback), A4 on (scored on the Fund + the Core burns); the three true burns stay"
 }
 ],
 "audit|A3 Revenue Buyback|Market cap ($)": [
@@ -660,6 +846,484 @@
 "from": 43702446000.0,
 "to": 47589620000.0,
 "why": "R21 (Jake 2026-11-25) Item 6: Hyperliquid's default until Jake decides — the Assistance Fund is a held buyback (inside circulating, +48.0M; off the free float; A4 off); 'burn' now counts only true burns (HyperCore supply fall and zero-address fees), so gross burn, net issuance and every per-circulating ratio move"
+},
+{
+"date": "2026-11-25",
+"from": 47589620000.0,
+"to": 43702446000.0,
+"why": "R21b item 1 (Jake 2026-11-25): Hyperliquid's Assistance Fund is BURNED — out of circulating and total supply (the validators' vote, HyperFND 2025-12-24: 85% of stake for removing the Fund's HYPE permanently from the circulating and total supply); its buybacks are buy-and-burn (the burns line of net float pressure, A3's retired buyback), A4 on (scored on the Fund + the Core burns); the three true burns stay"
+}
+],
+"audit|A4 Permanent Burn|Actual − implied burn (tokens)": [
+{
+"date": "2026-11-25",
+"from": "<absent>",
+"to": "n/a — no published buyback/burn split (Share of fees burned has no documented value in config) — the actual burn is on 'GROSS BURN Q0 (tokens)' (A4)",
+"why": "R21b item 1 — the A4 tab (Jake 2026-11-25): Hyperliquid's Assistance Fund is BURNED — out of circulating and total supply (the validators' vote, HyperFND 2025-12-24: 85% of stake for removing the Fund's HYPE permanently from the circulating and total supply); its buybacks are buy-and-burn (the burns line of net float pressure, A3's retired buyback), A4 on (scored on the Fund + the Core burns); the three true burns stay"
+}
+],
+"audit|A4 Permanent Burn|BURN ÷ ISSUANCE (x) — crossover, on the basis to the left": [
+{
+"date": "2026-11-25",
+"from": "<absent>",
+"to": 0.305018289,
+"why": "R21b item 1 — the A4 tab (Jake 2026-11-25): Hyperliquid's Assistance Fund is BURNED — out of circulating and total supply (the validators' vote, HyperFND 2025-12-24: 85% of stake for removing the Fund's HYPE permanently from the circulating and total supply); its buybacks are buy-and-burn (the burns line of net float pressure, A3's retired buyback), A4 on (scored on the Fund + the Core burns); the three true burns stay"
+}
+],
+"audit|A4 Permanent Burn|Burn as share of fees (measured)": [
+{
+"date": "2026-11-25",
+"from": "<absent>",
+"to": 0.818846548,
+"why": "R21b item 1 — the A4 tab (Jake 2026-11-25): Hyperliquid's Assistance Fund is BURNED — out of circulating and total supply (the validators' vote, HyperFND 2025-12-24: 85% of stake for removing the Fund's HYPE permanently from the circulating and total supply); its buybacks are buy-and-burn (the burns line of net float pressure, A3's retired buyback), A4 on (scored on the Fund + the Core burns); the three true burns stay"
+}
+],
+"audit|A4 Permanent Burn|Burn execution": [
+{
+"date": "2026-11-25",
+"from": "<absent>",
+"to": "protocol",
+"why": "R21b item 1 — the A4 tab (Jake 2026-11-25): Hyperliquid's Assistance Fund is BURNED — out of circulating and total supply (the validators' vote, HyperFND 2025-12-24: 85% of stake for removing the Fund's HYPE permanently from the circulating and total supply); its buybacks are buy-and-burn (the burns line of net float pressure, A3's retired buyback), A4 on (scored on the Fund + the Core burns); the three true burns stay"
+}
+],
+"audit|A4 Permanent Burn|Burn split Q0 (tokens): every burn − the A4 burn": [
+{
+"date": "2026-11-25",
+"from": "<absent>",
+"to": 30198.6663,
+"why": "R21b item 1 — the A4 tab (Jake 2026-11-25): Hyperliquid's Assistance Fund is BURNED — out of circulating and total supply (the validators' vote, HyperFND 2025-12-24: 85% of stake for removing the Fund's HYPE permanently from the circulating and total supply); its buybacks are buy-and-burn (the burns line of net float pressure, A3's retired buyback), A4 on (scored on the Fund + the Core burns); the three true burns stay"
+}
+],
+"audit|A4 Permanent Burn|Burn split — by source": [
+{
+"date": "2026-11-25",
+"from": "<absent>",
+"to": "A4 burn = burn_ex_chain_fee_tokens; every burn (A1) = total_burn_tokens; the difference is the burn outside the A4 mechanism (fee-market / other)",
+"why": "R21b item 1 — the A4 tab (Jake 2026-11-25): Hyperliquid's Assistance Fund is BURNED — out of circulating and total supply (the validators' vote, HyperFND 2025-12-24: 85% of stake for removing the Fund's HYPE permanently from the circulating and total supply); its buybacks are buy-and-burn (the burns line of net float pressure, A3's retired buyback), A4 on (scored on the Fund + the Core burns); the three true burns stay"
+}
+],
+"audit|A4 Permanent Burn|Burn status": [
+{
+"date": "2026-11-25",
+"from": "<absent>",
+"to": "active (measured Q0)",
+"why": "R21b item 1 — the A4 tab (Jake 2026-11-25): Hyperliquid's Assistance Fund is BURNED — out of circulating and total supply (the validators' vote, HyperFND 2025-12-24: 85% of stake for removing the Fund's HYPE permanently from the circulating and total supply); its buybacks are buy-and-burn (the burns line of net float pressure, A3's retired buyback), A4 on (scored on the Fund + the Core burns); the three true burns stay"
+}
+],
+"audit|A4 Permanent Burn|Burn Δ30d": [
+{
+"date": "2026-11-25",
+"from": "<absent>",
+"to": "n/a — SERIES BREAK 2026-09-25: burn_ex_chain_fee_tokens: THE BASIS CHANGES at the stitch: before the first live Assistance Fund read the burn is DefiLl (inside this comparison)",
+"why": "R21b item 1 — the A4 tab (Jake 2026-11-25): Hyperliquid's Assistance Fund is BURNED — out of circulating and total supply (the validators' vote, HyperFND 2025-12-24: 85% of stake for removing the Fund's HYPE permanently from the circulating and total supply); its buybacks are buy-and-burn (the burns line of net float pressure, A3's retired buyback), A4 on (scored on the Fund + the Core burns); the three true burns stay"
+}
+],
+"audit|A4 Permanent Burn|Burn Δ3m": [
+{
+"date": "2026-11-25",
+"from": "<absent>",
+"to": "n/a — SERIES BREAK 2026-09-25: burn_ex_chain_fee_tokens: THE BASIS CHANGES at the stitch: before the first live Assistance Fund read the burn is DefiLl (inside this comparison)",
+"why": "R21b item 1 — the A4 tab (Jake 2026-11-25): Hyperliquid's Assistance Fund is BURNED — out of circulating and total supply (the validators' vote, HyperFND 2025-12-24: 85% of stake for removing the Fund's HYPE permanently from the circulating and total supply); its buybacks are buy-and-burn (the burns line of net float pressure, A3's retired buyback), A4 on (scored on the Fund + the Core burns); the three true burns stay"
+}
+],
+"audit|A4 Permanent Burn|Burn Δ6m": [
+{
+"date": "2026-11-25",
+"from": "<absent>",
+"to": "n/a — SERIES BREAK 2026-09-25: burn_ex_chain_fee_tokens: THE BASIS CHANGES at the stitch: before the first live Assistance Fund read the burn is DefiLl (inside this comparison)",
+"why": "R21b item 1 — the A4 tab (Jake 2026-11-25): Hyperliquid's Assistance Fund is BURNED — out of circulating and total supply (the validators' vote, HyperFND 2025-12-24: 85% of stake for removing the Fund's HYPE permanently from the circulating and total supply); its buybacks are buy-and-burn (the burns line of net float pressure, A3's retired buyback), A4 on (scored on the Fund + the Core burns); the three true burns stay"
+}
+],
+"audit|A4 Permanent Burn|Burn Δ9m": [
+{
+"date": "2026-11-25",
+"from": "<absent>",
+"to": "n/a — SERIES BREAK 2026-09-25: burn_ex_chain_fee_tokens: THE BASIS CHANGES at the stitch: before the first live Assistance Fund read the burn is DefiLl (inside this comparison)",
+"why": "R21b item 1 — the A4 tab (Jake 2026-11-25): Hyperliquid's Assistance Fund is BURNED — out of circulating and total supply (the validators' vote, HyperFND 2025-12-24: 85% of stake for removing the Fund's HYPE permanently from the circulating and total supply); its buybacks are buy-and-burn (the burns line of net float pressure, A3's retired buyback), A4 on (scored on the Fund + the Core burns); the three true burns stay"
+}
+],
+"audit|A4 Permanent Burn|Circulating supply (used, tokens)": [
+{
+"date": "2026-11-25",
+"from": "<absent>",
+"to": 539758896.0,
+"why": "R21b item 1 — the A4 tab (Jake 2026-11-25): Hyperliquid's Assistance Fund is BURNED — out of circulating and total supply (the validators' vote, HyperFND 2025-12-24: 85% of stake for removing the Fund's HYPE permanently from the circulating and total supply); its buybacks are buy-and-burn (the burns line of net float pressure, A3's retired buyback), A4 on (scored on the Fund + the Core burns); the three true burns stay"
+}
+],
+"audit|A4 Permanent Burn|Cross-check: Δ implied circulating supply Q0 vs Q1 (CoinGecko mcap ÷ price)": [
+{
+"date": "2026-11-25",
+"from": "<absent>",
+"to": -7084267.5,
+"why": "R21b item 1 — the A4 tab (Jake 2026-11-25): Hyperliquid's Assistance Fund is BURNED — out of circulating and total supply (the validators' vote, HyperFND 2025-12-24: 85% of stake for removing the Fund's HYPE permanently from the circulating and total supply); its buybacks are buy-and-burn (the burns line of net float pressure, A3's retired buyback), A4 on (scored on the Fund + the Core burns); the three true burns stay"
+}
+],
+"audit|A4 Permanent Burn|Cumulative burn ÷ max supply": [
+{
+"date": "2026-11-25",
+"from": "<absent>",
+"to": 0.0494562948,
+"why": "R21b item 1 — the A4 tab (Jake 2026-11-25): Hyperliquid's Assistance Fund is BURNED — out of circulating and total supply (the validators' vote, HyperFND 2025-12-24: 85% of stake for removing the Fund's HYPE permanently from the circulating and total supply); its buybacks are buy-and-burn (the burns line of net float pressure, A3's retired buyback), A4 on (scored on the Fund + the Core burns); the three true burns stay"
+}
+],
+"audit|A4 Permanent Burn|Derived issuance − burn, for comparison": [
+{
+"date": "2026-11-25",
+"from": "<absent>",
+"to": "BLOCKED — unequal coverage: issuance (pool_release_tokens, q0) covers 9 days of a 90-day window — holes: 2026-10-02..10-05; burn (total_burn_tokens, q0) covers 90 days of a 90-day window",
+"why": "R21b item 1 — the A4 tab (Jake 2026-11-25): Hyperliquid's Assistance Fund is BURNED — out of circulating and total supply (the validators' vote, HyperFND 2025-12-24: 85% of stake for removing the Fund's HYPE permanently from the circulating and total supply); its buybacks are buy-and-burn (the burns line of net float pressure, A3's retired buyback), A4 on (scored on the Fund + the Core burns); the three true burns stay"
+}
+],
+"audit|A4 Permanent Burn|Documented share burned (config) — of protocol revenue where the burn base is declared (burn_split.fee_base_metric), else of fees; the cell names its base": [
+{
+"date": "2026-11-25",
+"from": "<absent>",
+"to": 0.0,
+"why": "R21b item 1 — the A4 tab (Jake 2026-11-25): Hyperliquid's Assistance Fund is BURNED — out of circulating and total supply (the validators' vote, HyperFND 2025-12-24: 85% of stake for removing the Fund's HYPE permanently from the circulating and total supply); its buybacks are buy-and-burn (the burns line of net float pressure, A3's retired buyback), A4 on (scored on the Fund + the Core burns); the three true burns stay"
+}
+],
+"audit|A4 Permanent Burn|Fees Q0 ($)": [
+{
+"date": "2026-11-25",
+"from": "<absent>",
+"to": 229062929.0,
+"why": "R21b item 1 — the A4 tab (Jake 2026-11-25): Hyperliquid's Assistance Fund is BURNED — out of circulating and total supply (the validators' vote, HyperFND 2025-12-24: 85% of stake for removing the Fund's HYPE permanently from the circulating and total supply); its buybacks are buy-and-burn (the burns line of net float pressure, A3's retired buyback), A4 on (scored on the Fund + the Core burns); the three true burns stay"
+}
+],
+"audit|A4 Permanent Burn|Fees required for crossover ($ a year) = fees × issuance ÷ burn, per covered day — at the measured burn share": [
+{
+"date": "2026-11-25",
+"from": "<absent>",
+"to": 3045645030.0,
+"why": "R21b item 1 — the A4 tab (Jake 2026-11-25): Hyperliquid's Assistance Fund is BURNED — out of circulating and total supply (the validators' vote, HyperFND 2025-12-24: 85% of stake for removing the Fund's HYPE permanently from the circulating and total supply); its buybacks are buy-and-burn (the burns line of net float pressure, A3's retired buyback), A4 on (scored on the Fund + the Core burns); the three true burns stay"
+}
+],
+"audit|A4 Permanent Burn|GROSS BURN Q0 (tokens)": [
+{
+"date": "2026-11-25",
+"from": "<absent>",
+"to": 2444209.36,
+"why": "R21b item 1 — the A4 tab (Jake 2026-11-25): Hyperliquid's Assistance Fund is BURNED — out of circulating and total supply (the validators' vote, HyperFND 2025-12-24: 85% of stake for removing the Fund's HYPE permanently from the circulating and total supply); its buybacks are buy-and-burn (the burns line of net float pressure, A3's retired buyback), A4 on (scored on the Fund + the Core burns); the three true burns stay"
+}
+],
+"audit|A4 Permanent Burn|GROSS ISSUANCE Q0 (tokens)": [
+{
+"date": "2026-11-25",
+"from": "<absent>",
+"to": "0 — fixed supply: the whole supply was minted at genesis (pre-minted); distribution from it is an issuer release",
+"why": "R21b item 1 — the A4 tab (Jake 2026-11-25): Hyperliquid's Assistance Fund is BURNED — out of circulating and total supply (the validators' vote, HyperFND 2025-12-24: 85% of stake for removing the Fund's HYPE permanently from the circulating and total supply); its buybacks are buy-and-burn (the burns line of net float pressure, A3's retired buyback), A4 on (scored on the Fund + the Core burns); the three true burns stay"
+}
+],
+"audit|A4 Permanent Burn|Governance lever = burn share of fees that reaches crossover with no growth (issuance $ at each day's price ÷ fees)": [
+{
+"date": "2026-11-25",
+"from": "<absent>",
+"to": 2.84544575,
+"why": "R21b item 1 — the A4 tab (Jake 2026-11-25): Hyperliquid's Assistance Fund is BURNED — out of circulating and total supply (the validators' vote, HyperFND 2025-12-24: 85% of stake for removing the Fund's HYPE permanently from the circulating and total supply); its buybacks are buy-and-burn (the burns line of net float pressure, A3's retired buyback), A4 on (scored on the Fund + the Core burns); the three true burns stay"
+}
+],
+"audit|A4 Permanent Burn|Gross burn Q0 ($, each day's burn × that day's price)": [
+{
+"date": "2026-11-25",
+"from": "<absent>",
+"to": 187567389.0,
+"why": "R21b item 1 — the A4 tab (Jake 2026-11-25): Hyperliquid's Assistance Fund is BURNED — out of circulating and total supply (the validators' vote, HyperFND 2025-12-24: 85% of stake for removing the Fund's HYPE permanently from the circulating and total supply); its buybacks are buy-and-burn (the burns line of net float pressure, A3's retired buyback), A4 on (scored on the Fund + the Core burns); the three true burns stay"
+}
+],
+"audit|A4 Permanent Burn|Gross issuance Q0 ($, each day's issuance × that day's price)": [
+{
+"date": "2026-11-25",
+"from": "<absent>",
+"to": "0 — fixed supply: the whole supply was minted at genesis (pre-minted); distribution from it is an issuer release",
+"why": "R21b item 1 — the A4 tab (Jake 2026-11-25): Hyperliquid's Assistance Fund is BURNED — out of circulating and total supply (the validators' vote, HyperFND 2025-12-24: 85% of stake for removing the Fund's HYPE permanently from the circulating and total supply); its buybacks are buy-and-burn (the burns line of net float pressure, A3's retired buyback), A4 on (scored on the Fund + the Core burns); the three true burns stay"
+}
+],
+"audit|A4 Permanent Burn|ISSUANCE − BURN Q0 (tokens) — self-reported net mint where published, else issuance − burn, on the basis to the left (the cell says 'burn only' where nothing is minted)": [
+{
+"date": "2026-11-25",
+"from": "<absent>",
+"to": -2444209.36,
+"why": "R21b item 1 — the A4 tab (Jake 2026-11-25): Hyperliquid's Assistance Fund is BURNED — out of circulating and total supply (the validators' vote, HyperFND 2025-12-24: 85% of stake for removing the Fund's HYPE permanently from the circulating and total supply); its buybacks are buy-and-burn (the burns line of net float pressure, A3's retired buyback), A4 on (scored on the Fund + the Core burns); the three true burns stay"
+}
+],
+"audit|A4 Permanent Burn|ISSUANCE − BURN, annualised % of circulating (signed; + is net inflation; the cell says 'burn only' where nothing is minted)": [
+{
+"date": "2026-11-25",
+"from": "<absent>",
+"to": -0.0183649161,
+"why": "R21b item 1 — the A4 tab (Jake 2026-11-25): Hyperliquid's Assistance Fund is BURNED — out of circulating and total supply (the validators' vote, HyperFND 2025-12-24: 85% of stake for removing the Fund's HYPE permanently from the circulating and total supply); its buybacks are buy-and-burn (the burns line of net float pressure, A3's retired buyback), A4 on (scored on the Fund + the Core burns); the three true burns stay"
+}
+],
+"audit|A4 Permanent Burn|Implied burn Q0 (tokens) = burn base × documented share ÷ each day's price — the base is protocol revenue where declared (burn_split.fee_base_metric), else fees": [
+{
+"date": "2026-11-25",
+"from": "<absent>",
+"to": "n/a — no published buyback/burn split (Share of fees burned has no documented value in config) — the actual burn is on 'GROSS BURN Q0 (tokens)' (A4)",
+"why": "R21b item 1 — the A4 tab (Jake 2026-11-25): Hyperliquid's Assistance Fund is BURNED — out of circulating and total supply (the validators' vote, HyperFND 2025-12-24: 85% of stake for removing the Fund's HYPE permanently from the circulating and total supply); its buybacks are buy-and-burn (the burns line of net float pressure, A3's retired buyback), A4 on (scored on the Fund + the Core burns); the three true burns stay"
+}
+],
+"audit|A4 Permanent Burn|Issuance as % of supply (annualised)": [
+{
+"date": "2026-11-25",
+"from": "<absent>",
+"to": 0.0390380275,
+"why": "R21b item 1 — the A4 tab (Jake 2026-11-25): Hyperliquid's Assistance Fund is BURNED — out of circulating and total supply (the validators' vote, HyperFND 2025-12-24: 85% of stake for removing the Fund's HYPE permanently from the circulating and total supply); its buybacks are buy-and-burn (the burns line of net float pressure, A3's retired buyback), A4 on (scored on the Fund + the Core burns); the three true burns stay"
+}
+],
+"audit|A4 Permanent Burn|Issuance basis for the crossover": [
+{
+"date": "2026-11-25",
+"from": "<absent>",
+"to": "issuance_option_c_tokens — option C (P5-1.5): issuer replay + staking reward. OPTION C (P5-1.5) PASSED - staking reward = k x sqrt(stake) / 365; pass: mean abs error <= 5%, no row beyond 15%, bias within +-2%. k = 468.72, calibrated on 5 measured row(s) 2026-09-29..2026-10-07, tested on 6 row(s) 2026-10-08..2026-10-13: passed on the read-to-read interval basis (Jake 2026-11-16): mean abs error 0.1%, worst row 0.5%, bias +0.1% over 6 test row(s) (calendar days: k x sqrt(stake): mean abs error 25.0%, worst row 57.5%, bias -1.8% over 6 test row(s); k^2 / (365 x a): mean abs error 25.1%, worst row 54.1%, bias -3.9% over 6 test row(s))",
+"why": "R21b item 1 — the A4 tab (Jake 2026-11-25): Hyperliquid's Assistance Fund is BURNED — out of circulating and total supply (the validators' vote, HyperFND 2025-12-24: 85% of stake for removing the Fund's HYPE permanently from the circulating and total supply); its buybacks are buy-and-burn (the burns line of net float pressure, A3's retired buyback), A4 on (scored on the Fund + the Core burns); the three true burns stay"
+}
+],
+"audit|A4 Permanent Burn|Issuance Δ30d": [
+{
+"date": "2026-11-25",
+"from": "<absent>",
+"to": "BLOCKED — unequal coverage: NOW (pool_release_tokens, now) covers 9 days of a 30-day window — holes: 2026-10-02..10-05; M1 (pool_release_tokens, m1) covers 0 days of a 30-day window",
+"why": "R21b item 1 — the A4 tab (Jake 2026-11-25): Hyperliquid's Assistance Fund is BURNED — out of circulating and total supply (the validators' vote, HyperFND 2025-12-24: 85% of stake for removing the Fund's HYPE permanently from the circulating and total supply); its buybacks are buy-and-burn (the burns line of net float pressure, A3's retired buyback), A4 on (scored on the Fund + the Core burns); the three true burns stay"
+}
+],
+"audit|A4 Permanent Burn|Issuance Δ3m": [
+{
+"date": "2026-11-25",
+"from": "<absent>",
+"to": "BLOCKED — unequal coverage: Q0 (pool_release_tokens, q0) covers 9 days of a 90-day window — holes: 2026-10-02..10-05; Q1 (pool_release_tokens, q1) covers 0 days of a 90-day window",
+"why": "R21b item 1 — the A4 tab (Jake 2026-11-25): Hyperliquid's Assistance Fund is BURNED — out of circulating and total supply (the validators' vote, HyperFND 2025-12-24: 85% of stake for removing the Fund's HYPE permanently from the circulating and total supply); its buybacks are buy-and-burn (the burns line of net float pressure, A3's retired buyback), A4 on (scored on the Fund + the Core burns); the three true burns stay"
+}
+],
+"audit|A4 Permanent Burn|Issuance Δ6m": [
+{
+"date": "2026-11-25",
+"from": "<absent>",
+"to": "BLOCKED — unequal coverage: Q0 (pool_release_tokens, q0) covers 9 days of a 90-day window — holes: 2026-10-02..10-05; Q2 (pool_release_tokens, q2) covers 0 days of a 90-day window",
+"why": "R21b item 1 — the A4 tab (Jake 2026-11-25): Hyperliquid's Assistance Fund is BURNED — out of circulating and total supply (the validators' vote, HyperFND 2025-12-24: 85% of stake for removing the Fund's HYPE permanently from the circulating and total supply); its buybacks are buy-and-burn (the burns line of net float pressure, A3's retired buyback), A4 on (scored on the Fund + the Core burns); the three true burns stay"
+}
+],
+"audit|A4 Permanent Burn|Issuance Δ9m": [
+{
+"date": "2026-11-25",
+"from": "<absent>",
+"to": "BLOCKED — unequal coverage: Q0 (pool_release_tokens, q0) covers 9 days of a 90-day window — holes: 2026-10-02..10-05; Q3 (pool_release_tokens, q3) covers 0 days of a 90-day window",
+"why": "R21b item 1 — the A4 tab (Jake 2026-11-25): Hyperliquid's Assistance Fund is BURNED — out of circulating and total supply (the validators' vote, HyperFND 2025-12-24: 85% of stake for removing the Fund's HYPE permanently from the circulating and total supply); its buybacks are buy-and-burn (the burns line of net float pressure, A3's retired buyback), A4 on (scored on the Fund + the Core burns); the three true burns stay"
+}
+],
+"audit|A4 Permanent Burn|Issuance − burn ($, each day's issuance − burn × that day's price)": [
+{
+"date": "2026-11-25",
+"from": "<absent>",
+"to": -189856684.0,
+"why": "R21b item 1 — the A4 tab (Jake 2026-11-25): Hyperliquid's Assistance Fund is BURNED — out of circulating and total supply (the validators' vote, HyperFND 2025-12-24: 85% of stake for removing the Fund's HYPE permanently from the circulating and total supply); its buybacks are buy-and-burn (the burns line of net float pressure, A3's retired buyback), A4 on (scored on the Fund + the Core burns); the three true burns stay"
+}
+],
+"audit|A4 Permanent Burn|Issuance − burn Q1 (tokens, −3m window)": [
+{
+"date": "2026-11-25",
+"from": "<absent>",
+"to": "BLOCKED — unequal coverage: issuance (pool_release_tokens, q1) covers 0 days of a 90-day window; burn (total_burn_tokens, q1) covers 90 days of a 90-day window",
+"why": "R21b item 1 — the A4 tab (Jake 2026-11-25): Hyperliquid's Assistance Fund is BURNED — out of circulating and total supply (the validators' vote, HyperFND 2025-12-24: 85% of stake for removing the Fund's HYPE permanently from the circulating and total supply); its buybacks are buy-and-burn (the burns line of net float pressure, A3's retired buyback), A4 on (scored on the Fund + the Core burns); the three true burns stay"
+}
+],
+"audit|A4 Permanent Burn|Issuance − burn Q2 (−6m window)": [
+{
+"date": "2026-11-25",
+"from": "<absent>",
+"to": "BLOCKED — unequal coverage: issuance (pool_release_tokens, q2) covers 0 days of a 90-day window; burn (total_burn_tokens, q2) covers 90 days of a 90-day window",
+"why": "R21b item 1 — the A4 tab (Jake 2026-11-25): Hyperliquid's Assistance Fund is BURNED — out of circulating and total supply (the validators' vote, HyperFND 2025-12-24: 85% of stake for removing the Fund's HYPE permanently from the circulating and total supply); its buybacks are buy-and-burn (the burns line of net float pressure, A3's retired buyback), A4 on (scored on the Fund + the Core burns); the three true burns stay"
+}
+],
+"audit|A4 Permanent Burn|Issuance − burn Q3 (−9m window)": [
+{
+"date": "2026-11-25",
+"from": "<absent>",
+"to": "BLOCKED — unequal coverage: issuance (pool_release_tokens, q3) covers 0 days of a 90-day window; burn (total_burn_tokens, q3) covers 90 days of a 90-day window",
+"why": "R21b item 1 — the A4 tab (Jake 2026-11-25): Hyperliquid's Assistance Fund is BURNED — out of circulating and total supply (the validators' vote, HyperFND 2025-12-24: 85% of stake for removing the Fund's HYPE permanently from the circulating and total supply); its buybacks are buy-and-burn (the burns line of net float pressure, A3's retired buyback), A4 on (scored on the Fund + the Core burns); the three true burns stay"
+}
+],
+"audit|A4 Permanent Burn|Market cap ($)": [
+{
+"date": "2026-11-25",
+"from": "<absent>",
+"to": 43702446000.0,
+"why": "R21b item 1 — the A4 tab (Jake 2026-11-25): Hyperliquid's Assistance Fund is BURNED — out of circulating and total supply (the validators' vote, HyperFND 2025-12-24: 85% of stake for removing the Fund's HYPE permanently from the circulating and total supply); its buybacks are buy-and-burn (the burns line of net float pressure, A3's retired buyback), A4 on (scored on the Fund + the Core burns); the three true burns stay"
+}
+],
+"audit|A4 Permanent Burn|Net mint Q0 (SELF-REPORTED by the protocol)": [
+{
+"date": "2026-11-25",
+"from": "<absent>",
+"to": "n/a — Data: not applicable to this project — not applicable to this project's archetypes",
+"why": "R21b item 1 — the A4 tab (Jake 2026-11-25): Hyperliquid's Assistance Fund is BURNED — out of circulating and total supply (the validators' vote, HyperFND 2025-12-24: 85% of stake for removing the Fund's HYPE permanently from the circulating and total supply); its buybacks are buy-and-burn (the burns line of net float pressure, A3's retired buyback), A4 on (scored on the Fund + the Core burns); the three true burns stay"
+}
+],
+"audit|A4 Permanent Burn|Notes": [
+{
+"date": "2026-11-25",
+"from": "<absent>",
+"to": "DESTINATION RESOLVED: validators voted 27 Dec 2025 (DATE UNVERIFIED: secondary reports put the vote's close on 24 Dec; no primary post could be read — config.HL_VOTE_DATE), 85% of staked weight in favour, to formally recognise all Assistance Fund HYPE — past and future — as permanently burned. Independently corroborated by an SEC-filed exhibit from Hyperliquid Strategies Inc dated 7 May 2026. Lifetime burned (the Assistance Fund's HYPE, HyperCore info API spotClearinghouseState of 0xfefe…fefe): 47,590,997.04 on 2026-09-30 and 48,145,239.17 on 2026-10-20 09:02 UTC, c.4.81% of the 1bn max supply (G8 1: replaces an unsourced \"48.42m as of 6 Sep 2026\" that exceeded every later read). Assistance Fund absorbs 99% of net protocol fees (historical range 97-99%). Own L1 + HyperEVM hence the 1 block. SECOND REVENUE LEG: AQAv2 from 26 Aug 2026 accrues c.90% of cost-adjusted reserve yield on platform USDC, first payment due 3 Oct 2026 — accruing but NOT yet booked.",
+"why": "R21b item 1 — the A4 tab (Jake 2026-11-25): Hyperliquid's Assistance Fund is BURNED — out of circulating and total supply (the validators' vote, HyperFND 2025-12-24: 85% of stake for removing the Fund's HYPE permanently from the circulating and total supply); its buybacks are buy-and-burn (the burns line of net float pressure, A3's retired buyback), A4 on (scored on the Fund + the Core burns); the three true burns stay"
+}
+],
+"audit|A4 Permanent Burn|PERMANENT BURN YIELD = burn as % of supply (annualised, tokens)": [
+{
+"date": "2026-11-25",
+"from": "<absent>",
+"to": 0.0183649161,
+"why": "R21b item 1 — the A4 tab (Jake 2026-11-25): Hyperliquid's Assistance Fund is BURNED — out of circulating and total supply (the validators' vote, HyperFND 2025-12-24: 85% of stake for removing the Fund's HYPE permanently from the circulating and total supply); its buybacks are buy-and-burn (the burns line of net float pressure, A3's retired buyback), A4 on (scored on the Fund + the Core burns); the three true burns stay"
+}
+],
+"audit|A4 Permanent Burn|Pool release Q0 (tokens) — measured, premint distribution (where issuance is n/a)": [
+{
+"date": "2026-11-25",
+"from": "<absent>",
+"to": 214122.129,
+"why": "R21b item 1 — the A4 tab (Jake 2026-11-25): Hyperliquid's Assistance Fund is BURNED — out of circulating and total supply (the validators' vote, HyperFND 2025-12-24: 85% of stake for removing the Fund's HYPE permanently from the circulating and total supply); its buybacks are buy-and-burn (the burns line of net float pressure, A3's retired buyback), A4 on (scored on the Fund + the Core burns); the three true burns stay"
+}
+],
+"audit|A4 Permanent Burn|Price — 90d average ($)": [
+{
+"date": "2026-11-25",
+"from": "<absent>",
+"to": 74.2366365,
+"why": "R21b item 1 — the A4 tab (Jake 2026-11-25): Hyperliquid's Assistance Fund is BURNED — out of circulating and total supply (the validators' vote, HyperFND 2025-12-24: 85% of stake for removing the Fund's HYPE permanently from the circulating and total supply); its buybacks are buy-and-burn (the burns line of net float pressure, A3's retired buyback), A4 on (scored on the Fund + the Core burns); the three true burns stay"
+}
+],
+"audit|A4 Permanent Burn|Price — spot ($)": [
+{
+"date": "2026-11-25",
+"from": "<absent>",
+"to": 80.9666063,
+"why": "R21b item 1 — the A4 tab (Jake 2026-11-25): Hyperliquid's Assistance Fund is BURNED — out of circulating and total supply (the validators' vote, HyperFND 2025-12-24: 85% of stake for removing the Fund's HYPE permanently from the circulating and total supply); its buybacks are buy-and-burn (the burns line of net float pressure, A3's retired buyback), A4 on (scored on the Fund + the Core burns); the three true burns stay"
+}
+],
+"audit|A4 Permanent Burn|Q0 WINDOW CAVEAT — read before the yield and crossover": [
+{
+"date": "2026-11-25",
+"from": "<absent>",
+"to": "NOT A STABLE RATE YET — ISSUANCE covers 89 of 90 days, so annualised as if full it reads 32,137,373/yr against a 32,498,467/yr run-rate (1.01x low). Burn yield and burn ÷ issuance show what actually happened in this window on both sides, with no padding; they will move as the window fills even if nothing changes, and are not comparable across periods until the issuance window fills (1 more day(s)).",
+"why": "R21b item 1 — the A4 tab (Jake 2026-11-25): Hyperliquid's Assistance Fund is BURNED — out of circulating and total supply (the validators' vote, HyperFND 2025-12-24: 85% of stake for removing the Fund's HYPE permanently from the circulating and total supply); its buybacks are buy-and-burn (the burns line of net float pressure, A3's retired buyback), A4 on (scored on the Fund + the Core burns); the three true burns stay"
+}
+],
+"audit|A4 Permanent Burn|Release ÷ burn (x) — premint projects, in place of burn ÷ issuance": [
+{
+"date": "2026-11-25",
+"from": "<absent>",
+"to": "BLOCKED — unequal coverage: release (pool_release_tokens, q0) covers 9 days of a 90-day window — holes: 2026-10-02..10-05; burn (burn_ex_chain_fee_tokens, q0) covers 90 days of a 90-day window",
+"why": "R21b item 1 — the A4 tab (Jake 2026-11-25): Hyperliquid's Assistance Fund is BURNED — out of circulating and total supply (the validators' vote, HyperFND 2025-12-24: 85% of stake for removing the Fund's HYPE permanently from the circulating and total supply); its buybacks are buy-and-burn (the burns line of net float pressure, A3's retired buyback), A4 on (scored on the Fund + the Core burns); the three true burns stay"
+}
+],
+"audit|A4 Permanent Burn|Self-reported − derived (a gap here means one of the two is wrong)": [
+{
+"date": "2026-11-25",
+"from": "<absent>",
+"to": "n/a — nothing issued and nothing self-reported: the whole supply was minted at genesis (pre-minted); distribution from it is an issuer release",
+"why": "R21b item 1 — the A4 tab (Jake 2026-11-25): Hyperliquid's Assistance Fund is BURNED — out of circulating and total supply (the validators' vote, HyperFND 2025-12-24: 85% of stake for removing the Fund's HYPE permanently from the circulating and total supply); its buybacks are buy-and-burn (the burns line of net float pressure, A3's retired buyback), A4 on (scored on the Fund + the Core burns); the three true burns stay"
+}
+],
+"audit|A4 Permanent Burn|Symbol": [
+{
+"date": "2026-11-25",
+"from": "<absent>",
+"to": "HYPE",
+"why": "R21b item 1 — the A4 tab (Jake 2026-11-25): Hyperliquid's Assistance Fund is BURNED — out of circulating and total supply (the validators' vote, HyperFND 2025-12-24: 85% of stake for removing the Fund's HYPE permanently from the circulating and total supply); its buybacks are buy-and-burn (the burns line of net float pressure, A3's retired buyback), A4 on (scored on the Fund + the Core burns); the three true burns stay"
+}
+],
+"audit|A4 Permanent Burn|TOTAL DILUTION = emissions + unlocks, annualised % of free float": [
+{
+"date": "2026-11-25",
+"from": "<absent>",
+"to": 0.327234403,
+"why": "R21b item 1 — the A4 tab (Jake 2026-11-25): Hyperliquid's Assistance Fund is BURNED — out of circulating and total supply (the validators' vote, HyperFND 2025-12-24: 85% of stake for removing the Fund's HYPE permanently from the circulating and total supply); its buybacks are buy-and-burn (the burns line of net float pressure, A3's retired buyback), A4 on (scored on the Fund + the Core burns); the three true burns stay"
+}
+],
+"audit|A4 Permanent Burn|Treasury governance could redeploy ($, spot)": [
+{
+"date": "2026-11-25",
+"from": "<absent>",
+"to": 12590388.5,
+"why": "R21b item 1 — the A4 tab (Jake 2026-11-25): Hyperliquid's Assistance Fund is BURNED — out of circulating and total supply (the validators' vote, HyperFND 2025-12-24: 85% of stake for removing the Fund's HYPE permanently from the circulating and total supply); its buybacks are buy-and-burn (the burns line of net float pressure, A3's retired buyback), A4 on (scored on the Fund + the Core burns); the three true burns stay"
+}
+],
+"audit|A4 Permanent Burn|Treasury governance could redeploy (tokens) — discretionary issuer-side wallets": [
+{
+"date": "2026-11-25",
+"from": "<absent>",
+"to": 155501.003,
+"why": "R21b item 1 — the A4 tab (Jake 2026-11-25): Hyperliquid's Assistance Fund is BURNED — out of circulating and total supply (the validators' vote, HyperFND 2025-12-24: 85% of stake for removing the Fund's HYPE permanently from the circulating and total supply); its buybacks are buy-and-burn (the burns line of net float pressure, A3's retired buyback), A4 on (scored on the Fund + the Core burns); the three true burns stay"
+}
+],
+"audit|A4 Permanent Burn|Trend — a4_burn_yield (arrow · QoQ · 4Q growth/yr · quarters improved; Trajectory tab)": [
+{
+"date": "2026-11-25",
+"from": "<absent>",
+"to": "SERIES BREAK 2026-09-25 · – · STEP CHANGE at Q0 · QoQ n/a",
+"why": "R21b item 1 — the A4 tab (Jake 2026-11-25): Hyperliquid's Assistance Fund is BURNED — out of circulating and total supply (the validators' vote, HyperFND 2025-12-24: 85% of stake for removing the Fund's HYPE permanently from the circulating and total supply); its buybacks are buy-and-burn (the burns line of net float pressure, A3's retired buyback), A4 on (scored on the Fund + the Core burns); the three true burns stay"
+}
+],
+"audit|A4 Permanent Burn|Trend — a4_crossover (arrow · QoQ · 4Q growth/yr · quarters improved; Trajectory tab)": [
+{
+"date": "2026-11-25",
+"from": "<absent>",
+"to": "SERIES BREAK 2026-09-25 · MODELLED Q0, Q-1, Q-2, Q-3, Q-4 · – · STEP CHANGE at Q0 · QoQ n/a",
+"why": "R21b item 1 — the A4 tab (Jake 2026-11-25): Hyperliquid's Assistance Fund is BURNED — out of circulating and total supply (the validators' vote, HyperFND 2025-12-24: 85% of stake for removing the Fund's HYPE permanently from the circulating and total supply); its buybacks are buy-and-burn (the burns line of net float pressure, A3's retired buyback), A4 on (scored on the Fund + the Core burns); the three true burns stay"
+}
+],
+"audit|A4 Permanent Burn|Trend — a4_gross_burn (arrow · QoQ · 4Q growth/yr · quarters improved; Trajectory tab)": [
+{
+"date": "2026-11-25",
+"from": "<absent>",
+"to": "SERIES BREAK 2026-09-25 · – · STEP CHANGE at Q0 · QoQ n/a",
+"why": "R21b item 1 — the A4 tab (Jake 2026-11-25): Hyperliquid's Assistance Fund is BURNED — out of circulating and total supply (the validators' vote, HyperFND 2025-12-24: 85% of stake for removing the Fund's HYPE permanently from the circulating and total supply); its buybacks are buy-and-burn (the burns line of net float pressure, A3's retired buyback), A4 on (scored on the Fund + the Core burns); the three true burns stay"
+}
+],
+"audit|A4 Permanent Burn|Trend — a4_gross_issuance (arrow · QoQ · 4Q growth/yr · quarters improved; Trajectory tab)": [
+{
+"date": "2026-11-25",
+"from": "<absent>",
+"to": "– · 4Q n/a · QoQ n/a",
+"why": "R21b item 1 — the A4 tab (Jake 2026-11-25): Hyperliquid's Assistance Fund is BURNED — out of circulating and total supply (the validators' vote, HyperFND 2025-12-24: 85% of stake for removing the Fund's HYPE permanently from the circulating and total supply); its buybacks are buy-and-burn (the burns line of net float pressure, A3's retired buyback), A4 on (scored on the Fund + the Core burns); the three true burns stay"
+}
+],
+"audit|A4 Permanent Burn|Trend — a4_net_change (arrow · QoQ · 4Q growth/yr · quarters improved; Trajectory tab)": [
+{
+"date": "2026-11-25",
+"from": "<absent>",
+"to": "SERIES BREAK 2026-09-25 · – · STEP CHANGE at Q0 · QoQ n/a",
+"why": "R21b item 1 — the A4 tab (Jake 2026-11-25): Hyperliquid's Assistance Fund is BURNED — out of circulating and total supply (the validators' vote, HyperFND 2025-12-24: 85% of stake for removing the Fund's HYPE permanently from the circulating and total supply); its buybacks are buy-and-burn (the burns line of net float pressure, A3's retired buyback), A4 on (scored on the Fund + the Core burns); the three true burns stay"
+}
+],
+"audit|A4 Permanent Burn|Trend — a4_net_change_pct (arrow · QoQ · 4Q growth/yr · quarters improved; Trajectory tab)": [
+{
+"date": "2026-11-25",
+"from": "<absent>",
+"to": "SERIES BREAK 2026-09-25 · – · STEP CHANGE at Q0 · QoQ n/a",
+"why": "R21b item 1 — the A4 tab (Jake 2026-11-25): Hyperliquid's Assistance Fund is BURNED — out of circulating and total supply (the validators' vote, HyperFND 2025-12-24: 85% of stake for removing the Fund's HYPE permanently from the circulating and total supply); its buybacks are buy-and-burn (the burns line of net float pressure, A3's retired buyback), A4 on (scored on the Fund + the Core burns); the three true burns stay"
+}
+],
+"audit|A4 Permanent Burn|Trend — a4_pool_release (arrow · QoQ · 4Q growth/yr · quarters improved; Trajectory tab)": [
+{
+"date": "2026-11-25",
+"from": "<absent>",
+"to": "SERIES BREAK 2026-09-24 · – · STEP CHANGE at Q0 · QoQ n/a",
+"why": "R21b item 1 — the A4 tab (Jake 2026-11-25): Hyperliquid's Assistance Fund is BURNED — out of circulating and total supply (the validators' vote, HyperFND 2025-12-24: 85% of stake for removing the Fund's HYPE permanently from the circulating and total supply); its buybacks are buy-and-burn (the burns line of net float pressure, A3's retired buyback), A4 on (scored on the Fund + the Core burns); the three true burns stay"
+}
+],
+"audit|A4 Permanent Burn|UNLOCK DILUTION Q0 (tokens) — released from the non-circulating wallets, NOT emissions": [
+{
+"date": "2026-11-25",
+"from": "<absent>",
+"to": 5476191.84,
+"why": "R21b item 1 — the A4 tab (Jake 2026-11-25): Hyperliquid's Assistance Fund is BURNED — out of circulating and total supply (the validators' vote, HyperFND 2025-12-24: 85% of stake for removing the Fund's HYPE permanently from the circulating and total supply); its buybacks are buy-and-burn (the burns line of net float pressure, A3's retired buyback), A4 on (scored on the Fund + the Core burns); the three true burns stay"
+}
+],
+"audit|A4 Permanent Burn|Unlock dilution, annualised % of free float": [
+{
+"date": "2026-11-25",
+"from": "<absent>",
+"to": 0.225799175,
+"why": "R21b item 1 — the A4 tab (Jake 2026-11-25): Hyperliquid's Assistance Fund is BURNED — out of circulating and total supply (the validators' vote, HyperFND 2025-12-24: 85% of stake for removing the Fund's HYPE permanently from the circulating and total supply); its buybacks are buy-and-burn (the burns line of net float pressure, A3's retired buyback), A4 on (scored on the Fund + the Core burns); the three true burns stay"
 }
 ],
 "audit|CP Comparability|BOUGHT TOKENS RETURNED TO THE FLOAT, % a year = bought tokens paid out liquid, sold or transferred out of the holding wallet (tokens, annualised) ÷ free float (R21)": [
@@ -676,6 +1340,12 @@
 "from": "<absent>",
 "to": 0.0112813068,
 "why": "R21 (Jake 2026-11-25) Item 6: Hyperliquid's default until Jake decides — the Assistance Fund is a held buyback (inside circulating, +48.0M; off the free float; A4 off); 'burn' now counts only true burns (HyperCore supply fall and zero-address fees), so gross burn, net issuance and every per-circulating ratio move"
+},
+{
+"date": "2026-11-25",
+"from": 0.0112813068,
+"to": 0.100893343,
+"why": "R21b item 1 (Jake 2026-11-25): Hyperliquid's Assistance Fund is BURNED — out of circulating and total supply (the validators' vote, HyperFND 2025-12-24: 85% of stake for removing the Fund's HYPE permanently from the circulating and total supply); its buybacks are buy-and-burn (the burns line of net float pressure, A3's retired buyback), A4 on (scored on the Fund + the Core burns); the three true burns stay"
 }
 ],
 "audit|CP Comparability|BUYING PRESSURE ON FLOAT, % a year = revenue-funded buying, held or paid out (tokens, annualised) ÷ free float — the demand side of net float pressure; a burned buyback is a burn (R21)": [
@@ -684,6 +1354,12 @@
 "from": "<absent>",
 "to": 0.0970550318,
 "why": "R21 (Jake 2026-11-25) Item 6: Hyperliquid's default until Jake decides — the Assistance Fund is a held buyback (inside circulating, +48.0M; off the free float; A4 off); 'burn' now counts only true burns (HyperCore supply fall and zero-address fees), so gross burn, net issuance and every per-circulating ratio move"
+},
+{
+"date": "2026-11-25",
+"from": 0.0970550318,
+"to": 0.0,
+"why": "R21b item 1 (Jake 2026-11-25): Hyperliquid's Assistance Fund is BURNED — out of circulating and total supply (the validators' vote, HyperFND 2025-12-24: 85% of stake for removing the Fund's HYPE permanently from the circulating and total supply); its buybacks are buy-and-burn (the burns line of net float pressure, A3's retired buyback), A4 on (scored on the Fund + the Core burns); the three true burns stay"
 }
 ],
 "audit|CP Comparability|Burn rate (every burn, fee-market included — A1's basis, annualised) ÷ circulating": [
@@ -692,6 +1368,12 @@
 "from": 0.0185918181,
 "to": 0.00190902787,
 "why": "R21 (Jake 2026-11-25) Item 6: Hyperliquid's default until Jake decides — the Assistance Fund is a held buyback (inside circulating, +48.0M; off the free float; A4 off); 'burn' now counts only true burns (HyperCore supply fall and zero-address fees), so gross burn, net issuance and every per-circulating ratio move"
+},
+{
+"date": "2026-11-25",
+"from": 0.00190902787,
+"to": 0.0185918181,
+"why": "R21b item 1 (Jake 2026-11-25): Hyperliquid's Assistance Fund is BURNED — out of circulating and total supply (the validators' vote, HyperFND 2025-12-24: 85% of stake for removing the Fund's HYPE permanently from the circulating and total supply); its buybacks are buy-and-burn (the burns line of net float pressure, A3's retired buyback), A4 on (scored on the Fund + the Core burns); the three true burns stay"
 }
 ],
 "audit|CP Comparability|Burn rate (every burn, fee-market included — A1's basis, annualised) ÷ free float": [
@@ -700,6 +1382,12 @@
 "from": 0.100893343,
 "to": 0.0112813068,
 "why": "R21 (Jake 2026-11-25) Item 6: Hyperliquid's default until Jake decides — the Assistance Fund is a held buyback (inside circulating, +48.0M; off the free float; A4 off); 'burn' now counts only true burns (HyperCore supply fall and zero-address fees), so gross burn, net issuance and every per-circulating ratio move"
+},
+{
+"date": "2026-11-25",
+"from": 0.0112813068,
+"to": 0.100893343,
+"why": "R21b item 1 (Jake 2026-11-25): Hyperliquid's Assistance Fund is BURNED — out of circulating and total supply (the validators' vote, HyperFND 2025-12-24: 85% of stake for removing the Fund's HYPE permanently from the circulating and total supply); its buybacks are buy-and-burn (the burns line of net float pressure, A3's retired buyback), A4 on (scored on the Fund + the Core burns); the three true burns stay"
 }
 ],
 "audit|CP Comparability|Burns — where they came from (memo: from float / staked / treasury, Q0)": [
@@ -708,6 +1396,12 @@
 "from": "<absent>",
 "to": "burns 2026-07-14..2026-10-13: from float 52,261 (100%) — total_burn_tokens 52,261 (float)",
 "why": "R21 (Jake 2026-11-25) Item 6: Hyperliquid's default until Jake decides — the Assistance Fund is a held buyback (inside circulating, +48.0M; off the free float; A4 off); 'burn' now counts only true burns (HyperCore supply fall and zero-address fees), so gross burn, net issuance and every per-circulating ratio move"
+},
+{
+"date": "2026-11-25",
+"from": "burns 2026-07-14..2026-10-13: from float 52,261 (100%) — total_burn_tokens 52,261 (float)",
+"to": "burns 2026-07-14..2026-10-13: from float 2,495,487 (100%) — total_burn_tokens 2,495,487 (float)",
+"why": "R21b item 1 (Jake 2026-11-25): Hyperliquid's Assistance Fund is BURNED — out of circulating and total supply (the validators' vote, HyperFND 2025-12-24: 85% of stake for removing the Fund's HYPE permanently from the circulating and total supply); its buybacks are buy-and-burn (the burns line of net float pressure, A3's retired buyback), A4 on (scored on the Fund + the Core burns); the three true burns stay"
 }
 ],
 "audit|CP Comparability|Circulating supply (tokens) — our convention, the figure in use": [
@@ -716,6 +1410,12 @@
 "from": 539758896.0,
 "to": 587768491.0,
 "why": "R21 (Jake 2026-11-25) Item 6: Hyperliquid's default until Jake decides — the Assistance Fund is a held buyback (inside circulating, +48.0M; off the free float; A4 off); 'burn' now counts only true burns (HyperCore supply fall and zero-address fees), so gross burn, net issuance and every per-circulating ratio move"
+},
+{
+"date": "2026-11-25",
+"from": 587768491.0,
+"to": 539758896.0,
+"why": "R21b item 1 (Jake 2026-11-25): Hyperliquid's Assistance Fund is BURNED — out of circulating and total supply (the validators' vote, HyperFND 2025-12-24: 85% of stake for removing the Fund's HYPE permanently from the circulating and total supply); its buybacks are buy-and-burn (the burns line of net float pressure, A3's retired buyback), A4 on (scored on the Fund + the Core burns); the three true burns stay"
 }
 ],
 "audit|CP Comparability|DILUTION, % OF MARKET CAP = outflows a+b+c+d+e+f at each day's price (annualised) ÷ average market cap over the window — what net holder yield subtracts (R20)": [
@@ -724,6 +1424,12 @@
 "from": 0.047139246,
 "to": 0.0433037444,
 "why": "R21 (Jake 2026-11-25) Item 6: Hyperliquid's default until Jake decides — the Assistance Fund is a held buyback (inside circulating, +48.0M; off the free float; A4 off); 'burn' now counts only true burns (HyperCore supply fall and zero-address fees), so gross burn, net issuance and every per-circulating ratio move"
+},
+{
+"date": "2026-11-25",
+"from": 0.0433037444,
+"to": 0.047139246,
+"why": "R21b item 1 (Jake 2026-11-25): Hyperliquid's Assistance Fund is BURNED — out of circulating and total supply (the validators' vote, HyperFND 2025-12-24: 85% of stake for removing the Fund's HYPE permanently from the circulating and total supply); its buybacks are buy-and-burn (the burns line of net float pressure, A3's retired buyback), A4 on (scored on the Fund + the Core burns); the three true burns stay"
 }
 ],
 "audit|CP Comparability|Destination durability (burn / held-timelocked / held-discretionary)": [
@@ -732,6 +1438,12 @@
 "from": "burn — Assistance Fund (system address 0xfefe...fe, no private key) converts fees to HYPE automatically; docs: 'HYPE in the assistance fund is burned'. Validator stake-weighted vote recognised all past AND future AF HYPE as burned: 85% for / 7% against / 8% not voting, vote closed 2025-12-24 04:00 UTC, result posted 2025-12-24 (~37.1-37.5M HYPE). NOT 27 Dec. Slashed HIP-3 deployer stake is also burned.",
 "to": "held (keyless; a hard fork could move it) — the Assistance Fund (system address 0xfefe…fefe, no private key) converts fees to HYPE and holds it; the December 2025 vote is 'binding social consensus', the Foundation says the HYPE is retrievable by a hard fork, and it is still inside tokenDetails.totalSupply. R21 (Jake's default): a held buyback",
 "why": "R21 (Jake 2026-11-25) Item 6: Hyperliquid's default until Jake decides — the Assistance Fund is a held buyback (inside circulating, +48.0M; off the free float; A4 off); 'burn' now counts only true burns (HyperCore supply fall and zero-address fees), so gross burn, net issuance and every per-circulating ratio move"
+},
+{
+"date": "2026-11-25",
+"from": "held (keyless; a hard fork could move it) — the Assistance Fund (system address 0xfefe…fefe, no private key) converts fees to HYPE and holds it; the December 2025 vote is 'binding social consensus', the Foundation says the HYPE is retrievable by a hard fork, and it is still inside tokenDetails.totalSupply. R21 (Jake's default): a held buyback",
+"to": "burn — Assistance Fund (system address 0xfefe...fe, no private key) converts fees to HYPE automatically; docs: 'HYPE in the assistance fund is burned'. Validator stake-weighted vote recognised all past AND future AF HYPE as burned: 85% for / 7% against / 8% not voting, vote closed 2025-12-24 04:00 UTC, result posted 2025-12-24 (~37.1-37.5M HYPE). NOT 27 Dec. Slashed HIP-3 deployer stake is also burned.",
+"why": "R21b item 1 (Jake 2026-11-25): Hyperliquid's Assistance Fund is BURNED — out of circulating and total supply (the validators' vote, HyperFND 2025-12-24: 85% of stake for removing the Fund's HYPE permanently from the circulating and total supply); its buybacks are buy-and-burn (the burns line of net float pressure, A3's retired buyback), A4 on (scored on the Fund + the Core burns); the three true burns stay"
 }
 ],
 "audit|CP Comparability|Dilution (a) security emissions (annualised) ÷ circulating": [
@@ -740,6 +1452,12 @@
 "from": 0.00841334785,
 "to": 0.00772613608,
 "why": "R21 (Jake 2026-11-25) Item 6: Hyperliquid's default until Jake decides — the Assistance Fund is a held buyback (inside circulating, +48.0M; off the free float; A4 off); 'burn' now counts only true burns (HyperCore supply fall and zero-address fees), so gross burn, net issuance and every per-circulating ratio move"
+},
+{
+"date": "2026-11-25",
+"from": 0.00772613608,
+"to": 0.00841334785,
+"why": "R21b item 1 (Jake 2026-11-25): Hyperliquid's Assistance Fund is BURNED — out of circulating and total supply (the validators' vote, HyperFND 2025-12-24: 85% of stake for removing the Fund's HYPE permanently from the circulating and total supply); its buybacks are buy-and-burn (the burns line of net float pressure, A3's retired buyback), A4 on (scored on the Fund + the Core burns); the three true burns stay"
 }
 ],
 "audit|CP Comparability|Dilution (e) unlocks (annualised) ÷ circulating": [
@@ -748,6 +1466,12 @@
 "from": 0.0416084658,
 "to": 0.0382098393,
 "why": "R21 (Jake 2026-11-25) Item 6: Hyperliquid's default until Jake decides — the Assistance Fund is a held buyback (inside circulating, +48.0M; off the free float; A4 off); 'burn' now counts only true burns (HyperCore supply fall and zero-address fees), so gross burn, net issuance and every per-circulating ratio move"
+},
+{
+"date": "2026-11-25",
+"from": 0.0382098393,
+"to": 0.0416084658,
+"why": "R21b item 1 (Jake 2026-11-25): Hyperliquid's Assistance Fund is BURNED — out of circulating and total supply (the validators' vote, HyperFND 2025-12-24: 85% of stake for removing the Fund's HYPE permanently from the circulating and total supply); its buybacks are buy-and-burn (the burns line of net float pressure, A3's retired buyback), A4 on (scored on the Fund + the Core burns); the three true burns stay"
 }
 ],
 "audit|CP Comparability|Discretionary supply ÷ circulating": [
@@ -756,6 +1480,12 @@
 "from": 0.000288093451,
 "to": 0.000264561653,
 "why": "R21 (Jake 2026-11-25) Item 6: Hyperliquid's default until Jake decides — the Assistance Fund is a held buyback (inside circulating, +48.0M; off the free float; A4 off); 'burn' now counts only true burns (HyperCore supply fall and zero-address fees), so gross burn, net issuance and every per-circulating ratio move"
+},
+{
+"date": "2026-11-25",
+"from": 0.000264561653,
+"to": 0.000288093451,
+"why": "R21b item 1 (Jake 2026-11-25): Hyperliquid's Assistance Fund is BURNED — out of circulating and total supply (the validators' vote, HyperFND 2025-12-24: 85% of stake for removing the Fund's HYPE permanently from the circulating and total supply); its buybacks are buy-and-burn (the burns line of net float pressure, A3's retired buyback), A4 on (scored on the Fund + the Core burns); the three true burns stay"
 }
 ],
 "audit|CP Comparability|ETF / ETP holdings ÷ circulating": [
@@ -764,6 +1494,12 @@
 "from": 0.010240303,
 "to": 0.00940386349,
 "why": "R21 (Jake 2026-11-25) Item 6: Hyperliquid's default until Jake decides — the Assistance Fund is a held buyback (inside circulating, +48.0M; off the free float; A4 off); 'burn' now counts only true burns (HyperCore supply fall and zero-address fees), so gross burn, net issuance and every per-circulating ratio move"
+},
+{
+"date": "2026-11-25",
+"from": 0.00940386349,
+"to": 0.010240303,
+"why": "R21b item 1 (Jake 2026-11-25): Hyperliquid's Assistance Fund is BURNED — out of circulating and total supply (the validators' vote, HyperFND 2025-12-24: 85% of stake for removing the Fund's HYPE permanently from the circulating and total supply); its buybacks are buy-and-burn (the burns line of net float pressure, A3's retired buyback), A4 on (scored on the Fund + the Core burns); the three true burns stay"
 }
 ],
 "audit|CP Comparability|Flow demand — buyback $ (every funding source, annualised) ÷ market cap": [
@@ -772,6 +1508,12 @@
 "from": 0.0169114779,
 "to": 0.0155301293,
 "why": "R21 (Jake 2026-11-25) Item 6: Hyperliquid's default until Jake decides — the Assistance Fund is a held buyback (inside circulating, +48.0M; off the free float; A4 off); 'burn' now counts only true burns (HyperCore supply fall and zero-address fees), so gross burn, net issuance and every per-circulating ratio move"
+},
+{
+"date": "2026-11-25",
+"from": 0.0155301293,
+"to": 0.0169114779,
+"why": "R21b item 1 (Jake 2026-11-25): Hyperliquid's Assistance Fund is BURNED — out of circulating and total supply (the validators' vote, HyperFND 2025-12-24: 85% of stake for removing the Fund's HYPE permanently from the circulating and total supply); its buybacks are buy-and-burn (the burns line of net float pressure, A3's retired buyback), A4 on (scored on the Fund + the Core burns); the three true burns stay"
 }
 ],
 "audit|CP Comparability|Free float ÷ circulating": [
@@ -780,6 +1522,12 @@
 "from": 0.184272001,
 "to": 0.169220455,
 "why": "R21 (Jake 2026-11-25) Item 6: Hyperliquid's default until Jake decides — the Assistance Fund is a held buyback (inside circulating, +48.0M; off the free float; A4 off); 'burn' now counts only true burns (HyperCore supply fall and zero-address fees), so gross burn, net issuance and every per-circulating ratio move"
+},
+{
+"date": "2026-11-25",
+"from": 0.169220455,
+"to": 0.184272001,
+"why": "R21b item 1 (Jake 2026-11-25): Hyperliquid's Assistance Fund is BURNED — out of circulating and total supply (the validators' vote, HyperFND 2025-12-24: 85% of stake for removing the Fund's HYPE permanently from the circulating and total supply); its buybacks are buy-and-burn (the burns line of net float pressure, A3's retired buyback), A4 on (scored on the Fund + the Core burns); the three true burns stay"
 }
 ],
 "audit|CP Comparability|HOLDER VALUE YIELD = revenue-funded $ retired + $ distributed + liquid bribes to voters (annualised) ÷ average market cap over the window — treasury- or emissions-funded buybacks are NOT credited (LITMUS A); fee-market burns are on A1 net issuance": [
@@ -788,6 +1536,12 @@
 "from": 0.0155918832,
 "to": 0.014323244,
 "why": "R21 (Jake 2026-11-25) Item 6: Hyperliquid's default until Jake decides — the Assistance Fund is a held buyback (inside circulating, +48.0M; off the free float; A4 off); 'burn' now counts only true burns (HyperCore supply fall and zero-address fees), so gross burn, net issuance and every per-circulating ratio move"
+},
+{
+"date": "2026-11-25",
+"from": 0.014323244,
+"to": 0.0155918832,
+"why": "R21b item 1 (Jake 2026-11-25): Hyperliquid's Assistance Fund is BURNED — out of circulating and total supply (the validators' vote, HyperFND 2025-12-24: 85% of stake for removing the Fund's HYPE permanently from the circulating and total supply); its buybacks are buy-and-burn (the burns line of net float pressure, A3's retired buyback), A4 on (scored on the Fund + the Core burns); the three true burns stay"
 }
 ],
 "audit|CP Comparability|Held buyback inside circulating (tokens) — off the free float while held (R20; P4-Q5b)": [
@@ -804,6 +1558,12 @@
 "from": 0.374631896,
 "to": 0.34403154,
 "why": "R21 (Jake 2026-11-25) Item 6: Hyperliquid's default until Jake decides — the Assistance Fund is a held buyback (inside circulating, +48.0M; off the free float; A4 off); 'burn' now counts only true burns (HyperCore supply fall and zero-address fees), so gross burn, net issuance and every per-circulating ratio move"
+},
+{
+"date": "2026-11-25",
+"from": 0.34403154,
+"to": 0.374631896,
+"why": "R21b item 1 (Jake 2026-11-25): Hyperliquid's Assistance Fund is BURNED — out of circulating and total supply (the validators' vote, HyperFND 2025-12-24: 85% of stake for removing the Fund's HYPE permanently from the circulating and total supply); its buybacks are buy-and-burn (the burns line of net float pressure, A3's retired buyback), A4 on (scored on the Fund + the Core burns); the three true burns stay"
 }
 ],
 "audit|CP Comparability|Insider share of circulating = insider-held tokens counted inside circulating ÷ circulating": [
@@ -812,6 +1572,12 @@
 "from": 0.558514731,
 "to": 0.512894617,
 "why": "R21 (Jake 2026-11-25) Item 6: Hyperliquid's default until Jake decides — the Assistance Fund is a held buyback (inside circulating, +48.0M; off the free float; A4 off); 'burn' now counts only true burns (HyperCore supply fall and zero-address fees), so gross burn, net issuance and every per-circulating ratio move"
+},
+{
+"date": "2026-11-25",
+"from": 0.512894617,
+"to": 0.558514731,
+"why": "R21b item 1 (Jake 2026-11-25): Hyperliquid's Assistance Fund is BURNED — out of circulating and total supply (the validators' vote, HyperFND 2025-12-24: 85% of stake for removing the Fund's HYPE permanently from the circulating and total supply); its buybacks are buy-and-burn (the burns line of net float pressure, A3's retired buyback), A4 on (scored on the Fund + the Core burns); the three true burns stay"
 }
 ],
 "audit|CP Comparability|Market cap ($)": [
@@ -820,6 +1586,12 @@
 "from": 43702446000.0,
 "to": 47589620000.0,
 "why": "R21 (Jake 2026-11-25) Item 6: Hyperliquid's default until Jake decides — the Assistance Fund is a held buyback (inside circulating, +48.0M; off the free float; A4 off); 'burn' now counts only true burns (HyperCore supply fall and zero-address fees), so gross burn, net issuance and every per-circulating ratio move"
+},
+{
+"date": "2026-11-25",
+"from": 47589620000.0,
+"to": 43702446000.0,
+"why": "R21b item 1 (Jake 2026-11-25): Hyperliquid's Assistance Fund is BURNED — out of circulating and total supply (the validators' vote, HyperFND 2025-12-24: 85% of stake for removing the Fund's HYPE permanently from the circulating and total supply); its buybacks are buy-and-burn (the burns line of net float pressure, A3's retired buyback), A4 on (scored on the Fund + the Core burns); the three true burns stay"
 }
 ],
 "audit|CP Comparability|NET FLOAT PRESSURE, % a year = buying pressure on float + burns on float − total dilution ÷ free float − bought tokens returned to the float (revenue-funded buying + burns − new supply; all ÷ free float) (R21)": [
@@ -828,6 +1600,12 @@
 "from": "<absent>",
 "to": -0.16312006,
 "why": "R21 (Jake 2026-11-25) Item 6: Hyperliquid's default until Jake decides — the Assistance Fund is a held buyback (inside circulating, +48.0M; off the free float; A4 off); 'burn' now counts only true burns (HyperCore supply fall and zero-address fees), so gross burn, net issuance and every per-circulating ratio move"
+},
+{
+"date": "2026-11-25",
+"from": -0.16312006,
+"to": -0.170563056,
+"why": "R21b item 1 (Jake 2026-11-25): Hyperliquid's Assistance Fund is BURNED — out of circulating and total supply (the validators' vote, HyperFND 2025-12-24: 85% of stake for removing the Fund's HYPE permanently from the circulating and total supply); its buybacks are buy-and-burn (the burns line of net float pressure, A3's retired buyback), A4 on (scored on the Fund + the Core burns); the three true burns stay"
 }
 ],
 "audit|CP Comparability|NET HOLDER YIELD = holder value yield − dilution (outflows a+b+c+d+e+f at each day's price, annualised) ÷ average market cap over the window": [
@@ -836,6 +1614,12 @@
 "from": -0.0315473628,
 "to": -0.0289805003,
 "why": "R21 (Jake 2026-11-25) Item 6: Hyperliquid's default until Jake decides — the Assistance Fund is a held buyback (inside circulating, +48.0M; off the free float; A4 off); 'burn' now counts only true burns (HyperCore supply fall and zero-address fees), so gross burn, net issuance and every per-circulating ratio move"
+},
+{
+"date": "2026-11-25",
+"from": -0.0289805003,
+"to": -0.0315473628,
+"why": "R21b item 1 (Jake 2026-11-25): Hyperliquid's Assistance Fund is BURNED — out of circulating and total supply (the validators' vote, HyperFND 2025-12-24: 85% of stake for removing the Fund's HYPE permanently from the circulating and total supply); its buybacks are buy-and-burn (the burns line of net float pressure, A3's retired buyback), A4 on (scored on the Fund + the Core burns); the three true burns stay"
 }
 ],
 "audit|CP Comparability|Retirement rate (RETIRED buyback tokens, burned + held, annualised) ÷ circulating": [
@@ -844,6 +1628,12 @@
 "from": 0.0178845249,
 "to": 0.0164236967,
 "why": "R21 (Jake 2026-11-25) Item 6: Hyperliquid's default until Jake decides — the Assistance Fund is a held buyback (inside circulating, +48.0M; off the free float; A4 off); 'burn' now counts only true burns (HyperCore supply fall and zero-address fees), so gross burn, net issuance and every per-circulating ratio move"
+},
+{
+"date": "2026-11-25",
+"from": 0.0164236967,
+"to": 0.0178845249,
+"why": "R21b item 1 (Jake 2026-11-25): Hyperliquid's Assistance Fund is BURNED — out of circulating and total supply (the validators' vote, HyperFND 2025-12-24: 85% of stake for removing the Fund's HYPE permanently from the circulating and total supply); its buybacks are buy-and-burn (the burns line of net float pressure, A3's retired buyback), A4 on (scored on the Fund + the Core burns); the three true burns stay"
 }
 ],
 "audit|CP Comparability|TOTAL DILUTION = outflows a+b+c+d+e+f (annualised) ÷ circulating": [
@@ -852,6 +1642,12 @@
 "from": 0.0500218136,
 "to": 0.0459359754,
 "why": "R21 (Jake 2026-11-25) Item 6: Hyperliquid's default until Jake decides — the Assistance Fund is a held buyback (inside circulating, +48.0M; off the free float; A4 off); 'burn' now counts only true burns (HyperCore supply fall and zero-address fees), so gross burn, net issuance and every per-circulating ratio move"
+},
+{
+"date": "2026-11-25",
+"from": 0.0459359754,
+"to": 0.0500218136,
+"why": "R21b item 1 (Jake 2026-11-25): Hyperliquid's Assistance Fund is BURNED — out of circulating and total supply (the validators' vote, HyperFND 2025-12-24: 85% of stake for removing the Fund's HYPE permanently from the circulating and total supply); its buybacks are buy-and-burn (the burns line of net float pressure, A3's retired buyback), A4 on (scored on the Fund + the Core burns); the three true burns stay"
 }
 ],
 "audit|CP Comparability|Total supply (tokens)": [
@@ -860,6 +1656,12 @@
 "from": 950543705.0,
 "to": 998553300.0,
 "why": "R21 (Jake 2026-11-25) Item 6: Hyperliquid's default until Jake decides — the Assistance Fund is a held buyback (inside circulating, +48.0M; off the free float; A4 off); 'burn' now counts only true burns (HyperCore supply fall and zero-address fees), so gross burn, net issuance and every per-circulating ratio move"
+},
+{
+"date": "2026-11-25",
+"from": 998553300.0,
+"to": 950543705.0,
+"why": "R21b item 1 (Jake 2026-11-25): Hyperliquid's Assistance Fund is BURNED — out of circulating and total supply (the validators' vote, HyperFND 2025-12-24: 85% of stake for removing the Fund's HYPE permanently from the circulating and total supply); its buybacks are buy-and-burn (the burns line of net float pressure, A3's retired buyback), A4 on (scored on the Fund + the Core burns); the three true burns stay"
 }
 ],
 "audit|CP Comparability|Treasury-company (DAT) holdings ÷ circulating": [
@@ -868,6 +1670,12 @@
 "from": 0.0755761513,
 "to": 0.0694030059,
 "why": "R21 (Jake 2026-11-25) Item 6: Hyperliquid's default until Jake decides — the Assistance Fund is a held buyback (inside circulating, +48.0M; off the free float; A4 off); 'burn' now counts only true burns (HyperCore supply fall and zero-address fees), so gross burn, net issuance and every per-circulating ratio move"
+},
+{
+"date": "2026-11-25",
+"from": 0.0694030059,
+"to": 0.0755761513,
+"why": "R21b item 1 (Jake 2026-11-25): Hyperliquid's Assistance Fund is BURNED — out of circulating and total supply (the validators' vote, HyperFND 2025-12-24: 85% of stake for removing the Fund's HYPE permanently from the circulating and total supply); its buybacks are buy-and-burn (the burns line of net float pressure, A3's retired buyback), A4 on (scored on the Fund + the Core burns); the three true burns stay"
 }
 ],
 "audit|CP Comparability|Trend — cp_nfp (arrow · QoQ · 4Q growth/yr · quarters improved; Trajectory tab)": [
@@ -884,6 +1692,12 @@
 "from": 0.374631896,
 "to": 0.34403154,
 "why": "R21 (Jake 2026-11-25) Item 6: Hyperliquid's default until Jake decides — the Assistance Fund is a held buyback (inside circulating, +48.0M; off the free float; A4 off); 'burn' now counts only true burns (HyperCore supply fall and zero-address fees), so gross burn, net issuance and every per-circulating ratio move"
+},
+{
+"date": "2026-11-25",
+"from": 0.34403154,
+"to": 0.374631896,
+"why": "R21b item 1 (Jake 2026-11-25): Hyperliquid's Assistance Fund is BURNED — out of circulating and total supply (the validators' vote, HyperFND 2025-12-24: 85% of stake for removing the Fund's HYPE permanently from the circulating and total supply); its buybacks are buy-and-burn (the burns line of net float pressure, A3's retired buyback), A4 on (scored on the Fund + the Core burns); the three true burns stay"
 }
 ],
 "audit|CP Comparability|Whole-token yield — validator = staker yield × staked share (locked ÷ circulating, now)": [
@@ -892,6 +1706,20 @@
 "from": 0.00858738527,
 "to": 0.00788595793,
 "why": "R21 (Jake 2026-11-25) Item 6: Hyperliquid's default until Jake decides — the Assistance Fund is a held buyback (inside circulating, +48.0M; off the free float; A4 off); 'burn' now counts only true burns (HyperCore supply fall and zero-address fees), so gross burn, net issuance and every per-circulating ratio move"
+},
+{
+"date": "2026-11-25",
+"from": 0.00788595793,
+"to": 0.00858738527,
+"why": "R21b item 1 (Jake 2026-11-25): Hyperliquid's Assistance Fund is BURNED — out of circulating and total supply (the validators' vote, HyperFND 2025-12-24: 85% of stake for removing the Fund's HYPE permanently from the circulating and total supply); its buybacks are buy-and-burn (the burns line of net float pressure, A3's retired buyback), A4 on (scored on the Fund + the Core burns); the three true burns stay"
+}
+],
+"audit|Master|Archetypes (primary first)": [
+{
+"date": "2026-11-25",
+"from": "3, 1",
+"to": "3, 1, 4",
+"why": "R21b item 1 (Jake 2026-11-25): Hyperliquid's Assistance Fund is BURNED — out of circulating and total supply (the validators' vote, HyperFND 2025-12-24: 85% of stake for removing the Fund's HYPE permanently from the circulating and total supply); its buybacks are buy-and-burn (the burns line of net float pressure, A3's retired buyback), A4 on (scored on the Fund + the Core burns); the three true burns stay"
 }
 ],
 "audit|Master|Buyback % of supply (annualised, implied, split as at this window)": [
@@ -900,6 +1728,12 @@
 "from": 0.0181198683,
 "to": 0.0166398169,
 "why": "R21 (Jake 2026-11-25) Item 6: Hyperliquid's default until Jake decides — the Assistance Fund is a held buyback (inside circulating, +48.0M; off the free float; A4 off); 'burn' now counts only true burns (HyperCore supply fall and zero-address fees), so gross burn, net issuance and every per-circulating ratio move"
+},
+{
+"date": "2026-11-25",
+"from": 0.0166398169,
+"to": 0.0181198683,
+"why": "R21b item 1 (Jake 2026-11-25): Hyperliquid's Assistance Fund is BURNED — out of circulating and total supply (the validators' vote, HyperFND 2025-12-24: 85% of stake for removing the Fund's HYPE permanently from the circulating and total supply); its buybacks are buy-and-burn (the burns line of net float pressure, A3's retired buyback), A4 on (scored on the Fund + the Core burns); the three true burns stay"
 }
 ],
 "audit|Master|Circulating supply (used)": [
@@ -908,6 +1742,12 @@
 "from": 539758896.0,
 "to": 587768491.0,
 "why": "R21 (Jake 2026-11-25) Item 6: Hyperliquid's default until Jake decides — the Assistance Fund is a held buyback (inside circulating, +48.0M; off the free float; A4 off); 'burn' now counts only true burns (HyperCore supply fall and zero-address fees), so gross burn, net issuance and every per-circulating ratio move"
+},
+{
+"date": "2026-11-25",
+"from": 587768491.0,
+"to": 539758896.0,
+"why": "R21b item 1 (Jake 2026-11-25): Hyperliquid's Assistance Fund is BURNED — out of circulating and total supply (the validators' vote, HyperFND 2025-12-24: 85% of stake for removing the Fund's HYPE permanently from the circulating and total supply); its buybacks are buy-and-burn (the burns line of net float pressure, A3's retired buyback), A4 on (scored on the Fund + the Core burns); the three true burns stay"
 }
 ],
 "audit|Master|FDV ($)": [
@@ -916,6 +1756,12 @@
 "from": 76962297900.0,
 "to": 80849471900.0,
 "why": "R21 (Jake 2026-11-25) Item 6: Hyperliquid's default until Jake decides — the Assistance Fund is a held buyback (inside circulating, +48.0M; off the free float; A4 off); 'burn' now counts only true burns (HyperCore supply fall and zero-address fees), so gross burn, net issuance and every per-circulating ratio move"
+},
+{
+"date": "2026-11-25",
+"from": 80849471900.0,
+"to": 76962297900.0,
+"why": "R21b item 1 (Jake 2026-11-25): Hyperliquid's Assistance Fund is BURNED — out of circulating and total supply (the validators' vote, HyperFND 2025-12-24: 85% of stake for removing the Fund's HYPE permanently from the circulating and total supply); its buybacks are buy-and-burn (the burns line of net float pressure, A3's retired buyback), A4 on (scored on the Fund + the Core burns); the three true burns stay"
 }
 ],
 "audit|Master|Fees ÷ FDV (annualised)": [
@@ -924,6 +1770,12 @@
 "from": 0.0120705522,
 "to": 0.0114902103,
 "why": "R21 (Jake 2026-11-25) Item 6: Hyperliquid's default until Jake decides — the Assistance Fund is a held buyback (inside circulating, +48.0M; off the free float; A4 off); 'burn' now counts only true burns (HyperCore supply fall and zero-address fees), so gross burn, net issuance and every per-circulating ratio move"
+},
+{
+"date": "2026-11-25",
+"from": 0.0114902103,
+"to": 0.0120705522,
+"why": "R21b item 1 (Jake 2026-11-25): Hyperliquid's Assistance Fund is BURNED — out of circulating and total supply (the validators' vote, HyperFND 2025-12-24: 85% of stake for removing the Fund's HYPE permanently from the circulating and total supply); its buybacks are buy-and-burn (the burns line of net float pressure, A3's retired buyback), A4 on (scored on the Fund + the Core burns); the three true burns stay"
 }
 ],
 "audit|Master|Gross burn Q0 (tokens)": [
@@ -932,6 +1784,12 @@
 "from": 2474408.02,
 "to": 52260.6283,
 "why": "R21 (Jake 2026-11-25) Item 6: Hyperliquid's default until Jake decides — the Assistance Fund is a held buyback (inside circulating, +48.0M; off the free float; A4 off); 'burn' now counts only true burns (HyperCore supply fall and zero-address fees), so gross burn, net issuance and every per-circulating ratio move"
+},
+{
+"date": "2026-11-25",
+"from": 52260.6283,
+"to": 2474408.02,
+"why": "R21b item 1 (Jake 2026-11-25): Hyperliquid's Assistance Fund is BURNED — out of circulating and total supply (the validators' vote, HyperFND 2025-12-24: 85% of stake for removing the Fund's HYPE permanently from the circulating and total supply); its buybacks are buy-and-burn (the burns line of net float pressure, A3's retired buyback), A4 on (scored on the Fund + the Core burns); the three true burns stay"
 }
 ],
 "audit|Master|Issuance − burn Q0 (tokens) — a component of the supply change, NOT the net supply change": [
@@ -940,6 +1798,12 @@
 "from": -2474408.02,
 "to": -52260.6283,
 "why": "R21 (Jake 2026-11-25) Item 6: Hyperliquid's default until Jake decides — the Assistance Fund is a held buyback (inside circulating, +48.0M; off the free float; A4 off); 'burn' now counts only true burns (HyperCore supply fall and zero-address fees), so gross burn, net issuance and every per-circulating ratio move"
+},
+{
+"date": "2026-11-25",
+"from": -52260.6283,
+"to": -2474408.02,
+"why": "R21b item 1 (Jake 2026-11-25): Hyperliquid's Assistance Fund is BURNED — out of circulating and total supply (the validators' vote, HyperFND 2025-12-24: 85% of stake for removing the Fund's HYPE permanently from the circulating and total supply); its buybacks are buy-and-burn (the burns line of net float pressure, A3's retired buyback), A4 on (scored on the Fund + the Core burns); the three true burns stay"
 }
 ],
 "audit|Master|Issuance − burn, annualised % of circulating — a component, NOT the net supply change": [
@@ -948,6 +1812,12 @@
 "from": -0.0185918181,
 "to": -0.00190902787,
 "why": "R21 (Jake 2026-11-25) Item 6: Hyperliquid's default until Jake decides — the Assistance Fund is a held buyback (inside circulating, +48.0M; off the free float; A4 off); 'burn' now counts only true burns (HyperCore supply fall and zero-address fees), so gross burn, net issuance and every per-circulating ratio move"
+},
+{
+"date": "2026-11-25",
+"from": -0.00190902787,
+"to": -0.0185918181,
+"why": "R21b item 1 (Jake 2026-11-25): Hyperliquid's Assistance Fund is BURNED — out of circulating and total supply (the validators' vote, HyperFND 2025-12-24: 85% of stake for removing the Fund's HYPE permanently from the circulating and total supply); its buybacks are buy-and-burn (the burns line of net float pressure, A3's retired buyback), A4 on (scored on the Fund + the Core burns); the three true burns stay"
 }
 ],
 "audit|Master|Market cap ($)": [
@@ -956,6 +1826,12 @@
 "from": 43702446000.0,
 "to": 47589620000.0,
 "why": "R21 (Jake 2026-11-25) Item 6: Hyperliquid's default until Jake decides — the Assistance Fund is a held buyback (inside circulating, +48.0M; off the free float; A4 off); 'burn' now counts only true burns (HyperCore supply fall and zero-address fees), so gross burn, net issuance and every per-circulating ratio move"
+},
+{
+"date": "2026-11-25",
+"from": 47589620000.0,
+"to": 43702446000.0,
+"why": "R21b item 1 (Jake 2026-11-25): Hyperliquid's Assistance Fund is BURNED — out of circulating and total supply (the validators' vote, HyperFND 2025-12-24: 85% of stake for removing the Fund's HYPE permanently from the circulating and total supply); its buybacks are buy-and-burn (the burns line of net float pressure, A3's retired buyback), A4 on (scored on the Fund + the Core burns); the three true burns stay"
 }
 ],
 "audit|Master|Trend — master_gross_burn_q0_tokens (arrow · QoQ · 4Q growth/yr · quarters improved; Trajectory tab)": [
@@ -964,6 +1840,12 @@
 "from": "SERIES BREAK 2026-09-25 · – · STEP CHANGE at Q0 · QoQ n/a",
 "to": "– · 4Q n/a · QoQ n/a — Q0 is part-held",
 "why": "R21 (Jake 2026-11-25) Item 6: Hyperliquid's default until Jake decides — the Assistance Fund is a held buyback (inside circulating, +48.0M; off the free float; A4 off); 'burn' now counts only true burns (HyperCore supply fall and zero-address fees), so gross burn, net issuance and every per-circulating ratio move"
+},
+{
+"date": "2026-11-25",
+"from": "– · 4Q n/a · QoQ n/a — Q0 is part-held",
+"to": "SERIES BREAK 2026-09-25 · – · STEP CHANGE at Q0 · QoQ n/a",
+"why": "R21b item 1 (Jake 2026-11-25): Hyperliquid's Assistance Fund is BURNED — out of circulating and total supply (the validators' vote, HyperFND 2025-12-24: 85% of stake for removing the Fund's HYPE permanently from the circulating and total supply); its buybacks are buy-and-burn (the burns line of net float pressure, A3's retired buyback), A4 on (scored on the Fund + the Core burns); the three true burns stay"
 }
 ],
 "audit|Master|Turnover = 30d volume ÷ market cap (x)": [
@@ -972,6 +1854,12 @@
 "from": 0.629963507,
 "to": 0.578507376,
 "why": "R21 (Jake 2026-11-25) Item 6: Hyperliquid's default until Jake decides — the Assistance Fund is a held buyback (inside circulating, +48.0M; off the free float; A4 off); 'burn' now counts only true burns (HyperCore supply fall and zero-address fees), so gross burn, net issuance and every per-circulating ratio move"
+},
+{
+"date": "2026-11-25",
+"from": 0.578507376,
+"to": 0.629963507,
+"why": "R21b item 1 (Jake 2026-11-25): Hyperliquid's Assistance Fund is BURNED — out of circulating and total supply (the validators' vote, HyperFND 2025-12-24: 85% of stake for removing the Fund's HYPE permanently from the circulating and total supply); its buybacks are buy-and-burn (the burns line of net float pressure, A3's retired buyback), A4 on (scored on the Fund + the Core burns); the three true burns stay"
 }
 ],
 "reader|A1 Infrastructure|Circulating supply": [
@@ -980,6 +1868,12 @@
 "from": 539758896.0,
 "to": 587768491.0,
 "why": "R21 (Jake 2026-11-25) Item 6: Hyperliquid's default until Jake decides — the Assistance Fund is a held buyback (inside circulating, +48.0M; off the free float; A4 off); 'burn' now counts only true burns (HyperCore supply fall and zero-address fees), so gross burn, net issuance and every per-circulating ratio move"
+},
+{
+"date": "2026-11-25",
+"from": 587768491.0,
+"to": 539758896.0,
+"why": "R21b item 1 (Jake 2026-11-25): Hyperliquid's Assistance Fund is BURNED — out of circulating and total supply (the validators' vote, HyperFND 2025-12-24: 85% of stake for removing the Fund's HYPE permanently from the circulating and total supply); its buybacks are buy-and-burn (the burns line of net float pressure, A3's retired buyback), A4 on (scored on the Fund + the Core burns); the three true burns stay"
 }
 ],
 "reader|A1 Infrastructure|FDV": [
@@ -988,6 +1882,12 @@
 "from": 76962297900.0,
 "to": 80849471900.0,
 "why": "R21 (Jake 2026-11-25) Item 6: Hyperliquid's default until Jake decides — the Assistance Fund is a held buyback (inside circulating, +48.0M; off the free float; A4 off); 'burn' now counts only true burns (HyperCore supply fall and zero-address fees), so gross burn, net issuance and every per-circulating ratio move"
+},
+{
+"date": "2026-11-25",
+"from": 80849471900.0,
+"to": 76962297900.0,
+"why": "R21b item 1 (Jake 2026-11-25): Hyperliquid's Assistance Fund is BURNED — out of circulating and total supply (the validators' vote, HyperFND 2025-12-24: 85% of stake for removing the Fund's HYPE permanently from the circulating and total supply); its buybacks are buy-and-burn (the burns line of net float pressure, A3's retired buyback), A4 on (scored on the Fund + the Core burns); the three true burns stay"
 }
 ],
 "reader|A1 Infrastructure|Fees ÷ FDV, a year": [
@@ -996,6 +1896,12 @@
 "from": 0.0120705522,
 "to": 0.0114902103,
 "why": "R21 (Jake 2026-11-25) Item 6: Hyperliquid's default until Jake decides — the Assistance Fund is a held buyback (inside circulating, +48.0M; off the free float; A4 off); 'burn' now counts only true burns (HyperCore supply fall and zero-address fees), so gross burn, net issuance and every per-circulating ratio move"
+},
+{
+"date": "2026-11-25",
+"from": 0.0114902103,
+"to": 0.0120705522,
+"why": "R21b item 1 (Jake 2026-11-25): Hyperliquid's Assistance Fund is BURNED — out of circulating and total supply (the validators' vote, HyperFND 2025-12-24: 85% of stake for removing the Fund's HYPE permanently from the circulating and total supply); its buybacks are buy-and-burn (the burns line of net float pressure, A3's retired buyback), A4 on (scored on the Fund + the Core burns); the three true burns stay"
 }
 ],
 "reader|A1 Infrastructure|Gross burn, 90 days (tokens)": [
@@ -1004,6 +1910,12 @@
 "from": 2474408.02,
 "to": 52260.6283,
 "why": "R21 (Jake 2026-11-25) Item 6: Hyperliquid's default until Jake decides — the Assistance Fund is a held buyback (inside circulating, +48.0M; off the free float; A4 off); 'burn' now counts only true burns (HyperCore supply fall and zero-address fees), so gross burn, net issuance and every per-circulating ratio move"
+},
+{
+"date": "2026-11-25",
+"from": 52260.6283,
+"to": 2474408.02,
+"why": "R21b item 1 (Jake 2026-11-25): Hyperliquid's Assistance Fund is BURNED — out of circulating and total supply (the validators' vote, HyperFND 2025-12-24: 85% of stake for removing the Fund's HYPE permanently from the circulating and total supply); its buybacks are buy-and-burn (the burns line of net float pressure, A3's retired buyback), A4 on (scored on the Fund + the Core burns); the three true burns stay"
 }
 ],
 "reader|A1 Infrastructure|Market cap": [
@@ -1012,6 +1924,12 @@
 "from": 43702446000.0,
 "to": 47589620000.0,
 "why": "R21 (Jake 2026-11-25) Item 6: Hyperliquid's default until Jake decides — the Assistance Fund is a held buyback (inside circulating, +48.0M; off the free float; A4 off); 'burn' now counts only true burns (HyperCore supply fall and zero-address fees), so gross burn, net issuance and every per-circulating ratio move"
+},
+{
+"date": "2026-11-25",
+"from": 47589620000.0,
+"to": 43702446000.0,
+"why": "R21b item 1 (Jake 2026-11-25): Hyperliquid's Assistance Fund is BURNED — out of circulating and total supply (the validators' vote, HyperFND 2025-12-24: 85% of stake for removing the Fund's HYPE permanently from the circulating and total supply); its buybacks are buy-and-burn (the burns line of net float pressure, A3's retired buyback), A4 on (scored on the Fund + the Core burns); the three true burns stay"
 }
 ],
 "reader|A1 Infrastructure|NRR headroom (throughput)": [
@@ -1020,6 +1938,12 @@
 "from": 45.5346796,
 "to": 41.8153555,
 "why": "R21 (Jake 2026-11-25) Item 6: Hyperliquid's default until Jake decides — the Assistance Fund is a held buyback (inside circulating, +48.0M; off the free float; A4 off); 'burn' now counts only true burns (HyperCore supply fall and zero-address fees), so gross burn, net issuance and every per-circulating ratio move"
+},
+{
+"date": "2026-11-25",
+"from": 41.8153555,
+"to": 45.5346796,
+"why": "R21b item 1 (Jake 2026-11-25): Hyperliquid's Assistance Fund is BURNED — out of circulating and total supply (the validators' vote, HyperFND 2025-12-24: 85% of stake for removing the Fund's HYPE permanently from the circulating and total supply); its buybacks are buy-and-burn (the burns line of net float pressure, A3's retired buyback), A4 on (scored on the Fund + the Core burns); the three true burns stay"
 }
 ],
 "reader|A1 Infrastructure|NRR on trading throughput": [
@@ -1028,6 +1952,12 @@
 "from": 0.0155925112,
 "to": 0.0169794084,
 "why": "R21 (Jake 2026-11-25) Item 6: Hyperliquid's default until Jake decides — the Assistance Fund is a held buyback (inside circulating, +48.0M; off the free float; A4 off); 'burn' now counts only true burns (HyperCore supply fall and zero-address fees), so gross burn, net issuance and every per-circulating ratio move"
+},
+{
+"date": "2026-11-25",
+"from": 0.0169794084,
+"to": 0.0155925112,
+"why": "R21b item 1 (Jake 2026-11-25): Hyperliquid's Assistance Fund is BURNED — out of circulating and total supply (the validators' vote, HyperFND 2025-12-24: 85% of stake for removing the Fund's HYPE permanently from the circulating and total supply); its buybacks are buy-and-burn (the burns line of net float pressure, A3's retired buyback), A4 on (scored on the Fund + the Core burns); the three true burns stay"
 }
 ],
 "reader|A1 Infrastructure|Net issuance after burn (tokens)": [
@@ -1036,6 +1966,12 @@
 "from": -2474408.02,
 "to": -52260.6283,
 "why": "R21 (Jake 2026-11-25) Item 6: Hyperliquid's default until Jake decides — the Assistance Fund is a held buyback (inside circulating, +48.0M; off the free float; A4 off); 'burn' now counts only true burns (HyperCore supply fall and zero-address fees), so gross burn, net issuance and every per-circulating ratio move"
+},
+{
+"date": "2026-11-25",
+"from": -52260.6283,
+"to": -2474408.02,
+"why": "R21b item 1 (Jake 2026-11-25): Hyperliquid's Assistance Fund is BURNED — out of circulating and total supply (the validators' vote, HyperFND 2025-12-24: 85% of stake for removing the Fund's HYPE permanently from the circulating and total supply); its buybacks are buy-and-burn (the burns line of net float pressure, A3's retired buyback), A4 on (scored on the Fund + the Core burns); the three true burns stay"
 }
 ],
 "reader|A1 Infrastructure|Net issuance after burn, % a year": [
@@ -1044,6 +1980,12 @@
 "from": -0.0185918181,
 "to": -0.00190902787,
 "why": "R21 (Jake 2026-11-25) Item 6: Hyperliquid's default until Jake decides — the Assistance Fund is a held buyback (inside circulating, +48.0M; off the free float; A4 off); 'burn' now counts only true burns (HyperCore supply fall and zero-address fees), so gross burn, net issuance and every per-circulating ratio move"
+},
+{
+"date": "2026-11-25",
+"from": -0.00190902787,
+"to": -0.0185918181,
+"why": "R21b item 1 (Jake 2026-11-25): Hyperliquid's Assistance Fund is BURNED — out of circulating and total supply (the validators' vote, HyperFND 2025-12-24: 85% of stake for removing the Fund's HYPE permanently from the circulating and total supply); its buybacks are buy-and-burn (the burns line of net float pressure, A3's retired buyback), A4 on (scored on the Fund + the Core burns); the three true burns stay"
 }
 ],
 "reader|A1 Infrastructure|Quarter change [45]": [
@@ -1052,6 +1994,12 @@
 "from": "blocked",
 "to": "n/a",
 "why": "R21 (Jake 2026-11-25) Item 6: Hyperliquid's default until Jake decides — the Assistance Fund is a held buyback (inside circulating, +48.0M; off the free float; A4 off); 'burn' now counts only true burns (HyperCore supply fall and zero-address fees), so gross burn, net issuance and every per-circulating ratio move"
+},
+{
+"date": "2026-11-25",
+"from": "n/a",
+"to": "blocked",
+"why": "R21b item 1 (Jake 2026-11-25): Hyperliquid's Assistance Fund is BURNED — out of circulating and total supply (the validators' vote, HyperFND 2025-12-24: 85% of stake for removing the Fund's HYPE permanently from the circulating and total supply); its buybacks are buy-and-burn (the burns line of net float pressure, A3's retired buyback), A4 on (scored on the Fund + the Core burns); the three true burns stay"
 }
 ],
 "reader|A1 Infrastructure|Staking rate": [
@@ -1060,6 +2008,12 @@
 "from": 0.374631896,
 "to": 0.34403154,
 "why": "R21 (Jake 2026-11-25) Item 6: Hyperliquid's default until Jake decides — the Assistance Fund is a held buyback (inside circulating, +48.0M; off the free float; A4 off); 'burn' now counts only true burns (HyperCore supply fall and zero-address fees), so gross burn, net issuance and every per-circulating ratio move"
+},
+{
+"date": "2026-11-25",
+"from": 0.34403154,
+"to": 0.374631896,
+"why": "R21b item 1 (Jake 2026-11-25): Hyperliquid's Assistance Fund is BURNED — out of circulating and total supply (the validators' vote, HyperFND 2025-12-24: 85% of stake for removing the Fund's HYPE permanently from the circulating and total supply); its buybacks are buy-and-burn (the burns line of net float pressure, A3's retired buyback), A4 on (scored on the Fund + the Core burns); the three true burns stay"
 }
 ],
 "reader|A1 Infrastructure|Total yield, non-stakers": [
@@ -1068,6 +2022,12 @@
 "from": -0.0314299956,
 "to": -0.0440269475,
 "why": "R21 (Jake 2026-11-25) Item 6: Hyperliquid's default until Jake decides — the Assistance Fund is a held buyback (inside circulating, +48.0M; off the free float; A4 off); 'burn' now counts only true burns (HyperCore supply fall and zero-address fees), so gross burn, net issuance and every per-circulating ratio move"
+},
+{
+"date": "2026-11-25",
+"from": -0.0440269475,
+"to": -0.0314299956,
+"why": "R21b item 1 (Jake 2026-11-25): Hyperliquid's Assistance Fund is BURNED — out of circulating and total supply (the validators' vote, HyperFND 2025-12-24: 85% of stake for removing the Fund's HYPE permanently from the circulating and total supply); its buybacks are buy-and-burn (the burns line of net float pressure, A3's retired buyback), A4 on (scored on the Fund + the Core burns); the three true burns stay"
 }
 ],
 "reader|A1 Infrastructure|Total yield, stakers": [
@@ -1076,6 +2036,12 @@
 "from": -0.00850780088,
 "to": -0.0211047528,
 "why": "R21 (Jake 2026-11-25) Item 6: Hyperliquid's default until Jake decides — the Assistance Fund is a held buyback (inside circulating, +48.0M; off the free float; A4 off); 'burn' now counts only true burns (HyperCore supply fall and zero-address fees), so gross burn, net issuance and every per-circulating ratio move"
+},
+{
+"date": "2026-11-25",
+"from": -0.0211047528,
+"to": -0.00850780088,
+"why": "R21b item 1 (Jake 2026-11-25): Hyperliquid's Assistance Fund is BURNED — out of circulating and total supply (the validators' vote, HyperFND 2025-12-24: 85% of stake for removing the Fund's HYPE permanently from the circulating and total supply); its buybacks are buy-and-burn (the burns line of net float pressure, A3's retired buyback), A4 on (scored on the Fund + the Core burns); the three true burns stay"
 }
 ],
 "reader|A3 Revenue Buyback|Bought back and burned (tokens)": [
@@ -1084,6 +2050,12 @@
 "from": 2380273.5,
 "to": 0.0,
 "why": "R21 (Jake 2026-11-25) Item 6: Hyperliquid's default until Jake decides — the Assistance Fund is a held buyback (inside circulating, +48.0M; off the free float; A4 off); 'burn' now counts only true burns (HyperCore supply fall and zero-address fees), so gross burn, net issuance and every per-circulating ratio move"
+},
+{
+"date": "2026-11-25",
+"from": 0.0,
+"to": 2380273.5,
+"why": "R21b item 1 (Jake 2026-11-25): Hyperliquid's Assistance Fund is BURNED — out of circulating and total supply (the validators' vote, HyperFND 2025-12-24: 85% of stake for removing the Fund's HYPE permanently from the circulating and total supply); its buybacks are buy-and-burn (the burns line of net float pressure, A3's retired buyback), A4 on (scored on the Fund + the Core burns); the three true burns stay"
 }
 ],
 "reader|A3 Revenue Buyback|Bought back and held (tokens)": [
@@ -1092,6 +2064,12 @@
 "from": 0.0,
 "to": 2380273.5,
 "why": "R21 (Jake 2026-11-25) Item 6: Hyperliquid's default until Jake decides — the Assistance Fund is a held buyback (inside circulating, +48.0M; off the free float; A4 off); 'burn' now counts only true burns (HyperCore supply fall and zero-address fees), so gross burn, net issuance and every per-circulating ratio move"
+},
+{
+"date": "2026-11-25",
+"from": 2380273.5,
+"to": 0.0,
+"why": "R21b item 1 (Jake 2026-11-25): Hyperliquid's Assistance Fund is BURNED — out of circulating and total supply (the validators' vote, HyperFND 2025-12-24: 85% of stake for removing the Fund's HYPE permanently from the circulating and total supply); its buybacks are buy-and-burn (the burns line of net float pressure, A3's retired buyback), A4 on (scored on the Fund + the Core burns); the three true burns stay"
 }
 ],
 "reader|A3 Revenue Buyback|Burned ÷ (emissions + unlocks)": [
@@ -1100,6 +2078,12 @@
 "from": 0.296591773,
 "to": 0.0,
 "why": "R21 (Jake 2026-11-25) Item 6: Hyperliquid's default until Jake decides — the Assistance Fund is a held buyback (inside circulating, +48.0M; off the free float; A4 off); 'burn' now counts only true burns (HyperCore supply fall and zero-address fees), so gross burn, net issuance and every per-circulating ratio move"
+},
+{
+"date": "2026-11-25",
+"from": 0.0,
+"to": 0.296591773,
+"why": "R21b item 1 (Jake 2026-11-25): Hyperliquid's Assistance Fund is BURNED — out of circulating and total supply (the validators' vote, HyperFND 2025-12-24: 85% of stake for removing the Fund's HYPE permanently from the circulating and total supply); its buybacks are buy-and-burn (the burns line of net float pressure, A3's retired buyback), A4 on (scored on the Fund + the Core burns); the three true burns stay"
 }
 ],
 "reader|A3 Revenue Buyback|Buyback destination": [
@@ -1108,6 +2092,20 @@
 "from": "burn",
 "to": "hold — the Assistance Fund 0xfefe…fefe holds what it buys (R21, Jake's default: a held buyback, not a burn)",
 "why": "R21 (Jake 2026-11-25) Item 6: Hyperliquid's default until Jake decides — the Assistance Fund is a held buyback (inside circulating, +48.0M; off the free float; A4 off); 'burn' now counts only true burns (HyperCore supply fall and zero-address fees), so gross burn, net issuance and every per-circulating ratio move"
+},
+{
+"date": "2026-11-25",
+"from": "hold — the Assistance Fund 0xfefe…fefe holds what it buys (R21, Jake's default: a held buyback, not a burn)",
+"to": "burn",
+"why": "R21b item 1 (Jake 2026-11-25): Hyperliquid's Assistance Fund is BURNED — out of circulating and total supply (the validators' vote, HyperFND 2025-12-24: 85% of stake for removing the Fund's HYPE permanently from the circulating and total supply); its buybacks are buy-and-burn (the burns line of net float pressure, A3's retired buyback), A4 on (scored on the Fund + the Core burns); the three true burns stay"
+}
+],
+"reader|A3 Revenue Buyback|Buying pressure on float, % a year": [
+{
+"date": "2026-11-25",
+"from": 0.0970550318,
+"to": 0.0,
+"why": "R21b item 1 (Jake 2026-11-25): Hyperliquid's Assistance Fund is BURNED — out of circulating and total supply (the validators' vote, HyperFND 2025-12-24: 85% of stake for removing the Fund's HYPE permanently from the circulating and total supply); its buybacks are buy-and-burn (the burns line of net float pressure, A3's retired buyback), A4 on (scored on the Fund + the Core burns); the three true burns stay"
 }
 ],
 "reader|A3 Revenue Buyback|Circulating supply": [
@@ -1116,6 +2114,12 @@
 "from": 539758896.0,
 "to": 587768491.0,
 "why": "R21 (Jake 2026-11-25) Item 6: Hyperliquid's default until Jake decides — the Assistance Fund is a held buyback (inside circulating, +48.0M; off the free float; A4 off); 'burn' now counts only true burns (HyperCore supply fall and zero-address fees), so gross burn, net issuance and every per-circulating ratio move"
+},
+{
+"date": "2026-11-25",
+"from": 587768491.0,
+"to": 539758896.0,
+"why": "R21b item 1 (Jake 2026-11-25): Hyperliquid's Assistance Fund is BURNED — out of circulating and total supply (the validators' vote, HyperFND 2025-12-24: 85% of stake for removing the Fund's HYPE permanently from the circulating and total supply); its buybacks are buy-and-burn (the burns line of net float pressure, A3's retired buyback), A4 on (scored on the Fund + the Core burns); the three true burns stay"
 }
 ],
 "reader|A3 Revenue Buyback|Effect on float": [
@@ -1124,6 +2128,12 @@
 "from": "removed_from_supply",
 "to": "locked_supply",
 "why": "R21 (Jake 2026-11-25) Item 6: Hyperliquid's default until Jake decides — the Assistance Fund is a held buyback (inside circulating, +48.0M; off the free float; A4 off); 'burn' now counts only true burns (HyperCore supply fall and zero-address fees), so gross burn, net issuance and every per-circulating ratio move"
+},
+{
+"date": "2026-11-25",
+"from": "locked_supply",
+"to": "removed_from_supply",
+"why": "R21b item 1 (Jake 2026-11-25): Hyperliquid's Assistance Fund is BURNED — out of circulating and total supply (the validators' vote, HyperFND 2025-12-24: 85% of stake for removing the Fund's HYPE permanently from the circulating and total supply); its buybacks are buy-and-burn (the burns line of net float pressure, A3's retired buyback), A4 on (scored on the Fund + the Core burns); the three true burns stay"
 }
 ],
 "reader|A3 Revenue Buyback|FDV": [
@@ -1132,6 +2142,12 @@
 "from": 76962297900.0,
 "to": 80849471900.0,
 "why": "R21 (Jake 2026-11-25) Item 6: Hyperliquid's default until Jake decides — the Assistance Fund is a held buyback (inside circulating, +48.0M; off the free float; A4 off); 'burn' now counts only true burns (HyperCore supply fall and zero-address fees), so gross burn, net issuance and every per-circulating ratio move"
+},
+{
+"date": "2026-11-25",
+"from": 80849471900.0,
+"to": 76962297900.0,
+"why": "R21b item 1 (Jake 2026-11-25): Hyperliquid's Assistance Fund is BURNED — out of circulating and total supply (the validators' vote, HyperFND 2025-12-24: 85% of stake for removing the Fund's HYPE permanently from the circulating and total supply); its buybacks are buy-and-burn (the burns line of net float pressure, A3's retired buyback), A4 on (scored on the Fund + the Core burns); the three true burns stay"
 }
 ],
 "reader|A3 Revenue Buyback|Fees ÷ FDV, a year": [
@@ -1140,6 +2156,12 @@
 "from": 0.0120705522,
 "to": 0.0114902103,
 "why": "R21 (Jake 2026-11-25) Item 6: Hyperliquid's default until Jake decides — the Assistance Fund is a held buyback (inside circulating, +48.0M; off the free float; A4 off); 'burn' now counts only true burns (HyperCore supply fall and zero-address fees), so gross burn, net issuance and every per-circulating ratio move"
+},
+{
+"date": "2026-11-25",
+"from": 0.0114902103,
+"to": 0.0120705522,
+"why": "R21b item 1 (Jake 2026-11-25): Hyperliquid's Assistance Fund is BURNED — out of circulating and total supply (the validators' vote, HyperFND 2025-12-24: 85% of stake for removing the Fund's HYPE permanently from the circulating and total supply); its buybacks are buy-and-burn (the burns line of net float pressure, A3's retired buyback), A4 on (scored on the Fund + the Core burns); the three true burns stay"
 }
 ],
 "reader|A3 Revenue Buyback|Holder value yield": [
@@ -1148,6 +2170,12 @@
 "from": 0.0155918832,
 "to": 0.014323244,
 "why": "R21 (Jake 2026-11-25) Item 6: Hyperliquid's default until Jake decides — the Assistance Fund is a held buyback (inside circulating, +48.0M; off the free float; A4 off); 'burn' now counts only true burns (HyperCore supply fall and zero-address fees), so gross burn, net issuance and every per-circulating ratio move"
+},
+{
+"date": "2026-11-25",
+"from": 0.014323244,
+"to": 0.0155918832,
+"why": "R21b item 1 (Jake 2026-11-25): Hyperliquid's Assistance Fund is BURNED — out of circulating and total supply (the validators' vote, HyperFND 2025-12-24: 85% of stake for removing the Fund's HYPE permanently from the circulating and total supply); its buybacks are buy-and-burn (the burns line of net float pressure, A3's retired buyback), A4 on (scored on the Fund + the Core burns); the three true burns stay"
 }
 ],
 "reader|A3 Revenue Buyback|Implied buyback %, 3 months ago": [
@@ -1156,6 +2184,12 @@
 "from": 0.0192118917,
 "to": 0.0176426426,
 "why": "R21 (Jake 2026-11-25) Item 6: Hyperliquid's default until Jake decides — the Assistance Fund is a held buyback (inside circulating, +48.0M; off the free float; A4 off); 'burn' now counts only true burns (HyperCore supply fall and zero-address fees), so gross burn, net issuance and every per-circulating ratio move"
+},
+{
+"date": "2026-11-25",
+"from": 0.0176426426,
+"to": 0.0192118917,
+"why": "R21b item 1 (Jake 2026-11-25): Hyperliquid's Assistance Fund is BURNED — out of circulating and total supply (the validators' vote, HyperFND 2025-12-24: 85% of stake for removing the Fund's HYPE permanently from the circulating and total supply); its buybacks are buy-and-burn (the burns line of net float pressure, A3's retired buyback), A4 on (scored on the Fund + the Core burns); the three true burns stay"
 }
 ],
 "reader|A3 Revenue Buyback|Implied buyback %, 6 months ago": [
@@ -1164,6 +2198,12 @@
 "from": 0.0359936238,
 "to": 0.0330536239,
 "why": "R21 (Jake 2026-11-25) Item 6: Hyperliquid's default until Jake decides — the Assistance Fund is a held buyback (inside circulating, +48.0M; off the free float; A4 off); 'burn' now counts only true burns (HyperCore supply fall and zero-address fees), so gross burn, net issuance and every per-circulating ratio move"
+},
+{
+"date": "2026-11-25",
+"from": 0.0330536239,
+"to": 0.0359936238,
+"why": "R21b item 1 (Jake 2026-11-25): Hyperliquid's Assistance Fund is BURNED — out of circulating and total supply (the validators' vote, HyperFND 2025-12-24: 85% of stake for removing the Fund's HYPE permanently from the circulating and total supply); its buybacks are buy-and-burn (the burns line of net float pressure, A3's retired buyback), A4 on (scored on the Fund + the Core burns); the three true burns stay"
 }
 ],
 "reader|A3 Revenue Buyback|Implied buyback, % of supply a year": [
@@ -1172,6 +2212,12 @@
 "from": 0.0181198683,
 "to": 0.0166398169,
 "why": "R21 (Jake 2026-11-25) Item 6: Hyperliquid's default until Jake decides — the Assistance Fund is a held buyback (inside circulating, +48.0M; off the free float; A4 off); 'burn' now counts only true burns (HyperCore supply fall and zero-address fees), so gross burn, net issuance and every per-circulating ratio move"
+},
+{
+"date": "2026-11-25",
+"from": 0.0166398169,
+"to": 0.0181198683,
+"why": "R21b item 1 (Jake 2026-11-25): Hyperliquid's Assistance Fund is BURNED — out of circulating and total supply (the validators' vote, HyperFND 2025-12-24: 85% of stake for removing the Fund's HYPE permanently from the circulating and total supply); its buybacks are buy-and-burn (the burns line of net float pressure, A3's retired buyback), A4 on (scored on the Fund + the Core burns); the three true burns stay"
 }
 ],
 "reader|A3 Revenue Buyback|Lock rate, % of circulating": [
@@ -1180,6 +2226,12 @@
 "from": 0.374631896,
 "to": 0.34403154,
 "why": "R21 (Jake 2026-11-25) Item 6: Hyperliquid's default until Jake decides — the Assistance Fund is a held buyback (inside circulating, +48.0M; off the free float; A4 off); 'burn' now counts only true burns (HyperCore supply fall and zero-address fees), so gross burn, net issuance and every per-circulating ratio move"
+},
+{
+"date": "2026-11-25",
+"from": 0.34403154,
+"to": 0.374631896,
+"why": "R21b item 1 (Jake 2026-11-25): Hyperliquid's Assistance Fund is BURNED — out of circulating and total supply (the validators' vote, HyperFND 2025-12-24: 85% of stake for removing the Fund's HYPE permanently from the circulating and total supply); its buybacks are buy-and-burn (the burns line of net float pressure, A3's retired buyback), A4 on (scored on the Fund + the Core burns); the three true burns stay"
 }
 ],
 "reader|A3 Revenue Buyback|Market cap": [
@@ -1188,6 +2240,12 @@
 "from": 43702446000.0,
 "to": 47589620000.0,
 "why": "R21 (Jake 2026-11-25) Item 6: Hyperliquid's default until Jake decides — the Assistance Fund is a held buyback (inside circulating, +48.0M; off the free float; A4 off); 'burn' now counts only true burns (HyperCore supply fall and zero-address fees), so gross burn, net issuance and every per-circulating ratio move"
+},
+{
+"date": "2026-11-25",
+"from": 47589620000.0,
+"to": 43702446000.0,
+"why": "R21b item 1 (Jake 2026-11-25): Hyperliquid's Assistance Fund is BURNED — out of circulating and total supply (the validators' vote, HyperFND 2025-12-24: 85% of stake for removing the Fund's HYPE permanently from the circulating and total supply); its buybacks are buy-and-burn (the burns line of net float pressure, A3's retired buyback), A4 on (scored on the Fund + the Core burns); the three true burns stay"
 }
 ],
 "reader|A3 Revenue Buyback|Retired, % of supply a year": [
@@ -1196,6 +2254,12 @@
 "from": 0.0178845249,
 "to": 0.0164236967,
 "why": "R21 (Jake 2026-11-25) Item 6: Hyperliquid's default until Jake decides — the Assistance Fund is a held buyback (inside circulating, +48.0M; off the free float; A4 off); 'burn' now counts only true burns (HyperCore supply fall and zero-address fees), so gross burn, net issuance and every per-circulating ratio move"
+},
+{
+"date": "2026-11-25",
+"from": 0.0164236967,
+"to": 0.0178845249,
+"why": "R21b item 1 (Jake 2026-11-25): Hyperliquid's Assistance Fund is BURNED — out of circulating and total supply (the validators' vote, HyperFND 2025-12-24: 85% of stake for removing the Fund's HYPE permanently from the circulating and total supply); its buybacks are buy-and-burn (the burns line of net float pressure, A3's retired buyback), A4 on (scored on the Fund + the Core burns); the three true burns stay"
 }
 ],
 "reader|A3 Revenue Buyback|Retirement rate ($), % of FDV": [
@@ -1204,6 +2268,12 @@
 "from": 0.00960305203,
 "to": 0.00914134545,
 "why": "R21 (Jake 2026-11-25) Item 6: Hyperliquid's default until Jake decides — the Assistance Fund is a held buyback (inside circulating, +48.0M; off the free float; A4 off); 'burn' now counts only true burns (HyperCore supply fall and zero-address fees), so gross burn, net issuance and every per-circulating ratio move"
+},
+{
+"date": "2026-11-25",
+"from": 0.00914134545,
+"to": 0.00960305203,
+"why": "R21b item 1 (Jake 2026-11-25): Hyperliquid's Assistance Fund is BURNED — out of circulating and total supply (the validators' vote, HyperFND 2025-12-24: 85% of stake for removing the Fund's HYPE permanently from the circulating and total supply); its buybacks are buy-and-burn (the burns line of net float pressure, A3's retired buyback), A4 on (scored on the Fund + the Core burns); the three true burns stay"
 }
 ],
 "reader|A3 Revenue Buyback|Retirement rate ($), % of mkt cap": [
@@ -1212,6 +2282,12 @@
 "from": 0.0169114779,
 "to": 0.0155301293,
 "why": "R21 (Jake 2026-11-25) Item 6: Hyperliquid's default until Jake decides — the Assistance Fund is a held buyback (inside circulating, +48.0M; off the free float; A4 off); 'burn' now counts only true burns (HyperCore supply fall and zero-address fees), so gross burn, net issuance and every per-circulating ratio move"
+},
+{
+"date": "2026-11-25",
+"from": 0.0155301293,
+"to": 0.0169114779,
+"why": "R21b item 1 (Jake 2026-11-25): Hyperliquid's Assistance Fund is BURNED — out of circulating and total supply (the validators' vote, HyperFND 2025-12-24: 85% of stake for removing the Fund's HYPE permanently from the circulating and total supply); its buybacks are buy-and-burn (the burns line of net float pressure, A3's retired buyback), A4 on (scored on the Fund + the Core burns); the three true burns stay"
 }
 ],
 "reader|A3 Revenue Buyback|Retirement rate, % of FDV supply": [
@@ -1220,6 +2296,12 @@
 "from": 0.0101555892,
 "to": 0.00966731711,
 "why": "R21 (Jake 2026-11-25) Item 6: Hyperliquid's default until Jake decides — the Assistance Fund is a held buyback (inside circulating, +48.0M; off the free float; A4 off); 'burn' now counts only true burns (HyperCore supply fall and zero-address fees), so gross burn, net issuance and every per-circulating ratio move"
+},
+{
+"date": "2026-11-25",
+"from": 0.00966731711,
+"to": 0.0101555892,
+"why": "R21b item 1 (Jake 2026-11-25): Hyperliquid's Assistance Fund is BURNED — out of circulating and total supply (the validators' vote, HyperFND 2025-12-24: 85% of stake for removing the Fund's HYPE permanently from the circulating and total supply); its buybacks are buy-and-burn (the burns line of net float pressure, A3's retired buyback), A4 on (scored on the Fund + the Core burns); the three true burns stay"
 }
 ],
 "reader|A3 Revenue Buyback|Retirement rate, % of circulating": [
@@ -1228,6 +2310,484 @@
 "from": 0.0178845249,
 "to": 0.0164236967,
 "why": "R21 (Jake 2026-11-25) Item 6: Hyperliquid's default until Jake decides — the Assistance Fund is a held buyback (inside circulating, +48.0M; off the free float; A4 off); 'burn' now counts only true burns (HyperCore supply fall and zero-address fees), so gross burn, net issuance and every per-circulating ratio move"
+},
+{
+"date": "2026-11-25",
+"from": 0.0164236967,
+"to": 0.0178845249,
+"why": "R21b item 1 (Jake 2026-11-25): Hyperliquid's Assistance Fund is BURNED — out of circulating and total supply (the validators' vote, HyperFND 2025-12-24: 85% of stake for removing the Fund's HYPE permanently from the circulating and total supply); its buybacks are buy-and-burn (the burns line of net float pressure, A3's retired buyback), A4 on (scored on the Fund + the Core burns); the three true burns stay"
+}
+],
+"reader|A4 Permanent Burn|90-day window caveat": [
+{
+"date": "2026-11-25",
+"from": "<absent>",
+"to": "NOT A STABLE RATE YET — ISSUANCE covers 89 of 90 days, so annualised as if full it reads 32,137,373/yr against a 32,498,",
+"why": "R21b item 1 — the A4 tab (Jake 2026-11-25): Hyperliquid's Assistance Fund is BURNED — out of circulating and total supply (the validators' vote, HyperFND 2025-12-24: 85% of stake for removing the Fund's HYPE permanently from the circulating and total supply); its buybacks are buy-and-burn (the burns line of net float pressure, A3's retired buyback), A4 on (scored on the Fund + the Core burns); the three true burns stay"
+}
+],
+"reader|A4 Permanent Burn|Actual minus implied burn (tokens)": [
+{
+"date": "2026-11-25",
+"from": "<absent>",
+"to": "n/a",
+"why": "R21b item 1 — the A4 tab (Jake 2026-11-25): Hyperliquid's Assistance Fund is BURNED — out of circulating and total supply (the validators' vote, HyperFND 2025-12-24: 85% of stake for removing the Fund's HYPE permanently from the circulating and total supply); its buybacks are buy-and-burn (the burns line of net float pressure, A3's retired buyback), A4 on (scored on the Fund + the Core burns); the three true burns stay"
+}
+],
+"reader|A4 Permanent Burn|Burn execution": [
+{
+"date": "2026-11-25",
+"from": "<absent>",
+"to": "protocol",
+"why": "R21b item 1 — the A4 tab (Jake 2026-11-25): Hyperliquid's Assistance Fund is BURNED — out of circulating and total supply (the validators' vote, HyperFND 2025-12-24: 85% of stake for removing the Fund's HYPE permanently from the circulating and total supply); its buybacks are buy-and-burn (the burns line of net float pressure, A3's retired buyback), A4 on (scored on the Fund + the Core burns); the three true burns stay"
+}
+],
+"reader|A4 Permanent Burn|Burn growth, selected period": [
+{
+"date": "2026-11-25",
+"from": "<absent>",
+"to": "n/a",
+"why": "R21b item 1 — the A4 tab (Jake 2026-11-25): Hyperliquid's Assistance Fund is BURNED — out of circulating and total supply (the validators' vote, HyperFND 2025-12-24: 85% of stake for removing the Fund's HYPE permanently from the circulating and total supply); its buybacks are buy-and-burn (the burns line of net float pressure, A3's retired buyback), A4 on (scored on the Fund + the Core burns); the three true burns stay"
+}
+],
+"reader|A4 Permanent Burn|Burn share of fees": [
+{
+"date": "2026-11-25",
+"from": "<absent>",
+"to": 0.818846548,
+"why": "R21b item 1 — the A4 tab (Jake 2026-11-25): Hyperliquid's Assistance Fund is BURNED — out of circulating and total supply (the validators' vote, HyperFND 2025-12-24: 85% of stake for removing the Fund's HYPE permanently from the circulating and total supply); its buybacks are buy-and-burn (the burns line of net float pressure, A3's retired buyback), A4 on (scored on the Fund + the Core burns); the three true burns stay"
+}
+],
+"reader|A4 Permanent Burn|Burn split (tokens)": [
+{
+"date": "2026-11-25",
+"from": "<absent>",
+"to": 30198.6663,
+"why": "R21b item 1 — the A4 tab (Jake 2026-11-25): Hyperliquid's Assistance Fund is BURNED — out of circulating and total supply (the validators' vote, HyperFND 2025-12-24: 85% of stake for removing the Fund's HYPE permanently from the circulating and total supply); its buybacks are buy-and-burn (the burns line of net float pressure, A3's retired buyback), A4 on (scored on the Fund + the Core burns); the three true burns stay"
+}
+],
+"reader|A4 Permanent Burn|Burn split by source": [
+{
+"date": "2026-11-25",
+"from": "<absent>",
+"to": "A4 burn = burn_ex_chain_fee_tokens; every burn (A1) = total_burn_tokens; the difference is the burn outside the A4 mecha",
+"why": "R21b item 1 — the A4 tab (Jake 2026-11-25): Hyperliquid's Assistance Fund is BURNED — out of circulating and total supply (the validators' vote, HyperFND 2025-12-24: 85% of stake for removing the Fund's HYPE permanently from the circulating and total supply); its buybacks are buy-and-burn (the burns line of net float pressure, A3's retired buyback), A4 on (scored on the Fund + the Core burns); the three true burns stay"
+}
+],
+"reader|A4 Permanent Burn|Burn status": [
+{
+"date": "2026-11-25",
+"from": "<absent>",
+"to": "active (measured last 90 days)",
+"why": "R21b item 1 — the A4 tab (Jake 2026-11-25): Hyperliquid's Assistance Fund is BURNED — out of circulating and total supply (the validators' vote, HyperFND 2025-12-24: 85% of stake for removing the Fund's HYPE permanently from the circulating and total supply); its buybacks are buy-and-burn (the burns line of net float pressure, A3's retired buyback), A4 on (scored on the Fund + the Core burns); the three true burns stay"
+}
+],
+"reader|A4 Permanent Burn|Burn ÷ issuance (x)": [
+{
+"date": "2026-11-25",
+"from": "<absent>",
+"to": 0.305018289,
+"why": "R21b item 1 — the A4 tab (Jake 2026-11-25): Hyperliquid's Assistance Fund is BURNED — out of circulating and total supply (the validators' vote, HyperFND 2025-12-24: 85% of stake for removing the Fund's HYPE permanently from the circulating and total supply); its buybacks are buy-and-burn (the burns line of net float pressure, A3's retired buyback), A4 on (scored on the Fund + the Core burns); the three true burns stay"
+}
+],
+"reader|A4 Permanent Burn|Burn ÷ issuance (x), latest": [
+{
+"date": "2026-11-25",
+"from": "<absent>",
+"to": 0.305018289,
+"why": "R21b item 1 — the A4 tab (Jake 2026-11-25): Hyperliquid's Assistance Fund is BURNED — out of circulating and total supply (the validators' vote, HyperFND 2025-12-24: 85% of stake for removing the Fund's HYPE permanently from the circulating and total supply); its buybacks are buy-and-burn (the burns line of net float pressure, A3's retired buyback), A4 on (scored on the Fund + the Core burns); the three true burns stay"
+}
+],
+"reader|A4 Permanent Burn|Burn ÷ issuance (x), −1 qtr": [
+{
+"date": "2026-11-25",
+"from": "<absent>",
+"to": 0.46067085,
+"why": "R21b item 1 — the A4 tab (Jake 2026-11-25): Hyperliquid's Assistance Fund is BURNED — out of circulating and total supply (the validators' vote, HyperFND 2025-12-24: 85% of stake for removing the Fund's HYPE permanently from the circulating and total supply); its buybacks are buy-and-burn (the burns line of net float pressure, A3's retired buyback), A4 on (scored on the Fund + the Core burns); the three true burns stay"
+}
+],
+"reader|A4 Permanent Burn|Burn ÷ issuance (x), −2 qtrs": [
+{
+"date": "2026-11-25",
+"from": "<absent>",
+"to": 0.980089855,
+"why": "R21b item 1 — the A4 tab (Jake 2026-11-25): Hyperliquid's Assistance Fund is BURNED — out of circulating and total supply (the validators' vote, HyperFND 2025-12-24: 85% of stake for removing the Fund's HYPE permanently from the circulating and total supply); its buybacks are buy-and-burn (the burns line of net float pressure, A3's retired buyback), A4 on (scored on the Fund + the Core burns); the three true burns stay"
+}
+],
+"reader|A4 Permanent Burn|Burn ÷ issuance (x), −3 qtrs": [
+{
+"date": "2026-11-25",
+"from": "<absent>",
+"to": 0.859098092,
+"why": "R21b item 1 — the A4 tab (Jake 2026-11-25): Hyperliquid's Assistance Fund is BURNED — out of circulating and total supply (the validators' vote, HyperFND 2025-12-24: 85% of stake for removing the Fund's HYPE permanently from the circulating and total supply); its buybacks are buy-and-burn (the burns line of net float pressure, A3's retired buyback), A4 on (scored on the Fund + the Core burns); the three true burns stay"
+}
+],
+"reader|A4 Permanent Burn|Circulating supply": [
+{
+"date": "2026-11-25",
+"from": "<absent>",
+"to": 539758896.0,
+"why": "R21b item 1 — the A4 tab (Jake 2026-11-25): Hyperliquid's Assistance Fund is BURNED — out of circulating and total supply (the validators' vote, HyperFND 2025-12-24: 85% of stake for removing the Fund's HYPE permanently from the circulating and total supply); its buybacks are buy-and-burn (the burns line of net float pressure, A3's retired buyback), A4 on (scored on the Fund + the Core burns); the three true burns stay"
+}
+],
+"reader|A4 Permanent Burn|Cumulative burn ÷ max supply": [
+{
+"date": "2026-11-25",
+"from": "<absent>",
+"to": 0.0494562948,
+"why": "R21b item 1 — the A4 tab (Jake 2026-11-25): Hyperliquid's Assistance Fund is BURNED — out of circulating and total supply (the validators' vote, HyperFND 2025-12-24: 85% of stake for removing the Fund's HYPE permanently from the circulating and total supply); its buybacks are buy-and-burn (the burns line of net float pressure, A3's retired buyback), A4 on (scored on the Fund + the Core burns); the three true burns stay"
+}
+],
+"reader|A4 Permanent Burn|Derived issuance − burn": [
+{
+"date": "2026-11-25",
+"from": "<absent>",
+"to": "blocked",
+"why": "R21b item 1 — the A4 tab (Jake 2026-11-25): Hyperliquid's Assistance Fund is BURNED — out of circulating and total supply (the validators' vote, HyperFND 2025-12-24: 85% of stake for removing the Fund's HYPE permanently from the circulating and total supply); its buybacks are buy-and-burn (the burns line of net float pressure, A3's retired buyback), A4 on (scored on the Fund + the Core burns); the three true burns stay"
+}
+],
+"reader|A4 Permanent Burn|FDV": [
+{
+"date": "2026-11-25",
+"from": "<absent>",
+"to": 76962297900.0,
+"why": "R21b item 1 — the A4 tab (Jake 2026-11-25): Hyperliquid's Assistance Fund is BURNED — out of circulating and total supply (the validators' vote, HyperFND 2025-12-24: 85% of stake for removing the Fund's HYPE permanently from the circulating and total supply); its buybacks are buy-and-burn (the burns line of net float pressure, A3's retired buyback), A4 on (scored on the Fund + the Core burns); the three true burns stay"
+}
+],
+"reader|A4 Permanent Burn|Fees needed for crossover": [
+{
+"date": "2026-11-25",
+"from": "<absent>",
+"to": 3045645030.0,
+"why": "R21b item 1 — the A4 tab (Jake 2026-11-25): Hyperliquid's Assistance Fund is BURNED — out of circulating and total supply (the validators' vote, HyperFND 2025-12-24: 85% of stake for removing the Fund's HYPE permanently from the circulating and total supply); its buybacks are buy-and-burn (the burns line of net float pressure, A3's retired buyback), A4 on (scored on the Fund + the Core burns); the three true burns stay"
+}
+],
+"reader|A4 Permanent Burn|Fees ÷ FDV, a year": [
+{
+"date": "2026-11-25",
+"from": "<absent>",
+"to": 0.0120705522,
+"why": "R21b item 1 — the A4 tab (Jake 2026-11-25): Hyperliquid's Assistance Fund is BURNED — out of circulating and total supply (the validators' vote, HyperFND 2025-12-24: 85% of stake for removing the Fund's HYPE permanently from the circulating and total supply); its buybacks are buy-and-burn (the burns line of net float pressure, A3's retired buyback), A4 on (scored on the Fund + the Core burns); the three true burns stay"
+}
+],
+"reader|A4 Permanent Burn|Fees, last 90 days": [
+{
+"date": "2026-11-25",
+"from": "<absent>",
+"to": 229062929.0,
+"why": "R21b item 1 — the A4 tab (Jake 2026-11-25): Hyperliquid's Assistance Fund is BURNED — out of circulating and total supply (the validators' vote, HyperFND 2025-12-24: 85% of stake for removing the Fund's HYPE permanently from the circulating and total supply); its buybacks are buy-and-burn (the burns line of net float pressure, A3's retired buyback), A4 on (scored on the Fund + the Core burns); the three true burns stay"
+}
+],
+"reader|A4 Permanent Burn|Governance lever": [
+{
+"date": "2026-11-25",
+"from": "<absent>",
+"to": 2.84544575,
+"why": "R21b item 1 — the A4 tab (Jake 2026-11-25): Hyperliquid's Assistance Fund is BURNED — out of circulating and total supply (the validators' vote, HyperFND 2025-12-24: 85% of stake for removing the Fund's HYPE permanently from the circulating and total supply); its buybacks are buy-and-burn (the burns line of net float pressure, A3's retired buyback), A4 on (scored on the Fund + the Core burns); the three true burns stay"
+}
+],
+"reader|A4 Permanent Burn|Gross burn, 90 days ($)": [
+{
+"date": "2026-11-25",
+"from": "<absent>",
+"to": 187567389.0,
+"why": "R21b item 1 — the A4 tab (Jake 2026-11-25): Hyperliquid's Assistance Fund is BURNED — out of circulating and total supply (the validators' vote, HyperFND 2025-12-24: 85% of stake for removing the Fund's HYPE permanently from the circulating and total supply); its buybacks are buy-and-burn (the burns line of net float pressure, A3's retired buyback), A4 on (scored on the Fund + the Core burns); the three true burns stay"
+}
+],
+"reader|A4 Permanent Burn|Gross burn, 90 days (tokens)": [
+{
+"date": "2026-11-25",
+"from": "<absent>",
+"to": 2444209.36,
+"why": "R21b item 1 — the A4 tab (Jake 2026-11-25): Hyperliquid's Assistance Fund is BURNED — out of circulating and total supply (the validators' vote, HyperFND 2025-12-24: 85% of stake for removing the Fund's HYPE permanently from the circulating and total supply); its buybacks are buy-and-burn (the burns line of net float pressure, A3's retired buyback), A4 on (scored on the Fund + the Core burns); the three true burns stay"
+}
+],
+"reader|A4 Permanent Burn|Gross issuance, 90 days ($)": [
+{
+"date": "2026-11-25",
+"from": "<absent>",
+"to": 0.0,
+"why": "R21b item 1 — the A4 tab (Jake 2026-11-25): Hyperliquid's Assistance Fund is BURNED — out of circulating and total supply (the validators' vote, HyperFND 2025-12-24: 85% of stake for removing the Fund's HYPE permanently from the circulating and total supply); its buybacks are buy-and-burn (the burns line of net float pressure, A3's retired buyback), A4 on (scored on the Fund + the Core burns); the three true burns stay"
+}
+],
+"reader|A4 Permanent Burn|Implied burn, 90 days (tokens)": [
+{
+"date": "2026-11-25",
+"from": "<absent>",
+"to": "n/a",
+"why": "R21b item 1 — the A4 tab (Jake 2026-11-25): Hyperliquid's Assistance Fund is BURNED — out of circulating and total supply (the validators' vote, HyperFND 2025-12-24: 85% of stake for removing the Fund's HYPE permanently from the circulating and total supply); its buybacks are buy-and-burn (the burns line of net float pressure, A3's retired buyback), A4 on (scored on the Fund + the Core burns); the three true burns stay"
+}
+],
+"reader|A4 Permanent Burn|Implied circulating change check": [
+{
+"date": "2026-11-25",
+"from": "<absent>",
+"to": -7084267.5,
+"why": "R21b item 1 — the A4 tab (Jake 2026-11-25): Hyperliquid's Assistance Fund is BURNED — out of circulating and total supply (the validators' vote, HyperFND 2025-12-24: 85% of stake for removing the Fund's HYPE permanently from the circulating and total supply); its buybacks are buy-and-burn (the burns line of net float pressure, A3's retired buyback), A4 on (scored on the Fund + the Core burns); the three true burns stay"
+}
+],
+"reader|A4 Permanent Burn|Issuance basis": [
+{
+"date": "2026-11-25",
+"from": "<absent>",
+"to": "issuance_option_c_tokens — option C: issuer replay + staking reward. OPTION C PASSED - staking reward = k x sqrt(stake) ",
+"why": "R21b item 1 — the A4 tab (Jake 2026-11-25): Hyperliquid's Assistance Fund is BURNED — out of circulating and total supply (the validators' vote, HyperFND 2025-12-24: 85% of stake for removing the Fund's HYPE permanently from the circulating and total supply); its buybacks are buy-and-burn (the burns line of net float pressure, A3's retired buyback), A4 on (scored on the Fund + the Core burns); the three true burns stay"
+}
+],
+"reader|A4 Permanent Burn|Issuance growth, selected period": [
+{
+"date": "2026-11-25",
+"from": "<absent>",
+"to": "n/a",
+"why": "R21b item 1 — the A4 tab (Jake 2026-11-25): Hyperliquid's Assistance Fund is BURNED — out of circulating and total supply (the validators' vote, HyperFND 2025-12-24: 85% of stake for removing the Fund's HYPE permanently from the circulating and total supply); its buybacks are buy-and-burn (the burns line of net float pressure, A3's retired buyback), A4 on (scored on the Fund + the Core burns); the three true burns stay"
+}
+],
+"reader|A4 Permanent Burn|Issuance or release, 90 days": [
+{
+"date": "2026-11-25",
+"from": "<absent>",
+"to": 7924283.76,
+"why": "R21b item 1 — the A4 tab (Jake 2026-11-25): Hyperliquid's Assistance Fund is BURNED — out of circulating and total supply (the validators' vote, HyperFND 2025-12-24: 85% of stake for removing the Fund's HYPE permanently from the circulating and total supply); its buybacks are buy-and-burn (the burns line of net float pressure, A3's retired buyback), A4 on (scored on the Fund + the Core burns); the three true burns stay"
+}
+],
+"reader|A4 Permanent Burn|Issuance − burn ($)": [
+{
+"date": "2026-11-25",
+"from": "<absent>",
+"to": -189856684.0,
+"why": "R21b item 1 — the A4 tab (Jake 2026-11-25): Hyperliquid's Assistance Fund is BURNED — out of circulating and total supply (the validators' vote, HyperFND 2025-12-24: 85% of stake for removing the Fund's HYPE permanently from the circulating and total supply); its buybacks are buy-and-burn (the burns line of net float pressure, A3's retired buyback), A4 on (scored on the Fund + the Core burns); the three true burns stay"
+}
+],
+"reader|A4 Permanent Burn|Issuance − burn (tokens), change": [
+{
+"date": "2026-11-25",
+"from": "<absent>",
+"to": "blocked",
+"why": "R21b item 1 — the A4 tab (Jake 2026-11-25): Hyperliquid's Assistance Fund is BURNED — out of circulating and total supply (the validators' vote, HyperFND 2025-12-24: 85% of stake for removing the Fund's HYPE permanently from the circulating and total supply); its buybacks are buy-and-burn (the burns line of net float pressure, A3's retired buyback), A4 on (scored on the Fund + the Core burns); the three true burns stay"
+}
+],
+"reader|A4 Permanent Burn|Issuance − burn (tokens), latest": [
+{
+"date": "2026-11-25",
+"from": "<absent>",
+"to": -2444209.36,
+"why": "R21b item 1 — the A4 tab (Jake 2026-11-25): Hyperliquid's Assistance Fund is BURNED — out of circulating and total supply (the validators' vote, HyperFND 2025-12-24: 85% of stake for removing the Fund's HYPE permanently from the circulating and total supply); its buybacks are buy-and-burn (the burns line of net float pressure, A3's retired buyback), A4 on (scored on the Fund + the Core burns); the three true burns stay"
+}
+],
+"reader|A4 Permanent Burn|Issuance − burn (tokens), −1 qtr": [
+{
+"date": "2026-11-25",
+"from": "<absent>",
+"to": -2647990.09,
+"why": "R21b item 1 — the A4 tab (Jake 2026-11-25): Hyperliquid's Assistance Fund is BURNED — out of circulating and total supply (the validators' vote, HyperFND 2025-12-24: 85% of stake for removing the Fund's HYPE permanently from the circulating and total supply); its buybacks are buy-and-burn (the burns line of net float pressure, A3's retired buyback), A4 on (scored on the Fund + the Core burns); the three true burns stay"
+}
+],
+"reader|A4 Permanent Burn|Issuance − burn (tokens), −2 qtrs": [
+{
+"date": "2026-11-25",
+"from": "<absent>",
+"to": -5022483.8,
+"why": "R21b item 1 — the A4 tab (Jake 2026-11-25): Hyperliquid's Assistance Fund is BURNED — out of circulating and total supply (the validators' vote, HyperFND 2025-12-24: 85% of stake for removing the Fund's HYPE permanently from the circulating and total supply); its buybacks are buy-and-burn (the burns line of net float pressure, A3's retired buyback), A4 on (scored on the Fund + the Core burns); the three true burns stay"
+}
+],
+"reader|A4 Permanent Burn|Issuance − burn (tokens), −3 qtrs": [
+{
+"date": "2026-11-25",
+"from": "<absent>",
+"to": -5829888.7,
+"why": "R21b item 1 — the A4 tab (Jake 2026-11-25): Hyperliquid's Assistance Fund is BURNED — out of circulating and total supply (the validators' vote, HyperFND 2025-12-24: 85% of stake for removing the Fund's HYPE permanently from the circulating and total supply); its buybacks are buy-and-burn (the burns line of net float pressure, A3's retired buyback), A4 on (scored on the Fund + the Core burns); the three true burns stay"
+}
+],
+"reader|A4 Permanent Burn|Issuance − burn, % a year": [
+{
+"date": "2026-11-25",
+"from": "<absent>",
+"to": -0.0183649161,
+"why": "R21b item 1 — the A4 tab (Jake 2026-11-25): Hyperliquid's Assistance Fund is BURNED — out of circulating and total supply (the validators' vote, HyperFND 2025-12-24: 85% of stake for removing the Fund's HYPE permanently from the circulating and total supply); its buybacks are buy-and-burn (the burns line of net float pressure, A3's retired buyback), A4 on (scored on the Fund + the Core burns); the three true burns stay"
+}
+],
+"reader|A4 Permanent Burn|Issuance − burn, 90 days": [
+{
+"date": "2026-11-25",
+"from": "<absent>",
+"to": -2444209.36,
+"why": "R21b item 1 — the A4 tab (Jake 2026-11-25): Hyperliquid's Assistance Fund is BURNED — out of circulating and total supply (the validators' vote, HyperFND 2025-12-24: 85% of stake for removing the Fund's HYPE permanently from the circulating and total supply); its buybacks are buy-and-burn (the burns line of net float pressure, A3's retired buyback), A4 on (scored on the Fund + the Core burns); the three true burns stay"
+}
+],
+"reader|A4 Permanent Burn|Issuance, % of supply a year": [
+{
+"date": "2026-11-25",
+"from": "<absent>",
+"to": 0.0390380275,
+"why": "R21b item 1 — the A4 tab (Jake 2026-11-25): Hyperliquid's Assistance Fund is BURNED — out of circulating and total supply (the validators' vote, HyperFND 2025-12-24: 85% of stake for removing the Fund's HYPE permanently from the circulating and total supply); its buybacks are buy-and-burn (the burns line of net float pressure, A3's retired buyback), A4 on (scored on the Fund + the Core burns); the three true burns stay"
+}
+],
+"reader|A4 Permanent Burn|Key: change vs previous quarter": [
+{
+"date": "2026-11-25",
+"from": "<absent>",
+"to": "blocked",
+"why": "R21b item 1 — the A4 tab (Jake 2026-11-25): Hyperliquid's Assistance Fund is BURNED — out of circulating and total supply (the validators' vote, HyperFND 2025-12-24: 85% of stake for removing the Fund's HYPE permanently from the circulating and total supply); its buybacks are buy-and-burn (the burns line of net float pressure, A3's retired buyback), A4 on (scored on the Fund + the Core burns); the three true burns stay"
+}
+],
+"reader|A4 Permanent Burn|Market cap": [
+{
+"date": "2026-11-25",
+"from": "<absent>",
+"to": 43702446000.0,
+"why": "R21b item 1 — the A4 tab (Jake 2026-11-25): Hyperliquid's Assistance Fund is BURNED — out of circulating and total supply (the validators' vote, HyperFND 2025-12-24: 85% of stake for removing the Fund's HYPE permanently from the circulating and total supply); its buybacks are buy-and-burn (the burns line of net float pressure, A3's retired buyback), A4 on (scored on the Fund + the Core burns); the three true burns stay"
+}
+],
+"reader|A4 Permanent Burn|Net mint, self-reported": [
+{
+"date": "2026-11-25",
+"from": "<absent>",
+"to": "n/a — Data: not applicable to this project — not applicable to this project's archetypes",
+"why": "R21b item 1 — the A4 tab (Jake 2026-11-25): Hyperliquid's Assistance Fund is BURNED — out of circulating and total supply (the validators' vote, HyperFND 2025-12-24: 85% of stake for removing the Fund's HYPE permanently from the circulating and total supply); its buybacks are buy-and-burn (the burns line of net float pressure, A3's retired buyback), A4 on (scored on the Fund + the Core burns); the three true burns stay"
+}
+],
+"reader|A4 Permanent Burn|One-off burn events": [
+{
+"date": "2026-11-25",
+"from": "<absent>",
+"to": "—",
+"why": "R21b item 1 — the A4 tab (Jake 2026-11-25): Hyperliquid's Assistance Fund is BURNED — out of circulating and total supply (the validators' vote, HyperFND 2025-12-24: 85% of stake for removing the Fund's HYPE permanently from the circulating and total supply); its buybacks are buy-and-burn (the burns line of net float pressure, A3's retired buyback), A4 on (scored on the Fund + the Core burns); the three true burns stay"
+}
+],
+"reader|A4 Permanent Burn|One-off burns, 12 months (tokens)": [
+{
+"date": "2026-11-25",
+"from": "<absent>",
+"to": "by design",
+"why": "R21b item 1 — the A4 tab (Jake 2026-11-25): Hyperliquid's Assistance Fund is BURNED — out of circulating and total supply (the validators' vote, HyperFND 2025-12-24: 85% of stake for removing the Fund's HYPE permanently from the circulating and total supply); its buybacks are buy-and-burn (the burns line of net float pressure, A3's retired buyback), A4 on (scored on the Fund + the Core burns); the three true burns stay"
+}
+],
+"reader|A4 Permanent Burn|Permanent burn yield": [
+{
+"date": "2026-11-25",
+"from": "<absent>",
+"to": 0.0183649161,
+"why": "R21b item 1 — the A4 tab (Jake 2026-11-25): Hyperliquid's Assistance Fund is BURNED — out of circulating and total supply (the validators' vote, HyperFND 2025-12-24: 85% of stake for removing the Fund's HYPE permanently from the circulating and total supply); its buybacks are buy-and-burn (the burns line of net float pressure, A3's retired buyback), A4 on (scored on the Fund + the Core burns); the three true burns stay"
+}
+],
+"reader|A4 Permanent Burn|Price": [
+{
+"date": "2026-11-25",
+"from": "<absent>",
+"to": 80.9666063,
+"why": "R21b item 1 — the A4 tab (Jake 2026-11-25): Hyperliquid's Assistance Fund is BURNED — out of circulating and total supply (the validators' vote, HyperFND 2025-12-24: 85% of stake for removing the Fund's HYPE permanently from the circulating and total supply); its buybacks are buy-and-burn (the burns line of net float pressure, A3's retired buyback), A4 on (scored on the Fund + the Core burns); the three true burns stay"
+}
+],
+"reader|A4 Permanent Burn|Price, 90-day average": [
+{
+"date": "2026-11-25",
+"from": "<absent>",
+"to": 74.2366365,
+"why": "R21b item 1 — the A4 tab (Jake 2026-11-25): Hyperliquid's Assistance Fund is BURNED — out of circulating and total supply (the validators' vote, HyperFND 2025-12-24: 85% of stake for removing the Fund's HYPE permanently from the circulating and total supply); its buybacks are buy-and-burn (the burns line of net float pressure, A3's retired buyback), A4 on (scored on the Fund + the Core burns); the three true burns stay"
+}
+],
+"reader|A4 Permanent Burn|Quarter change [41]": [
+{
+"date": "2026-11-25",
+"from": "<absent>",
+"to": "blocked",
+"why": "R21b item 1 — the A4 tab (Jake 2026-11-25): Hyperliquid's Assistance Fund is BURNED — out of circulating and total supply (the validators' vote, HyperFND 2025-12-24: 85% of stake for removing the Fund's HYPE permanently from the circulating and total supply); its buybacks are buy-and-burn (the burns line of net float pressure, A3's retired buyback), A4 on (scored on the Fund + the Core burns); the three true burns stay"
+}
+],
+"reader|A4 Permanent Burn|Quarter change [43]": [
+{
+"date": "2026-11-25",
+"from": "<absent>",
+"to": "blocked",
+"why": "R21b item 1 — the A4 tab (Jake 2026-11-25): Hyperliquid's Assistance Fund is BURNED — out of circulating and total supply (the validators' vote, HyperFND 2025-12-24: 85% of stake for removing the Fund's HYPE permanently from the circulating and total supply); its buybacks are buy-and-burn (the burns line of net float pressure, A3's retired buyback), A4 on (scored on the Fund + the Core burns); the three true burns stay"
+}
+],
+"reader|A4 Permanent Burn|Rank in A4": [
+{
+"date": "2026-11-25",
+"from": "<absent>",
+"to": "secondary",
+"why": "R21b item 1 — the A4 tab (Jake 2026-11-25): Hyperliquid's Assistance Fund is BURNED — out of circulating and total supply (the validators' vote, HyperFND 2025-12-24: 85% of stake for removing the Fund's HYPE permanently from the circulating and total supply); its buybacks are buy-and-burn (the burns line of net float pressure, A3's retired buyback), A4 on (scored on the Fund + the Core burns); the three true burns stay"
+}
+],
+"reader|A4 Permanent Burn|Self-reported figure preferred?": [
+{
+"date": "2026-11-25",
+"from": "<absent>",
+"to": "—",
+"why": "R21b item 1 — the A4 tab (Jake 2026-11-25): Hyperliquid's Assistance Fund is BURNED — out of circulating and total supply (the validators' vote, HyperFND 2025-12-24: 85% of stake for removing the Fund's HYPE permanently from the circulating and total supply); its buybacks are buy-and-burn (the burns line of net float pressure, A3's retired buyback), A4 on (scored on the Fund + the Core burns); the three true burns stay"
+}
+],
+"reader|A4 Permanent Burn|Self-reported minus derived": [
+{
+"date": "2026-11-25",
+"from": "<absent>",
+"to": "n/a",
+"why": "R21b item 1 — the A4 tab (Jake 2026-11-25): Hyperliquid's Assistance Fund is BURNED — out of circulating and total supply (the validators' vote, HyperFND 2025-12-24: 85% of stake for removing the Fund's HYPE permanently from the circulating and total supply); its buybacks are buy-and-burn (the burns line of net float pressure, A3's retired buyback), A4 on (scored on the Fund + the Core burns); the three true burns stay"
+}
+],
+"reader|A4 Permanent Burn|Share burned, of revenue or fees": [
+{
+"date": "2026-11-25",
+"from": "<absent>",
+"to": 0.0,
+"why": "R21b item 1 — the A4 tab (Jake 2026-11-25): Hyperliquid's Assistance Fund is BURNED — out of circulating and total supply (the validators' vote, HyperFND 2025-12-24: 85% of stake for removing the Fund's HYPE permanently from the circulating and total supply); its buybacks are buy-and-burn (the burns line of net float pressure, A3's retired buyback), A4 on (scored on the Fund + the Core burns); the three true burns stay"
+}
+],
+"reader|A4 Permanent Burn|Supply figure complete?": [
+{
+"date": "2026-11-25",
+"from": "<absent>",
+"to": "—",
+"why": "R21b item 1 — the A4 tab (Jake 2026-11-25): Hyperliquid's Assistance Fund is BURNED — out of circulating and total supply (the validators' vote, HyperFND 2025-12-24: 85% of stake for removing the Fund's HYPE permanently from the circulating and total supply); its buybacks are buy-and-burn (the burns line of net float pressure, A3's retired buyback), A4 on (scored on the Fund + the Core burns); the three true burns stay"
+}
+],
+"reader|A4 Permanent Burn|Token": [
+{
+"date": "2026-11-25",
+"from": "<absent>",
+"to": "HYPE",
+"why": "R21b item 1 — the A4 tab (Jake 2026-11-25): Hyperliquid's Assistance Fund is BURNED — out of circulating and total supply (the validators' vote, HyperFND 2025-12-24: 85% of stake for removing the Fund's HYPE permanently from the circulating and total supply); its buybacks are buy-and-burn (the burns line of net float pressure, A3's retired buyback), A4 on (scored on the Fund + the Core burns); the three true burns stay"
+}
+],
+"reader|A4 Permanent Burn|Total dilution, % of float a year": [
+{
+"date": "2026-11-25",
+"from": "<absent>",
+"to": 0.327234403,
+"why": "R21b item 1 — the A4 tab (Jake 2026-11-25): Hyperliquid's Assistance Fund is BURNED — out of circulating and total supply (the validators' vote, HyperFND 2025-12-24: 85% of stake for removing the Fund's HYPE permanently from the circulating and total supply); its buybacks are buy-and-burn (the burns line of net float pressure, A3's retired buyback), A4 on (scored on the Fund + the Core burns); the three true burns stay"
+}
+],
+"reader|A4 Permanent Burn|Treasury can redeploy ($)": [
+{
+"date": "2026-11-25",
+"from": "<absent>",
+"to": 12590388.5,
+"why": "R21b item 1 — the A4 tab (Jake 2026-11-25): Hyperliquid's Assistance Fund is BURNED — out of circulating and total supply (the validators' vote, HyperFND 2025-12-24: 85% of stake for removing the Fund's HYPE permanently from the circulating and total supply); its buybacks are buy-and-burn (the burns line of net float pressure, A3's retired buyback), A4 on (scored on the Fund + the Core burns); the three true burns stay"
+}
+],
+"reader|A4 Permanent Burn|Treasury governance can redeploy": [
+{
+"date": "2026-11-25",
+"from": "<absent>",
+"to": 155501.003,
+"why": "R21b item 1 — the A4 tab (Jake 2026-11-25): Hyperliquid's Assistance Fund is BURNED — out of circulating and total supply (the validators' vote, HyperFND 2025-12-24: 85% of stake for removing the Fund's HYPE permanently from the circulating and total supply); its buybacks are buy-and-burn (the burns line of net float pressure, A3's retired buyback), A4 on (scored on the Fund + the Core burns); the three true burns stay"
+}
+],
+"reader|A4 Permanent Burn|UNLOCK DILUTION last 90 days": [
+{
+"date": "2026-11-25",
+"from": "<absent>",
+"to": 5476191.84,
+"why": "R21b item 1 — the A4 tab (Jake 2026-11-25): Hyperliquid's Assistance Fund is BURNED — out of circulating and total supply (the validators' vote, HyperFND 2025-12-24: 85% of stake for removing the Fund's HYPE permanently from the circulating and total supply); its buybacks are buy-and-burn (the burns line of net float pressure, A3's retired buyback), A4 on (scored on the Fund + the Core burns); the three true burns stay"
+}
+],
+"reader|A4 Permanent Burn|Unlocks, % of free float a year": [
+{
+"date": "2026-11-25",
+"from": "<absent>",
+"to": 0.225799175,
+"why": "R21b item 1 — the A4 tab (Jake 2026-11-25): Hyperliquid's Assistance Fund is BURNED — out of circulating and total supply (the validators' vote, HyperFND 2025-12-24: 85% of stake for removing the Fund's HYPE permanently from the circulating and total supply); its buybacks are buy-and-burn (the burns line of net float pressure, A3's retired buyback), A4 on (scored on the Fund + the Core burns); the three true burns stay"
 }
 ],
 "reader|Business|Burn change, 30d vs prior 30d": [
@@ -1236,6 +2796,12 @@
 "from": -0.102372849,
 "to": "n/a",
 "why": "R21 (Jake 2026-11-25) Item 6: Hyperliquid's default until Jake decides — the Assistance Fund is a held buyback (inside circulating, +48.0M; off the free float; A4 off); 'burn' now counts only true burns (HyperCore supply fall and zero-address fees), so gross burn, net issuance and every per-circulating ratio move"
+},
+{
+"date": "2026-11-25",
+"from": "n/a",
+"to": -0.102372849,
+"why": "R21b item 1 (Jake 2026-11-25): Hyperliquid's Assistance Fund is BURNED — out of circulating and total supply (the validators' vote, HyperFND 2025-12-24: 85% of stake for removing the Fund's HYPE permanently from the circulating and total supply); its buybacks are buy-and-burn (the burns line of net float pressure, A3's retired buyback), A4 on (scored on the Fund + the Core burns); the three true burns stay"
 }
 ],
 "reader|Comparison|Burns on float, % a year": [
@@ -1244,6 +2810,20 @@
 "from": "<absent>",
 "to": 0.0112813068,
 "why": "R21 (Jake 2026-11-25) Item 6: Hyperliquid's default until Jake decides — the Assistance Fund is a held buyback (inside circulating, +48.0M; off the free float; A4 off); 'burn' now counts only true burns (HyperCore supply fall and zero-address fees), so gross burn, net issuance and every per-circulating ratio move"
+},
+{
+"date": "2026-11-25",
+"from": 0.0112813068,
+"to": 0.100893343,
+"why": "R21b item 1 (Jake 2026-11-25): Hyperliquid's Assistance Fund is BURNED — out of circulating and total supply (the validators' vote, HyperFND 2025-12-24: 85% of stake for removing the Fund's HYPE permanently from the circulating and total supply); its buybacks are buy-and-burn (the burns line of net float pressure, A3's retired buyback), A4 on (scored on the Fund + the Core burns); the three true burns stay"
+}
+],
+"reader|Comparison|Buying pressure on float, % a year": [
+{
+"date": "2026-11-25",
+"from": 0.0970550318,
+"to": 0.0,
+"why": "R21b item 1 (Jake 2026-11-25): Hyperliquid's Assistance Fund is BURNED — out of circulating and total supply (the validators' vote, HyperFND 2025-12-24: 85% of stake for removing the Fund's HYPE permanently from the circulating and total supply); its buybacks are buy-and-burn (the burns line of net float pressure, A3's retired buyback), A4 on (scored on the Fund + the Core burns); the three true burns stay"
 }
 ],
 "reader|Comparison|Dilution, % of market cap": [
@@ -1252,6 +2832,12 @@
 "from": 0.047139246,
 "to": 0.0433037444,
 "why": "R21 (Jake 2026-11-25) Item 6: Hyperliquid's default until Jake decides — the Assistance Fund is a held buyback (inside circulating, +48.0M; off the free float; A4 off); 'burn' now counts only true burns (HyperCore supply fall and zero-address fees), so gross burn, net issuance and every per-circulating ratio move"
+},
+{
+"date": "2026-11-25",
+"from": 0.0433037444,
+"to": 0.047139246,
+"why": "R21b item 1 (Jake 2026-11-25): Hyperliquid's Assistance Fund is BURNED — out of circulating and total supply (the validators' vote, HyperFND 2025-12-24: 85% of stake for removing the Fund's HYPE permanently from the circulating and total supply); its buybacks are buy-and-burn (the burns line of net float pressure, A3's retired buyback), A4 on (scored on the Fund + the Core burns); the three true burns stay"
 }
 ],
 "reader|Comparison|Fees ÷ FDV, a year": [
@@ -1260,6 +2846,12 @@
 "from": 0.0120705522,
 "to": 0.0114902103,
 "why": "R21 (Jake 2026-11-25) Item 6: Hyperliquid's default until Jake decides — the Assistance Fund is a held buyback (inside circulating, +48.0M; off the free float; A4 off); 'burn' now counts only true burns (HyperCore supply fall and zero-address fees), so gross burn, net issuance and every per-circulating ratio move"
+},
+{
+"date": "2026-11-25",
+"from": 0.0114902103,
+"to": 0.0120705522,
+"why": "R21b item 1 (Jake 2026-11-25): Hyperliquid's Assistance Fund is BURNED — out of circulating and total supply (the validators' vote, HyperFND 2025-12-24: 85% of stake for removing the Fund's HYPE permanently from the circulating and total supply); its buybacks are buy-and-burn (the burns line of net float pressure, A3's retired buyback), A4 on (scored on the Fund + the Core burns); the three true burns stay"
 }
 ],
 "reader|Comparison|Holder value yield": [
@@ -1268,6 +2860,12 @@
 "from": 0.0155918832,
 "to": 0.014323244,
 "why": "R21 (Jake 2026-11-25) Item 6: Hyperliquid's default until Jake decides — the Assistance Fund is a held buyback (inside circulating, +48.0M; off the free float; A4 off); 'burn' now counts only true burns (HyperCore supply fall and zero-address fees), so gross burn, net issuance and every per-circulating ratio move"
+},
+{
+"date": "2026-11-25",
+"from": 0.014323244,
+"to": 0.0155918832,
+"why": "R21b item 1 (Jake 2026-11-25): Hyperliquid's Assistance Fund is BURNED — out of circulating and total supply (the validators' vote, HyperFND 2025-12-24: 85% of stake for removing the Fund's HYPE permanently from the circulating and total supply); its buybacks are buy-and-burn (the burns line of net float pressure, A3's retired buyback), A4 on (scored on the Fund + the Core burns); the three true burns stay"
 }
 ],
 "reader|Comparison|Lock rate, % of circulating": [
@@ -1276,6 +2874,12 @@
 "from": 0.374631896,
 "to": 0.34403154,
 "why": "R21 (Jake 2026-11-25) Item 6: Hyperliquid's default until Jake decides — the Assistance Fund is a held buyback (inside circulating, +48.0M; off the free float; A4 off); 'burn' now counts only true burns (HyperCore supply fall and zero-address fees), so gross burn, net issuance and every per-circulating ratio move"
+},
+{
+"date": "2026-11-25",
+"from": 0.34403154,
+"to": 0.374631896,
+"why": "R21b item 1 (Jake 2026-11-25): Hyperliquid's Assistance Fund is BURNED — out of circulating and total supply (the validators' vote, HyperFND 2025-12-24: 85% of stake for removing the Fund's HYPE permanently from the circulating and total supply); its buybacks are buy-and-burn (the burns line of net float pressure, A3's retired buyback), A4 on (scored on the Fund + the Core burns); the three true burns stay"
 }
 ],
 "reader|Comparison|Net float pressure": [
@@ -1284,6 +2888,12 @@
 "from": -0.174401367,
 "to": -0.16312006,
 "why": "R21 (Jake 2026-11-25) Item 6: Hyperliquid's default until Jake decides — the Assistance Fund is a held buyback (inside circulating, +48.0M; off the free float; A4 off); 'burn' now counts only true burns (HyperCore supply fall and zero-address fees), so gross burn, net issuance and every per-circulating ratio move"
+},
+{
+"date": "2026-11-25",
+"from": -0.16312006,
+"to": -0.170563056,
+"why": "R21b item 1 (Jake 2026-11-25): Hyperliquid's Assistance Fund is BURNED — out of circulating and total supply (the validators' vote, HyperFND 2025-12-24: 85% of stake for removing the Fund's HYPE permanently from the circulating and total supply); its buybacks are buy-and-burn (the burns line of net float pressure, A3's retired buyback), A4 on (scored on the Fund + the Core burns); the three true burns stay"
 }
 ],
 "reader|Comparison|Net holder yield": [
@@ -1292,6 +2902,12 @@
 "from": -0.0315473628,
 "to": -0.0289805003,
 "why": "R21 (Jake 2026-11-25) Item 6: Hyperliquid's default until Jake decides — the Assistance Fund is a held buyback (inside circulating, +48.0M; off the free float; A4 off); 'burn' now counts only true burns (HyperCore supply fall and zero-address fees), so gross burn, net issuance and every per-circulating ratio move"
+},
+{
+"date": "2026-11-25",
+"from": -0.0289805003,
+"to": -0.0315473628,
+"why": "R21b item 1 (Jake 2026-11-25): Hyperliquid's Assistance Fund is BURNED — out of circulating and total supply (the validators' vote, HyperFND 2025-12-24: 85% of stake for removing the Fund's HYPE permanently from the circulating and total supply); its buybacks are buy-and-burn (the burns line of net float pressure, A3's retired buyback), A4 on (scored on the Fund + the Core burns); the three true burns stay"
 }
 ],
 "reader|Comparison|Returned to float, % a year": [
@@ -1308,6 +2924,36 @@
 "from": 0.0167815547,
 "to": 0.0154108183,
 "why": "R21 (Jake 2026-11-25) Item 6: Hyperliquid's default until Jake decides — the Assistance Fund is a held buyback (inside circulating, +48.0M; off the free float; A4 off); 'burn' now counts only true burns (HyperCore supply fall and zero-address fees), so gross burn, net issuance and every per-circulating ratio move"
+},
+{
+"date": "2026-11-25",
+"from": 0.0154108183,
+"to": 0.0167815547,
+"why": "R21b item 1 (Jake 2026-11-25): Hyperliquid's Assistance Fund is BURNED — out of circulating and total supply (the validators' vote, HyperFND 2025-12-24: 85% of stake for removing the Fund's HYPE permanently from the circulating and total supply); its buybacks are buy-and-burn (the burns line of net float pressure, A3's retired buyback), A4 on (scored on the Fund + the Core burns); the three true burns stay"
+}
+],
+"reader|Summary|Archetypes": [
+{
+"date": "2026-11-25",
+"from": "A3, A1",
+"to": "A3, A1, A4",
+"why": "R21b item 1 (Jake 2026-11-25): Hyperliquid's Assistance Fund is BURNED — out of circulating and total supply (the validators' vote, HyperFND 2025-12-24: 85% of stake for removing the Fund's HYPE permanently from the circulating and total supply); its buybacks are buy-and-burn (the burns line of net float pressure, A3's retired buyback), A4 on (scored on the Fund + the Core burns); the three true burns stay"
+}
+],
+"reader|Summary|Buying pressure on float, % a year": [
+{
+"date": "2026-11-25",
+"from": 0.0970550318,
+"to": 0.0,
+"why": "R21b item 1 (Jake 2026-11-25): Hyperliquid's Assistance Fund is BURNED — out of circulating and total supply (the validators' vote, HyperFND 2025-12-24: 85% of stake for removing the Fund's HYPE permanently from the circulating and total supply); its buybacks are buy-and-burn (the burns line of net float pressure, A3's retired buyback), A4 on (scored on the Fund + the Core burns); the three true burns stay"
+}
+],
+"reader|Summary|Confidence (share green)": [
+{
+"date": "2026-11-25",
+"from": 0.25,
+"to": 0.333333333,
+"why": "R21b: the share of green cells is recounted after the Hyperliquid change"
 }
 ],
 "reader|Summary|Dilution, % of market cap": [
@@ -1316,6 +2962,12 @@
 "from": 0.047139246,
 "to": 0.0433037444,
 "why": "R21 (Jake 2026-11-25) Item 6: Hyperliquid's default until Jake decides — the Assistance Fund is a held buyback (inside circulating, +48.0M; off the free float; A4 off); 'burn' now counts only true burns (HyperCore supply fall and zero-address fees), so gross burn, net issuance and every per-circulating ratio move"
+},
+{
+"date": "2026-11-25",
+"from": 0.0433037444,
+"to": 0.047139246,
+"why": "R21b item 1 (Jake 2026-11-25): Hyperliquid's Assistance Fund is BURNED — out of circulating and total supply (the validators' vote, HyperFND 2025-12-24: 85% of stake for removing the Fund's HYPE permanently from the circulating and total supply); its buybacks are buy-and-burn (the burns line of net float pressure, A3's retired buyback), A4 on (scored on the Fund + the Core burns); the three true burns stay"
 }
 ],
 "reader|Summary|FDV": [
@@ -1324,6 +2976,12 @@
 "from": 76962297900.0,
 "to": 80849471900.0,
 "why": "R21 (Jake 2026-11-25) Item 6: Hyperliquid's default until Jake decides — the Assistance Fund is a held buyback (inside circulating, +48.0M; off the free float; A4 off); 'burn' now counts only true burns (HyperCore supply fall and zero-address fees), so gross burn, net issuance and every per-circulating ratio move"
+},
+{
+"date": "2026-11-25",
+"from": 80849471900.0,
+"to": 76962297900.0,
+"why": "R21b item 1 (Jake 2026-11-25): Hyperliquid's Assistance Fund is BURNED — out of circulating and total supply (the validators' vote, HyperFND 2025-12-24: 85% of stake for removing the Fund's HYPE permanently from the circulating and total supply); its buybacks are buy-and-burn (the burns line of net float pressure, A3's retired buyback), A4 on (scored on the Fund + the Core burns); the three true burns stay"
 }
 ],
 "reader|Summary|Holder value yield": [
@@ -1332,6 +2990,12 @@
 "from": 0.0155918832,
 "to": 0.014323244,
 "why": "R21 (Jake 2026-11-25) Item 6: Hyperliquid's default until Jake decides — the Assistance Fund is a held buyback (inside circulating, +48.0M; off the free float; A4 off); 'burn' now counts only true burns (HyperCore supply fall and zero-address fees), so gross burn, net issuance and every per-circulating ratio move"
+},
+{
+"date": "2026-11-25",
+"from": 0.014323244,
+"to": 0.0155918832,
+"why": "R21b item 1 (Jake 2026-11-25): Hyperliquid's Assistance Fund is BURNED — out of circulating and total supply (the validators' vote, HyperFND 2025-12-24: 85% of stake for removing the Fund's HYPE permanently from the circulating and total supply); its buybacks are buy-and-burn (the burns line of net float pressure, A3's retired buyback), A4 on (scored on the Fund + the Core burns); the three true burns stay"
 }
 ],
 "reader|Summary|Market cap": [
@@ -1340,6 +3004,12 @@
 "from": 43702446000.0,
 "to": 47589620000.0,
 "why": "R21 (Jake 2026-11-25) Item 6: Hyperliquid's default until Jake decides — the Assistance Fund is a held buyback (inside circulating, +48.0M; off the free float; A4 off); 'burn' now counts only true burns (HyperCore supply fall and zero-address fees), so gross burn, net issuance and every per-circulating ratio move"
+},
+{
+"date": "2026-11-25",
+"from": 47589620000.0,
+"to": 43702446000.0,
+"why": "R21b item 1 (Jake 2026-11-25): Hyperliquid's Assistance Fund is BURNED — out of circulating and total supply (the validators' vote, HyperFND 2025-12-24: 85% of stake for removing the Fund's HYPE permanently from the circulating and total supply); its buybacks are buy-and-burn (the burns line of net float pressure, A3's retired buyback), A4 on (scored on the Fund + the Core burns); the three true burns stay"
 }
 ],
 "reader|Summary|Net float pressure": [
@@ -1348,6 +3018,12 @@
 "from": -0.174401367,
 "to": -0.16312006,
 "why": "R21 (Jake 2026-11-25) Item 6: Hyperliquid's default until Jake decides — the Assistance Fund is a held buyback (inside circulating, +48.0M; off the free float; A4 off); 'burn' now counts only true burns (HyperCore supply fall and zero-address fees), so gross burn, net issuance and every per-circulating ratio move"
+},
+{
+"date": "2026-11-25",
+"from": -0.16312006,
+"to": -0.170563056,
+"why": "R21b item 1 (Jake 2026-11-25): Hyperliquid's Assistance Fund is BURNED — out of circulating and total supply (the validators' vote, HyperFND 2025-12-24: 85% of stake for removing the Fund's HYPE permanently from the circulating and total supply); its buybacks are buy-and-burn (the burns line of net float pressure, A3's retired buyback), A4 on (scored on the Fund + the Core burns); the three true burns stay"
 }
 ],
 "reader|Summary|Net holder yield": [
@@ -1356,6 +3032,12 @@
 "from": -0.0315473628,
 "to": -0.0289805003,
 "why": "R21 (Jake 2026-11-25) Item 6: Hyperliquid's default until Jake decides — the Assistance Fund is a held buyback (inside circulating, +48.0M; off the free float; A4 off); 'burn' now counts only true burns (HyperCore supply fall and zero-address fees), so gross burn, net issuance and every per-circulating ratio move"
+},
+{
+"date": "2026-11-25",
+"from": -0.0289805003,
+"to": -0.0315473628,
+"why": "R21b item 1 (Jake 2026-11-25): Hyperliquid's Assistance Fund is BURNED — out of circulating and total supply (the validators' vote, HyperFND 2025-12-24: 85% of stake for removing the Fund's HYPE permanently from the circulating and total supply); its buybacks are buy-and-burn (the burns line of net float pressure, A3's retired buyback), A4 on (scored on the Fund + the Core burns); the three true burns stay"
 }
 ]
 },

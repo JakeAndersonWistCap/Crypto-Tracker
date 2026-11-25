@@ -481,3 +481,257 @@ Total: 259 cells — 250 below, and the 9 cp_nfp Trend cells declared first (ite
 | Pendle | audit / CP Comparability / Trend — cp_nfp (arrow · QoQ · 4Q growth/yr · quarters improved; Trajectory tab) | <absent> | – · 4Q n/a · QoQ n/a | Item 1 |
 | Sky | audit / CP Comparability / Trend — cp_nfp (arrow · QoQ · 4Q growth/yr · quarters improved; Trajectory tab) | <absent> | – · 4Q n/a · QoQ n/a | Item 1 |
 | Uniswap | audit / CP Comparability / Trend — cp_nfp (arrow · QoQ · 4Q growth/yr · quarters improved; Trajectory tab) | <absent> | – · 4Q n/a · QoQ n/a | Item 1 |
+
+## Round 21b — Jake's decisions (2026-11-25)
+
+Declared as a later step of the same cells in `tests/fixtures/frozen_moves_r21.json`. Built on the 15 fixture dumps (as of 2026-10-13); values are the fixture's, not Jake's store's.
+
+| Project | Reason | Cells |
+|---|---|---|
+| Hyperliquid | R21b: the share of green cells is recounted after the Hyperliquid change | 1 |
+| Hyperliquid | R21b item 1 (Jake 2026-11-25): Hyperliquid's Assistance Fund is BURNED — out of circulating and total supply (the validators' vote, HyperFND 2025-12-24: 85% of stake for removing the Fund's HYPE permanently from the circulating and total supply); its buybacks are buy-and-burn (the burns line of net float pressure, A3's retired buyback), A4 on (scored on the Fund + the Core burns); the three true burns stay | 120 |
+| Hyperliquid | R21b item 1 — the A4 tab (Jake 2026-11-25): Hyperliquid's Assistance Fund is BURNED — out of circulating and total supply (the validators' vote, HyperFND 2025-12-24: 85% of stake for removing the Fund's HYPE permanently from the circulating and total supply); its buybacks are buy-and-burn (the burns line of net float pressure, A3's retired buyback), A4 on (scored on the Fund + the Core burns); the three true burns stay | 118 |
+
+Total: 239 cells.
+
+| Project | Cell | Before | After | Reason |
+|---|---|---|---|---|
+| Hyperliquid | audit / A1 Infrastructure / Detail — Supply overhang, % of total supply (reserve ÷ total supply, latest) | 0.411378 | 0.432156 | R21b item 1 (Jake 2026-11-25) |
+| Hyperliquid | audit / A1 Infrastructure / Gross burn Q0 (tokens) — every burn, fee-market included | 52,260.6 | 2.47441e+06 | R21b item 1 (Jake 2026-11-25) |
+| Hyperliquid | audit / A1 Infrastructure / NET ISSUANCE AFTER BURN Q0 (tokens) — issuance − every burn, on the basis A4 uses | -52,260.6 | -2.47441e+06 | R21b item 1 (Jake 2026-11-25) |
+| Hyperliquid | audit / A1 Infrastructure / NET ISSUANCE AFTER BURN, annualised % of circulating (+ is net inflation; fee-market burns | -0.00190903 | -0.0185918 | R21b item 1 (Jake 2026-11-25) |
+| Hyperliquid | audit / A1 Infrastructure / NRR HEADROOM (trading throughput) = M2/GDP ÷ NRR — valuation headroom, not a target | 41.8154 | 45.5347 | R21b item 1 (Jake 2026-11-25) |
+| Hyperliquid | audit / A1 Infrastructure / NRR ON TRADING THROUGHPUT — market cap ÷ trailing-365d DEX + perps volume (DefiLlama) | 0.0169794 | 0.0155925 | R21b item 1 (Jake 2026-11-25) |
+| Hyperliquid | audit / A1 Infrastructure / Staking rate = staked inside circulating ÷ circulating | 0.344032 | 0.374632 | R21b item 1 (Jake 2026-11-25) |
+| Hyperliquid | audit / A1 Infrastructure / Trend — a1_gross_burn (arrow · QoQ · 4Q growth/yr · quarters improved; Trajectory tab) | – · 4Q n/a · QoQ n/a — Q0 is part-held | SERIES BREAK 2026-09-25 · – · STEP CHANGE at Q | R21b item 1 (Jake 2026-11-25) |
+| Hyperliquid | audit / A1 Infrastructure / Trend — a1_net_issuance (arrow · QoQ · 4Q growth/yr · quarters improved; Trajectory tab) | – · 4Q n/a · QoQ n/a — Q0 is part-held | SERIES BREAK 2026-09-25 · – · STEP CHANGE at Q | R21b item 1 (Jake 2026-11-25) |
+| Hyperliquid | audit / A1 Infrastructure / Trend — a1_net_issuance_pct (arrow · QoQ · 4Q growth/yr · quarters improved; Trajectory ta | SERIES BREAK 2026-09-24 · – · STEP CHANGE at Q | SERIES BREAK 2026-09-25 · – · STEP CHANGE at Q | R21b item 1 (Jake 2026-11-25) |
+| Hyperliquid | audit / A3 Revenue Buyback / Actual buyback Q0 BURNED (tokens) | 0 | 2.38027e+06 | R21b item 1 (Jake 2026-11-25) |
+| Hyperliquid | audit / A3 Revenue Buyback / Actual buyback Q0 HELD (tokens) — treasury, reserve, foundation-locked | 2.38027e+06 | 0 | R21b item 1 (Jake 2026-11-25) |
+| Hyperliquid | audit / A3 Revenue Buyback / Actual buyback as % of supply (annualised) — RETIRED (burned + held) only | 0.0164237 | 0.0178845 | R21b item 1 (Jake 2026-11-25) |
+| Hyperliquid | audit / A3 Revenue Buyback / BURNED ÷ (EMISSIONS + UNLOCKS) (x) = BURNED buyback ÷ (emissions + unlocks), per covered d | 0 | 0.296592 | R21b item 1 (Jake 2026-11-25) |
+| Hyperliquid | audit / A3 Revenue Buyback / BUYBACK AS % OF SUPPLY (annualised, implied) | 0.0166398 | 0.0181199 | R21b item 1 (Jake 2026-11-25) |
+| Hyperliquid | audit / A3 Revenue Buyback / BUYING PRESSURE ON FLOAT, % a year = revenue-funded buying, held or paid out (tokens, annu | 0.097055 | 0 | R21b item 1 (Jake 2026-11-25) |
+| Hyperliquid | audit / A3 Revenue Buyback / Buyback % supply at Q1 (−3m window, split as at Q1) | 0.0176426 | 0.0192119 | R21b item 1 (Jake 2026-11-25) |
+| Hyperliquid | audit / A3 Revenue Buyback / Buyback % supply at Q2 (−6m, split as at Q2) | 0.0330536 | 0.0359936 | R21b item 1 (Jake 2026-11-25) |
+| Hyperliquid | audit / A3 Revenue Buyback / Buyback destination | hold — the Assistance Fund 0xfefe…fefe holds w | burn | R21b item 1 (Jake 2026-11-25) |
+| Hyperliquid | audit / A3 Revenue Buyback / Buyback to LOCKED supply (destination = hold) — off the free float while held | n/a — Data: not applicable to this project — T | n/a — buyback_fund_balance (now): not applicab | R21b item 1 (Jake 2026-11-25) |
+| Hyperliquid | audit / A3 Revenue Buyback / Buyback to YIELD PAYOUT (destination = distribute) — re-enters float, never netted against | n/a — Destination effect on float is 'locked_s | n/a — Destination effect on float is 'removed_ | R21b item 1 (Jake 2026-11-25) |
+| Hyperliquid | audit / A3 Revenue Buyback / CIRCULATING RETIREMENT RATE (tokens) = RETIRED buyback tokens (burned + held, annualised)  | 0.0164237 | 0.0178845 | R21b item 1 (Jake 2026-11-25) |
+| Hyperliquid | audit / A3 Revenue Buyback / Circulating retirement rate ($) = RETIRED buyback $ (burned + held, annualised) ÷ market c | 0.0155301 | 0.0169115 | R21b item 1 (Jake 2026-11-25) |
+| Hyperliquid | audit / A3 Revenue Buyback / Circulating supply | 5.87768e+08 | 5.39759e+08 | R21b item 1 (Jake 2026-11-25) |
+| Hyperliquid | audit / A3 Revenue Buyback / Contract vs dashboard divergence (flagged when beyond tolerance) | n/a — buyback_fund_balance (now): not applicab | n/a — buyback_fund_balance (now): not applicab | R21b item 1 (Jake 2026-11-25) |
+| Hyperliquid | audit / A3 Revenue Buyback / Destination effect on float | locked_supply | removed_from_supply | R21b item 1 (Jake 2026-11-25) |
+| Hyperliquid | audit / A3 Revenue Buyback / FDV ($) | 8.08495e+10 | 7.69623e+10 | R21b item 1 (Jake 2026-11-25) |
+| Hyperliquid | audit / A3 Revenue Buyback / FDV RETIREMENT RATE (tokens) = RETIRED buyback tokens (burned + held, annualised) ÷ FDV su | 0.00966732 | 0.0101556 | R21b item 1 (Jake 2026-11-25) |
+| Hyperliquid | audit / A3 Revenue Buyback / FDV retirement rate ($) = RETIRED buyback $ (burned + held, annualised) ÷ FDV — alongside | 0.00914135 | 0.00960305 | R21b item 1 (Jake 2026-11-25) |
+| Hyperliquid | audit / A3 Revenue Buyback / Fees ÷ FDV (annualised) | 0.0114902 | 0.0120706 | R21b item 1 (Jake 2026-11-25) |
+| Hyperliquid | audit / A3 Revenue Buyback / Lock rate = locked inside circulating ÷ circulating (stake held by wallets outside circula | 0.344032 | 0.374632 | R21b item 1 (Jake 2026-11-25) |
+| Hyperliquid | audit / A3 Revenue Buyback / Market cap ($) | 4.75896e+10 | 4.37024e+10 | R21b item 1 (Jake 2026-11-25) |
+| Hyperliquid | audit / A4 Permanent Burn / Actual − implied burn (tokens) | <absent> | n/a — no published buyback/burn split (Share o | R21b item 1 — the A4 tab (Jake 2026-11-25) |
+| Hyperliquid | audit / A4 Permanent Burn / BURN ÷ ISSUANCE (x) — crossover, on the basis to the left | <absent> | 0.305018 | R21b item 1 — the A4 tab (Jake 2026-11-25) |
+| Hyperliquid | audit / A4 Permanent Burn / Burn as share of fees (measured) | <absent> | 0.818847 | R21b item 1 — the A4 tab (Jake 2026-11-25) |
+| Hyperliquid | audit / A4 Permanent Burn / Burn execution | <absent> | protocol | R21b item 1 — the A4 tab (Jake 2026-11-25) |
+| Hyperliquid | audit / A4 Permanent Burn / Burn split Q0 (tokens): every burn − the A4 burn | <absent> | 30,198.7 | R21b item 1 — the A4 tab (Jake 2026-11-25) |
+| Hyperliquid | audit / A4 Permanent Burn / Burn split — by source | <absent> | A4 burn = burn_ex_chain_fee_tokens; every burn | R21b item 1 — the A4 tab (Jake 2026-11-25) |
+| Hyperliquid | audit / A4 Permanent Burn / Burn status | <absent> | active (measured Q0) | R21b item 1 — the A4 tab (Jake 2026-11-25) |
+| Hyperliquid | audit / A4 Permanent Burn / Burn Δ30d | <absent> | n/a — SERIES BREAK 2026-09-25: burn_ex_chain_f | R21b item 1 — the A4 tab (Jake 2026-11-25) |
+| Hyperliquid | audit / A4 Permanent Burn / Burn Δ3m | <absent> | n/a — SERIES BREAK 2026-09-25: burn_ex_chain_f | R21b item 1 — the A4 tab (Jake 2026-11-25) |
+| Hyperliquid | audit / A4 Permanent Burn / Burn Δ6m | <absent> | n/a — SERIES BREAK 2026-09-25: burn_ex_chain_f | R21b item 1 — the A4 tab (Jake 2026-11-25) |
+| Hyperliquid | audit / A4 Permanent Burn / Burn Δ9m | <absent> | n/a — SERIES BREAK 2026-09-25: burn_ex_chain_f | R21b item 1 — the A4 tab (Jake 2026-11-25) |
+| Hyperliquid | audit / A4 Permanent Burn / Circulating supply (used, tokens) | <absent> | 5.39759e+08 | R21b item 1 — the A4 tab (Jake 2026-11-25) |
+| Hyperliquid | audit / A4 Permanent Burn / Cross-check: Δ implied circulating supply Q0 vs Q1 (CoinGecko mcap ÷ price) | <absent> | -7.08427e+06 | R21b item 1 — the A4 tab (Jake 2026-11-25) |
+| Hyperliquid | audit / A4 Permanent Burn / Cumulative burn ÷ max supply | <absent> | 0.0494563 | R21b item 1 — the A4 tab (Jake 2026-11-25) |
+| Hyperliquid | audit / A4 Permanent Burn / Derived issuance − burn, for comparison | <absent> | BLOCKED — unequal coverage: issuance (pool_rel | R21b item 1 — the A4 tab (Jake 2026-11-25) |
+| Hyperliquid | audit / A4 Permanent Burn / Documented share burned (config) — of protocol revenue where the burn base is declared (bu | <absent> | 0 | R21b item 1 — the A4 tab (Jake 2026-11-25) |
+| Hyperliquid | audit / A4 Permanent Burn / Fees Q0 ($) | <absent> | 2.29063e+08 | R21b item 1 — the A4 tab (Jake 2026-11-25) |
+| Hyperliquid | audit / A4 Permanent Burn / Fees required for crossover ($ a year) = fees × issuance ÷ burn, per covered day — at the  | <absent> | 3.04565e+09 | R21b item 1 — the A4 tab (Jake 2026-11-25) |
+| Hyperliquid | audit / A4 Permanent Burn / GROSS BURN Q0 (tokens) | <absent> | 2.44421e+06 | R21b item 1 — the A4 tab (Jake 2026-11-25) |
+| Hyperliquid | audit / A4 Permanent Burn / GROSS ISSUANCE Q0 (tokens) | <absent> | 0 — fixed supply: the whole supply was minted  | R21b item 1 — the A4 tab (Jake 2026-11-25) |
+| Hyperliquid | audit / A4 Permanent Burn / Governance lever = burn share of fees that reaches crossover with no growth (issuance $ at | <absent> | 2.84545 | R21b item 1 — the A4 tab (Jake 2026-11-25) |
+| Hyperliquid | audit / A4 Permanent Burn / Gross burn Q0 ($, each day's burn × that day's price) | <absent> | 1.87567e+08 | R21b item 1 — the A4 tab (Jake 2026-11-25) |
+| Hyperliquid | audit / A4 Permanent Burn / Gross issuance Q0 ($, each day's issuance × that day's price) | <absent> | 0 — fixed supply: the whole supply was minted  | R21b item 1 — the A4 tab (Jake 2026-11-25) |
+| Hyperliquid | audit / A4 Permanent Burn / ISSUANCE − BURN Q0 (tokens) — self-reported net mint where published, else issuance − burn | <absent> | -2.44421e+06 | R21b item 1 — the A4 tab (Jake 2026-11-25) |
+| Hyperliquid | audit / A4 Permanent Burn / ISSUANCE − BURN, annualised % of circulating (signed; + is net inflation; the cell says 'b | <absent> | -0.0183649 | R21b item 1 — the A4 tab (Jake 2026-11-25) |
+| Hyperliquid | audit / A4 Permanent Burn / Implied burn Q0 (tokens) = burn base × documented share ÷ each day's price — the base is p | <absent> | n/a — no published buyback/burn split (Share o | R21b item 1 — the A4 tab (Jake 2026-11-25) |
+| Hyperliquid | audit / A4 Permanent Burn / Issuance as % of supply (annualised) | <absent> | 0.039038 | R21b item 1 — the A4 tab (Jake 2026-11-25) |
+| Hyperliquid | audit / A4 Permanent Burn / Issuance basis for the crossover | <absent> | issuance_option_c_tokens — option C (P5-1.5):  | R21b item 1 — the A4 tab (Jake 2026-11-25) |
+| Hyperliquid | audit / A4 Permanent Burn / Issuance Δ30d | <absent> | BLOCKED — unequal coverage: NOW (pool_release_ | R21b item 1 — the A4 tab (Jake 2026-11-25) |
+| Hyperliquid | audit / A4 Permanent Burn / Issuance Δ3m | <absent> | BLOCKED — unequal coverage: Q0 (pool_release_t | R21b item 1 — the A4 tab (Jake 2026-11-25) |
+| Hyperliquid | audit / A4 Permanent Burn / Issuance Δ6m | <absent> | BLOCKED — unequal coverage: Q0 (pool_release_t | R21b item 1 — the A4 tab (Jake 2026-11-25) |
+| Hyperliquid | audit / A4 Permanent Burn / Issuance Δ9m | <absent> | BLOCKED — unequal coverage: Q0 (pool_release_t | R21b item 1 — the A4 tab (Jake 2026-11-25) |
+| Hyperliquid | audit / A4 Permanent Burn / Issuance − burn ($, each day's issuance − burn × that day's price) | <absent> | -1.89857e+08 | R21b item 1 — the A4 tab (Jake 2026-11-25) |
+| Hyperliquid | audit / A4 Permanent Burn / Issuance − burn Q1 (tokens, −3m window) | <absent> | BLOCKED — unequal coverage: issuance (pool_rel | R21b item 1 — the A4 tab (Jake 2026-11-25) |
+| Hyperliquid | audit / A4 Permanent Burn / Issuance − burn Q2 (−6m window) | <absent> | BLOCKED — unequal coverage: issuance (pool_rel | R21b item 1 — the A4 tab (Jake 2026-11-25) |
+| Hyperliquid | audit / A4 Permanent Burn / Issuance − burn Q3 (−9m window) | <absent> | BLOCKED — unequal coverage: issuance (pool_rel | R21b item 1 — the A4 tab (Jake 2026-11-25) |
+| Hyperliquid | audit / A4 Permanent Burn / Market cap ($) | <absent> | 4.37024e+10 | R21b item 1 — the A4 tab (Jake 2026-11-25) |
+| Hyperliquid | audit / A4 Permanent Burn / Net mint Q0 (SELF-REPORTED by the protocol) | <absent> | n/a — Data: not applicable to this project — n | R21b item 1 — the A4 tab (Jake 2026-11-25) |
+| Hyperliquid | audit / A4 Permanent Burn / Notes | <absent> | DESTINATION RESOLVED: validators voted 27 Dec  | R21b item 1 — the A4 tab (Jake 2026-11-25) |
+| Hyperliquid | audit / A4 Permanent Burn / PERMANENT BURN YIELD = burn as % of supply (annualised, tokens) | <absent> | 0.0183649 | R21b item 1 — the A4 tab (Jake 2026-11-25) |
+| Hyperliquid | audit / A4 Permanent Burn / Pool release Q0 (tokens) — measured, premint distribution (where issuance is n/a) | <absent> | 214,122 | R21b item 1 — the A4 tab (Jake 2026-11-25) |
+| Hyperliquid | audit / A4 Permanent Burn / Price — 90d average ($) | <absent> | 74.2366 | R21b item 1 — the A4 tab (Jake 2026-11-25) |
+| Hyperliquid | audit / A4 Permanent Burn / Price — spot ($) | <absent> | 80.9666 | R21b item 1 — the A4 tab (Jake 2026-11-25) |
+| Hyperliquid | audit / A4 Permanent Burn / Q0 WINDOW CAVEAT — read before the yield and crossover | <absent> | NOT A STABLE RATE YET — ISSUANCE covers 89 of  | R21b item 1 — the A4 tab (Jake 2026-11-25) |
+| Hyperliquid | audit / A4 Permanent Burn / Release ÷ burn (x) — premint projects, in place of burn ÷ issuance | <absent> | BLOCKED — unequal coverage: release (pool_rele | R21b item 1 — the A4 tab (Jake 2026-11-25) |
+| Hyperliquid | audit / A4 Permanent Burn / Self-reported − derived (a gap here means one of the two is wrong) | <absent> | n/a — nothing issued and nothing self-reported | R21b item 1 — the A4 tab (Jake 2026-11-25) |
+| Hyperliquid | audit / A4 Permanent Burn / Symbol | <absent> | HYPE | R21b item 1 — the A4 tab (Jake 2026-11-25) |
+| Hyperliquid | audit / A4 Permanent Burn / TOTAL DILUTION = emissions + unlocks, annualised % of free float | <absent> | 0.327234 | R21b item 1 — the A4 tab (Jake 2026-11-25) |
+| Hyperliquid | audit / A4 Permanent Burn / Treasury governance could redeploy ($, spot) | <absent> | 1.25904e+07 | R21b item 1 — the A4 tab (Jake 2026-11-25) |
+| Hyperliquid | audit / A4 Permanent Burn / Treasury governance could redeploy (tokens) — discretionary issuer-side wallets | <absent> | 155,501 | R21b item 1 — the A4 tab (Jake 2026-11-25) |
+| Hyperliquid | audit / A4 Permanent Burn / Trend — a4_burn_yield (arrow · QoQ · 4Q growth/yr · quarters improved; Trajectory tab) | <absent> | SERIES BREAK 2026-09-25 · – · STEP CHANGE at Q | R21b item 1 — the A4 tab (Jake 2026-11-25) |
+| Hyperliquid | audit / A4 Permanent Burn / Trend — a4_crossover (arrow · QoQ · 4Q growth/yr · quarters improved; Trajectory tab) | <absent> | SERIES BREAK 2026-09-25 · MODELLED Q0, Q-1, Q- | R21b item 1 — the A4 tab (Jake 2026-11-25) |
+| Hyperliquid | audit / A4 Permanent Burn / Trend — a4_gross_burn (arrow · QoQ · 4Q growth/yr · quarters improved; Trajectory tab) | <absent> | SERIES BREAK 2026-09-25 · – · STEP CHANGE at Q | R21b item 1 — the A4 tab (Jake 2026-11-25) |
+| Hyperliquid | audit / A4 Permanent Burn / Trend — a4_gross_issuance (arrow · QoQ · 4Q growth/yr · quarters improved; Trajectory tab) | <absent> | – · 4Q n/a · QoQ n/a | R21b item 1 — the A4 tab (Jake 2026-11-25) |
+| Hyperliquid | audit / A4 Permanent Burn / Trend — a4_net_change (arrow · QoQ · 4Q growth/yr · quarters improved; Trajectory tab) | <absent> | SERIES BREAK 2026-09-25 · – · STEP CHANGE at Q | R21b item 1 — the A4 tab (Jake 2026-11-25) |
+| Hyperliquid | audit / A4 Permanent Burn / Trend — a4_net_change_pct (arrow · QoQ · 4Q growth/yr · quarters improved; Trajectory tab) | <absent> | SERIES BREAK 2026-09-25 · – · STEP CHANGE at Q | R21b item 1 — the A4 tab (Jake 2026-11-25) |
+| Hyperliquid | audit / A4 Permanent Burn / Trend — a4_pool_release (arrow · QoQ · 4Q growth/yr · quarters improved; Trajectory tab) | <absent> | SERIES BREAK 2026-09-24 · – · STEP CHANGE at Q | R21b item 1 — the A4 tab (Jake 2026-11-25) |
+| Hyperliquid | audit / A4 Permanent Burn / UNLOCK DILUTION Q0 (tokens) — released from the non-circulating wallets, NOT emissions | <absent> | 5.47619e+06 | R21b item 1 — the A4 tab (Jake 2026-11-25) |
+| Hyperliquid | audit / A4 Permanent Burn / Unlock dilution, annualised % of free float | <absent> | 0.225799 | R21b item 1 — the A4 tab (Jake 2026-11-25) |
+| Hyperliquid | audit / CP Comparability / BURNS ON FLOAT, % a year = every burn, whatever its source (tokens, annualised) ÷ free flo | 0.0112813 | 0.100893 | R21b item 1 (Jake 2026-11-25) |
+| Hyperliquid | audit / CP Comparability / BUYING PRESSURE ON FLOAT, % a year = revenue-funded buying, held or paid out (tokens, annu | 0.097055 | 0 | R21b item 1 (Jake 2026-11-25) |
+| Hyperliquid | audit / CP Comparability / Burn rate (every burn, fee-market included — A1's basis, annualised) ÷ circulating | 0.00190903 | 0.0185918 | R21b item 1 (Jake 2026-11-25) |
+| Hyperliquid | audit / CP Comparability / Burn rate (every burn, fee-market included — A1's basis, annualised) ÷ free float | 0.0112813 | 0.100893 | R21b item 1 (Jake 2026-11-25) |
+| Hyperliquid | audit / CP Comparability / Burns — where they came from (memo: from float / staked / treasury, Q0) | burns 2026-07-14..2026-10-13: from float 52,26 | burns 2026-07-14..2026-10-13: from float 2,495 | R21b item 1 (Jake 2026-11-25) |
+| Hyperliquid | audit / CP Comparability / Circulating supply (tokens) — our convention, the figure in use | 5.87768e+08 | 5.39759e+08 | R21b item 1 (Jake 2026-11-25) |
+| Hyperliquid | audit / CP Comparability / DILUTION, % OF MARKET CAP = outflows a+b+c+d+e+f at each day's price (annualised) ÷ averag | 0.0433037 | 0.0471392 | R21b item 1 (Jake 2026-11-25) |
+| Hyperliquid | audit / CP Comparability / Destination durability (burn / held-timelocked / held-discretionary) | held (keyless; a hard fork could move it) — th | burn — Assistance Fund (system address 0xfefe. | R21b item 1 (Jake 2026-11-25) |
+| Hyperliquid | audit / CP Comparability / Dilution (a) security emissions (annualised) ÷ circulating | 0.00772614 | 0.00841335 | R21b item 1 (Jake 2026-11-25) |
+| Hyperliquid | audit / CP Comparability / Dilution (e) unlocks (annualised) ÷ circulating | 0.0382098 | 0.0416085 | R21b item 1 (Jake 2026-11-25) |
+| Hyperliquid | audit / CP Comparability / Discretionary supply ÷ circulating | 0.000264562 | 0.000288093 | R21b item 1 (Jake 2026-11-25) |
+| Hyperliquid | audit / CP Comparability / ETF / ETP holdings ÷ circulating | 0.00940386 | 0.0102403 | R21b item 1 (Jake 2026-11-25) |
+| Hyperliquid | audit / CP Comparability / Flow demand — buyback $ (every funding source, annualised) ÷ market cap | 0.0155301 | 0.0169115 | R21b item 1 (Jake 2026-11-25) |
+| Hyperliquid | audit / CP Comparability / Free float ÷ circulating | 0.16922 | 0.184272 | R21b item 1 (Jake 2026-11-25) |
+| Hyperliquid | audit / CP Comparability / HOLDER VALUE YIELD = revenue-funded $ retired + $ distributed + liquid bribes to voters (a | 0.0143232 | 0.0155919 | R21b item 1 (Jake 2026-11-25) |
+| Hyperliquid | audit / CP Comparability / Holding demand — lock rate = locked ÷ circulating | 0.344032 | 0.374632 | R21b item 1 (Jake 2026-11-25) |
+| Hyperliquid | audit / CP Comparability / Insider share of circulating = insider-held tokens counted inside circulating ÷ circulatin | 0.512895 | 0.558515 | R21b item 1 (Jake 2026-11-25) |
+| Hyperliquid | audit / CP Comparability / Market cap ($) | 4.75896e+10 | 4.37024e+10 | R21b item 1 (Jake 2026-11-25) |
+| Hyperliquid | audit / CP Comparability / NET FLOAT PRESSURE, % a year = buying pressure on float + burns on float − total dilution  | -0.16312 | -0.170563 | R21b item 1 (Jake 2026-11-25) |
+| Hyperliquid | audit / CP Comparability / NET HOLDER YIELD = holder value yield − dilution (outflows a+b+c+d+e+f at each day's price | -0.0289805 | -0.0315474 | R21b item 1 (Jake 2026-11-25) |
+| Hyperliquid | audit / CP Comparability / Retirement rate (RETIRED buyback tokens, burned + held, annualised) ÷ circulating | 0.0164237 | 0.0178845 | R21b item 1 (Jake 2026-11-25) |
+| Hyperliquid | audit / CP Comparability / TOTAL DILUTION = outflows a+b+c+d+e+f (annualised) ÷ circulating | 0.045936 | 0.0500218 | R21b item 1 (Jake 2026-11-25) |
+| Hyperliquid | audit / CP Comparability / Total supply (tokens) | 9.98553e+08 | 9.50544e+08 | R21b item 1 (Jake 2026-11-25) |
+| Hyperliquid | audit / CP Comparability / Treasury-company (DAT) holdings ÷ circulating | 0.069403 | 0.0755762 | R21b item 1 (Jake 2026-11-25) |
+| Hyperliquid | audit / CP Comparability / UNIFORMITY = whole-token yield ÷ staker yield (1 = every holder alike) (PROPOSED) | 0.344032 | 0.374632 | R21b item 1 (Jake 2026-11-25) |
+| Hyperliquid | audit / CP Comparability / Whole-token yield — validator = staker yield × staked share (locked ÷ circulating, now) | 0.00788596 | 0.00858739 | R21b item 1 (Jake 2026-11-25) |
+| Hyperliquid | audit / Master / Archetypes (primary first) | 3, 1 | 3, 1, 4 | R21b item 1 (Jake 2026-11-25) |
+| Hyperliquid | audit / Master / Buyback % of supply (annualised, implied, split as at this window) | 0.0166398 | 0.0181199 | R21b item 1 (Jake 2026-11-25) |
+| Hyperliquid | audit / Master / Circulating supply (used) | 5.87768e+08 | 5.39759e+08 | R21b item 1 (Jake 2026-11-25) |
+| Hyperliquid | audit / Master / FDV ($) | 8.08495e+10 | 7.69623e+10 | R21b item 1 (Jake 2026-11-25) |
+| Hyperliquid | audit / Master / Fees ÷ FDV (annualised) | 0.0114902 | 0.0120706 | R21b item 1 (Jake 2026-11-25) |
+| Hyperliquid | audit / Master / Gross burn Q0 (tokens) | 52,260.6 | 2.47441e+06 | R21b item 1 (Jake 2026-11-25) |
+| Hyperliquid | audit / Master / Issuance − burn Q0 (tokens) — a component of the supply change, NOT the net supply change | -52,260.6 | -2.47441e+06 | R21b item 1 (Jake 2026-11-25) |
+| Hyperliquid | audit / Master / Issuance − burn, annualised % of circulating — a component, NOT the net supply change | -0.00190903 | -0.0185918 | R21b item 1 (Jake 2026-11-25) |
+| Hyperliquid | audit / Master / Market cap ($) | 4.75896e+10 | 4.37024e+10 | R21b item 1 (Jake 2026-11-25) |
+| Hyperliquid | audit / Master / Trend — master_gross_burn_q0_tokens (arrow · QoQ · 4Q growth/yr · quarters improved; Traje | – · 4Q n/a · QoQ n/a — Q0 is part-held | SERIES BREAK 2026-09-25 · – · STEP CHANGE at Q | R21b item 1 (Jake 2026-11-25) |
+| Hyperliquid | audit / Master / Turnover = 30d volume ÷ market cap (x) | 0.578507 | 0.629964 | R21b item 1 (Jake 2026-11-25) |
+| Hyperliquid | reader / A1 Infrastructure / Circulating supply | 5.87768e+08 | 5.39759e+08 | R21b item 1 (Jake 2026-11-25) |
+| Hyperliquid | reader / A1 Infrastructure / FDV | 8.08495e+10 | 7.69623e+10 | R21b item 1 (Jake 2026-11-25) |
+| Hyperliquid | reader / A1 Infrastructure / Fees ÷ FDV, a year | 0.0114902 | 0.0120706 | R21b item 1 (Jake 2026-11-25) |
+| Hyperliquid | reader / A1 Infrastructure / Gross burn, 90 days (tokens) | 52,260.6 | 2.47441e+06 | R21b item 1 (Jake 2026-11-25) |
+| Hyperliquid | reader / A1 Infrastructure / Market cap | 4.75896e+10 | 4.37024e+10 | R21b item 1 (Jake 2026-11-25) |
+| Hyperliquid | reader / A1 Infrastructure / NRR headroom (throughput) | 41.8154 | 45.5347 | R21b item 1 (Jake 2026-11-25) |
+| Hyperliquid | reader / A1 Infrastructure / NRR on trading throughput | 0.0169794 | 0.0155925 | R21b item 1 (Jake 2026-11-25) |
+| Hyperliquid | reader / A1 Infrastructure / Net issuance after burn (tokens) | -52,260.6 | -2.47441e+06 | R21b item 1 (Jake 2026-11-25) |
+| Hyperliquid | reader / A1 Infrastructure / Net issuance after burn, % a year | -0.00190903 | -0.0185918 | R21b item 1 (Jake 2026-11-25) |
+| Hyperliquid | reader / A1 Infrastructure / Quarter change [45] | n/a | blocked | R21b item 1 (Jake 2026-11-25) |
+| Hyperliquid | reader / A1 Infrastructure / Staking rate | 0.344032 | 0.374632 | R21b item 1 (Jake 2026-11-25) |
+| Hyperliquid | reader / A1 Infrastructure / Total yield, non-stakers | -0.0440269 | -0.03143 | R21b item 1 (Jake 2026-11-25) |
+| Hyperliquid | reader / A1 Infrastructure / Total yield, stakers | -0.0211048 | -0.0085078 | R21b item 1 (Jake 2026-11-25) |
+| Hyperliquid | reader / A3 Revenue Buyback / Bought back and burned (tokens) | 0 | 2.38027e+06 | R21b item 1 (Jake 2026-11-25) |
+| Hyperliquid | reader / A3 Revenue Buyback / Bought back and held (tokens) | 2.38027e+06 | 0 | R21b item 1 (Jake 2026-11-25) |
+| Hyperliquid | reader / A3 Revenue Buyback / Burned ÷ (emissions + unlocks) | 0 | 0.296592 | R21b item 1 (Jake 2026-11-25) |
+| Hyperliquid | reader / A3 Revenue Buyback / Buyback destination | hold — the Assistance Fund 0xfefe…fefe holds w | burn | R21b item 1 (Jake 2026-11-25) |
+| Hyperliquid | reader / A3 Revenue Buyback / Buying pressure on float, % a year | 0.097055 | 0 | R21b item 1 (Jake 2026-11-25) |
+| Hyperliquid | reader / A3 Revenue Buyback / Circulating supply | 5.87768e+08 | 5.39759e+08 | R21b item 1 (Jake 2026-11-25) |
+| Hyperliquid | reader / A3 Revenue Buyback / Effect on float | locked_supply | removed_from_supply | R21b item 1 (Jake 2026-11-25) |
+| Hyperliquid | reader / A3 Revenue Buyback / FDV | 8.08495e+10 | 7.69623e+10 | R21b item 1 (Jake 2026-11-25) |
+| Hyperliquid | reader / A3 Revenue Buyback / Fees ÷ FDV, a year | 0.0114902 | 0.0120706 | R21b item 1 (Jake 2026-11-25) |
+| Hyperliquid | reader / A3 Revenue Buyback / Holder value yield | 0.0143232 | 0.0155919 | R21b item 1 (Jake 2026-11-25) |
+| Hyperliquid | reader / A3 Revenue Buyback / Implied buyback %, 3 months ago | 0.0176426 | 0.0192119 | R21b item 1 (Jake 2026-11-25) |
+| Hyperliquid | reader / A3 Revenue Buyback / Implied buyback %, 6 months ago | 0.0330536 | 0.0359936 | R21b item 1 (Jake 2026-11-25) |
+| Hyperliquid | reader / A3 Revenue Buyback / Implied buyback, % of supply a year | 0.0166398 | 0.0181199 | R21b item 1 (Jake 2026-11-25) |
+| Hyperliquid | reader / A3 Revenue Buyback / Lock rate, % of circulating | 0.344032 | 0.374632 | R21b item 1 (Jake 2026-11-25) |
+| Hyperliquid | reader / A3 Revenue Buyback / Market cap | 4.75896e+10 | 4.37024e+10 | R21b item 1 (Jake 2026-11-25) |
+| Hyperliquid | reader / A3 Revenue Buyback / Retired, % of supply a year | 0.0164237 | 0.0178845 | R21b item 1 (Jake 2026-11-25) |
+| Hyperliquid | reader / A3 Revenue Buyback / Retirement rate ($), % of FDV | 0.00914135 | 0.00960305 | R21b item 1 (Jake 2026-11-25) |
+| Hyperliquid | reader / A3 Revenue Buyback / Retirement rate ($), % of mkt cap | 0.0155301 | 0.0169115 | R21b item 1 (Jake 2026-11-25) |
+| Hyperliquid | reader / A3 Revenue Buyback / Retirement rate, % of FDV supply | 0.00966732 | 0.0101556 | R21b item 1 (Jake 2026-11-25) |
+| Hyperliquid | reader / A3 Revenue Buyback / Retirement rate, % of circulating | 0.0164237 | 0.0178845 | R21b item 1 (Jake 2026-11-25) |
+| Hyperliquid | reader / A4 Permanent Burn / 90-day window caveat | <absent> | NOT A STABLE RATE YET — ISSUANCE covers 89 of  | R21b item 1 — the A4 tab (Jake 2026-11-25) |
+| Hyperliquid | reader / A4 Permanent Burn / Actual minus implied burn (tokens) | <absent> | n/a | R21b item 1 — the A4 tab (Jake 2026-11-25) |
+| Hyperliquid | reader / A4 Permanent Burn / Burn execution | <absent> | protocol | R21b item 1 — the A4 tab (Jake 2026-11-25) |
+| Hyperliquid | reader / A4 Permanent Burn / Burn growth, selected period | <absent> | n/a | R21b item 1 — the A4 tab (Jake 2026-11-25) |
+| Hyperliquid | reader / A4 Permanent Burn / Burn share of fees | <absent> | 0.818847 | R21b item 1 — the A4 tab (Jake 2026-11-25) |
+| Hyperliquid | reader / A4 Permanent Burn / Burn split (tokens) | <absent> | 30,198.7 | R21b item 1 — the A4 tab (Jake 2026-11-25) |
+| Hyperliquid | reader / A4 Permanent Burn / Burn split by source | <absent> | A4 burn = burn_ex_chain_fee_tokens; every burn | R21b item 1 — the A4 tab (Jake 2026-11-25) |
+| Hyperliquid | reader / A4 Permanent Burn / Burn status | <absent> | active (measured last 90 days) | R21b item 1 — the A4 tab (Jake 2026-11-25) |
+| Hyperliquid | reader / A4 Permanent Burn / Burn ÷ issuance (x) | <absent> | 0.305018 | R21b item 1 — the A4 tab (Jake 2026-11-25) |
+| Hyperliquid | reader / A4 Permanent Burn / Burn ÷ issuance (x), latest | <absent> | 0.305018 | R21b item 1 — the A4 tab (Jake 2026-11-25) |
+| Hyperliquid | reader / A4 Permanent Burn / Burn ÷ issuance (x), −1 qtr | <absent> | 0.460671 | R21b item 1 — the A4 tab (Jake 2026-11-25) |
+| Hyperliquid | reader / A4 Permanent Burn / Burn ÷ issuance (x), −2 qtrs | <absent> | 0.98009 | R21b item 1 — the A4 tab (Jake 2026-11-25) |
+| Hyperliquid | reader / A4 Permanent Burn / Burn ÷ issuance (x), −3 qtrs | <absent> | 0.859098 | R21b item 1 — the A4 tab (Jake 2026-11-25) |
+| Hyperliquid | reader / A4 Permanent Burn / Circulating supply | <absent> | 5.39759e+08 | R21b item 1 — the A4 tab (Jake 2026-11-25) |
+| Hyperliquid | reader / A4 Permanent Burn / Cumulative burn ÷ max supply | <absent> | 0.0494563 | R21b item 1 — the A4 tab (Jake 2026-11-25) |
+| Hyperliquid | reader / A4 Permanent Burn / Derived issuance − burn | <absent> | blocked | R21b item 1 — the A4 tab (Jake 2026-11-25) |
+| Hyperliquid | reader / A4 Permanent Burn / FDV | <absent> | 7.69623e+10 | R21b item 1 — the A4 tab (Jake 2026-11-25) |
+| Hyperliquid | reader / A4 Permanent Burn / Fees needed for crossover | <absent> | 3.04565e+09 | R21b item 1 — the A4 tab (Jake 2026-11-25) |
+| Hyperliquid | reader / A4 Permanent Burn / Fees ÷ FDV, a year | <absent> | 0.0120706 | R21b item 1 — the A4 tab (Jake 2026-11-25) |
+| Hyperliquid | reader / A4 Permanent Burn / Fees, last 90 days | <absent> | 2.29063e+08 | R21b item 1 — the A4 tab (Jake 2026-11-25) |
+| Hyperliquid | reader / A4 Permanent Burn / Governance lever | <absent> | 2.84545 | R21b item 1 — the A4 tab (Jake 2026-11-25) |
+| Hyperliquid | reader / A4 Permanent Burn / Gross burn, 90 days ($) | <absent> | 1.87567e+08 | R21b item 1 — the A4 tab (Jake 2026-11-25) |
+| Hyperliquid | reader / A4 Permanent Burn / Gross burn, 90 days (tokens) | <absent> | 2.44421e+06 | R21b item 1 — the A4 tab (Jake 2026-11-25) |
+| Hyperliquid | reader / A4 Permanent Burn / Gross issuance, 90 days ($) | <absent> | 0 | R21b item 1 — the A4 tab (Jake 2026-11-25) |
+| Hyperliquid | reader / A4 Permanent Burn / Implied burn, 90 days (tokens) | <absent> | n/a | R21b item 1 — the A4 tab (Jake 2026-11-25) |
+| Hyperliquid | reader / A4 Permanent Burn / Implied circulating change check | <absent> | -7.08427e+06 | R21b item 1 — the A4 tab (Jake 2026-11-25) |
+| Hyperliquid | reader / A4 Permanent Burn / Issuance basis | <absent> | issuance_option_c_tokens — option C: issuer re | R21b item 1 — the A4 tab (Jake 2026-11-25) |
+| Hyperliquid | reader / A4 Permanent Burn / Issuance growth, selected period | <absent> | n/a | R21b item 1 — the A4 tab (Jake 2026-11-25) |
+| Hyperliquid | reader / A4 Permanent Burn / Issuance or release, 90 days | <absent> | 7.92428e+06 | R21b item 1 — the A4 tab (Jake 2026-11-25) |
+| Hyperliquid | reader / A4 Permanent Burn / Issuance − burn ($) | <absent> | -1.89857e+08 | R21b item 1 — the A4 tab (Jake 2026-11-25) |
+| Hyperliquid | reader / A4 Permanent Burn / Issuance − burn (tokens), change | <absent> | blocked | R21b item 1 — the A4 tab (Jake 2026-11-25) |
+| Hyperliquid | reader / A4 Permanent Burn / Issuance − burn (tokens), latest | <absent> | -2.44421e+06 | R21b item 1 — the A4 tab (Jake 2026-11-25) |
+| Hyperliquid | reader / A4 Permanent Burn / Issuance − burn (tokens), −1 qtr | <absent> | -2.64799e+06 | R21b item 1 — the A4 tab (Jake 2026-11-25) |
+| Hyperliquid | reader / A4 Permanent Burn / Issuance − burn (tokens), −2 qtrs | <absent> | -5.02248e+06 | R21b item 1 — the A4 tab (Jake 2026-11-25) |
+| Hyperliquid | reader / A4 Permanent Burn / Issuance − burn (tokens), −3 qtrs | <absent> | -5.82989e+06 | R21b item 1 — the A4 tab (Jake 2026-11-25) |
+| Hyperliquid | reader / A4 Permanent Burn / Issuance − burn, % a year | <absent> | -0.0183649 | R21b item 1 — the A4 tab (Jake 2026-11-25) |
+| Hyperliquid | reader / A4 Permanent Burn / Issuance − burn, 90 days | <absent> | -2.44421e+06 | R21b item 1 — the A4 tab (Jake 2026-11-25) |
+| Hyperliquid | reader / A4 Permanent Burn / Issuance, % of supply a year | <absent> | 0.039038 | R21b item 1 — the A4 tab (Jake 2026-11-25) |
+| Hyperliquid | reader / A4 Permanent Burn / Key: change vs previous quarter | <absent> | blocked | R21b item 1 — the A4 tab (Jake 2026-11-25) |
+| Hyperliquid | reader / A4 Permanent Burn / Market cap | <absent> | 4.37024e+10 | R21b item 1 — the A4 tab (Jake 2026-11-25) |
+| Hyperliquid | reader / A4 Permanent Burn / Net mint, self-reported | <absent> | n/a — Data: not applicable to this project — n | R21b item 1 — the A4 tab (Jake 2026-11-25) |
+| Hyperliquid | reader / A4 Permanent Burn / One-off burn events | <absent> | — | R21b item 1 — the A4 tab (Jake 2026-11-25) |
+| Hyperliquid | reader / A4 Permanent Burn / One-off burns, 12 months (tokens) | <absent> | by design | R21b item 1 — the A4 tab (Jake 2026-11-25) |
+| Hyperliquid | reader / A4 Permanent Burn / Permanent burn yield | <absent> | 0.0183649 | R21b item 1 — the A4 tab (Jake 2026-11-25) |
+| Hyperliquid | reader / A4 Permanent Burn / Price | <absent> | 80.9666 | R21b item 1 — the A4 tab (Jake 2026-11-25) |
+| Hyperliquid | reader / A4 Permanent Burn / Price, 90-day average | <absent> | 74.2366 | R21b item 1 — the A4 tab (Jake 2026-11-25) |
+| Hyperliquid | reader / A4 Permanent Burn / Quarter change [41] | <absent> | blocked | R21b item 1 — the A4 tab (Jake 2026-11-25) |
+| Hyperliquid | reader / A4 Permanent Burn / Quarter change [43] | <absent> | blocked | R21b item 1 — the A4 tab (Jake 2026-11-25) |
+| Hyperliquid | reader / A4 Permanent Burn / Rank in A4 | <absent> | secondary | R21b item 1 — the A4 tab (Jake 2026-11-25) |
+| Hyperliquid | reader / A4 Permanent Burn / Self-reported figure preferred? | <absent> | — | R21b item 1 — the A4 tab (Jake 2026-11-25) |
+| Hyperliquid | reader / A4 Permanent Burn / Self-reported minus derived | <absent> | n/a | R21b item 1 — the A4 tab (Jake 2026-11-25) |
+| Hyperliquid | reader / A4 Permanent Burn / Share burned, of revenue or fees | <absent> | 0 | R21b item 1 — the A4 tab (Jake 2026-11-25) |
+| Hyperliquid | reader / A4 Permanent Burn / Supply figure complete? | <absent> | — | R21b item 1 — the A4 tab (Jake 2026-11-25) |
+| Hyperliquid | reader / A4 Permanent Burn / Token | <absent> | HYPE | R21b item 1 — the A4 tab (Jake 2026-11-25) |
+| Hyperliquid | reader / A4 Permanent Burn / Total dilution, % of float a year | <absent> | 0.327234 | R21b item 1 — the A4 tab (Jake 2026-11-25) |
+| Hyperliquid | reader / A4 Permanent Burn / Treasury can redeploy ($) | <absent> | 1.25904e+07 | R21b item 1 — the A4 tab (Jake 2026-11-25) |
+| Hyperliquid | reader / A4 Permanent Burn / Treasury governance can redeploy | <absent> | 155,501 | R21b item 1 — the A4 tab (Jake 2026-11-25) |
+| Hyperliquid | reader / A4 Permanent Burn / UNLOCK DILUTION last 90 days | <absent> | 5.47619e+06 | R21b item 1 — the A4 tab (Jake 2026-11-25) |
+| Hyperliquid | reader / A4 Permanent Burn / Unlocks, % of free float a year | <absent> | 0.225799 | R21b item 1 — the A4 tab (Jake 2026-11-25) |
+| Hyperliquid | reader / Business / Burn change, 30d vs prior 30d | n/a | -0.102373 | R21b item 1 (Jake 2026-11-25) |
+| Hyperliquid | reader / Comparison / Burns on float, % a year | 0.0112813 | 0.100893 | R21b item 1 (Jake 2026-11-25) |
+| Hyperliquid | reader / Comparison / Buying pressure on float, % a year | 0.097055 | 0 | R21b item 1 (Jake 2026-11-25) |
+| Hyperliquid | reader / Comparison / Dilution, % of market cap | 0.0433037 | 0.0471392 | R21b item 1 (Jake 2026-11-25) |
+| Hyperliquid | reader / Comparison / Fees ÷ FDV, a year | 0.0114902 | 0.0120706 | R21b item 1 (Jake 2026-11-25) |
+| Hyperliquid | reader / Comparison / Holder value yield | 0.0143232 | 0.0155919 | R21b item 1 (Jake 2026-11-25) |
+| Hyperliquid | reader / Comparison / Lock rate, % of circulating | 0.344032 | 0.374632 | R21b item 1 (Jake 2026-11-25) |
+| Hyperliquid | reader / Comparison / Net float pressure | -0.16312 | -0.170563 | R21b item 1 (Jake 2026-11-25) |
+| Hyperliquid | reader / Comparison / Net holder yield | -0.0289805 | -0.0315474 | R21b item 1 (Jake 2026-11-25) |
+| Hyperliquid | reader / Comparison / Revenue ÷ market cap, a year | 0.0154108 | 0.0167816 | R21b item 1 (Jake 2026-11-25) |
+| Hyperliquid | reader / Summary / Archetypes | A3, A1 | A3, A1, A4 | R21b item 1 (Jake 2026-11-25) |
+| Hyperliquid | reader / Summary / Buying pressure on float, % a year | 0.097055 | 0 | R21b item 1 (Jake 2026-11-25) |
+| Hyperliquid | reader / Summary / Confidence (share green) | 0.25 | 0.333333 | R21b |
+| Hyperliquid | reader / Summary / Dilution, % of market cap | 0.0433037 | 0.0471392 | R21b item 1 (Jake 2026-11-25) |
+| Hyperliquid | reader / Summary / FDV | 8.08495e+10 | 7.69623e+10 | R21b item 1 (Jake 2026-11-25) |
+| Hyperliquid | reader / Summary / Holder value yield | 0.0143232 | 0.0155919 | R21b item 1 (Jake 2026-11-25) |
+| Hyperliquid | reader / Summary / Market cap | 4.75896e+10 | 4.37024e+10 | R21b item 1 (Jake 2026-11-25) |
+| Hyperliquid | reader / Summary / Net float pressure | -0.16312 | -0.170563 | R21b item 1 (Jake 2026-11-25) |
+| Hyperliquid | reader / Summary / Net holder yield | -0.0289805 | -0.0315474 | R21b item 1 (Jake 2026-11-25) |
