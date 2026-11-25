@@ -2047,10 +2047,23 @@ def _lag_matched_views(groups: dict, asof) -> None:
         last = pd.Timestamp(lead.index.max()).normalize()
         lag = int((hi - last).days)
         ok = 0 <= lag <= int(spec["max_lag_days"])
+        # R22 (Pendle, Jake's store run): the match is for a PUBLISH lag. Where the lead's last stored day is read from a
+        # point that does not publish late (R21 item 5: the buyback contract's purchases, dated the day bought), there is
+        # no lag to match — each side keeps its own coverage guard (cutting at that day left only the fee series' point
+        # in force then, the epoch in progress: 8 of 90 days)
+        point = None
+        if spec.get("lagged_points"):
+            g0 = groups.get((name, spec["lead"]))
+            src = g0.loc[pd.to_datetime(g0["date"]).dt.normalize() == last, "source"].astype(str)
+            point = trajectory.basis_of(spec["lead"], src.iloc[-1]) if not src.empty else None
+            if point is not None and not any(str(point).startswith(lp) for lp in spec["lagged_points"]):
+                ok = False
         lo = last - pd.Timedelta(days=int(GLOBALS["period_days"]))
         LAG_MATCH[name] = {"ok": ok, "last": str(last.date()), "lag": lag, "first": str((lo + pd.Timedelta(days=1)).date()),
                            "days": int(((lead.index > lo) & (lead.index <= last)).sum()), "why": spec["why"],
-                           "cut": set()}
+                           "cut": set(), "point": point,
+                           "not_lagged": bool(point is not None and spec.get("lagged_points") and not ok
+                                              and 0 <= lag <= int(spec["max_lag_days"]))}
         if not ok:
             continue
         for m in spec["follow"]:
@@ -2072,6 +2085,68 @@ def _lag_matched_views(groups: dict, asof) -> None:
                 metric=f"{m}_lagm", source=cut["source"].astype(str) + f"[cut at {last.date()}: R5.3 lag-matched]"),
                 g.columns)
             LAG_MATCH[name]["cut"].add(m)
+
+
+BURN_SINCE: dict = {}    # project -> {"start", "days", "cut"} (R22: the A4 burn began inside the Q0 window), last build
+
+
+def _burn_since_views(groups: dict, asof) -> None:
+    """R22 (Jake 2026-11-25, Aethir): a project whose A4 burn has a declared start (config.burn_start) INSIDE the Q0
+    window reads its A4 ratios over the days since the burn began: the burn and the issuance basis (and the pool
+    release) cut to [start, as-of], as `<metric>_sinceburn`. Never filled: a day neither leg holds stays a hole, and the
+    coverage guard still judges both legs over the same span."""
+    BURN_SINCE.clear()
+    hi = pd.Timestamp(asof).normalize()
+    lo = hi - pd.Timedelta(days=int(GLOBALS["period_days"]) - 1)
+    for name, legs in config.BURN_SINCE_LEGS.items():
+        start = pd.Timestamp(config.burn_start(name)).normalize()
+        if not (lo < start <= hi):
+            continue
+        cut = set()
+        for m in set(legs) | {"pool_release_tokens"}:
+            g = groups.get((name, m))
+            if g is None or g.empty or f"{m}_sinceburn" not in config.METRICS:
+                continue
+            c = g[pd.to_datetime(g["date"]).dt.normalize() >= start]
+            if c.empty:
+                continue
+            groups[(name, f"{m}_sinceburn")] = _as_stored(c.assign(
+                metric=f"{m}_sinceburn", source=c["source"].astype(str) + f"[since {start.date()}: the burn began]"),
+                g.columns)
+            cut.add(m)
+        if set(legs) <= cut:
+            BURN_SINCE[name] = {"start": str(start.date()), "days": int((hi - start).days) + 1, "cut": cut}
+
+
+def burn_since(p: dict, m: str) -> str:
+    """R22: the leg an A4 ratio reads — `<m>_sinceburn` where this build re-based the project's burn (Q0 only)."""
+    st = BURN_SINCE.get(p["name"]) if not _SHIFT["k"] else None
+    return f"{m}_sinceburn" if st and m in st["cut"] else m
+
+
+def _rb_both(name: str) -> bool:
+    """Release ÷ burn is re-based only where BOTH its legs were cut (a premint project's release with its burn)."""
+    st = BURN_SINCE.get(name) if not _SHIFT["k"] else None
+    return bool(st) and {"pool_release_tokens", config.a4_burn_metric(name)} <= st["cut"]
+
+
+def _rb(p: dict, m: str) -> str:
+    return f"{m}_sinceburn" if _rb_both(p["name"]) else m
+
+
+def burn_since_fmt(name: str) -> str | None:
+    st = BURN_SINCE.get(name) if not _SHIFT["k"] else None
+    return (f'0.00"x since {st["start"]}";(0.00"x since {st["start"]})"') if st else None
+
+
+def burn_since_note(p: dict) -> str:
+    st = BURN_SINCE.get(p["name"])
+    if not st:
+        return ""
+    return (f"SINCE THE BURN BEGAN (R22, Jake 2026-11-25): the burn started on {st['start']}, inside the 90-day "
+            f"window, so both legs are read from {st['start']} to the as-of ({st['days']} days), not over 90 — the days "
+            f"before the burn existed would divide a zero into the rate. The coverage guard still holds both legs to "
+            f"the same span.")
 
 
 S13_STATE: dict = {}     # project -> what the last build's S13 views cover (R9.4 / R9.5)
@@ -2449,6 +2524,9 @@ def lag_matched_note(p: dict) -> str:
     st = LAG_MATCH.get(p["name"]) or {}
     if not st:
         return ""
+    if not st["ok"] and st.get("not_lagged"):
+        return (f"NOT LAG-MATCHED (R5.3; R22): the buyback's last stored day {st['last']} is read from {st['point']} "
+                f"(dated the day bought: R21 item 5) — not a publish lag, so each side keeps its own coverage")
     if not st["ok"]:
         return (f"NOT LAG-MATCHED (R5.3): the buyback's last stored day {st['last']} is {st['lag']} days before the "
                 f"as-of — beyond the declared publish lag, so each side keeps its own coverage")
@@ -8970,6 +9048,7 @@ def aggregate(long: pd.DataFrame, fetch_status: pd.DataFrame, asof: pd.Timestamp
     _s13_component_views(groups, asof)    # R11.3a: each line's gas / Intents parts on the line's own days (Near)
     _s13_share_basis_views(groups, asof)  # R13: the holder share on one basis (Uniswap: UNI burned ÷ UNI released)
     _lag_matched_views(groups, asof)      # R5.3: a declared publish lag — the follow series cut at the lead's last day
+    _burn_since_views(groups, asof)       # R22: an A4 burn that began inside the window — both legs from its start
     _as_published_views(groups, asof)     # R12.1: an outflow published in arrears counts as published (Near's (b))
     _LAST_GROUPS.update(groups)       # the views, for Credibility rows that read them (credibility.VIEWS_LONG)
     _market_share_mean_views(groups)  # PR1.U4: market share's 30- / 60-day means (config.MARKET_SHARE_MEAN)
@@ -11603,7 +11682,8 @@ def _a4_headline(R: Refs, burn, data_by_key: dict | None = None) -> list[tuple]:
                             f"circulating (P3-2c)" if p["name"] in config.A4_RELEASE_ISSUANCE
                        else "gross_issuance_tokens"), FMT_TEXT, "text"),
         ("BURN ÷ ISSUANCE (x) — crossover, on the basis to the left",
-         lambda r, p: _a4_crossover(R, r, p), FMT_X, "calc", True),
+         lambda r, p: _a4_crossover(R, r, p), FMT_X, "calc", True,
+         {"fmt_fn": burn_since_fmt, "note_fn": burn_since_note}),
         # RIGHT BESIDE THE TWO FIGURES IT QUALIFIES. Empty where the window is full and the burn
         # is a stream; otherwise it says, with numbers, why the pair is not yet a rate.
         ("Q0 WINDOW CAVEAT — read before the yield and crossover",
@@ -11808,6 +11888,7 @@ def _a4_crossover(R: Refs, r: int, p: dict) -> str:
     check (_zero_issuance) still blocks a positive measured mint; any other declared-zero project reads "no issuance —
     burn only" as before."""
     bm, im = config.a4_burn_metric(p["name"]), config.crossover_issuance_metric(p["name"])
+    bm, im = burn_since(p, bm), burn_since(p, im)        # R22: a burn begun inside the window, from its start
     legs = [("burn", bm, "q0"), ("release" if p["name"] in config.A4_RELEASE_ISSUANCE else "issuance", im, "q0")]
     expr = f"{_flow_rate(R, r, bm, p=p)}/{_flow_rate(R, r, im, p=p)}"
     if p["name"] in config.A4_RELEASE_ISSUANCE:
@@ -16235,10 +16316,12 @@ def write_a4(ws, R: Refs, data_by_key: dict):
         ("Pool release Q0 (tokens) — measured, premint distribution (where issuance is n/a)",
          lambda r, p: pull(R.D(r, "pool_release_tokens", "q0")), FMT_NUM, "pull", True, {"metric": "pool_release_tokens"}),
         ("Release ÷ burn (x) — premint projects, in place of burn ÷ issuance",
-         lambda r, p: _coverage_guard(R, r, [("release", "pool_release_tokens", "q0"),
-                                             ("burn", config.a4_burn_metric(p["name"]), "q0")],
-                                      f"{_flow_rate(R, r, 'pool_release_tokens')}/{_flow_rate(R, r, config.a4_burn_metric(p['name']), p=p)}"),
-         FMT_X, "calc"),
+         lambda r, p: _coverage_guard(R, r, [("release", _rb(p, "pool_release_tokens"), "q0"),
+                                             ("burn", _rb(p, config.a4_burn_metric(p["name"])), "q0")],
+                                      f"{_flow_rate(R, r, _rb(p, 'pool_release_tokens'))}/"
+                                      f"{_flow_rate(R, r, _rb(p, config.a4_burn_metric(p['name'])), p=p)}"),
+         FMT_X, "calc", False, {"fmt_fn": lambda n: burn_since_fmt(n) if _rb_both(n) else None,
+                                "note_fn": lambda p: burn_since_note(p) if _rb_both(p["name"]) else ""}),
         ("Net mint Q0 (SELF-REPORTED by the protocol)", lambda r, p: pull(R.D(r, "net_mint_monthly", "q0")), FMT_NUM, "pull", False, {"metric": "net_mint_monthly"}),
         ("Self-reported figure preferred?", lambda r, p: ", ".join(
             x for x in ["net mint" if p.get("self_reported_net_mint") else "",

@@ -12,7 +12,11 @@ Every GB figure is one the repo already records, with its source, or is marked E
   uses an older Ethereum estimate).
 - **About 740 GB a month is left for history.** That is 3 months of NEAR history (about 230 GB each), or 18 months of
   Ethereum (about 41 GB each), or a mix: 2 NEAR months plus 6-7 Ethereum months.
-- **One plan, both chains:** NEAR's key forms **2027-03-31**. Ethereum holds 24 months on the BigQuery definition
+- **R22 CORRECTION (2026-11-25): NEAR's key does NOT form 2027-03-31.** Jake's store run says the key forms
+  **2028-02-18** and the 365-day sum **2027-02-18**, and the workbook is right: see "R22: NEAR's dates reconciled"
+  below. With the billed one-shot fill the key forms **2026-12-09**; without it, **2028-02-18** on the daily run alone.
+  The rest of this bullet is the R19 plan as written, superseded for NEAR:
+- **One plan, both chains (R19, superseded for NEAR):** NEAR's key forms **2027-03-31**. Ethereum holds 24 months on the BigQuery definition
   after the **February 2027** run. NEAR alone could be one month faster (built 2027-03-01); that would leave Ethereum
   almost nothing until April.
 - **Nothing needs to wait for that.** Both chains hold enough today for a labelled short window. On the fixtures:
@@ -100,7 +104,36 @@ Notes on the schedule:
 - A NEAR history chunk still needs Jake's dated approval each month (`NEAR_P2P_HISTORY_APPROVAL`, with `chunks`
   set to 1, 2, 2, 3). Ethereum's backfill needs `extend_approved` declared once.
 
-## 3. When each chain reaches 6, 12 and 24 months
+## R22: NEAR's dates reconciled (Jake's store run, 2026-11-25)
+
+**The workbook is right; this plan was wrong for NEAR.** Both use the same rule (`reader._settlement_forms_on`):
+r0 = the first day of the settlement series' unbroken run back from its newest stored day; the 365-day sum forms
+on r0 + 364 and the key on r0 + 729. Jake's workbook reads "2027-02-18" and "2028-02-18", so on his store
+**r0 = 2026-02-19**. The plan's 2027-03-31 needs r0 = 2025-04-01. It got there from two assumptions, neither of
+which holds:
+
+1. **The store is held from 2025-12-29.** That is SPEC R18.N1's statement, never checked on the store (this plan
+   listed it under "Could not verify"). The store's unbroken run starts on 2026-02-19: either the series starts
+   there or a day on or before 2026-02-18 is missing, in the P2P leg or another settlement leg.
+2. **History chunks at 2, 2, 2, 3 a month from December.** Only December's chunk is approved
+   (`NEAR_P2P_HISTORY_APPROVAL`, for_month 2026-12, max 337 GB). The rest was a proposal.
+
+The workbook reads the store; the plan was a projection. The store wins.
+
+| Path | r0 | 365-day sum forms | **Key forms** |
+|---|---|---|---|
+| **With the billing fill** (`bigquery_backfill.py`, handover section 8; NEAR back to the 2024-12-10 floor) | 2024-12-10 | at the first build after the fill | **2026-12-09**, or the first build after the fill if that is later |
+| **Without it: the daily run only** (what Jake's workbook shows) | 2026-02-19 | 2027-02-18 | **2028-02-18** |
+| Without it, plus December's approved free-tier chunk (2026-02-01..02-18, if no older day is held) | 2026-02-01 | 2027-01-31 | 2028-01-31 |
+| Without it, one approved free-tier chunk every month from December | one month back per run | already formed | at the **2027-07-01** run (r0 2025-07-01, key 2027-06-30) |
+
+The billing-fill date assumes every settlement leg holds 2024-12-10 onward once the P2P leg is filled. The floor is
+the first day DefiLlama's NEAR DEX breakdown carries NEAR Intents, so the DEX leg should start there. INFERRED, not
+seen on the store. If the break at 2026-02-19 is in a leg other than P2P, no P2P fill moves r0. One read-only check
+settles both points:
+`SELECT metric, MIN(date), MAX(date), COUNT(*) FROM metrics WHERE project='Near' AND metric IN ('p2p_transfer_volume_usd','settlement_volume_usd') GROUP BY metric;`
+
+## 3. When each chain reaches 6, 12 and 24 months (R19; the NEAR rows are superseded by the R22 table above)
 
 "Held" = the daily settlement series hole-free back from its newest day. The 365-day sum forms at 12 months
 (r0 + 364). The key, its 1-year change, forms at 24 months (r0 + 729). This is `reader._settlement_forms_on`.

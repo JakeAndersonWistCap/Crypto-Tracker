@@ -42066,6 +42066,9 @@ LAG_MATCHED = {
                "follow": ("emissions_tokens", "outflow_b_usd", "outflow_e_usd", "unlock_release_tokens", "revenue_usd",
                           "fees_usd"),
                "max_lag_days": 30,
+               # R22: only these lead points publish late (the API's per-epoch amount, spread over its epoch); a lead
+               # whose last day is read elsewhere (the buyback contract, R21 item 5) is current, not lagged
+               "lagged_points": ("pendle_api",),
                "why": "Pendle publishes an sPENDLE epoch's buyback at the epoch's end (spendle/data; MEASURED_BUYBACK, "
                       "G11 B9): the epoch in progress is a publish lag, not a hole"},
 }
@@ -52251,3 +52254,45 @@ R22_MOVES_DECLARED = _load_r22_moves()
 for _sp in PROJECT_BY_NAME["Aethir"].get("log_scans") or ():
     if not _sp.get("own_tier"):
         _sp["own_tier"] = scan_tier("Aethir", _sp)
+
+
+# ===== ROUND 22 (Jake 2026-11-25): A BURN THAT STARTED INSIDE THE WINDOW IS READ OVER THE DAYS SINCE IT BEGAN =====
+# Aethir's BURN ÷ ISSUANCE (and release ÷ burn) read MISSING on Jake's store: the fee burn went live 2026-11-02 (a
+# declared 0 before, DECLARED_ZERO) while the release basis is stored from 2026-10-07, so the 90-day pair never shares a
+# span. The rule, for ANY project: where the A4 burn has a declared start (the day after its DECLARED_ZERO `until`, or
+# its MECHANISM_START) inside the Q0 window, both legs of the A4 ratios are read from that day to the as-of (read-time
+# views `<metric>_sinceburn`, build_workbook._burn_since_views), and the cell is labelled with the start date. The
+# coverage guard is unchanged: both legs must still cover those days (RATE_MIN_DAYS, the same span). A burn that
+# started before the window reads the 90 days as before. Quarters back (the Trajectory) are not re-based.
+def burn_start(project_name: str) -> str | None:
+    """The declared day the project's A4 burn began, or None."""
+    bm = a4_burn_metric(project_name)
+    ms = MECHANISM_START.get((project_name, bm))
+    if ms:
+        return str(ms["from"])
+    dz = DECLARED_ZERO.get((project_name, bm)) or {}
+    if dz.get("until"):
+        import datetime as _dt
+        return str(_dt.date.fromisoformat(str(dz["until"])[:10]) + _dt.timedelta(days=1))
+    return None
+
+
+BURN_SINCE_LEGS = {}      # project -> (burn metric, issuance-basis metric) for projects with a declared burn start
+for _p in PROJECTS:
+    if burn_start(_p["name"]):
+        BURN_SINCE_LEGS[_p["name"]] = (a4_burn_metric(_p["name"]), crossover_issuance_metric(_p["name"]))
+        for _m in set(BURN_SINCE_LEGS[_p["name"]]) | {"pool_release_tokens"}:
+            if _m not in METRICS:
+                continue
+            _v = METRICS.setdefault(f"{_m}_sinceburn", {
+                "label": f"{_m}, from the day the A4 burn began (R22: a burn that started inside the window is read "
+                         f"over the days since it began)", "kind": "flow", "unit": METRICS[_m]["unit"],
+                "archetypes": [4], "tiers": [2], "sanity_min": 0, "sanity_max": METRICS[_m].get("sanity_max", 1e12),
+                "view_only": True, "only_projects": ()})
+            _v["only_projects"] = tuple(sorted(set(_v["only_projects"]) | {_p["name"]}))
+# the since-the-burn-began views are the same burns / issuance cut at the start, read only by A4's two ratios
+for _n, _legs in BURN_SINCE_LEGS.items():
+    for _m in set(_legs) | {"pool_release_tokens"}:
+        BURN_NOT_IN_NET[(_n, f"{_m}_sinceburn")] = (
+            f"{_m} from the day the A4 burn began (R22 read-time view, read only by A4's burn ÷ issuance and release ÷ "
+            f"burn) — the same tokens as {_m}, never summed with it")

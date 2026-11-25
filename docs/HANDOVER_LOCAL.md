@@ -135,8 +135,9 @@ Freeze order once a project reads READY on the store and the gate is green: one 
 - Near: a NearBlocks key does NOT fix the timeouts (a key is already set; a free key and a keyless caller are on the
   same plan; only a paid plan lifts the limits). The fix is asking less. On the day the weekly lockup-list read runs,
   the daily NearBlocks reads may say "not called" and are read the next day.
-- Near's Rank and Archetype key now carry the date they form (two years of settlement: late 2027 on the store as it
-  stands) and no longer block; NRR on settlement volume blocks until the run on or after 2026-12-01 that stores the
+- Near's Rank and Archetype key now carry the date they form (two years of settlement; R22: on Jake's store the run is
+  unbroken from 2026-02-19, so the key forms 2028-02-18 on the daily run alone, or 2026-12-09 once the billed
+  one-shot fill reaches the 2024-12-10 floor — docs/r19_bigquery_plan.md, "R22: NEAR's dates reconciled") and no longer block; NRR on settlement volume blocks until the run on or after 2026-12-01 that stores the
   P2P days back to as-of minus 364.
 - Check lines: see the agent's block "11fg-ethereum-near" in SPEC "Round 17 — Ethereum and Near" and run:
   `python token_metrics.py --project Ethereum --project Near`, then
@@ -219,11 +220,11 @@ the store.
 | Ether.fi | READY | READY on its 20 Nov export at R22. Circulating 974,680,443 until 2026-12-17 (the unvested team leg out, MODELLED); its CoinGecko check raises a review row (about −2.4%), named in config. |
 | Morpho | READY | READY on its 20 Nov export at R22. Total dilution 27.2% → 9.6% of float on the export (vesting on schedule, claims not supply, the founders' relock out). Circulating about 966.9M. |
 | Near | READY | READY on its 20 Nov export at R22; circulating = total − LOCKED (about 1,310.3M). |
-| Pendle | READY | The chain reader dates each epoch's buyback the day it is bought (was STALE on 24 Nov); Berachain is an accepted gap. |
+| Pendle | READY | The chain reader dates each epoch's buyback the day it is bought (was STALE on 24 Nov); Berachain is an accepted gap. R22 addition: the 25 Nov store run read NOT READY (payout ratio and holder share BLOCKED, `fees_usd_lagm` 8 of 90 days). The R5.3 lag match no longer cuts the fee side once the buyback is current from the contract, so both cells read over their own 90 days, with the note "NOT LAG-MATCHED (R5.3; R22) … not a publish lag". |
 | Chainlink | READY | READY on 24 Nov. Circulating 766,849,970 (the 33 wallets out, = Chainlink's API, CoinGecko and CMC) until the next tranche (~2026-12-18). |
 | GEODNET | READY | READY on 24 Nov. Circulating about 836M (the Mining reserve out). |
 | Ethereum | READY | READY on 24 Nov. New A3 tab (secondary): the EIP-1559 burn in the key; its buyback cells N/A by the route "nothing is bought". |
-| Aethir | READY expected | UNIFORMITY forms (staking yield wired). Holder value yield keeps the same-span rule: if the faucet scan's first stored day leaves Q0 part-covered, it reads BLOCKED (unequal coverage) until both legs cover 90 days — the schedule rows from 2026-08-06 should cover Q0. |
+| Aethir | READY expected | UNIFORMITY forms (staking yield wired). Holder value yield keeps the same-span rule: if the faucet scan's first stored day leaves Q0 part-covered, it reads BLOCKED (unequal coverage) until both legs cover 90 days — the schedule rows from 2026-08-06 should cover Q0. R22 addition: BURN ÷ ISSUANCE and release ÷ burn read over the days since the burn began, formatted "x since 2026-11-02" (no longer MISSING). |
 | Plume | READY expected | 12 fixture lines, each filled by the run: outflow (a) emissions_claimed_tokens (6 lines), (b) merkl_campaigns_plume_tokens (Subsidy cover, Leakage), tbill_3m_yield, market_share_pct (may need ~3 runs; if DefiLlama's RWA move empties it, Jake declares it). "Insider share of stake" is NOT VERIFIED (no insider wallets published): done_check lists it, and freezing Plume needs that resolved first (tests/test_r17_round). |
 | World Mobile | parked | No change. |
 

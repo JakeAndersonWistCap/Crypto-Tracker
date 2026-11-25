@@ -92,7 +92,10 @@ def test_no_burn_series_is_missing_from_the_net():
     # the declared reasons are for real series only (no stale entry)
     for (n, m), why in config.BURN_NOT_IN_NET.items():
         # a build-time view (the buyback's burned / held / distributed split) is a real series of the Data sheet too
-        assert why and (m in config.metrics_for_project(P[n]) or m in config.BUYBACK_SPLIT_METRICS), (n, m)
+        # R22: the since-the-burn-began views (`<m>_sinceburn`) are build-time views of a series the project reads
+        base = m[:-len("_sinceburn")] if m.endswith("_sinceburn") else None
+        assert why and (m in config.metrics_for_project(P[n]) or m in config.BUYBACK_SPLIT_METRICS
+                        or (base and m in config.METRICS and n in config.BURN_SINCE_LEGS)), (n, m)
 
 
 def test_the_burns_cell_reads_every_declared_series_each_over_its_own_days(monkeypatch):
