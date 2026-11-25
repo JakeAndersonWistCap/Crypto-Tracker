@@ -5,8 +5,8 @@
    stores every complete day since 2026-11-02.
 2. Unlocks (decision 7): counted on the published schedule; the measured claims a memo beside them and the on-chain
    check (claimed <= scheduled, 0%).
-3. Staking pools: emissions-funded on chain; A3 stays off.
-4. Buyback: a direct burn of fees — the draft declaration is NOT applied.
+3. Staking pools: emissions-funded on chain (R21b: A3 is ON for the fee burn, Jake 2026-11-25).
+4. Buyback: a direct burn of fees — the declaration is APPLIED (R21b).
 No network: every read is a stub (the R20 stub world)."""
 from __future__ import annotations
 
@@ -192,19 +192,20 @@ def test_the_memo_column_sits_beside_the_unlock_on_cp():
 
 
 # ============================================================================================ 3. pools, 4. buyback
-def test_no_pool_is_fee_funded_on_chain_and_a3_stays_off():
+def test_no_pool_is_fee_funded_on_chain_and_the_finding_stays_on_record():
     rf = config.AETHIR_STAKING_POOLS["reward_funding"]
     safe = config.PROJECT_BY_NAME["Aethir"]["aethir_chain"]["vesting_wallet"]["beneficiary"].lower()
     for pool in ("ai_pool", "gaming_pool"):
         assert set(rf[pool]["faucet_funded_by"]) == {safe}                 # the issuer's Safe, nobody else
         assert rf[pool]["weekly"] == 1_000_000.0
     assert rf["fee_address_seen"] is False
-    assert config.CONDITIONAL_ARCHETYPES["Aethir"]["on"] is False
+    # R21b (Jake 2026-11-25): A3 is ON for the revenue-funded fee burn; the pool finding is kept on record
+    c = config.CONDITIONAL_ARCHETYPES["Aethir"]
+    assert c["on"] is True and "RewardFaucet" in c["pool_finding"]
 
 
-def test_the_buyback_draft_is_not_applied():
-    # the burn is a direct burn of fees (ServiceFeeBurner); the declaration waits for Jake: R20's by-design code stands
-    # R21 BURNS (Jake: "Uniswap and Aethir read 'buying: by design'. Fix all three"): buying is a declared 0 now;
-    # the draft declaration of the no-buyback line is still not applied (was: Aethir in BUYING_PRESSURE_BY_DESIGN)
+def test_the_buyback_draft_is_applied():
+    # R21b (Jake 2026-11-25): the section 9 wording is Aethir's declared reason (was R21: the draft, not applied)
     assert "Aethir" not in config.BUYING_PRESSURE_BY_DESIGN and "Aethir" in config.BUYING_ZERO_DECLARED
-    assert "ServiceFeeBurner" not in str(config.DECLARED_NA_REASONS.get("Aethir", ""))
+    assert "ServiceFeeBurner" in str(config.DECLARED_NA_REASONS.get("Aethir", ""))
+    assert config.declared_na_reason("Aethir", "n/a — " + config.AETHIR_DECLARED_NO_BUYBACK)
