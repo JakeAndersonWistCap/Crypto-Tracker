@@ -76,6 +76,7 @@ from .pendle_latent import PendleLatent
 from .wm_supply import WmSupply
 from .eth_settlement import EthNftVolume, EthP2PBigQuery
 from .near_issuance import NearIssuance
+from .solana import SolanaChain
 from .sky_ssr import SkySSR
 from .business import Business
 from .sky_accounting import SkyAccounting
@@ -241,6 +242,8 @@ TIER_ORDER = [
     ("pendle_latent", 2, lambda ctx: PendleLatent()),
     ("wm_supply", 2, lambda ctx: WmSupply()),
     ("near_issuance", 1, lambda ctx: NearIssuance(deadline_s=100.0)),
+    # R24: Solana's chain reads (supply, stake, inflation, epoch rewards), once a day, keyless
+    ("solana_rpc", 1, lambda ctx: SolanaChain()),
     # Sky's MKR backing (non-issuer MKR is circulating) and the reward vest in force (Jake 2026-10-12, decision 2).
     ("sky_mkr", 2, lambda ctx: SkyMkr(stored_long=ctx.get("stored_long"))),
     # Hyperliquid's own statistics for its S13 lines (R7B.C2, Jake 2026-11-16): fees by venue, the HIP-3 deployer route.
@@ -2128,7 +2131,7 @@ def stored_fresh(last_dates: dict | None, asof=None) -> set:
 # BEACON_API 60 -> 180 (P4-Q4, 2026-11-03): beaconcha.in's v2 epoch backfill reads one epoch a second (the Free Trial /
 # Hobbyist rate): ~165 days a run, stopped 10 s before the budget so what was read is stored; the next run resumes.
 TIER_BUDGET_S = {
-    "schedule:config": 15, "defillama": 150, "defillama_tvl": 150, "defillama_rwa_share": 150, "morpho_api": 60, "growthepie": 60,
+    "schedule:config": 15, "solana_rpc": 240, "defillama": 150, "defillama_tvl": 150, "defillama_rwa_share": 150, "morpho_api": 60, "growthepie": 60,
     "nearblocks": 180, "coingecko": 240, "price_history": 120, "hypercore_info": 60, "chainlink_fees": 180, "xref": 90, "xref_onchain": 150, "validatorqueue": 30, "beacon_api": 180, "treasury_bills": 60, "sky_ssr": 120, "sky_msc": 60, "fluid_buybacks": 60, "geodnet_feed": 60, "pendle_latent": 60, "wm_supply": 60, "near_issuance": 120, "business": 900, "share_vault": 60,
     # NEAR_RPC 90 -> 240 (R12.2, 2026-11-19): + the Foundation set's liquid NEAR, ~190 view_account calls (it stops
     # itself at its own budget_s and stores nothing short of every account), before the payout ledger (45 s)

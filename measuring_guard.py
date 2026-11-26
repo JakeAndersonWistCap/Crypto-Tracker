@@ -103,6 +103,8 @@ def build(out_dir: Path, probes: bool = True, previous: dict | None = None) -> d
             probed[pl["meta"]["project"]] = sorted({r["metric"] for r in rows})
         to_store(dict(pl, metrics=pl["metrics"] + rows), db)
         asofs.append(pl["meta"]["asof"])
+    from real_dump import build_asof
+    asofs = [build_asof(_payloads())]
     sm.DB_PATH = str(db)
     st = sm.Store(str(db))
     path = out_dir / "wb.xlsx"
@@ -143,7 +145,9 @@ def newer_series(db_path: str) -> list[tuple[str, str, str, str]]:
         for r in pl["metrics"]:
             k = (name, r["metric"])
             fx[k] = max(fx.get(k, ""), str(r["date"])[:10])
-    cut = max(str(pl["meta"]["asof"])[:10] for pl in _payloads())
+    sys.path.insert(0, str(ROOT / "tests"))
+    from real_dump import build_asof
+    cut = build_asof(_payloads())[:10]
     con = sqlite3.connect(db_path)
     try:
         got = con.execute("SELECT project, metric, MAX(date) FROM metrics GROUP BY project, metric").fetchall()

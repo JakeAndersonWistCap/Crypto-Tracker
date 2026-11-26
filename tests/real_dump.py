@@ -36,6 +36,16 @@ def dump_path(project: str, vintage: str | None = None) -> Path:
     return FIXTURES / name
 
 
+def build_asof(payloads) -> str:
+    """The as-of day of a build of `payloads`: the newest dump's, leaving out a dump whose meta carries `asof_exempt`
+    (R24: Solana's dump is a LATER read than the 2026-10-13 vintage the frozen projects are pinned to — letting it set the
+    build's as-of would age every frozen cell; its own rows dated after the as-of are read by `solo` builds, see
+    docs/r24_sol_section.md). With only exempt dumps the newest of them is used."""
+    pls = list(payloads)
+    use = [pl for pl in pls if not (pl.get("meta") or {}).get("asof_exempt")] or pls
+    return max(str(pl["meta"]["asof"]) for pl in use)
+
+
 def load(project: str, vintage: str | None = None) -> dict:
     p = dump_path(project, vintage)
     if not p.exists():

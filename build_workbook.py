@@ -12595,7 +12595,8 @@ def _a1_headline(R: Refs) -> list[tuple]:
         ("Settlement volume: last date of the NRR inputs (both end here) — the Artemis export, then any declared "
          "rebuild",
          lambda r, p: (f'=IF({R.D(r, "network_reserve_ratio", "latest_date")}="",'
-                       f'"n/a — no settlement series stored (Artemis export not read for this project)",'
+                       f'"n/a — no settlement series stored (Artemis export not read for this project)'
+                       f'{_settlement_gap_text(p["name"])}",'
                        f'{R.D(r, "network_reserve_ratio", "latest_date")}{_settlement_end_text(p["name"])})')
          if "network_reserve_ratio" in config.metrics_for_project(p) else "", FMT_TEXT, "pull", False,
          {"metric": "network_reserve_ratio"}),
@@ -12624,6 +12625,12 @@ def _a1_headline(R: Refs) -> list[tuple]:
          lambda r, p: config.TRADING_THROUGHPUT["meaningful"].get(p["name"], "")
          if p["name"] in config.TRADING_THROUGHPUT["chains"] else "", FMT_TEXT, "text"),
     ]
+
+
+def _settlement_gap_text(name: str) -> str:
+    """R24: a project's labelled settlement gap (config settlement_gap), appended to the n/a — '' for every other project."""
+    g = (config.PROJECT_BY_NAME.get(name) or {}).get("settlement_gap")
+    return f" — {g}".replace('"', "'") if g else ""
 
 
 def _settlement_end_text(name: str) -> str:

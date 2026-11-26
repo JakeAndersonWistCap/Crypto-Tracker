@@ -226,19 +226,19 @@ METRICS = {
     # DefiLlama's daily DEX volume and perps volume BY CHAIN, one source for all four chains, full
     # history; their sum and its NRR are their own metrics and never share a column with the
     # settlement-volume ones. See TRADING_THROUGHPUT.
-    "dex_volume_usd":             {"label": "DEX spot volume per day ($, DefiLlama by chain)", "kind": "flow", "unit": "usd", "archetypes": [1], "tiers": [1], "sanity_min": 0, "sanity_max": 1e12, "only_projects": ("Ethereum", "Near", "Hyperliquid", "Plume")},
+    "dex_volume_usd":             {"label": "DEX spot volume per day ($, DefiLlama by chain)", "kind": "flow", "unit": "usd", "archetypes": [1], "tiers": [1], "sanity_min": 0, "sanity_max": 1e12, "only_projects": ("Ethereum", "Solana", "Near", "Hyperliquid", "Plume")},
     "perps_volume_usd":           {"label": "Perps volume per day ($ ≈ Σ daily candle volume × close, Hyperliquid's own info API — an approximation of notional)", "kind": "flow", "unit": "usd", "archetypes": [1], "tiers": [1], "sanity_min": 0, "sanity_max": 1e12, "only_projects": ("Hyperliquid",)},
     "p2p_transfer_volume_usd":    {"label": "P2P transfer volume per day ($, Artemis method: ERC-20 + native between non-contract accounts, same-day prices) — UNVALIDATED", "kind": "flow", "unit": "usd", "archetypes": [1], "tiers": [1], "sanity_min": 0, "sanity_max": 1e12, "only_projects": ("Plume", "Near")},
-    "trading_throughput_usd":     {"label": "Trading throughput per day ($) = DEX + perps volume (DefiLlama) — NOT Artemis settlement volume", "kind": "flow", "unit": "usd", "archetypes": [1], "tiers": [1], "sanity_min": 0, "sanity_max": 2e12, "only_projects": ("Ethereum", "Near", "Hyperliquid", "Plume"), "view_only": True},
-    "trading_throughput_365d_usd": {"label": "Trading throughput, trailing 365 days ($, DefiLlama DEX + perps)", "kind": "stock", "unit": "usd", "archetypes": [1], "tiers": [1], "sanity_min": 0, "sanity_max": 1e15, "only_projects": ("Ethereum", "Near", "Hyperliquid", "Plume"), "view_only": True},
-    "network_reserve_ratio_throughput": {"label": "Network Reserve Ratio ON TRADING THROUGHPUT (market cap ÷ trailing-365d DEX + perps volume)", "kind": "stock", "unit": "pct", "archetypes": [1], "tiers": [1], "sanity_min": 0, "sanity_max": 1000, "only_projects": ("Ethereum", "Near", "Hyperliquid", "Plume"), "view_only": True},
-    "settlement_volume_usd":      {"label": "Settlement volume per day ($, Artemis: DEX + NFT trading + P2P transfers)", "kind": "flow", "unit": "usd", "archetypes": [1], "tiers": [5], "sanity_min": 0, "sanity_max": 1e12, "only_projects": ("Ethereum", "Near", "Hyperliquid", "Plume"),
+    "trading_throughput_usd":     {"label": "Trading throughput per day ($) = DEX + perps volume (DefiLlama) — NOT Artemis settlement volume", "kind": "flow", "unit": "usd", "archetypes": [1], "tiers": [1], "sanity_min": 0, "sanity_max": 2e12, "only_projects": ("Ethereum", "Solana", "Near", "Hyperliquid", "Plume"), "view_only": True},
+    "trading_throughput_365d_usd": {"label": "Trading throughput, trailing 365 days ($, DefiLlama DEX + perps)", "kind": "stock", "unit": "usd", "archetypes": [1], "tiers": [1], "sanity_min": 0, "sanity_max": 1e15, "only_projects": ("Ethereum", "Solana", "Near", "Hyperliquid", "Plume"), "view_only": True},
+    "network_reserve_ratio_throughput": {"label": "Network Reserve Ratio ON TRADING THROUGHPUT (market cap ÷ trailing-365d DEX + perps volume)", "kind": "stock", "unit": "pct", "archetypes": [1], "tiers": [1], "sanity_min": 0, "sanity_max": 1000, "only_projects": ("Ethereum", "Solana", "Near", "Hyperliquid", "Plume"), "view_only": True},
+    "settlement_volume_usd":      {"label": "Settlement volume per day ($, Artemis: DEX + NFT trading + P2P transfers)", "kind": "flow", "unit": "usd", "archetypes": [1], "tiers": [5], "sanity_min": 0, "sanity_max": 1e12, "only_projects": ("Ethereum", "Solana", "Near", "Hyperliquid", "Plume"),
                                    "definition": "Artemis SETTLEMENT_VOLUME (Powered by Flipside): total settlement volume per day in USD = DEX volumes + NFT trading volume + P2P transfer volume"},
     # READ-TIME (build_workbook._settlement_views): the 365 days ending on the export's LAST date,
     # and market cap on that same date over it. Both dated to the export's last date, so the cell
     # carries it; monthly cadence (manual_granularity) = stale, AMBER, after 45 days.
-    "settlement_volume_365d_usd": {"label": "Settlement volume, trailing 365 days to the export's last date ($, Artemis)", "kind": "stock", "unit": "usd", "archetypes": [1], "tiers": [5], "sanity_min": 0, "sanity_max": 1e14, "only_projects": ("Ethereum", "Near", "Hyperliquid", "Plume"), "view_only": True},
-    "network_reserve_ratio":      {"label": "Network Reserve Ratio (market cap ÷ trailing-365d settlement volume, same end date)", "kind": "stock", "unit": "pct", "archetypes": [1], "tiers": [5], "sanity_min": 0, "sanity_max": 100, "only_projects": ("Ethereum", "Near", "Hyperliquid", "Plume"), "view_only": True},
+    "settlement_volume_365d_usd": {"label": "Settlement volume, trailing 365 days to the export's last date ($, Artemis)", "kind": "stock", "unit": "usd", "archetypes": [1], "tiers": [5], "sanity_min": 0, "sanity_max": 1e14, "only_projects": ("Ethereum", "Solana", "Near", "Hyperliquid", "Plume"), "view_only": True},
+    "network_reserve_ratio":      {"label": "Network Reserve Ratio (market cap ÷ trailing-365d settlement volume, same end date)", "kind": "stock", "unit": "pct", "archetypes": [1], "tiers": [5], "sanity_min": 0, "sanity_max": 100, "only_projects": ("Ethereum", "Solana", "Near", "Hyperliquid", "Plume"), "view_only": True},
     # Hyperliquid's staking-reward reserve (tokenDetails.futureEmissions) — pre-minted, INSIDE
     # totalSupply. Its decline over a window is rewards paid; that is the validator-yield input.
     # ===== ON-CHAIN CIRCULATING SUPPLY (M, Jake 2026-09-30). See CIRCULATING_ONCHAIN. =====
@@ -3715,25 +3715,62 @@ PROJECTS = [
         "name": "Solana", "symbol": "SOL",
         "coingecko_id": "solana",
         "defillama_fees_slug": "solana", "defillama_protocol": None, "defillama_chain": "Solana",
-        "archetypes": [1],  # Jake 2026-10-12, Phase 2 amendment 1: fee-market burns come off A4 entirely and feed net issuance on A1
+        "archetypes": [1, 4],  # R24 (Jake 2026-11-26): A1 Infrastructure + A4 Permanent burn (A3 does not apply)
         "archetypes_held": [],
         "fee_split": dict(_NO_SPLIT),
-        "burn_split": {"share_of_fees_burned": None, "source_url": "https://solana.com/docs/economics", "source_date": BRIEF_DATE, "status": "unconfirmed",
-                       "note": "Partial fee burn (historically 50% of the base fee). SIMD-96 changed priority-fee handling. "
-                               "CONFIRM the current effective share before enabling the tier 1 rule."},
+        "burn_split": {"share_of_fees_burned": None, "source_url": "https://raw.githubusercontent.com/DefiLlama/dimension-adapters/master/fees/solana.ts", "source_date": "2026-11-26", "status": "confirmed",
+                       "note": "CONFIRMED 2026-11-26: 50% of the BASE fee (5,000 lamports a signature) is burned; the leader "
+                               "keeps the other 50% of the base fee and, since SIMD-0096 (slot 320,112,000, 2025-02-12), "
+                               "ALL of the priority fee (before it, 50% of the priority fee was burned too). The burned "
+                               "share of TOTAL fees is not a constant (it falls as priority fees grow), so no single "
+                               "share_of_fees_burned is declared."},
         "issuance_schedule": None,
         "contracts": {},
         # PROTOCOL BURN, not transfer burn. Supply is destroyed with no transfer, so there is no
         # address balance to read and burn_address is deliberately None.
         "burn_address": None,
         "burn_mechanism": {
-            "model": "protocol_level_destruction", "status": "assumed",
-            "source_url": None, "source_date": None,
-            "note": "ASSUMED. Solana burns 50% of each transaction fee at the protocol level. No Solana document is "
-                    "on file stating it, and the burn/issuance split matters here more than most: SOL "
-                    "issues by inflation schedule AND burns fees, so the supply delta nets two large "
-                    "opposing flows.",
+            "model": "protocol_level_destruction", "status": "confirmed",
+            "source_url": "https://raw.githubusercontent.com/DefiLlama/dimension-adapters/master/fees/solana.ts", "source_date": "2026-11-26",
+            "note": "CONFIRMED 2026-11-26 from DefiLlama's Solana fee adapter (fees/solana.ts, read raw): burned = 50% of "
+                    "base fees (+ 50% of priority fees before SIMD-0096, 2025-02-12); 'Base fee is 50/50 burn and leader "
+                    "(docs.anza.xyz/implemented-proposals/transaction-fees)'. SOL issues by inflation AND burns fees, so "
+                    "the burn is shown gross against issuance (A4 burn / issuance), never alone.",
         },
+        # R24: the daily burn is DefiLlama's burned-fee revenue / the day's price (the Ethereum pattern; history as far as
+        # price_usd goes). The chain's own fall of total supply inside one epoch is the cross-check
+        # (solana_burn_observed_tokens_per_day, forward-only).
+        "chain_burn_from_revenue": {
+            "status": "confirmed", "share_of_fees": None,
+            "source_url": "https://raw.githubusercontent.com/DefiLlama/dimension-adapters/master/fees/solana.ts",
+            "source_date": "2026-11-26",
+            "components": "50% of base fees (5,000 lamports a signature, vote transactions included); priority fees are the "
+                          "leader's since SIMD-0096 (2025-02-12), so no priority fee is in it for any stored day",
+            "expect_daily_tokens": None,
+            "how": "revenue_usd / price_usd of the same day = SOL burned; MODELLED only in the sense of a USD-to-SOL "
+                   "conversion on the day's price (the adapter's USD value is Allium's lamports x its price)",
+        },
+        # R24: the chain's own daily reads (fetch/solana.SolanaChain), FORWARD-ONLY from the first read
+        "solana_chain": {
+            "supply_metric": "total_supply_protocol", "noncirc_metric": "solana_noncirculating_tokens",
+            "stake_metric": "solana_staked_tokens", "noncirc_stake_metric": "solana_noncirc_staked_tokens",
+            "stake_circ_metric": "solana_staked_circulating_tokens",
+            "rate_metric": "solana_inflation_rate", "issuance_metric": "gross_issuance_tokens",
+            "burn_obs_metric": "solana_burn_observed_tokens_per_day",
+            "decided": "Jake 2026-11-26 (R24)",
+        },
+        "issuance_supply_metric": "total_supply_protocol",
+        "a1_burn_metric": "gross_burn_tokens",
+        "proposals_status": {
+            "checked": "2026-11-26", "source": "https://github.com/solana-foundation/solana-improvement-documents",
+            "note": "SIMD-0411, SIMD-0228 and SIMD-547: none is live (label only, nothing wired). ON CHAIN: getInflationGovernor "
+                    "on 2026-11-26 reads initial 0.08, taper 0.15, terminal 0.015 — SIMD-0411's 30% taper is not in force. "
+                    "SIMD-0228 failed its March 2025 validator vote (61.6% < 66.67%, press reports). The SIMD repository's "
+                    "own status field could not be read from this host (GitHub API 403; no file path confirmed), so the "
+                    "status of SIMD-0411 and SIMD-547 beyond 'not enacted' is NOT VERIFIED. SIMD-0096 IS live (slot "
+                    "320,112,000, 2025-02-12) and is in the burn above.",
+        },
+        "settlement_gap": "settlement: P2P transfer leg has no free source — Jake decides on billing (docs/r24_solana_settlement.md)",
         "burn_read_method": "protocol_level",
         "burn_read_note": "Partial fee burn via the SPL burn instruction — supply is destroyed, not sent to a wallet. There is no burn address to read. Needs a chain-data or dashboard source.",   # not EVM — tier 2 web3 path does not apply
         "buyback_destination": "burn", "destination_split": None, "burn_execution": "protocol",
@@ -21464,6 +21501,10 @@ TRADING_THROUGHPUT = {
                      "covered": ("dex_volume_usd",),
                      "coverage": "DEX: hundreds of adapters (Uniswap, Curve, Balancer...). Perps: few — "
                                  "apex-omni, aevo, extended, boros, toros, synthetix-v4, Orderly's slice"},
+        "Solana": {"slug": "solana", "label": "Solana", "covered": ("dex_volume_usd",),
+                   "coverage": "DEX: DefiLlama /overview/dexs/solana (read 2026-11-26, 1,879 daily rows from "
+                               "2021-10-01). Perps: none read (paid route). The P2P transfer leg of settlement has "
+                               "no free source (docs/r24_solana_settlement.md)"},
         "Near": {"slug": "near", "label": "Near", "covered": ("dex_volume_usd",),
                  "coverage": "DEX: ref-finance (Rhea), NEAR Intents (cross-chain intents booked to NEAR — "
                              "expect it to DOMINATE the series), veax, delta-trade, Thorchain's NEAR leg. "
@@ -21491,6 +21532,7 @@ TRADING_THROUGHPUT = {
     "meaningful": {
         "Hyperliquid": "THROUGHPUT only — its activity is perps, which settlement volume excludes; "
                        "and HyperCore transfers are not publicly indexed, so settlement is not rebuildable",
+        "Solana": "throughput only (DEX). settlement: P2P transfer leg has no free source — Jake decides on billing",
         "Ethereum": "both: settlement (Artemis) and throughput — read them as different measures",
         "Near": "throughput until a settlement rebuild validates (NEAR Intents dominates DEX volume)",
         "Plume": "both, read apart: settlement is REBUILT by Artemis's method (UNVALIDATED until checked on "
@@ -52351,3 +52393,63 @@ ZERO_NEW_SUPPLY_LABEL = "Net holder yield"
 def zero_new_supply(project_name: str) -> dict | None:
     """R24: the declaration that the project's new supply is zero (its key is net holder yield), or None."""
     return ZERO_NEW_SUPPLY.get(project_name)
+
+
+
+# =====================================================================================================================
+# ROUND 24 — SOLANA (SOL), archetypes A1 Infrastructure + A4 Permanent burn (Jake 2026-11-26). SPEC R24 Solana.
+# Reader: fetch/solana.SolanaRPC (methods added, no second reader); tier fetch/solana.SolanaChain; docs/r24_sol_section.md.
+# EVERY chain read below is FORWARD-ONLY from its first stored day (the public RPC serves no past supply, stake or
+# rewards); the burn alone has history (DefiLlama burned-fee revenue / price, the Ethereum pattern).
+# =====================================================================================================================
+_SOL_ONLY = ("Solana",)
+METRICS["solana_noncirculating_tokens"] = {
+    "label": "SOL in the issuer's non-circulating set — getSupply.nonCirculating (Agave rule: a fixed account list + stake "
+             "accounts with a lockup in force or an autostake withdraw authority)",
+    "kind": "stock", "unit": "tokens", "archetypes": [1], "tiers": [1], "sanity_min": 0, "sanity_max": 2e8,
+    "only_projects": _SOL_ONLY}
+METRICS["solana_staked_tokens"] = {
+    "label": "SOL staked — Σ activatedStake over getVoteAccounts (current + delinquent)",
+    "kind": "stock", "unit": "tokens", "archetypes": [1], "tiers": [1], "sanity_min": 1e8, "sanity_max": 6e8,
+    "only_projects": _SOL_ONLY}
+METRICS["solana_noncirc_staked_tokens"] = {
+    "label": "SOL actively delegated INSIDE the non-circulating accounts — already out of circulating, so off the staked figure once",
+    "kind": "stock", "unit": "tokens", "archetypes": [1], "tiers": [1], "sanity_min": 0, "sanity_max": 2e8,
+    "only_projects": _SOL_ONLY}
+METRICS["solana_inflation_rate"] = {
+    "label": "Solana's inflation rate in force (getInflationRate.total, a fraction a year)",
+    "kind": "stock", "unit": "pct", "archetypes": [1, 4], "tiers": [1], "sanity_min": 0.01, "sanity_max": 0.09,
+    "only_projects": _SOL_ONLY}
+METRICS["solana_burn_observed_tokens_per_day"] = {
+    "label": "SOL burned per day, OBSERVED on chain: the fall of getSupply total across a short window inside one epoch, "
+             "scaled to a day (MODELLED to a day; cross-check of the DefiLlama-derived burn)",
+    "kind": "flow", "unit": "tokens", "archetypes": [4], "tiers": [1], "sanity_min": 0, "sanity_max": 1e6,
+    "only_projects": _SOL_ONLY}
+_m = METRICS["total_supply_protocol"]
+_m["only_projects"] = tuple(_m["only_projects"]) + _SOL_ONLY
+PROJECT_BY_NAME["Solana"]["sanity"] = {"total_supply_protocol": {"min": 4e8, "max": 9e8}}
+METRICS["solana_staked_circulating_tokens"] = {
+    "label": "SOL staked and still counted in circulating = solana_staked_tokens - solana_noncirc_staked_tokens (a token comes off once)",
+    "kind": "stock", "unit": "tokens", "archetypes": [1], "tiers": [1], "sanity_min": 1e8, "sanity_max": 6e8,
+    "only_projects": _SOL_ONLY}
+CP_STAKE_METRIC["Solana"] = "solana_staked_circulating_tokens"
+STAKE_COUNTS_AS_LOCKED["Solana"] = (
+    "Staked SOL counts as locked (the same rule as Ethereum): getVoteAccounts' activated stake. Solana has no lock "
+    "contract, so locked_tokens is not applicable; the lock rate reads the stake series the float reads.")
+SOURCE_REGISTER["api.mainnet-beta.solana.com"] = {
+    "used_for": "R24: Solana's chain reads once a day (getSupply, getInflationRate/Governor, getVoteAccounts, getEpochInfo, "
+                "EpochRewards sysvar, getBlockTime, getMultipleAccounts); GEODNET's burn account (older)",
+    "paths": ["/ (JSON-RPC)"],
+    "robots": "a public JSON-RPC endpoint; about 45 small calls a day, paced (429 retried briefly, then the next endpoint)",
+    "terms": {"url": "https://solana.com/docs/references/clusters", "status": "public cluster endpoint; keyless; rate-limited"}}
+
+# Free float: circulating (the issuer's figure = getSupply circulating = CoinGecko's, equal to 7 digits on 2026-11-26)
+# minus staked SOL that circulating still counts. The foundation's liquid wallets are a LABELLED GAP: no published list
+# (docs/r24_sol_section.md); the lines say so rather than reading it as 0.
+SOLANA_FOUNDATION_GAP = ("Solana Foundation liquid wallets: no primary-source address list exists (the Foundation's "
+                         "transparency page is dated 2020, no wallet attribution) — NOT subtracted from the float, "
+                         "labelled gap, never 0")
+SOLANA_SETTLEMENT_GAP = "settlement: P2P transfer leg has no free source — Jake decides on billing"
+SOLANA_FTX_GAP = ("FTX estate unlocks: no primary source for which lockups belong to the estate — labelled gap. On chain, "
+                  "738 stake accounts (16.49M SOL, 2026-11-26) are lockup-in-force, unlocking monthly to 2028+; whose they "
+                  "are is not on chain")

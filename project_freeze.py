@@ -105,10 +105,11 @@ def _build(out_dir: str) -> tuple[Path, Path]:
     import measuring_guard as mg
     from real_dump import to_store
     db = os.path.join(out_dir, "metrics.db")
-    asof = None
-    for pl in mg._payloads():
+    from real_dump import build_asof
+    payloads = mg._payloads()
+    for pl in payloads:
         to_store(pl, db)
-        asof = max(asof or pl["meta"]["asof"], pl["meta"]["asof"])
+    asof = build_asof(payloads)
     sm.DB_PATH = db
     import build_workbook as bw
     import config

@@ -170,11 +170,11 @@ def _build(d: Path) -> dict:
     import store as sm
     from real_dump import to_store
     db = d / "metrics.db"
-    asofs = []
-    for pl in mg._payloads():
+    from real_dump import build_asof
+    payloads = mg._payloads()
+    for pl in payloads:
         to_store(pl, db)
-        asofs.append(pl["meta"]["asof"])
-    asof = pd.Timestamp(max(asofs))
+    asof = pd.Timestamp(build_asof(payloads))
     with pytest.MonkeyPatch.context() as mp:
         mp.setattr(sm, "DB_PATH", str(db))
         mp.setitem(sys.modules, "recalc", None)
