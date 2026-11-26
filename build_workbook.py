@@ -15874,7 +15874,8 @@ def _cp_cols(R: Refs, data_by_key: dict) -> list[tuple]:
         ("Total supply (tokens)", lambda r, p: pull(R.D(r, "total_supply", "now")), FMT_NUM, "pull", False, {"metric": "total_supply"}),
         ("Circulating supply (tokens) — our convention, the figure in use", lambda r, p: pull(circ(r, p)), FMT_NUM,
          "pull", False, {"metric": "circulating_supply_used",
-                         "note_fn": lambda p: config.coingecko_circ_basis_note(p["name"])}),   # PR1.U5, PR4.1
+                         "note_fn": lambda p: "\n\n".join(x for x in (
+                             config.coingecko_circ_basis_note(p["name"]), config.CIRC_CAVEAT.get(p["name"], "")) if x)}),   # PR1.U5, PR4.1; R23
         # R20: the three components the one free float subtracts, each its own stored series (free_float.views)
         ("Staked / locked inside circulating (tokens)",
          lambda r, p: calc(R.D(r, free_float.C_LOCK, "now")), FMT_NUM, "calc", False,

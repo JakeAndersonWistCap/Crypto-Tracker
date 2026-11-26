@@ -43494,12 +43494,17 @@ FROZEN_MOVES["Hyperliquid"] = _frozen_moves_record("hyperliquid")
 # holder" test). A position is classified by classify_position(): OUT of circulating only when unvested / unreleased AND
 # immovable AND idle; BURNED = out of circulating and of total; everything else circulating, and OFF FREE FLOAT when it
 # is staked, locked or earning, or held by the issuer / foundation / treasury (bought-back tokens held included).
+CIRC_CAVEAT = {   # R23 (Jake 2026-11-25): a caveat said on the project's circulating cell
+    "Chainlink": "issuer-declared reserve; no on-chain lock (27 Safes 3-of-5, 4 multisigs 3-of-6, 2 EOAs); release "
+                 "schedule is a published statement (docs/r23_chainlink_wallets.md). A send out of the 33 wallets counts "
+                 "as new supply (release, (e)) and reaches circulating and the free float on the day"}
 ISSUANCE_PCT_LABEL = {   # R23 (Jake 2026-11-25): the number stays, the window it was read over is said on the cell
     "Hyperliquid": "13-day window, annualised (as read 2026-11-25)"}
 CIRCULATING_RULE = {
     "decided": "Jake 2026-11-17 (final)",
     "out_only_if_all": ("not yet vested or released", "nobody can move it", "earns nothing (idle)"),
     # R23 (Jake 2026-11-25, Hyperliquid's team wallet): the unvested leg stays out even where it is staked
+    "issuer_figure": "Circulating follows the issuer's own published figure, adjusted by Jake's rule where on-chain evidence differs. Locked or earning holder tokens are in. An issuer-declared unreleased reserve is out until it moves; when it moves it counts as new supply.",
     "unvested_staked": "unvested and non-transferable is out of circulating even when staked, because the holder can't "
                        "sell it",
     "burned": "destroyed, or at an address nobody controls: out of circulating and of total supply",

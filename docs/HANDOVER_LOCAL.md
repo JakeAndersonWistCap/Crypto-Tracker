@@ -157,6 +157,8 @@ earlier). From now the daily run reads those holes through the normal top-up pat
 existing monthly ledger). If Ethereum's MIN is on or before 2024-11-25 no Ethereum fill is needed. The billed one-shot
 (`bigquery_backfill.py`) stays built, dry-run-ready and OFF.
 
+CIRCULATING RULE, R23 wording (Jake 2026-11-25): Circulating follows the issuer's own published figure, adjusted by Jake's rule where on-chain evidence differs. Locked or earning holder tokens are in. An issuer-declared unreleased reserve is out until it moves; when it moves it counts as new supply. Unvested and non-transferable is out of circulating even when staked, because the holder can't sell it. Chainlink's circulating cell carries the caveat "issuer-declared reserve; no on-chain lock (27 Safes 3-of-5, 4 multisigs 3-of-6, 2 EOAs); release schedule is a published statement"; docs/r23_chainlink_wallets.md is the record.
+
 Round 23 added to what follows: unvested-and-staked stays out of circulating (the rule's wording); Aethir's holder value
 yield and burn ÷ issuance are read since the burn began (2026-11-02, labelled "since 2026-11-02"); Plume's "Insider share
 of stake" reads n/a "issuer publishes no insider wallet list" (allowed label) and Plume is OUT of the freeze commands;
