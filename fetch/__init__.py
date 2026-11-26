@@ -88,6 +88,7 @@ from .aero_leaf import AeroLeafEpochs
 from .aero_voter import AeroVoter
 from .near_bigquery import NearBigQuery
 from .plume_staking import PlumeStaking
+from .origintrail import OriginTrailChain
 from .plume_claims import PlumeClaims
 from .scrape import Scrape, entry_ready, load_registry
 from .validate import (REASON_CHANGE, check_cross_checks, check_impossible_relations,
@@ -167,6 +168,8 @@ TIER_ORDER = [
     ("reward_vault", 2, lambda ctx: RewardVaultRates(prior_values=ctx["prior_values"])),
     # Plume's staking APR and total staked, from its own staking diamond (2026-09-30).
     ("plume_staking", 2, lambda ctx: PlumeStaking()),
+    # R24: OriginTrail (TRAC) staked, publishing fees and staker rewards from its Base / Gnosis contracts (keyless RPCs)
+    ("origintrail_chain", 2, lambda ctx: OriginTrailChain()),
     # G18-2: Plume's airdrop claims by campaign id over rpc.plume.org (never explorer.plume.org, plume_staking's host)
     ("plume_claims", 2, lambda ctx: PlumeClaims()),
     # Plume's settlement volume rebuilt by Artemis's method — P2P transfers from Blockscout (2026-10-01).
@@ -2143,7 +2146,7 @@ TIER_BUDGET_S = {
     "aethir_chain": 300,
     "aero_v3": 240,
     "aero_v3_epoch": 240,              # R8 item 2: stops itself at 200 s (fetch.aero_v3.EPOCH_BUDGET_S), scan saved
-    "scrape": 240, "dune": 420, "ultrasound": 60, "plume_staking": 180, "plume_claims": 180, "blockscout_stats": 90,
+    "scrape": 240, "dune": 420, "ultrasound": 60, "plume_staking": 180, "origintrail_chain": 240, "plume_claims": 180, "blockscout_stats": 90,
     # one candle call per perp market a day, paced to Hyperliquid's 1200 weight/min (~50 calls/min);
     # the adapter stops itself at 540s and resumes next run, storing only fully-read days
     "hl_candles": 600,

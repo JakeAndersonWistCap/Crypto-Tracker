@@ -52351,3 +52351,104 @@ ZERO_NEW_SUPPLY_LABEL = "Net holder yield"
 def zero_new_supply(project_name: str) -> dict | None:
     """R24: the declaration that the project's new supply is zero (its key is net holder yield), or None."""
     return ZERO_NEW_SUPPLY.get(project_name)
+
+
+# =====================================================================================================================
+# ===== ROUND 24 — ORIGINTRAIL (TRAC), A2 COORDINATION (Jake 2026-11-26) — fetch/origintrail.py, docs/r24_trac_section.md =====
+# Publishers pay TRAC fees; the stakers behind the nodes are paid from those publishing fees, not from emissions, so value
+# to stakers qualifies as holder value. Nothing is bought and nothing is burned. Supply is fixed: Ethereum TracToken
+# totalSupply 500,000,000 and mintingFinished() = true. Base, Gnosis and NeuroWeb TRAC are lock-and-mint copies.
+# =====================================================================================================================
+_R24T = "Jake 2026-11-26 (Round 24, TRAC)"
+_R24T_READ = "2026-11-26"
+PROJECT_BY_NAME["OriginTrail"]["origintrail_chain"] = {
+    "coingecko_id": "origintrail",
+    "ethereum": {"rpc": ["https://ethereum-rpc.publicnode.com", "https://eth-mainnet.public.blastapi.io", "https://eth-pokt.nodies.app", "https://eth.drpc.org"], "token": "0xaA7a9CA87d3694B5755f213B5D04094b8d0F0A6F"},
+    # the V10 Hubs (docs.origintrail.io/general/contract-addresses); every other contract is resolved THROUGH the Hub
+    "chains": {
+        "base": {"rpc": ["https://base-rpc.publicnode.com", "https://base.gateway.tenderly.co", "https://base-pokt.nodies.app", "https://base-mainnet.public.blastapi.io", "https://mainnet.base.org"], "token": "0xa81a52b4dda010896cdd386c7fbdc5cdc835ba23",
+                 "hub": "0x99Aa571fD5e681c2D27ee08A7b7989DB02541d13",
+                 "contracts": ("StakingStorage", "ConvictionStakingStorage", "StakingV10", "EpochStorageV8",
+                               "ParametersStorage"),
+                 "stake_contracts": ("StakingStorage", "ConvictionStakingStorage"), "staking": "StakingV10",
+                 "fee_storage": "EpochStorageV8", "parameters": "ParametersStorage",
+                 # publicnode serves logs in 50,000-block windows and keeps ~2026-09-07 on; Base moved to 0.2 s blocks
+                 # in 2026, so a day is read from timestamps sampled every 100,000 blocks
+                 "log_step": 50_000, "window_blocks": 1_800_000, "anchor_every": 25_000,
+                 "first_readable_block": 51_000_000},
+        "gnosis": {"rpc": ["https://rpc.gnosischain.com"], "token": "0xEddd81E0792E764501AaE206EB432399a0268DB5",
+                   "hub": "0x882D0BF07F956b1b94BBfe9E77F47c6fc7D4EC8f",
+                   "contracts": ("StakingStorage", "ConvictionStakingStorage", "StakingV10", "EpochStorageV8",
+                                 "ParametersStorage"),
+                   "stake_contracts": ("StakingStorage", "ConvictionStakingStorage"), "staking": "StakingV10",
+                   "fee_storage": "EpochStorageV8", "parameters": "ParametersStorage",
+                   "log_step": 2_000_000, "window_blocks": 400_000, "anchor_every": 50_000,
+                   "first_readable_block": 1}},
+    # the lock-and-mint check: each copy against the Ethereum escrow that backs it
+    "copies": {
+        "base": {"rpc": ["https://base-rpc.publicnode.com", "https://base.gateway.tenderly.co", "https://base-pokt.nodies.app", "https://base-mainnet.public.blastapi.io", "https://mainnet.base.org"], "token": "0xa81a52b4dda010896cdd386c7fbdc5cdc835ba23",
+                 "escrow": "0x3154Cf16ccdb4C6d922629664174b904d80F2C35", "escrow_is": "Base L1StandardBridge"},
+        "gnosis": {"rpc": ["https://rpc.gnosischain.com"], "token": "0xEddd81E0792E764501AaE206EB432399a0268DB5",
+                   "escrow": "0x88ad09518695c6c3712AC10a214bE5109a655671", "escrow_is": "Gnosis Omnibridge mediator"},
+        "neuroweb": {"rpc": ["https://astrosat-parachain-rpc.origin-trail.network"],
+                     "token": "0xFfFFFFff00000000000000000000000000000001",
+                     "escrow": "0xd803472c47a87D7B63E888DE53f03B4191B846a8", "escrow_is": "Snowbridge Agent"}},
+    "neuroweb_v8_stake": "NOT READ — no NeuroWeb V8 StakingStorage address could be confirmed (the NeuroWeb Hub "
+                         "0x0957e25B… answers for Token, ParametersStorage and KnowledgeCollection but has no "
+                         "StakingStorage; V10 is not live there)",
+    "read_on": _R24T_READ}
+PROJECT_BY_NAME["OriginTrail"]["extra_metrics"] = tuple(PROJECT_BY_NAME["OriginTrail"].get("extra_metrics") or ()) + (
+    "fees_usd", "revenue_usd")
+PROJECT_BY_NAME["OriginTrail"]["fee_split"].update({
+    "source_url": "https://docs.origintrail.io/concepts/conviction-and-economics", "source_date": _R24T_READ,
+    "note": PROJECT_BY_NAME["OriginTrail"]["fee_split"]["note"] + " R24: re-read on chain 2026-11-26 — publishers' fees "
+            "go to the staker reward pool (EpochStorageV8 TokensAddedToEpochRange), after the node operator fee and the "
+            "protocol treasury fee (default 3%, cap 10%, dormant: ParametersStorage.protocolTreasury() reads the zero "
+            "address on Base and Gnosis). No buyback, no burn."})
+# THE TAG: A2 only (the old A3 tag read a buyback that does not exist). A re-tag moves no series (metric_archetypes).
+ARCHETYPES_R20["OriginTrail"] = [2]
+apply_archetypes_r20()
+# THE SERIES
+METRICS["trac_publish_fees_tokens"] = {
+    "label": "TRAC paid by publishers into the staker reward pool per day — EpochStorageV8 TokensAddedToEpochRange "
+             "tokenAmount, Base + Gnosis (a publish is split into up to three events; a PCA settlement credits its "
+             "window at once). Base is read from 2026-09-07 (the keyless RPC's horizon), Gnosis from V10's deploy "
+             "(2026-06-26); before them NOT READ (R24)",
+    "kind": "flow", "unit": "tokens", "archetypes": [2], "tiers": [2], "sanity_min": 0, "sanity_max": 5e7,
+    "only_projects": ("OriginTrail",)}
+METRICS["trac_staker_rewards_tokens"] = {
+    "label": "TRAC that reached stakers per day, MEASURED — StakingV10 RewardsClaimed amounts (the reward after the node "
+             "operator fee and the protocol treasury fee, compounded into the position), Base + Gnosis (R24). CLAIMS, not "
+             "accrual: a reward is booked when a position is touched, so this LAGS what the pool owes stakers (a lower "
+             "bound of the value earned); the epoch-by-epoch accrual is NOT read",
+    "kind": "flow", "unit": "tokens", "archetypes": [2], "tiers": [2], "sanity_min": 0, "sanity_max": 5e7,
+    "only_projects": ("OriginTrail",)}
+METRICS["trac_staker_rewards_usd"] = {
+    "label": "Value paid to TRAC stakers out of publishing fees ($ per day) = trac_staker_rewards_tokens x that day's "
+             "price — HOLDER VALUE (HOLDER_VALUE distributed_extra): fee-funded, so credited (R24)",
+    "kind": "flow", "unit": "usd", "archetypes": [2], "tiers": [2], "sanity_min": 0, "sanity_max": 1e10,
+    "only_projects": ("OriginTrail",)}
+HOLDER_VALUE["OriginTrail"] = {
+    "distributed_extra": ("trac_staker_rewards_usd",),
+    "extra_why": "the rewards that reach TRAC stakers (StakingV10 RewardsClaimed, after the node operator fee and the "
+                 "protocol treasury fee), paid out of publishers' fees — not emissions (TRAC has none)"}
+METRICS["holder_value_revenue_usd"]["only_projects"] = tuple(dict.fromkeys(
+    (*METRICS["holder_value_revenue_usd"]["only_projects"], "OriginTrail")))
+# ZERO NEW SUPPLY: the A2 key shows net holder yield only (Jake 2026-11-26)
+ZERO_NEW_SUPPLY["OriginTrail"] = {
+    "why": "TRAC's supply is fixed: Ethereum TracToken totalSupply = 500,000,000 = TOTAL_NUM_TOKENS and mintingFinished() "
+           "= true (mint and mintMany are onlyOwner and need !mintingFinished; finishMinting has no reversal); the "
+           "founder and advisor vesting inside the token contract reads 0 on every tranche; Base, Gnosis and NeuroWeb "
+           "TRAC are lock-and-mint copies of the same tokens. Staker rewards are paid from publishing fees, not minted",
+    "source": "eth_call TracToken 0xaA7a9CA87d3694B5755f213B5D04094b8d0F0A6F mintingFinished() = 1, totalSupply() = "
+              "5e26, founderAmounts(0..7) = 0, preicoAndAdvisorsAmounts(0..1) = 0; verified source "
+              "repo.sourcify.dev/contracts/full_match/1/0xaA7a9CA87d3694B5755f213B5D04094b8d0F0A6F",
+    "declared": _R24T}
+# THE PAYOUT RATIO CAN READ FAR ABOVE 1 — real, a timing difference between booking and paying (read 2026-11-26)
+PAYOUT_ABOVE_ONE["OriginTrail"] = (
+    "Can read far above 1 — real, timing. Holder value is the TRAC that REACHED stakers in the window (StakingV10 "
+    "RewardsClaimed x the day's price); the revenue base is the fees credited to the reward pool in the same window. "
+    "A publisher's conviction commitment is booked as fees when it settles and is then paid out to stakers epoch by "
+    "epoch: Publishing Conviction Account #11 settled 11,000,000 TRAC on Gnosis on 2026-07-09 (tx 0x73a8bc5d…), so the "
+    "stakers' claims after it dwarf the few TRAC of fees booked in the 90 days to 2026-10-13. One commitment, not "
+    "organic usage.")
