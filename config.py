@@ -51786,8 +51786,15 @@ RULE_IN["Chainlink"].update({
     "off_float": tuple(m for m in RULE_IN["Chainlink"]["off_float"] if m != "noncirculating_holding_tokens"),
     "circulating": (1_000_000_000, 766_849_999.90),
     "decided": RULE_IN["Chainlink"]["decided"] + "; R22 (" + _R22C_DECIDED + " b): the 33 wallets OUT",
-    "flow_outside": (("+ released from the 33 non-circulating wallets (Chainlink's 7%-a-year schedule; outside "
-                      "circulating until released)", "unlock_release_tokens"),),
+    # R25 fix 2: circulating = total - the 33 wallets, so it rises by the GROSS fall of their summed balance
+    # (pool_release_tokens: same read, same day). unlock_release_tokens is that fall NET of the staking-funded part
+    # (STAKING_FUNDING_SPLIT, counted in (a)) and of the exchange leg (f) (RELEASE_LESS); the rule branch of the Flows
+    # statement drops the inserted "+ netted" line, so those parts stood as an unexplained residual (2026-10-10: fall
+    # 18,750,000, unlock 16,875,000 on Jake's store). Each part is still counted once in its own category.
+    "flow_outside": (("+ released from the 33 non-circulating wallets (Chainlink's 7%-a-year schedule; the gross fall of "
+                      "their summed balance, the day it leaves; outside circulating until released)",
+                      "pool_release_tokens"),),
+    "flow_outside_gross": True,
     "references": {"chainlink_api": (766_849_970.42, {}), "coingecko": (766_849_970.42, {}),
                    "coinmarketcap": (766_849_970.42, {})}})
 RULE_IN["Chainlink"].pop("reference_minus", None)
