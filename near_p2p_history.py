@@ -517,6 +517,10 @@ def cmd_gaps(db: Path, dry: bool = False) -> int:
             print(f"      of them {len(g['not_in_state'])} were never read from BigQuery (cost GB) and "
                   f"{len(g['in_state'])} are held in the BigQuery state but not valued/stored (waiting on NEAR's "
                   f"price_usd: cost 0 GB, `python token_metrics.py --project Near` stores them)")
+            un = (st or {}).get("unvalued") or {}
+            for d in g["in_state"]:
+                if str(d) in un:
+                    print(f"        {d}: NOT valued by the last run - {un[str(d)]}")
         else:
             print("      (no BigQuery state file here: every missing day is counted as unread)")
     budget = int(spec["monthly_budget_bytes"]) / 1e9

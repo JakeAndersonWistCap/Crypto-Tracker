@@ -48,6 +48,7 @@ from __future__ import annotations
 import csv
 import json
 import logging
+import math
 import os
 import re
 import time
@@ -873,24 +874,41 @@ class NearBigQuery:
         return got
 
     def _value(self, spec, st, out, name) -> None:
+        """R25 FIX 4: every held day is valued here with LOCAL arithmetic (native NEAR and wNEAR at the store's same-day
+        price_usd; a token at its cached DefiLlama price). A day is left out only with a STATED reason, kept in the state
+        (`unvalued`, read by `near_p2p_history.py gaps`): no NEAR price, no native-NEAR row (unknown, never 0), a figure
+        that is not finite or beyond the metric's sanity bound. A DefiLlama price lookup that FAILS no longer stops the
+        loop (it used to `break`: one failure, e.g. a rate limit after ~50 uncached days, left every LATER day unvalued
+        on every run): the lookup is not repeated this run, the day is valued without the tokens it could not price
+        (counted as unpriced, NOT cached, so the next run that reaches DefiLlama re-values it and the store follows)."""
         near_px = self._stored(name, "price_usd")
-        stored, unpriced, no_near, notes = [], 0, 0, []
+        stored, unpriced, no_near, notes, why = [], 0, 0, [], {}
+        net_down, no_price_days = False, []
+        import config                                          # noqa: PLC0415
+        hi = (config.METRICS.get(spec["p2p_metric"]) or {}).get("sanity_max")
         for key in sorted(st["days"]):
             toks = st["days"][key]
             day = pd.Timestamp(key)
             p_near = near_px.get(day) if near_px is not None else None
             if p_near is None or pd.isna(p_near):
                 no_near += 1
+                why[key] = "no stored NEAR price_usd for the day"
+                continue
+            if NATIVE not in toks:
+                why[key] = "no native-NEAR row held for the day (unknown, not valued as 0)"
                 continue
             others = [t for t in toks if t not in (NATIVE, WRAPPED)]
             px = st["prices"].get(key)
-            if px is None and others:
+            if px is None and others and not net_down:
                 try:
                     px = {c: list(v) for c, v in self._price(spec, day, [f"near:{t}" for t in others]).items()}
+                    st["prices"][key] = px
                 except Exception as e:  # noqa: BLE001
-                    notes.append(f"prices {key}: {str(e).split('?')[0]}")
-                    break
-                st["prices"][key] = px
+                    net_down = True
+                    notes.append(f"prices {key}: {str(e).split('?')[0]} (no further DefiLlama call this run)")
+                    px = None
+            if px is None and others:
+                no_price_days.append(key)
             px = px or {}
             usd = 0.0
             try:
@@ -901,16 +919,32 @@ class NearBigQuery:
                     if p[0] is None or p[1] is None:
                         unpriced += 1
                         continue
-                    usd += float(Decimal(toks[t]) / Decimal(10) ** int(p[1])) * p[0]
+                    try:
+                        usd += float(Decimal(toks[t]) / Decimal(10) ** int(p[1])) * p[0]
+                    except (InvalidOperation, ValueError, TypeError, OverflowError):
+                        unpriced += 1                       # one bad token amount leaves out that token, not the day
             except (InvalidOperation, ValueError) as e:
                 notes.append(f"{key}: {e}")
+                why[key] = f"native amount unreadable ({e})"
+                continue
+            if not math.isfinite(usd) or (hi is not None and usd > float(hi)):
+                why[key] = f"value {usd:,.4g} is beyond the sanity bound - NOT stored"
                 continue
             stored.append((day, usd))
+        st["unvalued"] = why
         self._save(st)
+        if no_price_days:
+            notes.append(f"{len(no_price_days)} day(s) valued WITHOUT their non-native tokens (DefiLlama not reached; "
+                         f"re-valued by the next run that reaches it): {no_price_days[0]}..{no_price_days[-1]}")
+        if why:
+            ks = sorted(why)
+            notes.append(f"{len(why)} day(s) NOT valued: " + "; ".join(f"{k} {why[k]}" for k in ks[:3])
+                         + ("..." if len(ks) > 3 else ""))
         if not stored:
             if st["days"]:
                 out.skipped(SOURCE, name, f"{spec['p2p_metric']}: {len(st['days'])} day(s) held, none valued "
-                                          f"({no_near} without a stored NEAR price_usd)", TIER)
+                                          f"({no_near} without a stored NEAR price_usd)"
+                                          + (f"; {'; '.join(notes[:3])}" if notes else ""), TIER)
             return
         frame = tidy(stored, name, spec["p2p_metric"], f"{SOURCE}:p2p[{LABEL}]", TIER)
         out.add(frame, SOURCE, name,
