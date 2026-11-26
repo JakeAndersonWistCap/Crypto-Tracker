@@ -1332,6 +1332,12 @@ def _archetype_keys(A: Audit, groups, projects, config, bw) -> dict:
                        3: (A3_TAB, bw.A3_KEY_HEAD),
                        4: (A4_TAB, "BURN ÷ ISSUANCE (x)")}.get(arch, (None, None))
         src = A.cell(sheet, head, n) if sheet else None
+        if arch in (2, 3) and config.zero_new_supply(n):
+            # R24: zero new supply — the key is NET HOLDER YIELD (labelled), ranked on it; no ratio and no "n/a"
+            nsrc = A.cell(CP_TAB, "NET HOLDER YIELD", n)
+            out[n] = (arch, nsrc.num if nsrc is not None else None, nsrc,
+                      f"{config.ZERO_NEW_SUPPLY_LABEL} (new supply is zero: no ratio is shown)")
+            continue
         if n in blocks:
             out[n] = (arch, None, src, blocks[n])
             continue

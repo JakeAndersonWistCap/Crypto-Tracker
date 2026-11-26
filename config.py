@@ -52337,3 +52337,17 @@ NEAR_P2P_HISTORY.update({
     "gap_from": "2025-12-29",        # the first day of the stored year per SPEC R18.N1 (held from 2025-12-29)
     "hole_chunks_per_run": 3,        # hole chunks (contiguous days, <= chunk_days each) one daily run may read
 })
+
+
+# ===== ROUND 24 (Jake 2026-11-26): ZERO NEW SUPPLY — NO A3-TYPE RATIO, NET HOLDER YIELD IS THE KEY =====
+# Where a project's new supply is zero (nothing emitted, unlocked or minted) the A2 / A3 key ratio (revenue to holders ÷
+# new supply, customer revenue ÷ emissions) divides by zero. It is not shown and no "n/a" is written (the audit cell is
+# blank); the archetype key is NET HOLDER YIELD, labelled "Net holder yield", and the ranking is on it. Projects with new
+# supply keep their ratio. A project is declared here only where its new supply is documented as zero (a fixed supply).
+ZERO_NEW_SUPPLY = {}      # project -> {"why", "source", "declared"}
+ZERO_NEW_SUPPLY_LABEL = "Net holder yield"
+
+
+def zero_new_supply(project_name: str) -> dict | None:
+    """R24: the declaration that the project's new supply is zero (its key is net holder yield), or None."""
+    return ZERO_NEW_SUPPLY.get(project_name)

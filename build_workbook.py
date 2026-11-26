@@ -12284,6 +12284,8 @@ def _a3_key_col(R: Refs, data_by_key: dict | None = None) -> tuple:
     trajectory row re-runs this builder k quarters back, so its latest quarter is the key."""
     def build(r, p):
         name = p["name"]
+        if config.zero_new_supply(name):
+            return ""          # R24: zero new supply — no ratio and no "n/a"; the key is net holder yield (reader)
         # the label is today's: the key reads 0 with it. An earlier quarter (the trajectory re-runs this builder k
         # quarters back) keeps what was measured then — a programme paused in May still paid in March
         # R21 (decision 5): a paused / off programme is no longer forced to 0 — the key reads what the data reads (0
@@ -16783,7 +16785,7 @@ def write_a2(ws, R: Refs, data_by_key: dict, months: list[str]):
                                       f"{_flow_rate(R, r, 'customer_revenue_usd', 'q0')}/{_flow_rate(R, r, 'emissions_tokens', 'q0')}"), FMT_USD4, "calc", True),
         # PR1B.3 (lead 2026-11-09): the key's emissions $ is the Emissions Q0 $ column's series (each day's emissions x
         # that day's price) — was the window's tokens x the 90-day average price; one emissions $ figure on the tab
-        (A2_KEY_HEAD, lambda r, p: _rev_emissions_value_day(R, r), FMT_X, "calc", True,
+        (A2_KEY_HEAD, lambda r, p: "" if config.zero_new_supply(p["name"]) else _rev_emissions_value_day(R, r), FMT_X, "calc", True,
          {"note_fn": lambda p: day_price_note(p["name"], "emissions_day_priced_usd")}),
         ("Supplier earnings from emissions ($, each day's emissions × that day's price)",
          lambda r, p: _day_priced_cell(R, r, "emissions_tokens", "emissions_day_priced_usd"), FMT_USD, "calc"),
