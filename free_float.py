@@ -413,7 +413,8 @@ def movements(p: dict, groups: dict, ff: pd.Series, comps: dict, circ: pd.Series
             kinds[_leg_kind(name, lab, sign)].append(m)
     tot = {k: sum((per_step(d(m)) for m in ms), pd.Series(0.0, index=idx)) for k, ms in kinds.items()}
     has_u = bool(config.has_unlock_leg(name)) and (name, "unlock_release_tokens") in groups \
-        and "unlock_release_tokens" not in kinds["unlocks_out"]
+        and "unlock_release_tokens" not in kinds["unlocks_out"] \
+        and not (config.RULE_IN.get(name) or {}).get("flow_outside_gross")   # R25: the statement's leg is the gross fall
     unlocks = per_step(d("unlock_release_tokens")) if has_u else tot["unlocks_out"]
     # unlocks out of issuer wallets the rule counts IN circulating: a fall of the issuer stock, shown as an unlock
     unlock_in = (unlocks - tot["unlocks_out"]) if has_u else pd.Series(0.0, index=idx)
