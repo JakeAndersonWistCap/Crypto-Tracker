@@ -52552,3 +52552,29 @@ PAYOUT_ABOVE_ONE["OriginTrail"] = (
     "epoch: Publishing Conviction Account #11 settled 11,000,000 TRAC on Gnosis on 2026-07-09 (tx 0x73a8bc5d…), so the "
     "stakers' claims after it dwarf the few TRAC of fees booked in the 90 days to 2026-10-13. One commitment, not "
     "organic usage.")
+
+
+# ===== ROUND 25 (Jake 2026-11-26): AETHIR'S HOLDER VALUE YIELD, DILUTION AND NET HOLDER YIELD OVER THE SAME SINCE-DAYS =====
+# Root cause (build_workbook.hv_ann): the sum "credited holder value + value to stakers" was returned unparenthesised, so
+# hvy read (a)+(b)/market cap — annual $ plus a ratio (Jake's 860,087 = $ a year). Fixed there. Dilution and net holder
+# yield read the same since-days: every Aethir outflow leg is cut at the burn's start too (`outflow_<c>_usd_sinceburn`,
+# read-time views; build_workbook._burn_since_views), so both legs of net holder yield cover the same days.
+# THE WINDOW: the mechanism went live 2026-11-02 (dashboard launchDate) = the window's START; the first on-chain burn is
+# 2026-11-03 04:31 UTC (the burn series has no row for the 2nd — never a filled 0).
+BURN_SINCE_OUTFLOWS = {"Aethir": ("outflow_a_usd", "outflow_b_usd", "outflow_c_usd", "outflow_d_usd", "outflow_e_usd",
+                                  "outflow_f_usd")}
+BURN_SINCE_LABEL = {"Aethir": "go-live; first burn 2026-11-03"}
+for _n, _ms in BURN_SINCE_OUTFLOWS.items():
+    if _n not in BURN_SINCE_LEGS:
+        continue
+    for _m in _ms:
+        if _m not in METRICS:
+            continue
+        _v = METRICS.setdefault(f"{_m}_sinceburn", {
+            "label": f"{_m}, from the day the A4 burn went live (R25: dilution read over the same days as holder value)",
+            "kind": "flow", "unit": METRICS[_m]["unit"], "archetypes": [2, 3, 4], "tiers": [2], "sanity_min": 0,
+            "sanity_max": METRICS[_m].get("sanity_max", 1e12), "view_only": True, "only_projects": ()})
+        _v["only_projects"] = tuple(sorted(set(_v["only_projects"]) | {_n}))
+        BURN_NOT_IN_NET[(_n, f"{_m}_sinceburn")] = (
+            f"{_m} from the day the A4 burn went live (R25 read-time view, read only by dilution and net holder yield) — "
+            f"the same dollars as {_m}, never summed with it")

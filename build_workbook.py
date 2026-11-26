@@ -2103,7 +2103,8 @@ def _burn_since_views(groups: dict, asof) -> None:
         if not (lo < start <= hi):
             continue
         cut = set()
-        for m in set(legs) | {"pool_release_tokens"} | set(config.BURN_SINCE_EXTRA.get(name, ())):
+        extra = set(config.BURN_SINCE_EXTRA.get(name, ()))
+        for m in set(legs) | {"pool_release_tokens"} | extra | set(config.BURN_SINCE_OUTFLOWS.get(name, ())):
             g = groups.get((name, m))
             if g is None or g.empty or f"{m}_sinceburn" not in config.METRICS:
                 continue
@@ -2114,8 +2115,12 @@ def _burn_since_views(groups: dict, asof) -> None:
                 metric=f"{m}_sinceburn", source=c["source"].astype(str) + f"[since {start.date()}: the burn began]"),
                 g.columns)
             cut.add(m)
-        if set(legs) <= cut:
-            BURN_SINCE[name] = {"start": str(start.date()), "days": int((hi - start).days) + 1, "cut": cut}
+        # R25: the A4 ratios need both their legs cut (all or none); holder value yield / dilution / net holder yield need
+        # their own legs (holder value + value to stakers + the outflows) — one project's cut must not wait on the other's
+        ratio = set(legs) <= cut
+        if ratio or (extra and extra <= cut):
+            BURN_SINCE[name] = {"start": str(start.date()), "days": int((hi - start).days) + 1, "cut": cut,
+                                "ratio": ratio, "legs": set(legs) | {"pool_release_tokens"}}
 
 
 def _iss_pct_fmt(name: str) -> str | None:
@@ -2127,13 +2132,15 @@ def _iss_pct_fmt(name: str) -> str | None:
 def burn_since(p: dict, m: str) -> str:
     """R22: the leg an A4 ratio reads — `<m>_sinceburn` where this build re-based the project's burn (Q0 only)."""
     st = BURN_SINCE.get(p["name"]) if not _SHIFT["k"] else None
+    if st and m in st["legs"] and not st["ratio"]:          # R25: an A4 ratio leg is cut with its partner or not at all
+        return m
     return f"{m}_sinceburn" if st and m in st["cut"] else m
 
 
 def _rb_both(name: str) -> bool:
     """Release ÷ burn is re-based only where BOTH its legs were cut (a premint project's release with its burn)."""
     st = BURN_SINCE.get(name) if not _SHIFT["k"] else None
-    return bool(st) and {"pool_release_tokens", config.a4_burn_metric(name)} <= st["cut"]
+    return bool(st) and st["ratio"] and {"pool_release_tokens", config.a4_burn_metric(name)} <= st["cut"]
 
 
 def _rb(p: dict, m: str) -> str:
@@ -2144,17 +2151,32 @@ def _hvy_since_fmt(name: str) -> str | None:
     st = BURN_SINCE.get(name) if not _SHIFT["k"] else None
     if not st or name not in config.BURN_SINCE_EXTRA or not set(config.BURN_SINCE_EXTRA[name]) <= st["cut"]:
         return None
-    return f'0.0%" since {st["start"]}";(0.0%)" since {st["start"]})"'
+    lab = config.BURN_SINCE_LABEL.get(name)
+    tail = f" since {st['start']}" + (f" ({lab})" if lab else "")
+    return f'0.0%"{tail}";(0.0%)"{tail}"'
 
 
 def burn_since_fmt(name: str) -> str | None:
     st = BURN_SINCE.get(name) if not _SHIFT["k"] else None
-    return (f'0.00"x since {st["start"]}";(0.00"x since {st["start"]})"') if st else None
+    return (f'0.00"x since {st["start"]}";(0.00"x since {st["start"]})"') if st and st["ratio"] else None
+
+
+def hv_since_note(p: dict) -> str:
+    """R25: what the since-the-burn-began reading of holder value yield / dilution / net holder yield says on the cell."""
+    st = BURN_SINCE.get(p["name"]) if not _SHIFT["k"] else None
+    if not st or p["name"] not in config.BURN_SINCE_EXTRA or not set(config.BURN_SINCE_EXTRA[p["name"]]) <= st["cut"]:
+        return ""
+    return (f"SINCE {st['start']} (R25, Jake 2026-11-26): the window STARTS {st['start']} — the day the burn mechanism went "
+            f"live (dashboard launchDate) — and the FIRST ON-CHAIN BURN is 2026-11-03 04:31 UTC (no burn row for "
+            f"{st['start']}; a day with no row is a hole, never a filled 0). Holder value (the burn x price + value to "
+            f"stakers), dilution and net holder yield are each read over these {st['days']} days to the as-of and annualised "
+            f"over the days each leg covers, so dilution and net holder yield use the SAME days as holder value. "
+            f"Not over 90: the days before the burn existed would divide a zero into the rate.")
 
 
 def burn_since_note(p: dict) -> str:
     st = BURN_SINCE.get(p["name"])
-    if not st:
+    if not st or not st["ratio"]:
         return ""
     return (f"SINCE THE BURN BEGAN (R22, Jake 2026-11-25): the burn started on {st['start']}, inside the 90-day "
             f"window, so both legs are read from {st['start']} to the as-of ({st['days']} days), not over 90 — the days "
@@ -15482,7 +15504,7 @@ def _cp_cols(R: Refs, data_by_key: dict) -> list[tuple]:
             return [v], a
         sv = burn_since(p, sv)
         w = R.D(r, sv, "q0")
-        return [v, w], f"({a})+({_annualise(R, r, p, sv, w)})"
+        return [v, w], f"(({a})+({_annualise(R, r, p, sv, w)}))"
 
     def hvy_expr(r, p):
         cells, a = hv_ann(r, p)
@@ -15524,9 +15546,10 @@ def _cp_cols(R: Refs, data_by_key: dict) -> list[tuple]:
             return ("n/a — no holder value yield: " + no_hv(p)[6:])[:240] \
                 if p["name"] in config.BUYBACK_ROUTE_OVERRIDE else "n/a — no holder value yield"
         cats = _cp_cats(p)
-        om = lambda c: lag_matched(p, f"outflow_{c}_usd")  # noqa: E731 — R5.3: a declared publish lag is matched
+        # R25: a burn begun inside the window — every leg is read over the days since it began (burn_since)
+        om = lambda c: burn_since(p, lag_matched(p, f"outflow_{c}_usd"))  # noqa: E731 — R5.3: a declared publish lag is matched
         dil = "+".join(ann(r, p, om(c)) for c in cats) or "0"
-        legs = [("holder value", "holder_value_revenue_usd", "q0")] + sv_legs(p) + \
+        legs = [("holder value", burn_since(p, "holder_value_revenue_usd"), "q0")] + sv_legs(p) + \
             [(f"outflow {c}", om(c), "q0") for c in cats]
         # R16 (Jake 2026-11-20): holder value and dilution are each day's $ (each day's price), so the yield divides
         # by the AVERAGE market cap over the same window (market_cap_usd's Q0 mean), not today's. Was: ÷ today's
@@ -15554,13 +15577,13 @@ def _cp_cols(R: Refs, data_by_key: dict) -> list[tuple]:
         cats = _cp_cats(p)
         if not cats:
             return ""
-        om = lambda c: lag_matched(p, f"outflow_{c}_usd")  # noqa: E731 — the same legs net holder yield reads (R5.3)
+        om = lambda c: burn_since(p, lag_matched(p, f"outflow_{c}_usd"))  # noqa: E731 — the same legs net holder yield reads (R5.3, R25)
         dil = "+".join(ann(r, p, om(c)) for c in cats)
         m_ = R.D(r, "market_cap_usd", "q0")
         # THE SAME LEGS AS NET HOLDER YIELD'S GUARD (holder value beside the outflows), so the outflows are read over
         # the windows net holder yield reads them over (a monthly leg anchors the others, P3-A1) and the two cells
         # block together: holder value yield − this = net holder yield
-        legs = ([("holder value", "holder_value_revenue_usd", "q0")] + sv_legs(p) if hv_has(p) else []) + \
+        legs = ([("holder value", burn_since(p, "holder_value_revenue_usd"), "q0")] + sv_legs(p) if hv_has(p) else []) + \
             [(f"outflow {c}", om(c), "q0") for c in cats]
         return _coverage_guard(R, r, legs, f"IF(ISNUMBER({m_}),({dil})/{m_},{NA})",
                                same_span=None if hv_has(p) else False,
@@ -15916,18 +15939,18 @@ def _cp_cols(R: Refs, data_by_key: dict) -> list[tuple]:
         (CP_SUBSIDY_BC_HEAD, subsidy(("b", "c")), FMT_X, "calc"),
         # ---- HOLDER VALUE (item 3, LITMUS A) ----
         (CP_HVY_HEAD, hvy, FMT_PCT, "calc", True, {"metric": "holder_value_revenue_usd", "fmt_fn": _hvy_since_fmt,
-                                                    "note_fn": lambda p: "\n\n".join(x for x in (_holder_value_note(p), burn_since_note(p)) if x)}),
+                                                    "note_fn": lambda p: "\n\n".join(x for x in (_holder_value_note(p), burn_since_note(p), hv_since_note(p)) if x)}),
         ("Holder value yield — fees only (where liquid bribes are credited: Aerodrome, decision 4)", hv_fees_only,
          FMT_PCT, "calc"),
         ("Holder value RECORDED, NOT CREDITED (treasury / emissions-funded) ÷ average market cap over the window",
          hv_other, FMT_PCT, "calc"),
         ("Holder value funding by period (config HOLDER_VALUE)", lambda r, p: funding_text(p), FMT_TEXT, "text"),
         (DILUTION_MC_HEAD, dil_mc, FMT_PCT, "calc", False, {"note_fn": lambda p: "\n\n".join(
-            x for x in (one_off_dilution_note(p), lag_matched_note(p), as_published_note(p)) if x),
-            "fmt_fn": as_published_flag}),
+            x for x in (one_off_dilution_note(p), lag_matched_note(p), as_published_note(p), hv_since_note(p)) if x),
+            "fmt_fn": lambda n: _hvy_since_fmt(n) or as_published_flag(n)}),
         (CP_NHY_HEAD, nhy, FMT_PCT, "calc", True, {"metric": "holder_value_revenue_usd", "note_fn": lambda p: "\n\n".join(
-            x for x in (_holder_value_note(p), one_off_dilution_note(p), lag_matched_note(p), as_published_note(p))
-            if x), "fmt_fn": as_published_flag}),
+            x for x in (_holder_value_note(p), one_off_dilution_note(p), lag_matched_note(p), as_published_note(p),
+                        hv_since_note(p)) if x), "fmt_fn": lambda n: _hvy_since_fmt(n) or as_published_flag(n)}),
         (NET_FLOAT_PRESSURE_HEAD, nfp, FMT_PCT, "calc", True, {"metric": config.FREE_FLOAT_METRIC, "note_fn": lambda p: (
             "NET FLOAT PRESSURE (R21, Jake 2026-11-25) = revenue-funded buying + burns − new supply (outflows "
             "a+b+c+d+e+f) − bought tokens returned to the float, each in tokens a year ÷ the free float. Buying: "
