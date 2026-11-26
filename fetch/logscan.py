@@ -1156,6 +1156,27 @@ class LogScan:
                        "release figure is the falls of their summed balanceOf and does not read it — a stop here "
                        "leaves it unchanged." if labels_only else "")
 
+        # R25 FIX 3 (Jake 2026-11-26: Pendle's Berachain gauge "SCAN DOES NOT RECONCILE ... in minus out = 452,785.45 vs
+        # balanceOf 427,981.07", so the gauge series stopped on 2026-11-18). `window_only`: the daily run reconciles the
+        # recent window (balanceOf change = in - out, to the wei) and does NOT chase the full history, which the explorer
+        # route never completed (it returned 47,214.55 PENDLE of the 72,018.93 PENDLE paid out up to block 16,206,151,
+        # 24,804.38 short) and which the repair re-reads at 10,000 blocks a call (5,844 calls). The seed (unbounded) still
+        # reads the full history. Named in config.NAMED_SCAN_GAPS.
+        if spec.get("window_only") and not self.unbounded and not labels_only and spec.get("window_days"):
+            from .logcache import DailyChecks
+            if not DailyChecks(self.cache.root).due(f"window:{key}", str(today().date())):
+                return
+            if self._window_scan(p, spec, chain, chain_id, token, holders, to_block,
+                                 "window_only: the full history is read by the seed, not the daily run", out):
+                return
+            out.gap(name, metric,
+                    reason=f"the {key} recent-window scan did not reconcile or could not be read (see the failure line "
+                           f"above); nothing stored. The full history is not read by the daily run (window_only)."
+                           + (f" NAMED GAP: {config.NAMED_SCAN_GAPS[key]}"
+                              if key in (getattr(config, "NAMED_SCAN_GAPS", {}) or {}) else ""),
+                    tiers_attempted="2", suggestion=f"Check the {chain} RPC.")
+            return
+
         # 2. BOTH DIRECTIONS FOR EVERY HOLDER — reconciliation needs both even when one counts.
         # INCREMENTAL (2026-09-28, fetch/logcache.py): each stream's events already read are
         # loaded from the cache and only blocks after its `scanned_to` are asked for. The first

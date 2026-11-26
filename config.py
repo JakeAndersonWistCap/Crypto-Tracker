@@ -29928,6 +29928,7 @@ for _chain, _urls in (("mantle", ["https://rpc.mantle.xyz", "https://mantle-rpc.
                       ("katana", ["https://rpc.katana.network"])):
     DEFAULT_RPC.setdefault(_chain, _urls)
 _PENDLE_EXCLUDE = {56: "0xd77E9062c6DF3F2d1CB5Bf45855fa1E7712A059e", 5000: "0x5C30d3578A4D07a340650a76B9Ae5dF20D5bdF55"}
+BERACHAIN_DAILY = {"window_only": True, "window_days": 30, "incremental_after_seed": True}   # R25 FIX 3
 EXPLORER_PROBED_SCANS = (
     # (chain id, project, chain, key, metric, token, holders)
     (56, "Pendle", "bsc", "gauge_pendle_out_bsc", "emissions_tokens_gauge_bsc",
@@ -30076,7 +30077,8 @@ def wire_probed_scans(state: dict | None = None, projects=None, open_routes: boo
                       # PR4C.2 (Jake's run 2026-11-12: explorer_l2:base@Morpho TIMED OUT dating 396,522 transfers): Morpho's
                       # Base claims read only the days after the newest stored one — the 100-day window once, then
                       # each run's new transfers (as Katana's)
-                      **({"incremental_after_seed": True} if proj == "Morpho" else {})})
+                      **({"incremental_after_seed": True} if proj == "Morpho" else {}),
+                      **(BERACHAIN_DAILY if key == "gauge_pendle_out_berachain" else {})})
         if proj == "Pendle":
             em = PROJECT_BY_NAME["Pendle"].get("emissions_from_metric") or ()
             if metric not in em:
@@ -50726,11 +50728,25 @@ PENDLE_BERACHAIN_GAP = {
     "worth": "Q-3 lacks 590.18 and Q-4 18,126.19 PENDLE of gauge emissions (0.07% and 1.47% of those quarters'); Q0..Q-2 "
              "unaffected",
 }
+# R25 FIX 3 (Jake 2026-11-26): the daily run logged "FAILED explorer / Pendle: gauge_pendle_out_berachain: SCAN DOES NOT
+# RECONCILE ... in minus out = 452785453553452456185794 wei, balanceOf = 427981..." and the gauge series stopped 2026-11-18.
+# ROOT CAUSE (chain read 2026-11-26, rpc.berachain.com, keyless): the token 0xFf9c599D... is a plain 18-decimals ERC-20 (no
+# fee, no rebase; balanceOf(0x704478Dd...) = 427,981.065181357 = 500,000 in (1 transfer) - 72,018.934818643 out, 742,058
+# outs, the last at block 16,206,151). The scan's own record held only 47,214.55 of the 72,018.93 out: the explorer/Alchemy
+# route returns a PARTIAL history (24,804.38 PENDLE of outs missing: 452,785.45 - 427,981.07 = 24,804.38), and the chain's
+# truth needs 5,844 eth_getLogs calls (rpc.berachain.com refuses over 10,000 blocks: HTTP 413, also for one-holder topics),
+# so the daily run's repair never finished inside its share while the failing full-history path ran ahead of the
+# (working) recent window. FIX: the daily Berachain scan is window_only - it reconciles the recent window to the wei
+# (balanceOf(end) - balanceOf(start) = in - out) and stores its daily series (zeros observed: no payout since block
+# 16,206,151); only `--seed pendle_berachain` reads the full history. Window 30 days, incremental after the newest stored
+# day. Expected series: 0 PENDLE a day (balance unchanged at 427,981.065181357 since block 16,206,151, 2026-01-26).
+# (set where the scan is wired: EXPLORER_PROBED_SCANS loop, BERACHAIN_DAILY below)
 NAMED_SCAN_GAPS = {
     "gauge_pendle_out_berachain": (
         f"Pendle's Berachain gauge history (R21, measured {PENDLE_BERACHAIN_GAP['measured_on']}): "
         f"{PENDLE_BERACHAIN_GAP['share']} — {PENDLE_BERACHAIN_GAP['worth']}. Time-capped "
-        f"(--seed pendle_berachain stops after {PENDLE_BERACHAIN_GAP['seed_cap_min']} min)."),
+        f"(--seed pendle_berachain stops after {PENDLE_BERACHAIN_GAP['seed_cap_min']} min). The daily run reads only the "
+        f"recent window, reconciled to the wei against balanceOf (R25)."),
 }
 
 # =====================================================================================================================
