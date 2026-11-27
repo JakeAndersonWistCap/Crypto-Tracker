@@ -52601,3 +52601,18 @@ for _n, _ms in BURN_SINCE_OUTFLOWS.items():
         BURN_NOT_IN_NET[(_n, f"{_m}_sinceburn")] = (
             f"{_m} from the day the A4 burn went live (R25 read-time view, read only by dilution and net holder yield) — "
             f"the same dollars as {_m}, never summed with it")
+
+
+# ===== ROUND 26 (Jake 2026-11-27): NEAR P2P valuation price fallbacks =====
+# A priced leg tries DefiLlama, then the store's own price series, then Coinbase Exchange's daily open, then CoinGecko
+# /coins/{id}/history; the source that priced each day is saved in the state (price_src) and shown by `gaps`. The seed
+# tokens' maps below; a census token with no map has DefiLlama only, and a day it cannot be priced for is left unvalued.
+_nbq = PROJECT_BY_NAME["Near"]["near_bigquery"]
+_nbq.update({
+    "near_coinbase": "NEAR-USD", "near_coingecko": "near",
+    "token_decimals": {"usdt.tether-token.near": 6, "wrap.near": 24,
+                       "17208628f84f5d6ad33f0da3bbbeb27ffcb398eac501a31bd6ad2011e36133a1": 6},
+    "token_coinbase": {"usdt.tether-token.near": "USDT-USD",
+                       "17208628f84f5d6ad33f0da3bbbeb27ffcb398eac501a31bd6ad2011e36133a1": "USDC-USD"},
+    "token_coingecko": {"usdt.tether-token.near": "tether",
+                        "17208628f84f5d6ad33f0da3bbbeb27ffcb398eac501a31bd6ad2011e36133a1": "usd-coin"}})

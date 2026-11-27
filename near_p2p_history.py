@@ -521,6 +521,11 @@ def cmd_gaps(db: Path, dry: bool = False) -> int:
             for d in g["in_state"]:
                 if str(d) in un:
                     print(f"        {d}: NOT valued by the last run - {un[str(d)]}")
+            ps = (st or {}).get("price_src") or {}
+            if ps:
+                print("      price source per valued day (R26: DefiLlama, store, Coinbase daily open, CoinGecko history):")
+                for d, m in sorted(ps.items())[-8:]:
+                    print(f"        {d}: " + "; ".join(f"{k}={v}" for k, v in m.items()))
         else:
             print("      (no BigQuery state file here: every missing day is counted as unread)")
     budget = int(spec["monthly_budget_bytes"]) / 1e9

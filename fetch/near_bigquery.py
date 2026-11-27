@@ -873,6 +873,72 @@ class NearBigQuery:
                 got[c] = (float(v["price"]) if v.get("price") is not None else None, v.get("decimals"))
         return got
 
+    def _decimals(self, spec, st, token):
+        """A token's decimals: the declared map, else what a DefiLlama read cached for it (R26)."""
+        d = (spec.get("token_decimals") or {}).get(token)
+        if d is not None:
+            return int(d)
+        for px in (st.get("prices") or {}).values():
+            v = (px or {}).get(f"near:{token}")
+            if v and v[1] is not None:
+                return int(v[1])
+        return None
+
+    def _fallback_price(self, spec, day, token, st, errs, near: bool = False):
+        """(price, source) for NEAR (`near`) or a NEP-141 token on `day`, trying in order: DefiLlama (NEAR only here;
+        tokens are asked in batch by the caller), the store's own price series, Coinbase Exchange's daily open, CoinGecko
+        /coins/{id}/history. A source that failed is not asked again this run; every failure is appended to `errs`.
+        (None, None) only when every source failed (R26: the day is then left unvalued with the reason)."""
+        key = "near" if near else token
+        chain = []
+        if near:
+            chain.append(("DefiLlama", lambda: self._llama_one(spec, day, "coingecko:near")))
+        else:
+            ref = (spec.get("token_store_price") or {}).get(token)
+            if ref:
+                chain.append(("store", lambda: self._stored_at(ref, day)))
+        cb = ((spec.get("token_coinbase") or {}).get(token) if not near else (spec.get("near_coinbase") or "NEAR-USD"))
+        if cb:
+            chain.append(("Coinbase daily open", lambda: self._coinbase_open(cb, day)))
+        cg = ((spec.get("token_coingecko") or {}).get(token) if not near else (spec.get("near_coingecko") or "near"))
+        if cg:
+            chain.append(("CoinGecko history", lambda: self._coingecko_hist(cg, day)))
+        for label, fn in chain:
+            if label in self._down:
+                errs.append(f"{label}: failed earlier this run")
+                continue
+            try:
+                v = fn()
+            except Exception as e:  # noqa: BLE001
+                self._down.add(label)
+                errs.append(f"{label}: {str(e).split('?')[0][:60]}")
+                continue
+            if v is not None and math.isfinite(float(v)) and float(v) > 0:
+                return float(v), label
+            errs.append(f"{label}: no price for {key} on {day.date()}")
+        return None, None
+
+    def _llama_one(self, spec, day, coin):
+        got = self._price(spec, day, [coin])
+        v = got.get(coin)
+        return v[0] if v else None
+
+    def _stored_at(self, ref, day):
+        s = self._stored(ref[0], ref[1])
+        return None if s is None else s.get(day)
+
+    def _coinbase_open(self, product, day):
+        a, b = day.strftime("%Y-%m-%dT00:00:00Z"), (day + pd.Timedelta(days=1)).strftime("%Y-%m-%dT00:00:00Z")
+        j = self.http.get(f"https://api.exchange.coinbase.com/products/{product}/candles?granularity=86400&start={a}&end={b}")
+        for c in (j if isinstance(j, list) else []):       # [time, low, high, open, close, volume]
+            if int(c[0]) == int(day.timestamp()):
+                return c[3]
+        return None
+
+    def _coingecko_hist(self, cid, day):
+        j = self.http.get(f"https://api.coingecko.com/api/v3/coins/{cid}/history?date={day.strftime('%d-%m-%Y')}&localization=false")
+        return (((j or {}).get("market_data") or {}).get("current_price") or {}).get("usd")
+
     def _value(self, spec, st, out, name) -> None:
         """R25 FIX 4: every held day is valued here with LOCAL arithmetic (native NEAR and wNEAR at the store's same-day
         price_usd; a token at its cached DefiLlama price). A day is left out only with a STATED reason, kept in the state
@@ -883,42 +949,69 @@ class NearBigQuery:
         (counted as unpriced, NOT cached, so the next run that reaches DefiLlama re-values it and the store follows)."""
         near_px = self._stored(name, "price_usd")
         stored, unpriced, no_near, notes, why = [], 0, 0, [], {}
-        net_down, no_price_days = False, []
+        no_price_days = []
+        self._down = set()                    # sources that failed this run: not asked again (R26)
+        st.setdefault("price_src", {})
         import config                                          # noqa: PLC0415
         hi = (config.METRICS.get(spec["p2p_metric"]) or {}).get("sanity_max")
         for key in sorted(st["days"]):
             toks = st["days"][key]
             day = pd.Timestamp(key)
-            p_near = near_px.get(day) if near_px is not None else None
-            if p_near is None or pd.isna(p_near):
-                no_near += 1
-                why[key] = "no stored NEAR price_usd for the day"
-                continue
             if NATIVE not in toks:
                 why[key] = "no native-NEAR row held for the day (unknown, not valued as 0)"
                 continue
+            srcs, errs = {}, []
+            p_near = near_px.get(day) if near_px is not None else None
+            if p_near is not None and not pd.isna(p_near):
+                srcs["near"] = "store price_usd"
+            else:
+                p_near, srcs["near"] = self._fallback_price(spec, day, "near", None, errs, near=True)
+            if p_near is None:
+                no_near += 1
+                why[key] = "no NEAR price from any source (" + "; ".join(errs[:4]) + ")"
+                continue
             others = [t for t in toks if t not in (NATIVE, WRAPPED)]
-            px = st["prices"].get(key)
-            if px is None and others and not net_down:
+            px = st["prices"].get(key) or {}
+            px = {c: list(v) for c, v in px.items()}
+            have = st["price_src"].get(key) or {}
+            for c in px:
+                srcs[c] = have.get(c, "DefiLlama")
+            need = [t for t in others if (px.get(f"near:{t}") or [None, None])[0] is None]
+            if need and "defillama" not in self._down:
                 try:
-                    px = {c: list(v) for c, v in self._price(spec, day, [f"near:{t}" for t in others]).items()}
-                    st["prices"][key] = px
+                    got = self._price(spec, day, [f"near:{t}" for t in need])
+                    for c, v in got.items():
+                        if v and v[0] is not None and v[1] is not None:
+                            px[c] = [v[0], v[1]]
+                            srcs[c] = "DefiLlama"
                 except Exception as e:  # noqa: BLE001
-                    net_down = True
-                    notes.append(f"prices {key}: {str(e).split('?')[0]} (no further DefiLlama call this run)")
-                    px = None
-            if px is None and others:
+                    self._down.add("defillama")
+                    notes.append(f"prices {key}: {str(e).split('?')[0]} (DefiLlama not asked again this run; "
+                                 f"falling back to the store, Coinbase, CoinGecko)")
+                    errs.append("DefiLlama: " + str(e).split("?")[0][:60])
+            for t in need:
+                c = f"near:{t}"
+                if (px.get(c) or [None, None])[0] is not None:
+                    continue
+                price, srcname = self._fallback_price(spec, day, t, st, errs)
+                dec = self._decimals(spec, st, t)
+                if price is not None and dec is not None:
+                    px[c] = [price, dec]
+                    srcs[c] = srcname
+            missing = [t for t in others if (px.get(f"near:{t}") or [None, None])[0] is None]
+            if missing:
+                why[key] = (f"no price for {len(missing)} token(s) ({missing[0]}...) from any source: DefiLlama, the "
+                            f"store, Coinbase, CoinGecko (" + "; ".join(errs[:4]) + ") - NOT stored understated")
                 no_price_days.append(key)
-            px = px or {}
+                continue
+            st["prices"][key] = px
+            st["price_src"][key] = srcs
             usd = 0.0
             try:
                 usd += float(Decimal(toks.get(NATIVE, "0"))) * p_near
                 usd += float(Decimal(toks.get(WRAPPED, "0")) / Decimal(10) ** 24) * p_near
                 for t in others:
-                    p = px.get(f"near:{t}") or (None, None)
-                    if p[0] is None or p[1] is None:
-                        unpriced += 1
-                        continue
+                    p = px[f"near:{t}"]
                     try:
                         usd += float(Decimal(toks[t]) / Decimal(10) ** int(p[1])) * p[0]
                     except (InvalidOperation, ValueError, TypeError, OverflowError):
@@ -934,8 +1027,8 @@ class NearBigQuery:
         st["unvalued"] = why
         self._save(st)
         if no_price_days:
-            notes.append(f"{len(no_price_days)} day(s) valued WITHOUT their non-native tokens (DefiLlama not reached; "
-                         f"re-valued by the next run that reaches it): {no_price_days[0]}..{no_price_days[-1]}")
+            notes.append(f"{len(no_price_days)} day(s) left unvalued: a token had no price from any source "
+                         f"({no_price_days[0]}..{no_price_days[-1]}); retried by the next run")
         if why:
             ks = sorted(why)
             notes.append(f"{len(why)} day(s) NOT valued: " + "; ".join(f"{k} {why[k]}" for k in ks[:3])
