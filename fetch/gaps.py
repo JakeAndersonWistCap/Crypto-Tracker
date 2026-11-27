@@ -1052,7 +1052,7 @@ def _tier_note(project: dict, metric: str, scrape_entries: dict) -> tuple[str, s
     if metric in ("market_share_pct", "market_share_category_usd") and (config.MARKET_SHARE.get(name) or {}).get(
             "how") == "rwa_turn":
         return ("the weekly RWA turn (fetch/llama.DefiLlama.rwa_share, tier defillama_rwa_share) has not completed — "
-                "60 protocol calls a run until every RWA-category protocol is read",
+                "one /protocol call per RWA-category protocol (~180) until all are read, stored only when the whole pass completes (it resumes across runs from the cache)",
                 "Check the Run Log's defillama market_share_pct line: IN PROGRESS n of N, or the protocols that failed.")
     if metric == "plume_airdrop_claims_tokens" and name == "Plume":
         return ("the campaign-filtered claims read (fetch/plume_claims.py, rpc.plume.org) stored nothing this run — it "
