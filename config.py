@@ -52616,3 +52616,11 @@ _nbq.update({
                        "17208628f84f5d6ad33f0da3bbbeb27ffcb398eac501a31bd6ad2011e36133a1": "USDC-USD"},
     "token_coingecko": {"usdt.tether-token.near": "tether",
                         "17208628f84f5d6ad33f0da3bbbeb27ffcb398eac501a31bd6ad2011e36133a1": "usd-coin"}})
+
+# ===== ROUND 27 (Jake 2026-11-27): price maps for bridged Zcash and LiNEAR (read live: decimals from ft_metadata on
+# NEAR mainnet; Coinbase ZEC-USD and CoinGecko history both answer for 2026-02-14; CoinGecko has LiNEAR's daily history
+# under id linear-protocol, so no MODELLED rate is needed). Any other census token is looked up by contract address. =====
+_nbq = PROJECT_BY_NAME["Near"]["near_bigquery"]
+_nbq["token_decimals"].update({"zec.omft.near": 8, "linear-protocol.near": 24})
+_nbq["token_coinbase"].update({"zec.omft.near": "ZEC-USD"})
+_nbq["token_coingecko"].update({"zec.omft.near": "zcash", "linear-protocol.near": "linear-protocol"})

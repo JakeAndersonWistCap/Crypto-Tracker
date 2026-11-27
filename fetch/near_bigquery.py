@@ -129,6 +129,10 @@ def hole_days(held, gap_from) -> list:
     return [d for d in pd.date_range(lo, hi, freq="D") if str(d.date()) not in have]
 
 
+import threading as _threading
+_STATE_LOCK = _threading.RLock()
+
+
 class NearBigQuery:
     SOURCE = SOURCE
     TIER = TIER
@@ -163,9 +167,23 @@ class NearBigQuery:
         p.parent.mkdir(parents=True, exist_ok=True)
         # R22 (BQ one-shot): written whole or not at all - a run killed mid-write leaves the previous state, never a
         # truncated file that _load would read as an empty state (every held day lost)
-        tmp = p.with_name(p.name + ".tmp")
-        tmp.write_text(json.dumps(st))
-        os.replace(tmp, p)
+        # R27: one writer at a time in this process (the NEAR and Ethereum P2P tiers share the file) and each write its
+        # own temp name; the rename is retried (Windows: WinError 32 while another handle is still open) and a tier never
+        # crashes over it - if every try fails the state stays as it was on disk and the next save writes it again
+        import threading, time, uuid                                  # noqa: PLC0415, E401
+        with _STATE_LOCK:
+            tmp = p.with_name(f"{p.name}.{os.getpid()}.{threading.get_ident()}.{uuid.uuid4().hex[:6]}.tmp")
+            tmp.write_text(json.dumps(st))
+            for i in range(8):
+                try:
+                    os.replace(tmp, p)
+                    return
+                except OSError:
+                    time.sleep(0.15 * (i + 1))
+            try:
+                tmp.unlink()
+            except OSError:
+                pass
 
     # --- BigQuery ------------------------------------------------------------------------------
     def _client(self, spec: dict):
@@ -903,6 +921,12 @@ class NearBigQuery:
         cg = ((spec.get("token_coingecko") or {}).get(token) if not near else (spec.get("near_coingecko") or "near"))
         if cg:
             chain.append(("CoinGecko history", lambda: self._coingecko_hist(cg, day)))
+        elif not near:
+            # R27: a token with no hand-written map is looked up through CoinGecko by its NEAR contract address
+            chain.append(("CoinGecko by contract", lambda: self._coingecko_by_contract(token, day)))
+        mod = (spec.get("token_modelled") or {}).get(token)
+        if mod:        # R27: MODELLED = NEAR's price x the token's published exchange rate (labelled in the source)
+            chain.append(("MODELLED: NEAR price x " + mod["label"], lambda: self._modelled(spec, day, mod)))
         for label, fn in chain:
             if label in self._down:
                 errs.append(f"{label}: failed earlier this run")
@@ -917,6 +941,22 @@ class NearBigQuery:
                 return float(v), label
             errs.append(f"{label}: no price for {key} on {day.date()}")
         return None, None
+
+    def _coingecko_by_contract(self, token, day):
+        """CoinGecko's id for a NEAR contract (/coins/near-protocol/contract/{address}), cached in the state file's
+        sibling dict for the run, then its history price on `day`."""
+        ids = self.__dict__.setdefault("_cg_ids", {})
+        if token not in ids:
+            j = self.http.get(f"https://api.coingecko.com/api/v3/coins/near-protocol/contract/{token}")
+            ids[token] = (j or {}).get("id")
+        return self._coingecko_hist(ids[token], day) if ids[token] else None
+
+    def _modelled(self, spec, day, mod):
+        """NEAR's price x the published exchange rate (MODELLED): a rate series stored for the token, else the fixed
+        rate declared with its date; never a guess without a declared source."""
+        near = self._stored("Near", "price_usd")
+        p = None if near is None else near.get(day)
+        return None if p is None or mod.get("rate") is None else float(p) * float(mod["rate"])
 
     def _llama_one(self, spec, day, coin):
         got = self._price(spec, day, [coin])
