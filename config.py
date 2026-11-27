@@ -32464,18 +32464,23 @@ PROJECT_BY_NAME["GEODNET"].setdefault("series_handover", {})["gross_burn_tokens_
 # G6 item 2: AERODROME AFTER THE UPGRADE (aero.xyz/aero-upgrade, read 2026-10-19): "~2.127B max. As existing AERO and VELO
 # both upgrade to a unified token, the total supply of the new AERO token will increase from ~2B to a max ~2.127B";
 # "The realized annual inflation rate for AERO is expected to be ~12%. The annual rate ceiling at launch will be set at
-# 20%." The G5 closure (uncapped, max_supply null) holds to 2026-10-21; from the cutover the hub's figure is the max.
-PROJECT_BY_NAME["Aerodrome"].setdefault("declared_stocks", {})["max_supply"] = {
-    "value": 2_127_000_000, "from": AERODROME_MIGRATION["cutover_utc"],
-    "source": "aero.xyz/aero-upgrade read 2026-10-19",
-    "why": "the unified AERO's published max (~2.127B, APPROXIMATE as published: AERO ~2B + VELO 2.66B x 0.044 = 117M); "
-           "expected inflation ~12% a year, ceiling 20% at launch"}
+# 20%." G6 declared that ~2.127B as max_supply from the cutover.
+# R28 FIX 5 (the figure is withdrawn): the on-chain total supply (aero_v3.supply_once, 2,153,221,959.59) EXCEEDS that
+# "max" — the upgrade page's number is the launch-day migration size (AERO ~2B + VELO 2.66B x 0.044), and the token keeps
+# minting on a tail-emission schedule (Minter.sol tailEmissionRate, a share of supply each week; MAXIMUM_TAIL_RATE caps
+# the RATE, not the supply). So the protocol has no hard cap, CoinGecko's max_supply 2,127,000,000 is a stale legacy
+# figure, and total supply is the on-chain figure. The declared max is NOT stored; the G5 closure (no max supply) stands.
 AERODROME_MIGRATION["launch_chains"] = ("base", "ethereum", "optimism", "arc", "ink", "robinhood", "arbitrum")
 for _u in UNAVAILABLE:
     if _u.get("project") == "Aerodrome" and _u.get("metric") == "max_supply":
-        _u["until"] = "2026-10-21"
-        _u["reopen_if"] = ("REOPENED BY THE UPGRADE: from 2026-10-22 the unified AERO has a published max (~2.127B, "
-                           "declared_stocks) — the closure covers the legacy token only")
+        _u["summary"] = ("NO MAX SUPPLY — CoinGecko's max_supply 2,127,000,000 (the upgrade page's launch-day ~2.127B) is a "
+                         "stale legacy figure: AERO has a tail-emission schedule (Minter.sol tailEmissionRate 21 bps of "
+                         "supply a week; MAXIMUM_TAIL_RATE caps the rate, not the supply) and no hard cap. Total supply "
+                         "is the on-chain totalSupply (2,153,221,959.59), which already passes that figure")
+        _u["what_was_tried"] += ("; R28 (2026-11-27): Base eth_call totalSupply() of the legacy AERO 0x940181a9… 2,008,752,775 "
+                                 "and the unified AERO's supply 2,153,221,959.59 (aero_v3.supply_once) against the "
+                                 "published ~2.127B max — the supply is the larger, so the published max is not a ceiling")
+        _u["reopen_if"] = "the project or its governance declares a hard cap on AERO's supply"
 # a closure with an `until` stops applying the day after it (G6 item 2) — the gap rules then judge the metric again
 import datetime as _dt
 for _k, _u in list(UNAVAILABLE_BY_KEY.items()):
@@ -52325,6 +52330,14 @@ def _load_r22_moves() -> int:
 
 
 R22_MOVES_DECLARED = _load_r22_moves()
+# R28 FIX 5 (2026-11-27): Aerodrome's max supply is CLOSED as "none available" (the G5 closure, standing again). The
+# upgrade page's ~2.127B max was exceeded by the on-chain total supply (2,153,221,959.59); AERO mints on a tail-emission
+# schedule and has no hard cap, CoinGecko's max_supply 2,127,000,000 is a stale legacy figure. A label, not a measurement:
+# the cell was an unexplained "CoinGecko returned no data" gap on the dumps.
+declare_later_move("Aerodrome", "audit|CP Comparability|Max supply (tokens)", "none available",
+                   "R28 fix 5: AERO has no hard cap (tail emissions, Minter.sol tailEmissionRate; MAXIMUM_TAIL_RATE caps "
+                   "the rate, not the supply); CoinGecko's max_supply 2,127,000,000 is a stale legacy figure the on-chain "
+                   "total supply (2,153,221,959.59) already exceeds — the max is closed, not shown", "2026-11-27")
 # ===== ROUND 22 (lead, gate): AETHIR'S FAUCET SCAN RUNS IN ITS PROJECT'S OWN EXPLORER TIER (appended after the pass
 # that stamps own_tier on every scan; the tier list and its budget follow own_tier) =====
 for _sp in PROJECT_BY_NAME["Aethir"].get("log_scans") or ():
