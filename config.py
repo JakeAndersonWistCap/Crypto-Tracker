@@ -51306,7 +51306,8 @@ DECLARED_NA_REASONS["Ethereum"] = (*DECLARED_NA_REASONS["Ethereum"], {
 # ===== R21b (lead, gate): AETHIR JOINED THE A3 TAB — its "Buyback destination" says why it is n/a =====
 # (the same fix as Morpho's in R20; the coverage audit's BLANK-UNEXPLAINED): the declared wording, R21b item 3
 ATTRIBUTE_TEXT[("Aethir", "buyback_destination")] = (
-    "n/a — no buyback: a direct fee burn (ServiceFeeBurner 0xf8ec… → 0x…dEaD, no swap; R21b, Jake 2026-11-25)")
+    "n/a — no buyback: a direct fee burn (ServiceFeeBurner 0xf8ec… → 0x…dEaD, no swap; R21b, Jake 2026-11-25). The "
+    "burn itself IS counted: it is revenue sent to holders in A3's key and in net float pressure, and it is A4's burn")
 # ===== R21b (lead, gate): MORPHO'S RELEASE LESS THE FOUNDER CLAIMS — a declared component, not a new measuring point =====
 DECLARED_COMPONENTS.setdefault(("Morpho", "unlock_release_tokens"), []).append({
     "metric": "morpho_founder_vest_claims_tokens", "from": None,
@@ -52624,3 +52625,17 @@ _nbq = PROJECT_BY_NAME["Near"]["near_bigquery"]
 _nbq["token_decimals"].update({"zec.omft.near": 8, "linear-protocol.near": 24})
 _nbq["token_coinbase"].update({"zec.omft.near": "ZEC-USD"})
 _nbq["token_coingecko"].update({"zec.omft.near": "zcash", "linear-protocol.near": "linear-protocol"})
+
+
+# ===== ROUND 28 item 3 (Jake 2026-11-27): AETHIR'S "no buyback: a direct fee burn" IS A DECLARED n/a =====
+# The label is RIGHT, not a leftover: the buyback-destination column describes where bought tokens go, and Aethir buys
+# none. The revenue-funded fee burn is not hidden by it — it is credited in the A3 key (HOLDER_VALUE burn_credited) and
+# in net float pressure. The done check flagged the cell (rule-3 suspect) only because no declaration matched this wording.
+DECLARED_NA_REASONS["Aethir"].append(
+    {"cols": (), "match": "no buyback: a direct fee burn",
+     "source": "Sourcify (exact match, chain 42161): contracts/periphery/ServiceFeeBurner.sol at "
+               "0xf8Ec8E8ECdBfbBA4D073090152dfC6559C7eF531 (settle(): core.claimServiceFee(...), then a transfer to 0x…dEaD; "
+               "no router, pool or swap path) ; https://docs.aethir.com/aethir-tokenomics/ath-burn-mechanism",
+     "read_on": "2026-11-24", "decided": "Jake 2026-11-25 (R21b item 3: fee burns count in A3's key) — Round 28 item 3",
+     "why": "nothing is bought: the fee share is claimed in ATH and destroyed; the burn is credited as revenue to holders "
+            "(A3 key, burn_credited) and as A4's burn, so the buyback-destination column is n/a by design"})
