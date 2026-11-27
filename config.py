@@ -14688,6 +14688,13 @@ PROJECTS = [
             "gross_burn_tokens": "SKY burned from the Pause Proxy in the period, differenced from "
                                  "burn_address_balance — BLOCKED with it. The Stage 2 rate is "
                                  "sky_stage2_burn_tokens",
+            # R28 FIX 4: the ~10x level step is REAL (evidence in LEVEL_BREAK_ACKNOWLEDGED below), said on the sheet.
+            "holders_revenue_usd": "Holders revenue (DefiLlama sky-lending: SKY buyback + USDS staking rewards). "
+                                   "LEVEL STEP, REAL: ~$0.18M/day to ~$0.83-1.0M/day from 2026-11-20 (DefiLlama "
+                                   "sky-lending, no slug split: parent = sky-lending, sky-money is 0). Sky's own cash "
+                                   "flow (Block Analitica, Buyback Spending) shows the same step, $0.102M/day on "
+                                   "11-18 to $0.752M on 11-20 and $0.855M on 11-26, with staking rewards flat at "
+                                   "~$0.08M/day: the buyback rate went up. Not a settlement lump",
         },
         # ===== EACH BURN SERIES DIFFERENCES INTO ITS OWN FLOW. =====
         # burn_address_balance -> gross_burn_tokens is the global mapping and still applies. The
@@ -22263,7 +22270,20 @@ LEVEL_BREAK_LOOKBACK_DAYS = 180
 # Breaks a human has looked at and accepted, with the reason. A level_break that is REAL — a
 # protocol genuinely winding down, a fee switch turned off — is acknowledged here rather than by
 # widening the factor, because widening it turns the check off for everything else too.
-LEVEL_BREAK_ACKNOWLEDGED: dict[tuple[str, str], dict] = {}
+LEVEL_BREAK_ACKNOWLEDGED: dict[tuple[str, str], dict] = {
+    # R28 FIX 4 (2026-11-27): a REAL level rise, not a source restructure. No value changes.
+    ("Sky", "holders_revenue_usd"): {
+        "why": "DefiLlama dailyHoldersRevenue for Sky (api.llama.fi/summary/fees/sky?dataType=dailyHoldersRevenue): "
+               "~$182K/day through 2026-11-18, $290K on 11-19 (partial step), then $827K 11-20, $820K, $793K, $850K, "
+               "$1.00M 11-24, $969K, $973K 11-26 (7-day median ~$0.9M vs 30-day ~$36K-$184K). One child, "
+               "sky-lending, carries all of it (sky-money = 0); parent total30d equals the child's, history before "
+               "11-19 is unrestated, so no slug split or restructure. Sky's own accounts agree: Block Analitica "
+               "cash-flow Buyback Spending $102K/day 11-18, $211K 11-19, $752K 11-20..22, $785K 11-23, $850K 11-24..25, "
+               "$855K 11-26; Staking Rewards flat at $76-87K/day. So the buyback rate rose ~7-8x and holders revenue "
+               "(buyback + staking rewards) follows it; smooth daily, not a monthly settlement lump.",
+        "acknowledged_on": "2026-11-27",
+    },
+}
 
 
 def level_break_ack(project_name: str, metric: str) -> dict | None:
