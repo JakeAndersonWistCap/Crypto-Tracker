@@ -935,6 +935,8 @@ class NearBigQuery:
                 v = fn()
             except Exception as e:  # noqa: BLE001
                 self._down.add(label)
+                if label.startswith("CoinGecko"):               # R29: one CoinGecko failure (a 429) ends all CoinGecko calls this run
+                    self._down.update(("CoinGecko history", "CoinGecko by contract"))
                 errs.append(f"{label}: {str(e).split('?')[0][:60]}")
                 continue
             if v is not None and math.isfinite(float(v)) and float(v) > 0:
@@ -942,12 +944,26 @@ class NearBigQuery:
             errs.append(f"{label}: no price for {key} on {day.date()}")
         return None, None
 
+    @staticmethod
+    def _dec(raw):
+        """R29: an amount string as a Decimal, tolerant of what BigQuery / a CSV can hand over (surrounding space, thousands
+        separators, underscores, a trailing .0, scientific notation). Anything else (None, empty, NaN, inf, text) raises
+        ValueError carrying the raw string: the day is then a NAMED hole, never valued without that token."""
+        t = str(raw).strip().replace(",", "").replace("_", "").replace(" ", "")
+        try:
+            d = Decimal(t)
+        except InvalidOperation:
+            raise ValueError(f"raw string {str(raw)!r}") from None
+        if not d.is_finite():
+            raise ValueError(f"raw string {str(raw)!r}")
+        return d
+
     def _coingecko_by_contract(self, token, day):
         """CoinGecko's id for a NEAR contract (/coins/near-protocol/contract/{address}), cached in the state file's
         sibling dict for the run, then its history price on `day`."""
         ids = self.__dict__.setdefault("_cg_ids", {})
         if token not in ids:
-            j = self.http.get(f"https://api.coingecko.com/api/v3/coins/near-protocol/contract/{token}")
+            j = self._cg_get(f"https://api.coingecko.com/api/v3/coins/near-protocol/contract/{token}")
             ids[token] = (j or {}).get("id")
         return self._coingecko_hist(ids[token], day) if ids[token] else None
 
@@ -975,8 +991,27 @@ class NearBigQuery:
                 return c[3]
         return None
 
+    CG_BUDGET_S = 90.0
+
+    def _cg_get(self, url):
+        """R29: CoinGecko through its own client that never sleeps on a 429 (retries 0) and a 90 s total budget per run:
+        over budget or any failure raises, and _fallback_price stops asking CoinGecko for the rest of the run."""
+        import time as _t                                             # noqa: PLC0415
+        if getattr(self, "_cg_t0", None) is None:
+            self._cg_t0, self._cg_spent = _t.monotonic(), 0.0
+        if self._cg_spent >= self.CG_BUDGET_S:
+            raise RuntimeError("CoinGecko budget (90 s a run) spent")
+        if getattr(self, "_cg_http", None) is None:
+            from .base import Http                                    # noqa: PLC0415
+            self._cg_http = Http(min_interval=1.2, retries=0)
+        t = _t.monotonic()
+        try:
+            return self._cg_http.get(url)
+        finally:
+            self._cg_spent += _t.monotonic() - t
+
     def _coingecko_hist(self, cid, day):
-        j = self.http.get(f"https://api.coingecko.com/api/v3/coins/{cid}/history?date={day.strftime('%d-%m-%Y')}&localization=false")
+        j = self._cg_get(f"https://api.coingecko.com/api/v3/coins/{cid}/history?date={day.strftime('%d-%m-%Y')}&localization=false")
         return (((j or {}).get("market_data") or {}).get("current_price") or {}).get("usd")
 
     def _value(self, spec, st, out, name) -> None:
@@ -991,6 +1026,7 @@ class NearBigQuery:
         stored, unpriced, no_near, notes, why = [], 0, 0, [], {}
         no_price_days = []
         self._down = set()                    # sources that failed this run: not asked again (R26)
+        self._cg_t0, self._cg_spent = None, 0.0
         st.setdefault("price_src", {})
         import config                                          # noqa: PLC0415
         hi = (config.METRICS.get(spec["p2p_metric"]) or {}).get("sanity_max")
@@ -1005,10 +1041,27 @@ class NearBigQuery:
             if p_near is not None and not pd.isna(p_near):
                 srcs["near"] = "store price_usd"
             else:
-                p_near, srcs["near"] = self._fallback_price(spec, day, "near", None, errs, near=True)
+                cached = (st.setdefault("near_px", {}).get(key) or [None, None])
+                if cached[0] is not None:
+                    p_near, srcs["near"] = cached[0], cached[1]
+                else:
+                    p_near, srcs["near"] = self._fallback_price(spec, day, "near", None, errs, near=True)
+                    if p_near is not None:
+                        st["near_px"][key] = [p_near, srcs["near"]]
             if p_near is None:
                 no_near += 1
                 why[key] = "no NEAR price from any source (" + "; ".join(errs[:4]) + ")"
+                continue
+            bad = None
+            for tk, raw in toks.items():
+                try:
+                    self._dec(raw)
+                except ValueError as e:
+                    bad = (tk, str(e))
+                    break
+            if bad:
+                why[key] = (f"unreadable amount: token {bad[0]} {bad[1]} - the day is NOT valued (never stored without "
+                            f"that token)")
                 continue
             others = [t for t in toks if t not in (NATIVE, WRAPPED)]
             px = st["prices"].get(key) or {}
@@ -1038,6 +1091,8 @@ class NearBigQuery:
                 if price is not None and dec is not None:
                     px[c] = [price, dec]
                     srcs[c] = srcname
+            st["prices"][key] = px                  # R29: every price found is kept, a day is never priced twice
+            st["price_src"][key] = srcs
             missing = [t for t in others if (px.get(f"near:{t}") or [None, None])[0] is None]
             if missing:
                 why[key] = (f"no price for {len(missing)} token(s) ({missing[0]}...) from any source: DefiLlama, the "
@@ -1048,15 +1103,12 @@ class NearBigQuery:
             st["price_src"][key] = srcs
             usd = 0.0
             try:
-                usd += float(Decimal(toks.get(NATIVE, "0"))) * p_near
-                usd += float(Decimal(toks.get(WRAPPED, "0")) / Decimal(10) ** 24) * p_near
+                usd += float(self._dec(toks.get(NATIVE, "0"))) * p_near
+                usd += float(self._dec(toks.get(WRAPPED, "0")) / Decimal(10) ** 24) * p_near
                 for t in others:
                     p = px[f"near:{t}"]
-                    try:
-                        usd += float(Decimal(toks[t]) / Decimal(10) ** int(p[1])) * p[0]
-                    except (InvalidOperation, ValueError, TypeError, OverflowError):
-                        unpriced += 1                       # one bad token amount leaves out that token, not the day
-            except (InvalidOperation, ValueError) as e:
+                    usd += float(self._dec(toks[t]) / Decimal(10) ** int(p[1])) * p[0]
+            except (InvalidOperation, ValueError, TypeError, OverflowError) as e:
                 notes.append(f"{key}: {e}")
                 why[key] = f"native amount unreadable ({e})"
                 continue
