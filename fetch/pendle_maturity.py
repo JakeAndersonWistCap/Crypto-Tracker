@@ -55,6 +55,8 @@ import math
 import time
 from pathlib import Path
 
+import pandas as pd
+
 from .base import BudgetExhausted, Http, Progress, tidy, today
 from .logcache import atomic_write_text
 
@@ -125,12 +127,15 @@ def span_start(m: dict) -> _dt.date | None:
     return _date(m["created"]) + _dt.timedelta(days=1)
 
 
-def split_day(markets: dict, day: _dt.date) -> tuple[str, object]:
+def split_day(markets: dict, day: _dt.date, spot: dict | None = None, used: list | None = None) -> tuple[str, object]:
     """One day's verdict over every market:
         ("ok", {metric: usd})       every market live that day served a point — the buckets and their total
         ("refused", [names])        a live market read through the day has NO point on it — unknown, never 0
         ("pending", [names])        a market that may be live that day is not read through it yet
-    A refusal outranks pending: the day cannot be stored however the pending markets turn out."""
+    A refusal outranks pending: the day cannot be stored however the pending markets turn out.
+    `spot` ({market id: current totalTvl}) is passed ONLY for the latest complete day: core usage is a stock read as
+    of now, so a live market with no historical point that day is read from markets/all's current value instead of
+    refusing the day; each such market's label is appended to `used`. A market absent from `spot` still refuses."""
     sums = {b[0]: 0.0 for b in BUCKETS}
     refused, pending = [], []
     ds = str(day)
@@ -150,6 +155,10 @@ def split_day(markets: dict, day: _dt.date) -> tuple[str, object]:
             pending.append(label)
             continue
         v = (m.get("pts") or {}).get(ds)
+        if v is None and spot and spot.get(mid) is not None:
+            v = spot[mid]
+            if used is not None:
+                used.append(label)
         if v is None:
             refused.append(label)
             continue
@@ -354,6 +363,7 @@ class PendleMaturity:
                                    f"resumes next run ({pacer.summary()})", TIER)
             return
         now_live = {"n": 0, "usd": 0.0}
+        spot: dict[str, float] = {}                               # live markets' current totalTvl: a number > 0, or unknown
         for m in listed:
             try:
                 exp, created = str(m["expiry"]), str(m.get("timestamp") or m["expiry"])
@@ -366,6 +376,12 @@ class PendleMaturity:
             if exp_s > self.wall():                               # markets/all's own current figure, for the check
                 now_live["n"] += 1
                 now_live["usd"] += float((m.get("details") or {}).get("totalTvl") or 0)
+                try:
+                    sv = float((m.get("details") or {}).get("totalTvl"))
+                    if 0 < sv < float("inf"):
+                        spot[f"{m['chainId']}-{str(m['address']).lower()}"] = round(sv, 2)
+                except (TypeError, ValueError):
+                    pass
             if exp_s <= _day_s(first):
                 continue                                          # expired before the window: never live in it
             mid = f"{m['chainId']}-{str(m['address']).lower()}"
@@ -454,9 +470,11 @@ class PendleMaturity:
 
         # ---------------------------------------------------------- the days
         ok, refused, pending = {}, {}, {}
+        spot_used: list[str] = []
         d = first
         while d <= last:
-            verdict, val = split_day(mk, d)
+            # A SPOT READ IS VALID ONLY FOR THE LATEST COMPLETE DAY (yesterday): older days keep the refusal
+            verdict, val = split_day(mk, d, spot if d == last else None, spot_used if d == last else None)
             {"ok": ok, "refused": refused, "pending": pending}[verdict][d] = val
             d += _dt.timedelta(days=1)
         if not ok:
@@ -480,8 +498,19 @@ class PendleMaturity:
                 f"{len(refused)} day(s) REFUSED for a live market's missing point"
                 + (f" (latest {max(refused)}: {', '.join(refused[max(refused)][:3])})" if refused else "")
                 + f", {len(pending)} waiting on markets not yet read. {run_note}")
+        spot_src = ""
+        if spot_used and last in ok:
+            spot_src = f"{SRC} [spot read: {', '.join(u.split(' (')[0] for u in spot_used)} had no historical point]"
+            note += (f" SPOT READ for {last}: {len(spot_used)} live market(s) had no historical point that day "
+                     f"({', '.join(spot_used[:5])}); their current markets/all totalTvl stands in (a stock read as of "
+                     f"now; only the latest complete day is ever read this way).")
         for m in METRICS:
-            out.add(tidy([(_dt.datetime(x.year, x.month, x.day), ok[x][m]) for x in days], name, m, SRC, TIER),
+            main = tidy([(_dt.datetime(x.year, x.month, x.day), ok[x][m]) for x in days
+                         if not (spot_src and x == last)], name, m, SRC, TIER)
+            if spot_src:
+                main = pd.concat([main, tidy([(_dt.datetime(last.year, last.month, last.day), ok[last][m])],
+                                             name, m, spot_src, TIER)], ignore_index=True)
+            out.add(main,
                     SOURCE, name, f"{m}: {len(days)} day(s) {days[0]}..{days[-1]}" + (f" — {note}" if m == TOTAL
                                                                                       else ""), TIER)
         if days[-1] >= last:
