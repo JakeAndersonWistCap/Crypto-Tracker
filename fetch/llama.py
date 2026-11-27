@@ -1694,7 +1694,7 @@ class DefiLlama:
                     tot[k] = tot.get(k, 0.0) + v
                     if ch == spec["chain"]:
                         own[k] = own.get(k, 0.0) + v
-            st["done"][slug] = {"t": tot, "o": own}
+            st["done"][slug] = {"t": tot, "o": own, "on": self._today}
         left = [x for x in st["slugs"] if x not in st["done"]]
         if left:
             f.parent.mkdir(parents=True, exist_ok=True)
@@ -1712,7 +1712,12 @@ class DefiLlama:
                                    f"{', '.join(failed[:6])} could not be read: the category total is incomplete, "
                                    f"NOTHING STORED (the next weekly turn reads them again)", TIER)
             return
-        days = sorted({d for v in st_done.values() for d in v["t"]})
+        # a turn that spans runs read its protocols on different days: a protocol read on day X holds nothing after X-1,
+        # so a later day would be summed WITHOUT it (understated). Only the days every protocol covers are stored; the
+        # days after are owed to the next turn (never a partial sum).
+        reads = [v["on"] for v in st_done.values() if v.get("on")]
+        last_ok = (pd.Timestamp(min(reads)) - pd.Timedelta(days=1)) if reads else None
+        days = sorted({d for v in st_done.values() for d in v["t"] if last_ok is None or pd.Timestamp(d) <= last_ok})
         rows_t, rows_s = [], []
         for d in days:
             t = sum(v["t"].get(d, 0.0) for v in st_done.values())

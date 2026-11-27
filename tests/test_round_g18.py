@@ -124,7 +124,7 @@ def test_6_a_turn_in_progress_makes_the_share_cells_c_with_the_completion_date(t
     try:
         config.set_rwa_turn_progress(prog)
         cls, ev = config.MISSING_DECLARED[("Plume", "market_share_pct")]
-        assert cls == "C" and "60 of 178" in ev and "valid from 2026-10-28" in ev            # 118 left: 2 runs
+        assert cls == "C" and "60 of 178" in ev and "valid from 2026-10-27" in ev            # 118 left: 2 runs
         row = {"Project": "Plume", "Reason / route / error": "n/a — market_share_pct (now): no rows stored"}
         assert ca.missing_class(row)[0] == "C — NEEDS HISTORY"
     finally:

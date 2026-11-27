@@ -34950,7 +34950,7 @@ OUTFLOW_CATEGORIES["Plume"]["c"] = ("plume_airdrop_claims_tokens",)
 FLOW_LINE_EVIDENCE.pop(("Plume", "Incentives paid beside: demand side (c)"), None)
 
 # G17-5 PLUME MARKET SHARE — a weekly turn of the RWA rebuild without the chain filter (fetch/llama.DefiLlama.rwa_share)
-RWA_SHARE_TURN = {"project": "Plume", "chain": "Plume Mainnet", "cadence_days": 7, "calls_per_run": 60,
+RWA_SHARE_TURN = {"project": "Plume", "chain": "Plume Mainnet", "cadence_days": 7, "calls_per_run": 400,
                   "keep_days": 455,
                   "why": "~178 /protocol calls (every RWA-category protocol's full history): too many for the nightly "
                          "tier — spread over runs from a cache, once a week (the BigQuery P2P turn's pattern)"}
